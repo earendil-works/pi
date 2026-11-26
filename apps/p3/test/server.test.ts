@@ -8,9 +8,9 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "node:path";
 import { describe, it, mock, type TestContext } from "node:test";
+import { setImmediate as tick } from "node:timers/promises";
 import { createHost, type HostError } from "@earendil-works/chord";
 import { type Context, BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
 import {
@@ -395,18 +395,10 @@ describe("the runner the server uses", () => {
 });
 
 describe("the apply", () => {
-	// Review of the perf pass (Astra, ERNDL-1060): apply A's workers step was delayed, an edit, apply B finished, then A:
-	// both reported success, the page went back to A's code, nothing was dirty, and a third apply did not repair it.
-	it("runs one build and rollout at a time: a newer apply is not undone by an older one finishing late", async (t) => {
+	/** A test server with the runner's `reload` held at its first call until `finish` resolves. */
+	async function heldReload(t: TestContext) {
 		const running = await testServer({}, context);
 		t.after(() => running.close(context));
-		const file = join(running.userRoot, "race.web.ts");
-		const write = (said: string) => writeFile(file, `export default { setup() { globalThis.said = "${said}"; } };`);
-		await write("initial");
-		await until(running.plugins, ({ set }) => set, context);
-		await running.apply(context);
-		const scripts = await running.host.get(WebScripts, {}, context);
-		t.after(() => scripts.release());
 		const runners = (await running.host.registry(WorkerRunners, context)).value;
 		assert.ok(runners !== undefined);
 		const reload = runners.reload.bind(runners);
@@ -414,7 +406,6 @@ describe("the apply", () => {
 		const finish = Promise.withResolvers<void>();
 		t.after(() => finish.resolve());
 		let first = true;
-		// The older apply's workers step finishes only after the newer apply started.
 		t.mock.method(runners, "reload", async (built: Parameters<WorkerRunner["reload"]>[0], ctx: Context) => {
 			const result = await reload(built, ctx);
 			if (first) {
@@ -424,25 +415,69 @@ describe("the apply", () => {
 			}
 			return result;
 		});
+		return { running, reached, finish };
+	}
+
+	// Review of the perf pass (Astra, ERNDL-1060): apply A's workers step was delayed, an edit, apply B finished, then A:
+	// both reported success, the page went back to A's code, nothing was dirty, and a third apply did not repair it.
+	it("runs one build and rollout at a time: a newer apply is not undone by an older one finishing late", async (t) => {
+		const { running, reached, finish } = await heldReload(t);
+		const file = join(running.userRoot, "race.web.ts");
+		const write = (said: string) => writeFile(file, `export default { setup() { globalThis.said = "${said}"; } };`);
 		await write("a");
-		await until(running.plugins, ({ dirty }) => dirty.includes("race"), context);
+		await until(running.plugins, ({ dirty, set }) => set || dirty.includes("race"), context);
+		const scripts = await running.host.get(WebScripts, {}, context);
+		t.after(() => scripts.release());
 		const older = running.apply(context);
 		await reached.promise;
 		await write("b");
 		await until(running.plugins, ({ dirty }) => dirty.includes("race"), context);
+		// Round 2 (Astra): the newer apply reads what is dirty when it builds; while the older one is held it reads nothing.
+		const reads = t.mock.getter(running.plugins, "value");
 		const newer = running.apply(context);
-		// Unserialized, the newer apply finishes here while the older one is held, and the older one's page step lands
-		// last; serialized, it waits for the older one: nothing to wait for but time.
-		await Promise.race([newer, sleep(1500)]);
+		// Unheld, it reads within this turn's microtasks.
+		await tick();
+		const read = reads.mock.callCount();
+		reads.mock.restore();
 		finish.resolve();
+		assert.equal(read, 0, "the newer apply started while the older one was held");
 		assert.equal((await older).stopped, undefined);
 		assert.equal((await newer).stopped, undefined);
 		assert.deepEqual(running.plugins.value.dirty, []);
 		const shown = scripts.set.value.combined;
 		const headers = { cookie: await running.cookie(context) };
 		const combined = await (await fetch(`http://127.0.0.1:${running.port}${shown}`, { headers })).text();
-		assert.match(combined, /said\s*=\s*"b"/);
+		assert.equal(/said\s*=\s*"(\w+)"/.exec(combined)?.[1], "b");
 		await running.apply(context);
 		assert.equal(scripts.set.value.combined, shown);
+	});
+
+	// Round 2 (Astra): a queued apply whose caller left waited for the one before it, and built once its turn came.
+	it("lets a queued apply's caller stop waiting: its apply builds nothing, the next one still waits", async (t) => {
+		const { running, reached, finish } = await heldReload(t);
+		const first = running.apply(context);
+		await reached.promise;
+		const controller = new AbortController();
+		const second = running.apply(withAbortSignal(controller.signal, context));
+		controller.abort(new Error("the caller left"));
+		// It rejects at the abort, while the first apply is still held.
+		const settled = await Promise.race([
+			second.then(
+				() => "applied",
+				(error: Error) => error.message,
+			),
+			tick(),
+		]);
+		assert.equal(settled, "the caller left");
+		const reads = t.mock.getter(running.plugins, "value");
+		const third = running.apply(context);
+		// Unheld, it reads within this turn's microtasks.
+		await tick();
+		const read = reads.mock.callCount();
+		reads.mock.restore();
+		finish.resolve();
+		assert.equal(read, 0, "the third apply started while the first was held");
+		assert.equal((await first).stopped, undefined);
+		assert.equal((await third).stopped, undefined);
 	});
 });

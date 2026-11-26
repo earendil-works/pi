@@ -17,6 +17,7 @@
 - A link the heartbeat closes is reported once through `onError` as `link_closed { reason: "heartbeat", role }` (its holders wait `loading` until another link holds them), and every closed link is counted in `chord.links.closed { reason }` (`local`, `heartbeat`, `protocol`, `peer`).
 - `testPlugin` takes `hostStubs(host, store)`: stubs made once the test's host exists, for an app's registry of process values that hands out the host or its store (p3's `WorkerRuntime`).
 - `@earendil-works/chord/workers/child` exports `clearStaleLock`: an app that starts the holders of a `processLock` name itself clears a stale lock file before a start (macOS, the BSDs).
+- `Plugins.apply(steps, context)`: builds the dirty plugins and rolls them out with `steps`, one apply at a time (a call starts once the previous one ended); a caller whose context aborts while it waits stops waiting and builds nothing. The app kit's `applyChanges` uses it, so a queued `applyChanges` whose caller left no longer waits and builds.
 
 ### Changed
 

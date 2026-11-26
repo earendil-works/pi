@@ -261,7 +261,8 @@ export interface App<P extends Principal> {
 	readonly baseWatched: Promise<void>;
 	/**
 	 * Builds the dirty plugins and rolls them out: the server, every worker kind, then the clients; never by itself. Calls
-	 * run one after another (a later one builds after the earlier one rolled out).
+	 * run one after another (a later one builds after the earlier one rolled out); one whose context aborts while it
+	 * waits stops waiting and builds nothing (`Plugins.apply`).
 	 */
 	applyChanges(context: Context): Promise<RolloutResult>;
 	/**
@@ -690,8 +691,6 @@ class RunningApp<P extends Principal> implements App<P> {
 	/** The recording of the base code after the start (`watchBaseCode`). */
 	#scanning: Promise<void> = Promise.resolve();
 	#closing: Promise<void> | undefined;
-	/** The latest `applyChanges`, settled to nothing: the next one starts after it. */
-	#applying: Promise<void> = Promise.resolve();
 
 	constructor(
 		host: Host<P>,
@@ -759,26 +758,13 @@ class RunningApp<P extends Principal> implements App<P> {
 	}
 
 	applyChanges(context: Context): Promise<RolloutResult> {
-		// One build and rollout at a time: a later build rolled out before an earlier one would leave the older code
-		// deployed (each host applies the last set it is handed).
-		const applied = this.#applying.then(() => this.#applyChanges(context));
-		this.#applying = applied.then(
-			() => {},
-			() => {},
-		);
-		return applied;
-	}
-
-	/** One build of the dirty plugins and its rollout: the server, every worker kind, then the clients. */
-	async #applyChanges(context: Context): Promise<RolloutResult> {
-		const plugins = this.#component;
-		const built = await plugins.build(plugins.state.value.dirty, context);
+		// One build and rollout at a time (`Plugins.apply`): the server, every worker kind, then the clients.
 		const steps = [
-			plugins.step("server", this.host),
+			this.#component.step("server", this.host),
 			...[...this.workers].map(([name, each]) => each.step(name)),
 			...this.#surfaces.map(({ name, surface }) => surface.step(name)),
 		];
-		return plugins.rollout(steps, built, context);
+		return this.#component.apply(steps, context);
 	}
 
 	async exportData(address: Address, path: string, context: Context): Promise<void> {
