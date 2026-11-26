@@ -1086,8 +1086,16 @@ export class Binding implements Holder, UnboundRequest {
 		// At its own version (an older consumer has only its version's names), the same set while its target's is.
 		const granted = this.#state.kind === "bound" ? this.#state.target.granted : NO_GRANTS;
 		if (this.#projection?.from !== granted) {
-			const kept = [...granted].filter((name) => currentVersion(this.contract).grants.includes(name));
-			this.#projection = { from: granted, to: kept.length === granted.size ? granted : new Set(kept) };
+			const { grants } = currentVersion(this.contract);
+			// Most bindings are of the target's version: every name is theirs, and no list is made to find that out.
+			let all = true;
+			for (const name of granted) {
+				if (grants.includes(name)) continue;
+				all = false;
+				break;
+			}
+			const to = all ? granted : new Set([...granted].filter((name) => grants.includes(name)));
+			this.#projection = { from: granted, to };
 		}
 		this.#wasLive = this.#decided = true;
 	}
