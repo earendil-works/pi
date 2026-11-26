@@ -185,26 +185,27 @@ function checkMembers(
 		Object.hasOwn(implementation, member) ? implementation[member] : undefined;
 	// Methods and state members are the contract's names with the object's values (a map of each per object kept
 	// 216 B for names every object of the version shares); keyed members, rare, a map per object that has some.
-	// Of their exact length: a list's first push reserves room for 16 more.
-	const calls: Method[] = new Array(methods.size);
-	let at = 0;
-	for (const [member, data] of methods) {
-		const method = own(member);
-		if (typeof method !== "function") throw new Error(`${member}: a method is a function`);
-		// A method with arguments is called as it is (no wrapper per object and method): plugin code, called with its
-		// arguments and a context, whatever it returns made a promise by its caller.
-		calls[at++] = takesNoArgs(data) ? (_args: unknown, context: Context) => method(context) : (method as Method);
-	}
-	const watched: DeriveSource[] = new Array(state.size);
-	at = 0;
-	for (const member of state.keys()) {
-		const source = resolveWatchable(own(member));
-		if (source === undefined) throw new Error(`${member}: a state member is a JSON watchable`);
-		watched[at++] = source;
-	}
+	const calls =
+		methods.size === 0
+			? NO_METHODS
+			: memberValues(methods, (member, data): Method => {
+					const method = own(member);
+					if (typeof method !== "function") throw new Error(`${member}: a method is a function`);
+					// A method with arguments is called as it is (no wrapper per object and method): plugin code, called
+					// with its arguments and a context, whatever it returns made a promise by its caller.
+					return takesNoArgs(data) ? (_args: unknown, context: Context) => method(context) : (method as Method);
+				});
+	const watched =
+		state.size === 0
+			? NO_STATE
+			: memberValues(state, (member): DeriveSource => {
+					const source = resolveWatchable(own(member));
+					if (source === undefined) throw new Error(`${member}: a state member is a JSON watchable`);
+					return source;
+				});
 	const checked = {
-		methods: methods.size === 0 ? NO_METHODS : new MemberValues(indexesOf(methods), calls),
-		state: state.size === 0 ? NO_STATE : new MemberValues(indexesOf(state), watched),
+		methods: calls,
+		state: watched,
 		keyed: keyed.size === 0 ? NO_KEYED : new Map<string, KeyedBinding>(),
 		events: NO_EVENTS,
 		queries: NO_QUERIES,
@@ -227,7 +228,7 @@ function checkMembers(
 
 /**
  * One kind of a checked implementation's members as a map: the names its contract's version declares, shared by every
- * object of the version (`indexesOf`), and the values of this object, in the same order. Never written once made.
+ * object of the version (`memberValues`), and the values of this object, in the same order. Never written once made.
  */
 class MemberValues<V> implements ReadonlyMap<string, V> {
 	readonly #indexes: ReadonlyMap<string, number>;
@@ -272,14 +273,40 @@ class MemberValues<V> implements ReadonlyMap<string, V> {
 	}
 }
 
-/** The position of each name of a version's members of one kind, in their order: one map per version and kind. */
-function indexesOf(members: ReadonlyMap<string, unknown>): ReadonlyMap<string, number> {
-	let indexes = memberIndexes.get(members);
-	if (indexes === undefined) {
-		indexes = new Map([...members.keys()].map((member, index) => [member, index]));
-		memberIndexes.set(members, indexes);
+/**
+ * The values `valueOf` gives the members of `members` in the order this check iterates them, over their positions:
+ * the version's (one map per kind, `memberIndexes`) while they are that order, else made from this iteration's and
+ * kept in their place (a contract's members change while a kept `evolve` editor changes them: positions are never
+ * those of another order). The values in a list of their exact length (a list's first push reserves 16 more).
+ */
+function memberValues<D, V>(
+	members: ReadonlyMap<string, D>,
+	valueOf: (member: string, data: D) => V,
+): ReadonlyMap<string, V> {
+	const cached = memberIndexes.get(members);
+	const values: V[] = new Array(members.size);
+	let count = 0;
+	// The names as iterated, once they left the cached positions (or there are none).
+	let names: string[] | undefined;
+	for (const [member, data] of members) {
+		values[count] = valueOf(member, data);
+		if (names !== undefined) names.push(member);
+		else if (cached?.get(member) !== count) names = [...namesBefore(cached, count), member];
+		count++;
 	}
-	return indexes;
+	values.length = count;
+	if (names === undefined && cached !== undefined && cached.size === count) return new MemberValues(cached, values);
+	names ??= namesBefore(cached, count);
+	const indexes = new Map(names.map((member, index) => [member, index]));
+	memberIndexes.set(members, indexes);
+	return new MemberValues(indexes, values);
+}
+
+/** The names at the first `count` positions of `indexes`, in their order. */
+function namesBefore(indexes: ReadonlyMap<string, number> | undefined, count: number): string[] {
+	const names: string[] = new Array(count);
+	if (indexes !== undefined) for (const [member, index] of indexes) if (index < count) names[index] = member;
+	return names;
 }
 
 /** The positions of a version's members of one kind (its `MembersData` map, granted or not), gone with the version. */

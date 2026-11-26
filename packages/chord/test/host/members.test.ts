@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { type EventSource, event, int, keyed, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import {
+	type EventSource,
+	event,
+	evolve,
+	int,
+	keyed,
+	local,
+	method,
+	obj,
+	remote,
+	str,
+} from "../../src/contracts/index.ts";
 import { NO_GRANTS } from "../../src/contracts/internal.ts";
 import { defineState } from "../../src/documents/index.ts";
 import { checkImplementation } from "../../src/host/members.ts";
@@ -76,6 +87,34 @@ describe("a checked implementation's methods and state members (hot-path pass)",
 			return [new WeakRef(Short), new WeakRef(first.state)];
 		})();
 		await expectCollected(...refs);
+	});
+});
+
+// Found by the review of the hot-path pass (astra2, 2026-11-26): the positions of a version's members were cached
+// for a members map a kept `evolve` editor changed since.
+describe("a checked implementation's members after a kept editor changed them", () => {
+	it("a state member removed and added again serves its own source on the next object", async () => {
+		const First = local("review.pair", {
+			version: 1,
+			params: { id: int() },
+			members: { first: int(), second: int() },
+		});
+		let moveFirst = () => {};
+		const Second = evolve(First, (editor) => {
+			moveFirst = () => {
+				editor.removeState("first").addState("first", int());
+			};
+			return editor;
+		});
+		const { host } = await loaded((h) => h.serve(Second, () => ({ first: constant(1), second: constant(2) })));
+		try {
+			expect((await host.get(Second, { id: 1 }, context)).first.value).toBe(1);
+			moveFirst();
+			const another = await host.get(Second, { id: 2 }, context);
+			expect([another.first.value, another.second.value]).toEqual([1, 2]);
+		} finally {
+			await host.close(context);
+		}
 	});
 });
 
