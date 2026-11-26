@@ -1,4 +1,5 @@
-// The plans of the stores' named queries (sessions, people, environments, notes, canvas, checklist), as SQLite runs
+// The plans of the stores' named queries (sessions, people, environments, notes, canvas, checklist, instructions,
+// skills), as SQLite runs
 // them: each read must search the index its comment names, with no sort (a temporary B-tree would read and sort every
 // row of a tie, or of the list, for one page), except the joins ordered by a partner's column, which say in their
 // comment that SQLite sorts their few rows: for those the plan asserted is the one they get. The test opens the
@@ -11,7 +12,7 @@ import { describe, it } from "node:test";
 import { createHost, openStore, sqliteBackend } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
-import { type P3Principal, Server, THIS_DEVICE, thingOf } from "@earendil-works/p3/v1";
+import { defineFacet, type P3Principal, Server, THIS_DEVICE, thingOf } from "@earendil-works/p3/v1";
 import { EnvironmentsStore, PeopleStore, type ServerRuntime, SessionsStore } from "@earendil-works/p3/v1/server";
 import appsServer from "../plugins/apps/server.ts";
 import canvasServer from "../plugins/canvas/server.ts";
@@ -19,11 +20,13 @@ import { CanvasStore } from "../plugins/canvas/store.ts";
 import checklistServer, { ChecklistStore } from "../plugins/checklist/server.ts";
 import codingServer from "../plugins/coding/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
+import { InstructionsStore, serveStore as serveInstructions } from "../plugins/instructions/store.ts";
 import notesServer from "../plugins/notes/server.ts";
 import { NotesStore } from "../plugins/notes/store.ts";
 import peopleServer from "../plugins/people/server.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import { Notes, STUBS } from "../plugins/sessions/test/stubs.ts";
+import { SkillsStore, serveStore as serveSkills } from "../plugins/skills/store.ts";
 import { serverCoreFacet } from "../src/server.ts";
 
 /** A query's pages, read once each. */
@@ -79,6 +82,9 @@ describe("the plans of the stores' queries", () => {
 					{ name: "@earendil-works/p3-people", facet: peopleServer },
 					{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 					STUBS.find(({ name }) => name === "p3-test-kind")!,
+					// The kinds' stores alone: their kinds need the things plugin, whose store has a plan test of its own.
+					{ name: "@earendil-works/p3-instructions", facet: defineFacet((h) => serveInstructions(h)) },
+					{ name: "@earendil-works/p3-skills", facet: defineFacet((h) => serveSkills(h)) },
 				],
 				context,
 			);
@@ -138,6 +144,12 @@ describe("the plans of the stores' queries", () => {
 			for (const board of ["b1", "b2"]) {
 				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
 				await canvas.add({ canvas: board, shapes: [rect, rect, rect], author: "person:owner" }, context);
+			}
+			const instructions = await host.get(InstructionsStore, {}, context);
+			const skills = await host.get(SkillsStore, {}, context);
+			for (const thing of ["t1", "t2"]) {
+				await instructions.set({ thing, text: "be kind", language: "en" }, context);
+				await skills.set({ thing, folder: thing }, context);
 			}
 			/** The plans of the statements `read` makes Chord prepare. */
 			const plansOf = async (read: Read): Promise<string[]> => {
@@ -230,6 +242,8 @@ describe("the plans of the stores' queries", () => {
 				["notes.of", pages(notes.notes.of, { notebook: "n1" }), { index: `${N}.rows:by_time` }],
 				["shapes.of", pages(canvas.shapes.of, { canvas: "b1" }), { index: `${C}.shapes:by_order` }],
 				["items.of", pages(checklists.items.of, { checklist: "c1" }), { index: `${K}.items:by_order` }],
+				["instructions.settings.of", pages(instructions.settings.of, { thing: "t1" }), {}],
+				["skills.settings.of", pages(skills.settings.of, { thing: "t1" }), {}],
 			];
 			for (const [name, read, expected] of cases) {
 				const plans = (await Promise.all(read.map((each) => plansOf(each)))).flat();
