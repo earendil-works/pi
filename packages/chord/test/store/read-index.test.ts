@@ -178,6 +178,42 @@ describe("candidates", () => {
 		expect(log).toEqual([]);
 	});
 
+	it("a read run again is filed last under the keys it keeps again, as filing it anew did (hot-path pass)", async () => {
+		// Only the keys it no longer keeps lose it and only new ones gain it; a key it keeps again still has it last.
+		store = await memoryStore();
+		const entries = await tableIn(store, Entries);
+		const batch = new Batch(() => {}, undefined);
+		const log: string[] = [];
+		const open = async (name: string, q: Query) => {
+			const spec = { query: q, table: entries.sql.table, projection: {}, owner: {} };
+			const opened = new OpenQuery({ store: store!, batch }, spec, "rows", () => {}, BACKGROUND_CONTEXT);
+			await opened.read({ kind: "rows", range: { limit: 20 } }, { adopt: () => void log.push(name) }).load();
+			return opened;
+		};
+		const meter = await metered();
+		const row = { session: "s0", id: 1, kind: "note", text: "" };
+		await costOf(entries, batch, meter, (changes) => changes.put(row));
+		const notes = await open(
+			"notes",
+			query(Entries).where((e) => eq(e.kind, "note")),
+		);
+		const session = await open(
+			"session",
+			query(Entries).where((e) => eq(e.session, "s0")),
+		);
+		const edit = (changes: TableChanges) => changes.update({ session: "s0", id: 1 }, { text: "x" });
+		log.length = 0;
+		await costOf(entries, batch, meter, edit);
+		expect(log).toEqual(["notes", "session"]);
+		// Another note: the notes' read alone runs, and is filed again behind the session's read under (s0, 1).
+		await costOf(entries, batch, meter, (changes) => changes.put({ ...row, session: "s1" }));
+		log.length = 0;
+		await costOf(entries, batch, meter, edit);
+		expect(log).toEqual(["session", "notes"]);
+		notes.close();
+		session.close();
+	});
+
 	it("an `in` files a read once per value, up to 32 combinations; a column past that is left out of its bucket", async () => {
 		store = await memoryStore();
 		const entries = await tableIn(store, Entries);

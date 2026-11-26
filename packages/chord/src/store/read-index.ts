@@ -80,15 +80,22 @@ export class ReadIndex implements KeptKeysWatcher {
 		const kept = read.kept();
 		if (kept?.length === filing.kept?.length && (kept ?? NO_KEYS).every((keys, at) => keys === filing.kept![at]))
 			return;
-		this.#unkeep(read, filing);
+		const before = filing.kept;
 		filing.kept = kept;
 		const { index } = filing;
 		if (kept === undefined) {
+			for (const keys of before ?? NO_KEYS) for (const key of keys) removeFrom(index.kept, key, read);
 			index.unindexed.add(read);
 			return;
 		}
 		index.unindexed.delete(read);
-		for (const keys of kept) for (const key of keys) addTo(index.kept, key, read);
+		// What filing it anew after removing it from every key gave, without the map's removals and insertions of the
+		// keys it keeps again (a run of 100 rows keeps 99 of them): a key it no longer keeps loses it; a key it keeps
+		// has it last among the reads filed there.
+		for (const keys of before ?? NO_KEYS) {
+			for (const key of keys) if (!keepsKey(kept, key)) removeFrom(index.kept, key, read);
+		}
+		for (const keys of kept) for (const key of keys) refile(index.kept, key, read);
 	}
 
 	/**
@@ -229,6 +236,20 @@ function addTo<K>(map: Map<K, Filed>, key: K, read: Read): void {
 	if (filed === undefined) map.set(key, read);
 	else if (filed instanceof Set) filed.add(read);
 	else if (filed !== read) map.set(key, new Set([filed, read]));
+}
+
+/** Whether one of the key sets `kept` holds `key`. */
+function keepsKey(kept: readonly ReadonlySet<unknown>[], key: unknown): boolean {
+	for (const keys of kept) if (keys.has(key)) return true;
+	return false;
+}
+
+/** Files `read` under `key` as the last read there: added, or moved behind the reads filed after it. */
+function refile<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
+	if (filed === read) return;
+	if (filed instanceof Set && filed.delete(read)) filed.add(read);
+	else addTo(map, key, read);
 }
 
 function removeFrom<K>(map: Map<K, Filed>, key: K, read: Read): void {
