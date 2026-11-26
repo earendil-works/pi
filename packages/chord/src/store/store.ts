@@ -30,6 +30,13 @@ export interface Store {
 	/** The outbox the sync layer reads; `undefined` without one. */
 	readonly outbox: Outbox | undefined;
 	/**
+	 * Turns the outbox on (it records every commit after the current `lastSeq`) or off (its recorded commits dropped),
+	 * persisted as `openStore`'s `outbox` option is. Runs in the commit queue, so a commit is recorded whole or not at
+	 * all: those queued before it as the outbox was, those after as it is now. Asking for the current setting changes
+	 * nothing. Stop whatever reads the outbox before turning it off: its next read finds the commits gone.
+	 */
+	setOutbox(on: boolean, context: Context): Promise<void>;
+	/**
 	 * Calls `listener` with the new `lastSeq` after commits are durable and adopted (a commit, a group, a series, an
 	 * applied batch): in a microtask of its own, never inside a commit, once for however many commits it covers. A
 	 * listener that throws is removed and its error handed to `onError`, never to the commit. Commits a listener makes
@@ -63,7 +70,7 @@ export async function openStore(backend: Backend, context: Context, options: Sto
 	const { db } = backend;
 	try {
 		context.abortSignal?.throwIfAborted();
-		const meta = await switchOutbox(db, await applyStoreSchema(db), options.outbox);
+		const meta = await switchOutboxAtOpen(db, await applyStoreSchema(db), options.outbox);
 		return new ChordStore(db, meta, await readCatalog(db));
 	} catch (error) {
 		try {
@@ -75,19 +82,21 @@ export async function openStore(backend: Backend, context: Context, options: Sto
 	}
 }
 
-/** Turns the outbox on (from the current `lastSeq`) or off (its commits dropped) when `outbox` asks for the other. */
-async function switchOutbox(db: SqliteDatabase, meta: MetaRow, outbox: boolean | undefined): Promise<MetaRow> {
+/**
+ * At open, before the store exists: turns the outbox on (from the current `lastSeq`) or off (its commits dropped) when
+ * `outbox` asks for the other. An open store switches with `setOutbox`.
+ */
+async function switchOutboxAtOpen(db: SqliteDatabase, meta: MetaRow, outbox: boolean | undefined): Promise<MetaRow> {
 	if (outbox === undefined || outbox === (meta.outbox === 1)) return meta;
 	const floor = outbox ? meta.last_seq : 0;
-	await db.transaction(async (executor) => {
-		await executor.run(
-			`UPDATE ${TABLES.meta} SET outbox = ?, outbox_floor = ? WHERE singleton = 1`,
-			outbox ? 1 : 0,
-			floor,
-		);
-		if (!outbox) await executor.run(`DELETE FROM ${TABLES.outbox}`);
-	});
+	await db.transaction((executor) => writeOutboxSetting(executor, outbox, floor));
 	return { ...meta, outbox: outbox ? 1 : 0, outbox_floor: floor };
+}
+
+/** The outbox setting as the metadata keeps it: on from `floor`, or off with its recorded commits dropped. */
+async function writeOutboxSetting(executor: SqliteExecutor, on: boolean, floor: number): Promise<void> {
+	await executor.run(`UPDATE ${TABLES.meta} SET outbox = ?, outbox_floor = ? WHERE singleton = 1`, on ? 1 : 0, floor);
+	if (!on) await executor.run(`DELETE FROM ${TABLES.outbox}`);
 }
 
 /** The seal fence's two checks of a commit (§1.3), as the commit step calls them. */
@@ -240,6 +249,32 @@ export class ChordStore implements Store {
 
 	get outbox(): Outbox | undefined {
 		return this.#outbox;
+	}
+
+	setOutbox(on: boolean, context: Context): Promise<void> {
+		try {
+			this.assertUsable();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		// Nothing joins a group queued before the switch: its commits are recorded as the outbox was.
+		this.#open = undefined;
+		const turn = this.#tail.then(() => this.#switchOutbox(on));
+		this.#tail = turn.then(NOTHING, NOTHING);
+		return awaitWithContext(turn, context);
+	}
+
+	/** The switch's turn in the commit queue: the setting written, then the outbox in memory follows it. */
+	async #switchOutbox(on: boolean): Promise<void> {
+		this.assertUsable();
+		if (on === (this.#outbox !== undefined)) return;
+		const floor = on ? this.#lastSeq : 0;
+		try {
+			await this.#db.transaction((executor) => writeOutboxSetting(executor, on, floor));
+		} catch (error) {
+			throw this.#fail(error);
+		}
+		this.#outbox = on ? new Outbox(this, floor) : undefined;
 	}
 
 	onCommitted(listener: (lastSeq: number) => void, onError: (error: unknown) => void): () => void {
