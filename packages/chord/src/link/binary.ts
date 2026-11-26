@@ -110,7 +110,7 @@ export const binaryCodec: Codec = {
  * The writer no encode uses now, with its buffer: encoding into one buffer kept across messages costs a message one
  * right-sized copy, where a fresh zeroed buffer per message and its copy cost 2.5 KiB per held object (`hot-paths.ts`,
  * case 1) and made an encode 3.5 times as slow. It keeps no message: `finish` copies or hands its buffer off, and
- * `reset` drops a grown one.
+ * `reset` drops one grown past `KEPT` (16 KiB).
  */
 let idle: Writer | undefined;
 
