@@ -391,14 +391,20 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 		self.onLive(async (ctx) => {
 			live = ctx;
-			// Read outside a transaction: a store that ends meanwhile leaves no transaction to drain. The whole table:
-			// removed persons whose sign-ins are still to end are few, read at the start only.
+			// The people side starts beside the rest, never before it (it would hold the start of the others).
+			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx), startPeople(ctx)]);
+		});
+		/**
+		 * What the store does about people at its start: the sign-outs still to end are ended, and the people plugin's
+		 * owner adopted. Read outside a transaction: a store that ends meanwhile leaves no transaction to drain.
+		 */
+		const startPeople = async (ctx: Ctx<P3Principal>): Promise<void> => {
+			// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
 			const left: string[] = [];
 			for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);
 			if (left.length > 0) void signOut(left, ctx);
 			await adopt(ctx);
-			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx)]);
-		});
+		};
 		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
 		// migrate anew, every loaded workspace is read again; a kind's hooks back, its waiting deletes run.
 		self.on(kinds, async () => {
