@@ -265,6 +265,26 @@ describe("writing stored ticks back", () => {
 		await write(thing, ada.party, ["paint"]);
 		assert.deepEqual(rowsOf(thing, ada.party), ["!write/2", "read/2"]);
 	});
+
+	it("a given and a withheld tick migrating to one tick: it stays withheld on disk, as it reads", async () => {
+		const ada = await personIn("Ada");
+		const thing = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
+		await write(thing, ada.party, ["draw", "read"], true);
+		await write(thing, ada.party, ["write"], false);
+		// Draw and Write both became Paint: given and withheld at once, the withheld one wins.
+		const merge = (ticks: readonly string[]) =>
+			ticks.map((tick) => (tick === "draw" || tick === "write" ? "paint" : tick));
+		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
+		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, merge)));
+		await until(gives.answers, (answers) => answers[thing]?.ticksVersion === 2, within("version 2", context));
+		assert.deepEqual(gives.answers.value[thing]?.ticks, ["read"]);
+		// The next write of her rows writes them back: Paint stays withheld, it does not come back to her.
+		await write(thing, ada.party, ["read"], true);
+		assert.deepEqual(rowsOf(thing, ada.party), ["!paint/2", "read/2"]);
+		await until(gives.answers, (answers) => answers[thing] !== undefined, within("written back", context));
+		assert.deepEqual(gives.answers.value[thing]?.ticks, ["read"]);
+		gives.release();
+	});
 });
 
 describe("a kind's new ticks version while it loads", () => {

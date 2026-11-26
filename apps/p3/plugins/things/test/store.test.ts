@@ -374,7 +374,8 @@ describe("a plugin's one thing", () => {
 			context,
 		);
 		held.resolve();
-		assert.equal(await at.store.ensure({ kind: Machine.name }, context), made);
+		// A deadline: a seed whose undo waits for a lifecycle that does not serve yet never ends.
+		assert.equal(await soon(at.store.ensure({ kind: Machine.name }, context)), made);
 		await eventually(
 			() => calls,
 			(done) => done.includes(`delete ${seeded}`),

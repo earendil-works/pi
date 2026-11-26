@@ -389,6 +389,12 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "",
 	},
 	{
+		name: "older rows written back in their order: a given tick wins over a withheld one it merges with",
+		file: "store.ts",
+		find: "const withheldFirst = [...older.values()].sort((a, b) => Number(a[0]!.gives) - Number(b[0]!.gives));",
+		put: "const withheldFirst = [...older.values()].sort((a, b) => Number(b[0]!.gives) - Number(a[0]!.gives));",
+	},
+	{
 		name: "the start's seed runs before the lifecycle serves",
 		file: "store.ts",
 		find: "await Promise.all([lifecycle.serve(ctx), seed(ctx)]);",

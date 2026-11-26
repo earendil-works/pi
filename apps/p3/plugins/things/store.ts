@@ -825,7 +825,9 @@ class Writes {
 	 * Writes back the rows of `key`'s source for its party on its thing in its workspace that are at an older ticks
 	 * version than `info`'s: the rows of one `gives` value and version migrate together (`ticksNow`), the old ones go,
 	 * the migrated ones are put at the version now unless a row of that tick is there already (written since, it wins).
-	 * Rows that cannot be read now (a migration that throws, a newer version) are left as they are.
+	 * Withheld rows go first: where a given and a withheld old tick migrate to one tick, it stays withheld, as the
+	 * index reads them (a row's key has no `gives`, so only one of the two can stand). Rows that cannot be read now (a
+	 * migration that throws, a newer version) are left as they are.
 	 */
 	async #upgrade(
 		tx: Tx,
@@ -842,10 +844,13 @@ class Writes {
 		const older = new Map<string, typeof rows>();
 		for (const row of rows) {
 			if (row.ticksVersion === info.ticksVersion) continue;
-			const group = `${row.gives}\n${row.ticksVersion}`;
-			older.set(group, [...(older.get(group) ?? []), row]);
+			const key = `${row.gives}\n${row.ticksVersion}`;
+			const group = older.get(key);
+			if (group === undefined) older.set(key, [row]);
+			else group.push(row);
 		}
-		for (const group of older.values()) {
+		const withheldFirst = [...older.values()].sort((a, b) => Number(a[0]!.gives) - Number(b[0]!.gives));
+		for (const group of withheldFirst) {
 			const first = group[0]!;
 			// Reserved ticks (`OPEN`) mean the same at every version: written back as they are.
 			const named = group.filter(({ tick }) => !tick.startsWith(RESERVED)).map(({ tick }) => tick);
