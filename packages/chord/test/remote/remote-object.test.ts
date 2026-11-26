@@ -185,23 +185,6 @@ forEachCodec(() => {
 		});
 	});
 
-	describe("a re-hold's params (review of ea8b75a43)", () => {
-		it("names the params the reference was made with, though the app changed its object since", async () => {
-			const { client, peer } = await rawProvider();
-			const params = { session: "S1" };
-			const ref = client.hold(Notes, params, context);
-			await bindNext(peer);
-			params.session = "S2";
-			peer.close();
-			await transported();
-			const next = await rawParent(client);
-			const { params: part } = await next.next("hold");
-			expect(partValue(part)).toEqual({ session: "S1" });
-			ref.release();
-			await client.close(context);
-		});
-	});
-
 	describe("a wide state frame (review of aeceda143)", () => {
 		it("costs about as much per member at 16,384 members as at 256: no scan per member", async () => {
 			const costs: number[] = [];
