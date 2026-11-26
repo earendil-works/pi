@@ -1,11 +1,12 @@
 // A set's folder on the Pi's disk: where it is under the skills root (a setting people write: refused when it leaves
 // the root), the skills in it (each subfolder with a `SKILL.md`, its description from the file's front matter), one
 // skill's text and files, and a watcher that says when anything under the folder changed, also once a missing folder
-// is made. The files are people's: every read is confined where it happens (its real path, links resolved, inside the
-// set's real folder, which is inside the root's), and a missing folder is an empty set.
+// is made. The files are people's: every read is confined where it happens (the opened object itself, never a link,
+// verified inside the set's real folder, which is inside the root's; folders enumerated from their verified handle),
+// the watcher watches only folders verified inside the root, and a missing folder is an empty set.
 
-import { existsSync, type FSWatcher, mkdirSync, watch } from "node:fs";
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { existsSync, type FSWatcher, mkdirSync, realpathSync, watch } from "node:fs";
+import { constants, type FileHandle, open, readdir, readlink, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { invalid } from "@earendil-works/p3/v1";
 import { messages } from "./messages.ts";
@@ -34,38 +35,53 @@ export function folderPath(root: string, folder: string): string {
 
 /** The skills in the folder at `path`, by name; none when it does not exist or leaves `root` through a link. */
 export async function readSkills(root: string, path: string): Promise<Skill[]> {
-	const set = await inside(await realRoot(root), path);
+	const set = await opened(await realRoot(root), path, "folder");
 	if (set === undefined) return [];
-	const entries = await readdir(set, { withFileTypes: true }).catch(() => []);
-	const skills: Skill[] = [];
-	for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
-		const text = await skillFile(set, entry.name);
-		if (text !== undefined) skills.push({ name: entry.name, description: descriptionOf(text) });
+	try {
+		const entries = await readdir(set.at, { withFileTypes: true }).catch(() => []);
+		const skills: Skill[] = [];
+		for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
+			const text = await skillFile(set.real, join(set.at, entry.name));
+			if (text !== undefined) skills.push({ name: entry.name, description: descriptionOf(text) });
+		}
+		return skills;
+	} finally {
+		await set.handle.close();
 	}
-	return skills;
 }
 
 /** Skill `name`'s text and the other files of its folder; `invalid` when the set has no such skill. */
 export async function readSkill(root: string, path: string, name: string): Promise<SkillText> {
-	const set = await inside(await realRoot(root), path);
 	// A name is one folder: `..` or a separator would reach outside the set.
-	const ok = set !== undefined && !name.includes("/") && !name.startsWith(".");
-	const text = ok ? await skillFile(set, name) : undefined;
-	const folder = ok ? await inside(set, join(set, name)) : undefined;
-	if (text === undefined || folder === undefined) throw invalid("args", `prompt: no skill ${JSON.stringify(name)}`);
-	// Links are not followed: a linked file or folder of a skill is not one of its files.
-	const files = (await readdir(folder, { recursive: true, withFileTypes: true }))
-		.filter((entry) => entry.isFile())
-		.map((entry) => relative(folder, join(entry.parentPath, entry.name)))
-		.filter((file) => file !== SKILL_FILE)
-		.toSorted();
-	return { text, files };
+	const set =
+		name.includes("/") || name.startsWith(".") ? undefined : await opened(await realRoot(root), path, "folder");
+	const skill = set === undefined ? undefined : await opened(set.real, join(set.at, name), "folder");
+	try {
+		const text = skill === undefined ? undefined : await skillFile(skill.real, skill.at);
+		if (skill === undefined || text === undefined) throw invalid("args", `prompt: no skill ${JSON.stringify(name)}`);
+		// Enumerated from the verified folder; links are not followed: a linked file or folder of a skill is not one of
+		// its files.
+		const files = (await readdir(skill.at, { recursive: true, withFileTypes: true }))
+			.filter((entry) => entry.isFile())
+			.map((entry) => relative(skill.at, join(entry.parentPath, entry.name)))
+			.filter((file) => file !== SKILL_FILE)
+			.toSorted();
+		return { text, files };
+	} finally {
+		await skill?.handle.close();
+		await set?.handle.close();
+	}
 }
 
-/** The `SKILL.md` of the skill folder `name` in the real set folder `set`, read only where its real path is inside. */
-async function skillFile(set: string, name: string): Promise<string | undefined> {
-	const file = await inside(set, join(set, name, SKILL_FILE));
-	return file === undefined ? undefined : readFile(file, "utf8").catch(() => undefined);
+/** The `SKILL.md` in the skill folder at `folder`, read only from a regular file opened inside `within` (real). */
+async function skillFile(within: string, folder: string): Promise<string | undefined> {
+	const file = await opened(within, join(folder, SKILL_FILE), "file");
+	if (file === undefined) return undefined;
+	try {
+		return await file.handle.readFile("utf8");
+	} finally {
+		await file.handle.close();
+	}
 }
 
 /** The root's real path; none: no skills at all. */
@@ -73,12 +89,31 @@ function realRoot(root: string): Promise<string | undefined> {
 	return realpath(root).catch(() => undefined);
 }
 
-/** `path`'s real path while it exists and is `within` (a real path) or inside it, else `undefined`. */
-async function inside(within: string | undefined, path: string): Promise<string | undefined> {
+/** An open file or folder that was verified to be inside a set: its handle, its real path, and where to reach it. */
+type Opened = { readonly handle: FileHandle; readonly real: string; readonly at: string };
+
+/**
+ * `path` opened as a regular file or a folder, its last part never a link (`O_NOFOLLOW`), then verified where it was
+ * opened: the opened object's real path (Linux and Android name it in `/proc/self/fd`) is `within` (a real path) or
+ * inside it. `at` reaches the verified object itself (its `/proc/self/fd` path) where the system names one. `undefined`
+ * for anything else: missing, a link, outside, another kind of file. A change between the open and a later read inside
+ * it, by someone with a shell on the Pi, is the residual race accepted as for Files.
+ */
+async function opened(within: string | undefined, path: string, kind: "file" | "folder"): Promise<Opened | undefined> {
 	if (within === undefined) return undefined;
-	const real = await realpath(path).catch(() => undefined);
-	if (real === undefined) return undefined;
-	return real === within || real.startsWith(within + sep) ? real : undefined;
+	const flags = constants.O_RDONLY | constants.O_NOFOLLOW | (kind === "folder" ? constants.O_DIRECTORY : 0);
+	const handle = await open(path, flags).catch(() => undefined);
+	if (handle === undefined) return undefined;
+	const proc = `/proc/self/fd/${handle.fd}`;
+	const named = await readlink(proc).catch(() => undefined);
+	const real = named ?? (await realpath(path).catch(() => undefined));
+	const stats = await handle.stat().catch(() => undefined);
+	const fits = kind === "file" ? stats?.isFile() : stats?.isDirectory();
+	if (real === undefined || fits !== true || !(real === within || real.startsWith(within + sep))) {
+		await handle.close();
+		return undefined;
+	}
+	return { handle, real, at: named === undefined ? real : proc };
 }
 
 /**
@@ -135,12 +170,21 @@ export class FolderWatch {
 		}
 	}
 
-	/** `path` when it exists, else its nearest existing ancestor up to the root (made when missing). */
-	#nearest(path: string): string {
+	/**
+	 * `path` when it exists, else its nearest existing ancestor up to the root (made when missing); `undefined` when
+	 * that folder's real path is not inside the root's (a link out): nothing is watched there.
+	 */
+	#nearest(path: string): string | undefined {
 		let at = path;
 		while (at !== this.#root && !existsSync(at)) at = dirname(at);
 		if (at === this.#root && !existsSync(at)) mkdirSync(at, { recursive: true });
-		return at;
+		try {
+			const root = realpathSync(this.#root);
+			const real = realpathSync(at);
+			return real === root || real.startsWith(root + sep) ? real : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 }
 

@@ -299,4 +299,27 @@ describe("a set of skills", () => {
 			for (const name of ["borrowed", "escaped", "linked"]) await refused(skills.read!({ name }, ctx), "invalid");
 		});
 	});
+
+	it("lists, reads and watches nothing of a folder linked out of the root (Astra, round 2)", async () => {
+		const outside = join(root, "..", "elsewhere");
+		await mkdir(join(outside, "secret"), { recursive: true });
+		await writeFile(join(outside, "secret", "SKILL.md"), "---\ndescription: outside\n---\n");
+		await mkdir(root, { recursive: true });
+		await symlink(outside, join(root, "linked"));
+		// A skill whose SKILL.md is a folder, not a regular file.
+		await mkdir(join(root, "coding", "odd", "SKILL.md"), { recursive: true });
+		const before = watchers();
+		const linked = await setIn("linked");
+		const set = await t.host.get(SkillSet, { thing: linked }, context);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.deepEqual(set.skills.value, []);
+		assert.equal(watchers(), before, "no watcher on a folder outside the root");
+		await refused(set.read({ name: "secret" }, context), "invalid");
+		set.release();
+		const coding = await setIn("coding");
+		await holding(Skills, coding, async (skills, ctx) => {
+			await refused(skills.read!({ name: "odd" }, ctx), "invalid");
+			assert.deepEqual(skills.skills.value, []);
+		});
+	});
 });
