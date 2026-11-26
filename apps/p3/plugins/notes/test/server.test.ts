@@ -478,26 +478,30 @@ describe("a notebook's order", () => {
 });
 
 describe("the cost of a notebook's read", () => {
-	it("is one run of its list per note; a note by an author already shown reads no names", async () => {
-		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
+	// Identical live reads share one source in Chord (ERNDL-1176): the authors' names, the same for callers at the same
+	// pages, are one read. Lists do not share their pages yet (Chord's carry-over): one run per holder.
+	it("is one list run per holder per note; a note by a new author adds one shared read of names", async () => {
+		const persons = [await n.person("Ann"), await n.person("Ben"), await n.person("Cy")];
 		const notebook = await n.thingIn(n.pi);
-		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
-			const added = async (by: typeof notes, text: string) => {
+		const holders = await n.holders(persons, n.pi, notebook);
+		try {
+			const [ann, ben] = holders.held;
+			const added = async (by: NonNullable<typeof ann>, text: string) => {
 				const before = n.count("chord.query.runs");
-				await by.add!({ text }, ctx);
-				await until(notes.list, (list) => list.rows[0]?.text === text, within(text, ctx));
+				await by.ref.add!({ text }, by.ctx);
+				await Promise.all(
+					holders.held.map(({ ref, ctx }) =>
+						until(ref.list, (list) => list.rows[0]?.text === text, within(text, ctx)),
+					),
+				);
 				return n.count("chord.query.runs") - before;
 			};
-			await added(notes, "first");
-			assert.equal(await added(notes, "second"), 1, "the list only");
-			await n.holding(ben, n.pi, notebook, async (bens) => {
-				const before = n.count("chord.query.runs");
-				await bens.add!({ text: "Ben's" }, ctx);
-				await until(notes.list, (list) => list.rows[0]?.text === "Ben's", within("Ben's", ctx));
-				// Ann's list and the names of its new author; Ben's own list and names.
-				assert.equal(n.count("chord.query.runs") - before, 4);
-			});
-		});
+			await added(ann!, "first");
+			assert.equal(await added(ann!, "second"), 3, "each holder's list, no names");
+			assert.equal(await added(ben!, "Ben's"), 4, "each holder's list, and the names of its new author once");
+		} finally {
+			await holders.release();
+		}
 	});
 });
 
