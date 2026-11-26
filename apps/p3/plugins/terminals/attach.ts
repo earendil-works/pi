@@ -54,13 +54,15 @@ async function attach(request: HttpRequest, terminals: TerminalHost | undefined,
 	);
 	abortWhen(list, (rows) => !rows.some((row) => row.id === terminal), lost, ctx);
 	let from = 0;
+	// One context for every read: the request's scope (the reads run in it) cut by the loss too.
+	const reading = withAbortSignal(lost.signal, ctx);
 	return {
 		kind: "bytes",
 		mime: "application/octet-stream",
-		read: async (_offset, _length, pieceCtx) => {
+		read: async () => {
 			if (lost.signal.aborted) return END;
 			try {
-				const next = await terminals.next(terminal, from, withAbortSignal(lost.signal, pieceCtx));
+				const next = await terminals.next(terminal, from, reading);
 				// A loss while the read waited ends the body: what came meanwhile is not the person's anymore.
 				if (lost.signal.aborted) return END;
 				from = next.from + next.bytes.length;

@@ -102,8 +102,10 @@ async function download(request: HttpRequest, hosts: MachineHostResolver, ctx: C
 			.catch((error: unknown) => reportError("files: a download's close", error, BACKGROUND_CONTEXT)),
 	);
 	whenAborted(lost, release);
+	// One context for every read: the request's scope (the reads run in it) cut by the loss too.
+	const reading = withAbortSignal(lost, ctx);
 	try {
-		const { size } = must(await reader.info(ctx));
+		const { size } = must(await reader.info(reading));
 		transfer.check();
 		return {
 			kind: "bytes",
@@ -111,11 +113,11 @@ async function download(request: HttpRequest, hosts: MachineHostResolver, ctx: C
 			size,
 			ranges: true,
 			download: path.slice(path.lastIndexOf("/") + 1),
-			read: async (offset, length, pieceCtx) => {
+			read: async (offset, length) => {
 				try {
 					transfer.check();
 					// A loss cuts a read under way; what it read meanwhile is not the person's any more.
-					const bytes = must(await reader.read(offset, length, withAbortSignal(lost, pieceCtx)));
+					const bytes = must(await reader.read(offset, length, reading));
 					transfer.check();
 					return bytes;
 				} catch (error) {
@@ -170,24 +172,27 @@ async function upload(
 		return { kind: "json", value: {} };
 	} catch (error) {
 		await job.discard();
-		if (lost.aborted && !isChordError(error)) return { kind: "error", status: 403 };
+		// A loss is the refusal, whatever it cut (a write, a read of the body).
+		if (lost.aborted) return { kind: "error", status: 403 };
 		if (isChordError(error)) return refused(error);
 		throw error;
 	}
 }
 
 /**
- * One upload's staged file with its row (staging.ts): remembered once it exists, forgotten once it landed or was
- * removed. A discard that failed keeps the row, so the next upload's sweep tries again; a discard before the row was
- * written forgets it once it is.
+ * One upload's staged file with its row (staging.ts): remembered once it exists, forgotten once (it landed or was
+ * removed). A discard that failed keeps the row: the first upload to the machine after the next server start sweeps
+ * it. A discard before the row was written forgets it once it is. Exported for its test.
  */
-function owned(file: StagedFile, machine: string, staging: Reference<typeof StagingStore>) {
+export function owned(file: StagedFile, machine: string, staging: Reference<typeof StagingStore>) {
 	// Written whatever becomes of the request: the row must outlive a disconnect.
 	const remembered = staging.remember(
 		{ machine, path: file.path, identity: file.identity, at: Date.now() },
 		BACKGROUND_CONTEXT,
 	);
-	const forget = async () => staging.forget({ id: await remembered }, BACKGROUND_CONTEXT);
+	const forget = once(async () => {
+		await staging.forget({ id: await remembered }, BACKGROUND_CONTEXT);
+	});
 	return {
 		remembered,
 		land: async (destination: string, context: Context) => {
@@ -267,6 +272,8 @@ async function received(request: HttpRequest, file: StagedFile, transfer: Transf
 	let interrupt: ((error: unknown) => void) | undefined;
 	const stop = () => interrupt?.(gone());
 	transfer.lost.addEventListener("abort", stop, { once: true });
+	// One context for every write: the request's cut by the loss too.
+	const writing = withAbortSignal(transfer.lost, context);
 	try {
 		for (;;) {
 			transfer.check();
@@ -279,7 +286,7 @@ async function received(request: HttpRequest, file: StagedFile, transfer: Transf
 			pending = undefined;
 			if (piece.done === true) return;
 			transfer.check();
-			must(await file.write(piece.value, context));
+			must(await file.write(piece.value, writing));
 		}
 	} finally {
 		transfer.lost.removeEventListener("abort", stop);

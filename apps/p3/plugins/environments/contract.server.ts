@@ -63,9 +63,9 @@ export type NameEntry = { readonly name: string; readonly kind: "file" | "direct
 export type StagedFile = {
 	/** Where it was made. */
 	readonly path: string;
-	/** What tells it apart from any file that later has its path (`removeStaged` checks it). */
+	/** What tells it apart from a file that later has its path (`removeStaged` checks it). */
 	readonly identity: string;
-	/** Appends `bytes`. */
+	/** Appends `bytes`; stops when `context` aborts. */
 	write(bytes: Uint8Array, context: Context): Promise<Result<void, FileError>>;
 	/**
 	 * Moves it over `path` whole: with the permission bits of the regular file it replaces (without setuid, setgid and
@@ -80,8 +80,9 @@ export type StagedFile = {
  * A machine as server code uses it, connected: its files and commands, the folders never shown (Pi's own data folder
  * on this device), a folder's names and kinds, at most `max` (`listNames`: no entry is read, for paging a large
  * folder; `Infinity`: all; stops when `context` aborts), a new file for an upload (`stageFile`: made exclusively in
- * `folder`, so it never writes through a link) and the removal of one a crash left (`removeStaged`: only while the
- * file at its path is still that staged file, `absent` otherwise), its programs in pseudo-terminals (`not_supported`
+ * `folder`, so it never writes through a link) and the removal of one a crash left (`removeStaged`: only when the
+ * file at its path is that staged file when checked, `absent` otherwise; a file replacing it between the check and the
+ * removal is a residual race, as for Files' paths), its programs in pseudo-terminals (`not_supported`
  * where it has none), and `close`, which ends the connection (its settings changed, the machine or the plugin went).
  */
 export type MachineHost = {

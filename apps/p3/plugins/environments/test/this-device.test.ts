@@ -4,7 +4,7 @@
 // file at its path is still that one (astra round 3).
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -97,5 +97,35 @@ describe("this device's host", () => {
 		const left = await staged("left");
 		assert.deepEqual(await at.removeStaged(left.path, left.identity, context), { ok: true, value: "removed" });
 		assert.equal((await left.discard(context)).ok, false, "nothing left to discard");
+	});
+
+	it("answers concurrent removals of one staged file once removed, else absent (astra round 4)", async () => {
+		const left = await staged("left");
+		const answers = await Promise.all([1, 2, 3].map(() => at.removeStaged(left.path, left.identity, context)));
+		assert.deepEqual(answers.map((answer) => (answer.ok ? answer.value : answer.error.code)).sort(), [
+			"absent",
+			"absent",
+			"removed",
+		]);
+		await left.discard(context);
+	});
+
+	it("closes a new staged file whose identity cannot be read (astra round 4, must 2)", async () => {
+		const probe = await open(join(root, "probe"), "w");
+		const prototype = Object.getPrototypeOf(probe) as { stat: (...args: unknown[]) => Promise<unknown> };
+		await probe.close();
+		const stat = prototype.stat;
+		const opened = async () => (await readdir("/proc/self/fd")).length;
+		const before = await opened();
+		prototype.stat = async () => {
+			throw new Error("metadata I/O");
+		};
+		try {
+			assert.equal((await at.stageFile(root, context)).ok, false);
+		} finally {
+			prototype.stat = stat;
+		}
+		assert.equal(await opened(), before, "no descriptor left open");
+		await rm(join(root, "probe"));
 	});
 });

@@ -41,6 +41,7 @@ import thingsServer from "../../things/server.ts";
 import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../contract.ts";
 import { must } from "../places.ts";
 import { StagingStore } from "../staging.ts";
+import { owned } from "../transfers.ts";
 
 /** A person's principal. */
 type Person = Extract<P3Principal, { kind: "person" }>;
@@ -138,6 +139,15 @@ async function download(url: string, ctx: Ctx<P3Principal>): Promise<{ response:
 async function upload(f: Reference<typeof Files>, path: string, body: readonly Uint8Array[], ctx: Ctx<P3Principal>) {
 	const { url } = await f.upload!({ machine, path }, ctx);
 	return route(`PUT ${UPLOAD_PATH}`)(request(url, "PUT", body), ctx);
+}
+
+/** `promise`, failed after 5 s instead of hanging (a test that would wait forever fails). */
+function deadline<T>(promise: Promise<T>, ms = 5000): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => reject(new Error(`still waiting after ${ms} ms`)), ms);
+	});
+	return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
 /** Whether `promise` rejects with a ChordError of `code` whose message is `key`. */
@@ -847,9 +857,141 @@ describe("a transfer's lifetime (round 2)", () => {
 				const piece = response.read(0, 2, ctx);
 				await reading.promise;
 				await grant(pi, files, { kind: "person", person: ann.id }, ["browse"], false);
-				await assert.rejects(piece);
+				await assert.rejects(deadline(piece));
 			});
 		});
+	});
+
+	it("cuts a write under way when Edit is withheld, and answers at once (astra round 4, must 1)", async () => {
+		const ann = await person("Ann");
+		await grant(pi, files, { kind: "person", person: ann.id }, ["edit"]);
+		const at = await hostOf();
+		const stage = at.stageFile;
+		const writing = Promise.withResolvers<void>();
+		let cut = false;
+		at.stageFile = async (folder, ctx) => {
+			const made = await stage(folder, ctx);
+			if (!made.ok) return made;
+			// A write that waits until its context aborts (a machine that takes the bytes slowly).
+			const write = async (_bytes: Uint8Array, c: Context) => {
+				writing.resolve();
+				await new Promise<void>((resolve) =>
+					c.abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
+				);
+				cut = true;
+				return { ok: false as const, error: new FileError("aborted", "aborted") };
+			};
+			return { ok: true, value: { ...made.value, write } };
+		};
+		try {
+			await holding(ann, pi, async (f, ctx) => {
+				const submitting = upload(f, join(root, "slow"), [Buffer.from("a")], ctx);
+				await writing.promise;
+				await grant(pi, files, { kind: "person", person: ann.id }, ["edit"], false);
+				assert.deepEqual(await deadline(submitting), { kind: "error", status: 403 });
+				assert.equal(cut, true);
+			});
+		} finally {
+			at.stageFile = stage;
+		}
+		assert.deepEqual((await readdir(root)).sort(), ["README.md", "src"]);
+	});
+
+	it("refuses a piece a reader answered after Browse was withheld, and closes it (opus round 4, S1)", async () => {
+		const ann = await person("Ann");
+		const reading = Promise.withResolvers<void>();
+		const answer = Promise.withResolvers<void>();
+		// A reader that does not notice the abort: it answers bytes once let go.
+		const deaf = (reader: BinaryReader) =>
+			Object.assign(Object.create(reader) as BinaryReader, {
+				read: async () => {
+					reading.resolve();
+					await answer.promise;
+					return { ok: true as const, value: Buffer.from("# ") };
+				},
+			});
+		await readers(deaf, async (closes) => {
+			await holding(ann, pi, async (f, ctx) => {
+				const { url } = await f.open!({ machine, path: join(root, "README.md") }, ctx);
+				const response = await route(`GET ${DOWNLOAD_PATH}`)(request(url, "GET"), ctx);
+				assert.equal(response.kind, "bytes");
+				if (response.kind !== "bytes") return;
+				const piece = response.read(0, 2, ctx);
+				await reading.promise;
+				await grant(pi, files, { kind: "person", person: ann.id }, ["browse"], false);
+				await until(f.state, () => f.open === undefined, within("Browse withheld", ctx));
+				answer.resolve();
+				await assert.rejects(deadline(piece));
+				assert.equal(closes(), 1);
+			});
+		});
+	});
+
+	it("lands nothing when Edit is withheld while the final path is resolved (opus round 4, S1)", async () => {
+		const ann = await person("Ann");
+		await grant(pi, files, { kind: "person", person: ann.id }, ["edit"]);
+		const at = await hostOf();
+		const canonical = at.env.canonicalPath.bind(at.env);
+		const resolving = Promise.withResolvers<void>();
+		const resume = Promise.withResolvers<void>();
+		let hold = false;
+		at.env.canonicalPath = async (path, ctx) => {
+			if (hold) {
+				hold = false;
+				resolving.resolve();
+				await resume.promise;
+			}
+			return canonical(path, ctx);
+		};
+		const target = join(root, "landed");
+		try {
+			await holding(ann, pi, async (f, ctx) => {
+				const { url } = await f.upload!({ machine, path: target }, ctx);
+				const body = {
+					...request(url, "PUT"),
+					body: async function* () {
+						yield Buffer.from("new");
+						// The next resolve is the final path's, after the body.
+						hold = true;
+					},
+				} as unknown as HttpRequest;
+				const submitting = route(`PUT ${UPLOAD_PATH}`)(body, ctx);
+				await resolving.promise;
+				await grant(pi, files, { kind: "person", person: ann.id }, ["edit"], false);
+				await until(f.state, () => f.upload === undefined, within("Edit withheld", ctx));
+				resume.resolve();
+				assert.deepEqual(await deadline(submitting), { kind: "error", status: 403 });
+			});
+		} finally {
+			at.env.canonicalPath = canonical;
+		}
+		await assert.rejects(lstat(target), { code: "ENOENT" });
+		assert.deepEqual((await readdir(root)).sort(), ["README.md", "src"]);
+	});
+
+	it("forgets the row of a staged file discarded before its row was written (opus round 4, S1)", async () => {
+		const remembered = Promise.withResolvers<string>();
+		const calls: string[] = [];
+		const staging = {
+			remember: () => {
+				calls.push("remember");
+				return remembered.promise;
+			},
+			forget: async ({ id }: { id: string }) => void calls.push(`forget ${id}`),
+		} as unknown as Reference<typeof StagingStore>;
+		const file = {
+			path: "/p",
+			identity: "i",
+			discard: async () => ({ ok: true as const, value: "removed" as const }),
+		} as unknown as StagedFile;
+		const job = owned(file, machine, staging);
+		const discarding = job.discard();
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(calls, ["remember"], "the discard waits for the row");
+		remembered.resolve("row-1");
+		await discarding;
+		await job.discard();
+		assert.deepEqual(calls, ["remember", "forget row-1"], "forgotten once");
 	});
 
 	it("takes raw bytes, bounded by the upload's limit (astra round 2)", async () => {

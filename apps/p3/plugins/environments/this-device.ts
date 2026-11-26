@@ -1,8 +1,8 @@
 // The machine type of this device (`local`, decision 117: the family's first type): the machine the server runs on,
 // with no settings. Its host is Node's environment here with Pi's data folder hidden, a folder's names in one read,
 // and an upload's file staged beside its target (only the server's user may read it, its name its own, known by its
-// device, inode and birth time, so a sweep never removes a file that replaced it); its terminals are pending a
-// decision (pi-env's daemon, node-pty or a helper).
+// device, inode and birth time, so a sweep leaves a file that replaced it before the check); its terminals are pending
+// a decision (pi-env's daemon, node-pty or a helper).
 
 import { randomBytes } from "node:crypto";
 import { type FileHandle, lstat, open, opendir, readdir, readlink, rename, unlink } from "node:fs/promises";
@@ -86,11 +86,20 @@ const STAGE_TRIES = 4;
 async function staged(folder: string): Promise<StagedFile> {
 	for (let tries = 1; ; tries++) {
 		const path = `${folder === "/" ? "" : folder}/.p3-upload-${randomBytes(6).toString("hex")}`;
+		let file: FileHandle;
 		try {
-			const file = await open(path, "wx", 0o600);
-			return stagedAt(path, identityOf(await file.stat({ bigint: true })), file);
+			file = await open(path, "wx", 0o600);
 		} catch (error) {
 			if (tries === STAGE_TRIES || codeOf(error) !== "EEXIST") throw error;
+			continue;
+		}
+		try {
+			return stagedAt(path, identityOf(await file.stat({ bigint: true })), file);
+		} catch (error) {
+			// Ours, but not known by its identity: closed, and the empty file left (removing it by name would be a
+			// guess).
+			await file.close().catch(() => undefined);
+			throw error;
 		}
 	}
 }
@@ -111,9 +120,12 @@ function stagedAt(path: string, identity: string, file: FileHandle): StagedFile 
 	return {
 		path,
 		identity,
-		write: (bytes) =>
+		write: (bytes, context) =>
 			attempt(async () => {
-				for (let at = 0; at < bytes.length; ) at += (await file.write(bytes, at, bytes.length - at)).bytesWritten;
+				for (let at = 0; at < bytes.length; ) {
+					context.abortSignal?.throwIfAborted();
+					at += (await file.write(bytes, at, bytes.length - at)).bytesWritten;
+				}
 			}),
 		publish: (target) => {
 			if (landing !== undefined || removal !== undefined) {
@@ -148,14 +160,24 @@ async function closing(path: string, file: FileHandle): Promise<string> {
 	}
 }
 
-/** Removes the staged file at `path` if it is still the one with `identity`: never a file that replaced it. */
+/**
+ * Removes the staged file at `path` if it is the one with `identity` when checked; `absent` when another file or none
+ * is there (also when a removal of the same file came first). The check and the removal are two steps: a file that
+ * replaces it in between is removed, a residual race only someone who can change the machine's files has
+ * (ERNDL-1173).
+ */
 async function removedIf(path: string, identity: string): Promise<"removed" | "absent"> {
 	const found = await lstat(path, { bigint: true }).catch((error: unknown) => {
 		if (codeOf(error) === "ENOENT") return undefined;
 		throw error;
 	});
 	if (found === undefined || !found.isFile() || identityOf(found) !== identity) return "absent";
-	await unlink(path);
+	try {
+		await unlink(path);
+	} catch (error) {
+		if (codeOf(error) === "ENOENT") return "absent";
+		throw error;
+	}
 	return "removed";
 }
 
