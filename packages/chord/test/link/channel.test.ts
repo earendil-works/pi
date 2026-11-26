@@ -5,7 +5,6 @@
 import { fork } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -499,7 +498,8 @@ describe("a stall of the server (slice 15 §4)", () => {
 		clients: number,
 		holds: number,
 	) {
-		const directory = mkdtempSync(join(tmpdir(), "chord-stall-"));
+		// Under /tmp, not tmpdir(): a deep TMPDIR (macOS, test.sh) pushes the socket path past sun_path's 104 bytes.
+		const directory = mkdtempSync("/tmp/chord-stall-");
 		const path = join(directory, "server.sock");
 		const server = fork(
 			fileURLToPath(new URL("./fixtures/stall.ts", import.meta.url)),
