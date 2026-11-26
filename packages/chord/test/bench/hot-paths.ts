@@ -37,13 +37,17 @@ const Access = local("bench.access", {
 	params: {},
 	members: { roles: obj({ names: arr(Name), touched: int() }), grant: method(arr(Name)), touch: method(int()) },
 });
+
+/** The flag's label: a message as data, declared here (the test support would load Vitest into the benchmark). */
+const EXPORT = { namespace: "bench", key: "export", params: [] };
+
 const Thing = remote("bench.thing", {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
 	state: { name: str(), history: grantable(arr(str())) },
 	methods: { use: method(str(), str()), add: grantable(method(str(), str())) },
-	flags: { export: "Export" },
+	flags: { export: EXPORT },
 });
 
 let built = 0;

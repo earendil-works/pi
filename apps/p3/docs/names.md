@@ -34,7 +34,8 @@ meaning from `packages/chord/docs/design.md` §2.
 | environment | a machine the agent works on: this device, SSH, a sandbox | env, hands |
 | location | where a session works: an environment and a folder | place |
 | org | a company that manages its members' Pis | company |
-| view | a React component a plugin offers for something to show (`defineView`); apps place views | pane, panel |
+| view | one way to look at a target (a thing of a kind, a person, a group): an entry of the things plugin's `Views`; a kind has 0 to n | pane, panel, app |
+| component | a React component a plugin offers others to place (`defineComponent`, `Components`, `useComponent`): the pane layout, the session list | view |
 | layout | how an app arranges its views | |
 | slot | a place inside a view where other plugins add parts | |
 | chrome | the page's frame: the top bar (app switcher, person menu, connection) and the chosen app's page | workbench |

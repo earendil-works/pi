@@ -2,7 +2,9 @@
 // people set), their named queries, every write, and the access index in memory (`access.ts`), which its object
 // owns, reads through the same named queries (`reader.ts`), and hands admissions through `AccessHandles`. Every write
 // is one transaction, run one at a time with the index's loads, and followed by the index before the write answers,
-// so a caller's next admission sees it. The kinds' create and delete hooks around a thing's life are `lifecycle.ts`'s.
+// so a caller's next admission sees it; the index and the writes see the kinds as one snapshot, installed in the
+// index's queue. A kind's seeded thing (`serveThing`'s `one`) is made here, in Pi, at the start and again whenever it
+// is deleted. The kinds' delete hooks around a thing's life are `lifecycle.ts`'s.
 
 import {
 	and,
@@ -11,16 +13,20 @@ import {
 	type Columns,
 	type Condition,
 	type Context,
+	type Ctx,
+	checkValue,
 	defineColumns,
 	defineTable,
 	eq,
 	type FacetHost,
+	inArray,
 	int,
 	invalid,
 	json,
 	type P3Principal,
 	query,
 	type RowOf,
+	reportError,
 	type StoreSelf,
 	str,
 	type Table,
@@ -39,6 +45,7 @@ import {
 	OPEN,
 	Party,
 	partyKey,
+	RESERVED,
 	type Source,
 	Source as SourceSchema,
 	sourceKey,
@@ -46,6 +53,7 @@ import {
 import { type KindInfo, ThingKinds } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
+import { ticksNow } from "./migration.ts";
 import { type Kinds, lookupOf, readerOf } from "./reader.ts";
 import { audienceOf, isFor } from "./rules.ts";
 
@@ -67,6 +75,8 @@ const Things = defineTable("things.things", {
 		madeAt: int(),
 	},
 	key: ["thing"],
+	// A plugin's one thing of a kind (`ensure`).
+	indexes: { by_maker: ["madeByKey", "kind"] },
 	exposes: ThingColumns,
 });
 
@@ -94,7 +104,7 @@ const Links = defineTable("things.links", {
 });
 
 /** A party put into a workspace, and who did it. By party; by source (its cleanup). */
-const WorkspaceMembers = defineTable("things.workspace_members", {
+const WorkspaceMembers = defineTable("things.workspace-members", {
 	version: 1,
 	columns: {
 		workspace: str(),
@@ -145,7 +155,6 @@ const Persons = defineTable("things.persons", {
 		name: str(),
 		owner: int(),
 		madeBy: json(SourceSchema, { version: 1 }),
-		madeByKey: str(),
 	},
 	key: ["person"],
 	indexes: { by_owner: ["owner"] },
@@ -173,7 +182,7 @@ const Groups = defineTable("things.groups", {
 });
 
 /** A person in a group, as one source put them there (two sources: two rows). By person; by source. */
-const GroupMembers = defineTable("things.group_members", {
+const GroupMembers = defineTable("things.group-members", {
 	version: 1,
 	columns: { group: str(), person: str(), source: json(SourceSchema, { version: 1 }), sourceKey: str() },
 	key: ["group", "person", "sourceKey"],
@@ -198,9 +207,16 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const kinds = self.registry(ThingKinds);
 		const hooks = self.registry(ThingHooks);
 		const q = namedQueries(self, t);
+		// The kinds as the store's index and writes see them: one snapshot, installed inside the index's queue when the
+		// registry changes (`kindsChanged`), so an operation never mixes two generations of a kind.
+		let installed: ReadonlyMap<string, TableItem<KindInfo>> | undefined;
 		let lookup: Kinds | undefined;
+		const kindTable = () => {
+			installed ??= kinds.value;
+			return installed;
+		};
 		const kindsNow = () => {
-			lookup ??= lookupOf(kinds.value);
+			lookup ??= lookupOf(kindTable());
 			return lookup;
 		};
 		// The grants a kind cannot read, reported once each for this object's life.
@@ -225,16 +241,26 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		});
 		/**
 		 * One write: its transaction under `ctx`, one at a time with the index's work (`AccessIndex.commit`), which
-		 * follows it before the write answers; the things it removed then have their kind's delete hook run.
+		 * follows it before the write answers; the things it removed then have their kind's delete hook run, and a
+		 * removed seeded thing is made again at once.
 		 */
 		const write = async <R>(fn: (tx: Tx, changes: Changes) => Promise<R>, ctx: Context): Promise<R> => {
 			const retired: Retired[] = [];
 			// The store is live while it writes, so its index opened.
 			const result = await index!.commit((touched) => self.tx((tx) => fn(tx, { ...touched, retired }), ctx));
-			for (const { thing, kind } of retired) lifecycle.retire(thing, kind);
+			for (const { thing, kind } of retired) {
+				lifecycle.retire(thing, kind);
+				if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) {
+					// Made again under the store's own context; a failure is reported (the next start seeds it).
+					const own = live;
+					seedKind(kind, own).catch((error) =>
+						reportError(`things: the seeded thing of ${kind}, made again`, error, own),
+					);
+				}
+			}
 			return result;
 		};
-		const writes = new Writes({ ...t, pending }, () => kinds.value);
+		const writes = new Writes({ ...t, pending }, kindTable);
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
@@ -248,30 +274,116 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				}, ctx),
 			hooks: () => hooks.value,
 		});
-		self.onLive((ctx) => lifecycle.serve(ctx));
-		// A plugin loaded, reloaded or removed: ticks expand and migrate anew, every loaded workspace is read again; a
-		// kind's hooks back, its waiting deletes run.
-		self.on(kinds, async () => {
-			lookup = undefined;
-			await index?.kindsChanged();
+		/**
+		 * Makes a thing through the create path: the kind's create hook first, under the new id, then one commit (item
+		 * 34); `commit` writes it and answers the id that stands (another one's, for a seeded thing made meanwhile).
+		 * What the hook prepared for an id that does not stand is cleared durably (`lifecycle.undo`).
+		 */
+		const make = async (
+			args: { kind: string; name: string; workspace: string; by: Source; input?: unknown },
+			commit: (tx: Tx, changes: Changes, thing: string) => Promise<string>,
+			ctx: Ctx<P3Principal>,
+		): Promise<string> => {
+			// A trust boundary of the kind's: its input, given or not, is checked against the schema it declared, read
+			// from the registry the hook is read from (a kind's plugin reloading: one generation, never the index's).
+			const schema = kinds.value.get(args.kind)?.value.input;
+			if (schema === undefined) {
+				if (args.input !== undefined) throw invalid("args", `things: ${args.kind} takes no input`);
+			} else {
+				const failed = checkValue(schema, args.input);
+				if (failed !== undefined) throw invalid("args", `things: input of ${args.kind}: ${failed}`);
+			}
+			const thing = crypto.randomUUID();
+			// A hook that throws leaves nothing, as no row names the thing yet. A crash between the hook and the commit
+			// leaves the kind's content under an id nobody knows (accepted: nothing can reach it).
+			const create = hooks.value.get(args.kind)?.value.create;
+			await create?.(thing, args.input, args.by, ctx);
+			let made: string;
+			try {
+				made = await write((tx, changes) => commit(tx, changes, thing), ctx);
+			} catch (error) {
+				// Only a hook that ran prepared anything to clear.
+				if (create !== undefined) await lifecycle.undo(thing, args.kind, ctx);
+				throw error;
+			}
+			if (made !== thing && create !== undefined) await lifecycle.undo(thing, args.kind, ctx);
+			return made;
+		};
+		/** The seeded things being made, by kind: one at a time per kind, a second ask waits for the first. */
+		const seeding = new Map<string, Promise<string>>();
+		/**
+		 * Kind `kind`'s seeded thing (`serveThing`'s `one`): the one its plugin made, else one made in Pi through the
+		 * create path; `invalid` for a kind that asks for none.
+		 */
+		const seedKind = (kind: string, ctx: Ctx<P3Principal>): Promise<string> => {
+			const running = seeding.get(kind);
+			if (running !== undefined) return running;
+			const seeded = (async () => {
+				const entry = hooks.value.get(kind);
+				if (entry?.value.one === undefined) throw invalid("args", `things: ${kind} has no seeded thing`);
+				const by: Source = { kind: "plugin", plugin: entry.plugin };
+				const found = await self.tx((tx) => writes.one(tx, kind, by), ctx);
+				if (found !== undefined) return found;
+				const workspace = (await self.tx((tx) => rootOf(tx, t), ctx))!;
+				const args = { kind, name: entry.value.one.name, workspace, by };
+				return make(args, (tx, changes, thing) => writes.makeOne(tx, changes, { ...args, thing }), ctx);
+			})();
+			seeding.set(kind, seeded);
+			void seeded.then(
+				() => seeding.delete(kind),
+				() => seeding.delete(kind),
+			);
+			return seeded;
+		};
+		/**
+		 * Every kind that asks for a seeded thing has it, once its kind is registered: at the start, and when the
+		 * registries change. A failure is reported; the next start, or the registries changing, tries again.
+		 */
+		const seed = async (ctx: Ctx<P3Principal>): Promise<void> => {
+			for (const [kind, { value }] of hooks.value) {
+				if (value.one === undefined || !kinds.value.has(kind)) continue;
+				try {
+					await seedKind(kind, ctx);
+				} catch (error) {
+					reportError(`things: the seeded thing of ${kind}`, error, ctx);
+				}
+			}
+		};
+		// The store's own context while it is live: what seeding after a registry change runs under.
+		let live: Ctx<P3Principal> | undefined;
+		// The lifecycle serves first: a seed that must undo a hook's work needs it (an undo waits for it to serve).
+		self.onLive(async (ctx) => {
+			live = ctx;
+			await Promise.all([lifecycle.serve(ctx), seed(ctx)]);
 		});
-		self.on(hooks, () => lifecycle.resume());
+		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
+		// migrate anew, every loaded workspace is read again; a kind's hooks back, its waiting deletes run.
+		self.on(kinds, async () => {
+			const snapshot = kinds.value;
+			const install = () => {
+				installed = snapshot;
+				lookup = undefined;
+			};
+			if (index === undefined) install();
+			else await index.kindsChanged(install);
+			if (live !== undefined) await seed(live);
+		});
+		self.on(hooks, async () => {
+			await lifecycle.resume();
+			if (live !== undefined) await seed(live);
+		});
 		return {
 			...q,
-			create: async (args, ctx) => {
-				const thing = crypto.randomUUID();
-				// The kind prepares what is in it first, under the new id (item 34): a hook that throws leaves nothing, as
-				// no row names the thing yet. A crash between the hook and the commit leaves the kind's content under an id
-				// nobody knows (accepted: nothing can reach it).
-				await hooks.value.get(args.kind)?.value.create?.(thing, args.input, ctx);
-				try {
-					await write((tx, changes) => writes.make(tx, changes, { ...args, thing }), ctx);
-				} catch (error) {
-					await lifecycle.undo(thing, args.kind);
-					throw error;
-				}
-				return thing;
-			},
+			create: async (args, ctx) =>
+				make(
+					args,
+					async (tx, changes, thing) => {
+						await writes.make(tx, changes, { ...args, thing });
+						return thing;
+					},
+					ctx,
+				),
+			ensure: ({ kind }, ctx) => seedKind(kind, ctx),
 			link: (args, ctx) => write((tx, touched) => writes.link(tx, touched, args), ctx),
 			unlink: (args, ctx) => write((tx, touched) => writes.unlink(tx, touched, args), ctx),
 			rename: ({ thing, name }, ctx) => write(async (tx) => writes.rename(tx, thing, name), ctx),
@@ -289,7 +401,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			createPerson: ({ name, madeBy }, ctx) =>
 				write(async (tx) => {
 					const person = crypto.randomUUID();
-					tx.put(t.persons, { person, name, owner: 0, madeBy, madeByKey: sourceKey(madeBy) });
+					tx.put(t.persons, { person, name, owner: 0, madeBy });
 					return person;
 				}, ctx),
 			setOwner: (args, ctx) => write((tx, touched) => writes.setOwner(tx, touched, args), ctx),
@@ -345,6 +457,9 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key.
 				one: ({ thing }: { thing: string }) => query(Things).where((r) => eq(r.thing, thing)),
+				// Index `by_maker`: what a source made of a kind (a seeded thing: `OneThing`).
+				ofMaker: ({ sourceKey, kind }: { sourceKey: string; kind: string }) =>
+					query(Things).where((r) => and(eq(r.madeByKey, sourceKey), eq(r.kind, kind))),
 			},
 		),
 		workspaces: self.queries(
@@ -416,6 +531,8 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key.
 				one: ({ person }: { person: string }) => query(Persons).where((p) => eq(p.person, person)),
+				// The key, IN: the persons of a list (the notes plugin reads its notes' authors' names with it).
+				ofIds: ({ persons }: { persons: string[] }) => query(Persons).where((p) => inArray(p.person, persons)),
 			},
 		),
 		groupMembers: self.queries(
@@ -437,11 +554,16 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 
 /** Makes Pi, the root workspace, unless it exists. */
 async function ensurePi(tx: Tx, t: Tables): Promise<null> {
-	const roots = query(Workspaces).where((w) => eq(w.parent, ""));
-	if ((await tx.page(t.workspaces, roots, 1)).items.length > 0) return null;
+	if ((await rootOf(tx, t)) !== undefined) return null;
 	const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
 	putWorkspace(tx, t, { kind: WORKSPACE_KIND, name: "Pi", by, showsPeople: true }, "");
 	return null;
+}
+
+/** Pi, the root workspace (none only before the store first opened). */
+async function rootOf(tx: Tx, t: Tables): Promise<string | undefined> {
+	const roots = query(Workspaces).where((w) => eq(w.parent, ""));
+	return (await tx.page(t.workspaces, roots, 1)).items[0]?.workspace;
 }
 
 /** Puts a new workspace's thing row and line under `parent` (`""`: the root); answers its id. */
@@ -533,6 +655,25 @@ class Writes {
 		}
 		touched.workspaces.add(workspace);
 		return null;
+	}
+
+	/** The thing of `kind` that `by` made, if any (a plugin's one thing: `ensure`). */
+	async one(tx: Tx, kind: string, by: Source): Promise<string | undefined> {
+		const key = sourceKey(by);
+		const mine = query(Things).where((r) => and(eq(r.madeByKey, key), eq(r.kind, kind)));
+		return (await tx.page(this.#t.things, mine, 1)).items[0]?.thing;
+	}
+
+	/** `make`, unless `by` made a thing of `kind` meanwhile: answers the thing that stands. */
+	async makeOne(
+		tx: Tx,
+		touched: Touched,
+		args: { thing: string; kind: string; name: string; workspace: string; by: Source },
+	): Promise<string> {
+		const found = await this.one(tx, args.kind, args.by);
+		if (found !== undefined) return found;
+		await this.make(tx, touched, args);
+		return args.thing;
 	}
 
 	/**
@@ -651,6 +792,7 @@ class Writes {
 		touched: Touched,
 		{ source, grants }: { source: Source; grants: GrantInput[] },
 	): Promise<null> {
+		const upgraded = new Set<string>();
 		for (const { workspace, thing, party, tick, gives } of grants) {
 			const link = await tx.get(this.#t.links, { workspace, thing });
 			if (gives === true && link === undefined) {
@@ -672,11 +814,80 @@ class Writes {
 				});
 			}
 			const key = { workspace, thing, partyKey: partyKey(party), tick, sourceKey: sourceKey(source) };
+			// The source's older rows for the party, written back at the kind's ticks version first (item 105), so the
+			// edit names the ticks as they read now; once per thing and party in one write (a Map key, built once).
+			const at = `${workspace}\n${thing}\n${key.partyKey}`;
+			if (!upgraded.has(at)) {
+				upgraded.add(at);
+				await this.#upgrade(tx, key, info);
+			}
 			if (gives === undefined) tx.delete(this.#t.grants, key);
 			else this.#grant(tx, workspace, thing, party, source, tick, gives, info.ticksVersion);
 			touched.workspaces.add(workspace);
 		}
 		return null;
+	}
+
+	/**
+	 * Writes back the rows of `key`'s source for its party on its thing in its workspace that are at an older ticks
+	 * version than `info`'s, planned from the rows as they are: the named ticks of one `gives` value and version migrate
+	 * together (`ticksNow`; a group of reserved ticks only, `OPEN`, never calls the migration), reserved ticks stay as
+	 * they are. Every converted row goes first, then the outputs are put at the version now; where a given and a
+	 * withheld output meet at one tick it stays withheld, as the index reads them (a row's key has no `gives`, so only
+	 * one can stand). Rows that cannot be read now (a migration that throws, a newer version) are left as they are. An
+	 * output meeting a row of its tick that stays (at the version now, or one that cannot be read) is not put, unless
+	 * it withholds what that row gives.
+	 */
+	async #upgrade(
+		tx: Tx,
+		key: { workspace: string; thing: string; partyKey: string; sourceKey: string },
+		info: KindInfo,
+	): Promise<void> {
+		const { workspace, thing, partyKey: party, sourceKey: source } = key;
+		const mine = query(Grants).where((g) =>
+			and(eq(g.workspace, workspace), eq(g.thing, thing), eq(g.partyKey, party), eq(g.sourceKey, source)),
+		);
+		const rows = [];
+		for await (const row of tx.rows(this.#t.grants, mine)) rows.push(row);
+		const current = new Map(
+			rows.filter((row) => row.ticksVersion === info.ticksVersion).map((row) => [row.tick, row]),
+		);
+		const older = new Map<string, typeof rows>();
+		for (const row of rows) {
+			if (row.ticksVersion === info.ticksVersion) continue;
+			const key = `${row.gives}\n${row.ticksVersion}`;
+			const group = older.get(key);
+			if (group === undefined) older.set(key, [row]);
+			else group.push(row);
+		}
+		const outputs = new Map<string, (typeof rows)[number]>();
+		const unreadable = new Map<string, (typeof rows)[number]>();
+		for (const group of older.values()) {
+			const first = group[0]!;
+			const named = group.filter(({ tick }) => !tick.startsWith(RESERVED)).map(({ tick }) => tick);
+			let now: readonly string[];
+			try {
+				now = named.length === 0 ? [] : ticksNow(info, named, first.ticksVersion);
+			} catch {
+				for (const row of group) unreadable.set(row.tick, row);
+				continue;
+			}
+			const reserved = group.filter(({ tick }) => tick.startsWith(RESERVED)).map(({ tick }) => tick);
+			for (const row of group)
+				tx.delete(this.#t.grants, { workspace, thing, partyKey: party, tick: row.tick, sourceKey: source });
+			for (const tick of [...now, ...reserved]) {
+				const before = outputs.get(tick);
+				if (before === undefined || (before.gives && !first.gives))
+					outputs.set(tick, { ...first, tick, ticksVersion: info.ticksVersion });
+			}
+		}
+		for (const [tick, row] of outputs) {
+			// A row of the tick there already (at the version now, or one that cannot be read) stays, unless the output
+			// withholds what it gives: withheld wins, as the index reads them.
+			const there = current.get(tick) ?? unreadable.get(tick);
+			if (there !== undefined && (row.gives || !there.gives)) continue;
+			tx.put(this.#t.grants, row);
+		}
 	}
 
 	/** Puts a person, a group or a session's agent into a workspace. */

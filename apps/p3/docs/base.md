@@ -21,7 +21,8 @@ needed. Everything below is PROPOSED until the section "Built" lists it (there i
 | **options** | what a thing allows in one session: one whole object per party there (everyone, the agent, a member), typed by the kind |
 | **everywhere** | an owned thing's switch, "in all my sessions" on the page: every session that follows its owner has the thing |
 | **follows** | a session follows one party, or nobody: it has that party's `everywhere` things, live, while the party writes in it |
-| **view** | a React component a plugin offers for something to show; apps put views on their page |
+| **view** | one way to look at a target (a thing of a kind, a person, a group): an entry of the things plugin's `Views`; a kind has 0 to n |
+| **component** | a React component a plugin offers others to place (`defineComponent`, `Components`, `useComponent`): the pane layout, the session list |
 | **environment** | a machine sessions work on. This device is made at the server's first start |
 | **location** | where a session works: an environment and a folder |
 
@@ -215,8 +216,8 @@ reported `working` before Durable accepts an input, so a crash in between leaves
   below the bar; the bar stays.
 - **Routing:** `/<app>/<rest>`; the chrome owns the first segment, the app gets `useRoute()` and `navigate()` for the
   rest.
-- **Views** are typed tokens: `defineView<Props>(name)` in a contract file, one `Views` contribution per view,
-  `useView(Token)` returns its component. The base's: `SessionListView`, `NewSessionView`, `TranscriptView`,
+- **Components** are typed tokens: `defineComponent<Props>(name)` in a contract file, one `Components` contribution
+  per component, `useComponent(Token)` returns it. The base's: `SessionListView`, `NewSessionView`, `TranscriptView`,
   `SessionThingsView` (what a session has, opened on demand, never an always-shown strip: new content, add one of
   mine, keep, options, whom it follows), `MyThingsView` (what a person manages outside sessions: new, "in all my
   sessions", rename, give away, delete, where it is used).
@@ -237,7 +238,7 @@ reported `working` before Durable accepts an input, so a crash in between leaves
 | `ExecutionEnvironments` | worker | the environments plugin: an `ExecutionEnv` for a location |
 | `SessionHarness` | worker | the harness: the open Durable harness and `submit`, for the transcript and others |
 | `AppPages` | page | each app |
-| `Views` | page | each view's plugin (the pane layout: the `layout` plugin) |
+| `Components` | page | each component's plugin (the pane layout: the layout plugin) |
 | `ThingViews` | page | each kind's plugin: `View`, `Options`, `Create` |
 | `PageRoot`, `PageConnection` | page | the chrome (the one component the base renders); the base |
 | (base, as on main) `WorkerRunners`, `WorkerRunnerWraps`, `WorkerBusy`, `ServerCommands`, `LinkOpened` | | |

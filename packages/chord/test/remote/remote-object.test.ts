@@ -1,11 +1,12 @@
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
-import { grantable, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { arr, grantable, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
 import { currentVersion } from "../../src/contracts/internal.ts";
 import { ChordError, PluginError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import {
+	allow,
 	createHost,
 	defineFacet,
 	type FacetHost,
@@ -29,6 +30,7 @@ import {
 	expectCollected,
 	failures,
 	fakeTimers,
+	flagLabel,
 	forEachCodec,
 	framesOf,
 	grantOf,
@@ -306,7 +308,7 @@ forEachCodec(() => {
 						params: {},
 						hostAddress: () => Server(),
 						state: { n: int() },
-						flags: { home: "Home" },
+						flags: { home: flagLabel("home") },
 					});
 					const version = new WeakRef(currentVersion(Homed));
 					const { client, peer } = await rawProvider();
@@ -357,7 +359,13 @@ forEachCodec(() => {
 						params: {},
 						hostAddress: () => Server(),
 						state: { n: int() },
-						flags: { kept0: "0", kept1: "1", kept2: "2", kept3: "3", kept4: "4" },
+						flags: {
+							kept0: flagLabel("kept0"),
+							kept1: flagLabel("kept1"),
+							kept2: flagLabel("kept2"),
+							kept3: flagLabel("kept3"),
+							kept4: flagLabel("kept4"),
+						},
 					});
 					const { client, peer } = await rawProvider();
 					const ref = client.hold(Kept, {}, context);
@@ -394,7 +402,13 @@ forEachCodec(() => {
 				params: { id: str() },
 				hostAddress: () => Server(),
 				state: { n: int() },
-				flags: { f0: "0", f1: "1", f2: "2", f3: "3", f4: "4" },
+				flags: {
+					f0: flagLabel("f0"),
+					f1: flagLabel("f1"),
+					f2: flagLabel("f2"),
+					f3: flagLabel("f3"),
+					f4: flagLabel("f4"),
+				},
 			});
 			const { client, peer } = await rawProvider();
 			// Watches the cache's insertions only: it keeps neither the map, the slot nor its set.
@@ -2349,5 +2363,108 @@ describe('references sharing one wire hold (decision "References share one wire 
 			await expectCollected(...refs);
 			expect(server).toBeDefined();
 		});
+	});
+});
+
+describe("a flag-only regrant (ERNDL-1131)", () => {
+	/** The names an admission grants, changed by `set`: the source of `Tools`' admission. */
+	const Grants = local("app.grants", {
+		version: 1,
+		params: {},
+		members: { names: arr(str()), set: method(arr(str())) },
+	});
+
+	const GrantsDoc = defineState("grants", {
+		schema: obj({ names: arr(str()) }),
+		version: 1,
+		initial: () => ({ names: ["bash", "read"] }),
+	});
+
+	/** A contract whose grants are flags only: a regrant between them changes no member. */
+	const Tools = remote("app.tools", {
+		version: 1,
+		params: { session: str() },
+		hostAddress: ({ session }) => Session({ id: session }),
+		state: { label: str() },
+		flags: { bash: flagLabel("bash"), read: flagLabel("read") },
+	});
+
+	/** Serves `Grants` and `Tools`, admitted with the flags `Grants` names. */
+	function serveTools(h: FacetHost<TestPrincipal>): void {
+		h.serve(Grants, (_, self) => {
+			const doc = self.state(GrantsDoc);
+			return {
+				names: self.derive([doc], ([d]) => d.names),
+				set: async (names, ctx) => {
+					await doc.change((draft) => {
+						draft.names = names;
+					}, ctx);
+					return null;
+				},
+			};
+		});
+		h.serve(Tools, () => ({ label: constant("tools") }), {
+			admit: (_params, _principal, self) =>
+				self.derive([self.get(Grants, {}).names], ([names]) =>
+					allow({ granted: names.filter((name) => name === "bash" || name === "read") }),
+				),
+		});
+	}
+
+	/** Regrants `tools` from bash and read to read alone through `grants`: its state watcher and its `granted`. */
+	async function regrant(
+		tools: Reference<typeof Tools>,
+		grants: Reference<typeof Grants>,
+		settle: () => Promise<void>,
+	): Promise<void> {
+		const states = statesOf(await tools.state.watch(context));
+		const before = tools.granted;
+		expect(grantOf(tools)).toEqual(["bash", "read"]);
+		await grants.set(["read"], context);
+		await settle();
+		// Slice 5's holder relies on it: a watcher of `ref.state` sees the regrant, `granted` is a new set.
+		expect(states).toEqual(["loading", "live"]);
+		expect(grantOf(tools)).toEqual(["read"]);
+		expect(tools.granted).not.toBe(before);
+	}
+
+	it("on one host: the watcher of ref.state sees loading then live, granted is the new set", async () => {
+		const host = createHost<TestPrincipal>({
+			address: Session({ id: "S1" }),
+			principal: { kind: "worker", session: "S1" },
+			onError: () => {},
+		});
+		await host.load([{ name: "@test/app", facet: defineFacet<TestPrincipal>(serveTools) }], context);
+		const tools = await host.get(Tools, { session: "S1" }, context);
+		await regrant(tools, await host.get(Grants, {}, context), delivered);
+		await host.close(context);
+	});
+
+	it("over a link: the same", async () => {
+		const host = createHost<TestPrincipal>({
+			address: Session({ id: "S1" }),
+			principal: { kind: "worker", session: "S1" },
+			onError: () => {},
+		});
+		await host.load([{ name: "@test/app", facet: defineFacet<TestPrincipal>(serveTools) }], context);
+		const client = createHost<TestPrincipal>({ onError: () => {} });
+		await client.load([], context);
+		const [a, b] = memoryLinkPair();
+		host.accept(a, { principal: { kind: "owner" }, codec: testCodec() }, context);
+		client.connect(b, { principal: { kind: "server" }, codec: testCodec() }, context);
+		const tools = await client.get(Tools, { session: "S1" }, context);
+		await regrant(tools, await host.get(Grants, {}, context), transported);
+		await client.close(context);
+		await host.close(context);
+	});
+
+	it("over a relay: the same", async () => {
+		const relay = await relayed({ worker: serveTools });
+		const tools = await relay.tab.get(Tools, { session: "S1" }, context);
+		const worker = relay.workers.get(Session({ id: "S1" }).key)!;
+		const settle = async () => {
+			for (let hop = 0; hop < 3; hop++) await transported();
+		};
+		await regrant(tools, await worker.get(Grants, {}, context), settle);
 	});
 });

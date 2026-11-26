@@ -85,7 +85,7 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   references, wire, React and TUI bindings); example 77.
 - **Slice 15, denials with a message** (built 2026-11-25, `slice-15.md` §2): `deny(reason, message?)`, the message
   as data in the `forbidden` error's `details.message` and part of the decision (`host/admission.ts`);
-  `MessageData` and `MessageSchema` in `data/message.ts` (re-exported by `surfaces`); example 78.
+  `MessageData` and `MessageSchema` (in `contracts/message.ts` since flag labels are messages; re-exported by `data` and `surfaces`); example 78.
 - **Slice 15, the commit index** (built 2026-11-25, `slice-15.md` §3): `store/read-index.ts` (buckets by the
   equalities a read's plan fixes, `ReadPlan.equalities`; kept keys, kept current by the read, `Read.kept`), used by
   `Reads.candidates` in a commit's refresh; the oracle's world shared by `test/store/skip.test.ts` and

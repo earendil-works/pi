@@ -1,10 +1,13 @@
 // Downloaded code: the TUI is one esbuild build of the selected plugins' facets, named by content (the web is Chord's
-// web surface, server.ts). Test component fixtures compile as browser scripts (`buildBrowserScript`).
+// web surface, server.ts). Test component fixtures compile as browser scripts (`buildBrowserScript`). Both build through
+// Chord's counted `esbuildBuild`: Chord stops esbuild's one service of the process once idle, a direct build would stop
+// with it.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type BuildOptions, build, type Loader, type Plugin } from "esbuild";
+import { esbuildBuild } from "@earendil-works/chord/plugins";
+import type { BuildOptions, Loader, Plugin } from "esbuild";
 import { type FacetKind, listRoots } from "./plugins.ts";
 import { MAX_TUI_BUNDLE } from "./tui-sandbox.ts";
 
@@ -98,7 +101,7 @@ export async function buildTuiBundle(
 		...entries.map(([, file], index) => `import facet${index} from ${JSON.stringify(file)};`),
 		`export default bridge => setupTui(bridge, [${entries.map(([name], index) => `{name:${JSON.stringify(name)},facet:facet${index}}`).join(",")}]);`,
 	].join("\n");
-	const result = await build({
+	const result = await esbuildBuild({
 		...common,
 		stdin: { contents: entry, resolveDir: root, sourcefile: "p2-tui-entry.ts", loader: "ts" },
 		plugins: [
@@ -151,7 +154,7 @@ const assetUrls: Plugin = {
 
 /** One browser script (an IIFE) from `entry`. Tests use it to run component fixtures (`test/fixtures/`) in an open page. */
 export async function buildBrowserScript(entry: string): Promise<string> {
-	const result = await build({
+	const result = await esbuildBuild({
 		...browser,
 		entryPoints: [entry],
 		outdir: join(root, ".p2-script"),

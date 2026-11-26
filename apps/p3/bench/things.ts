@@ -2,17 +2,21 @@
 // projects > 2,000 sessions; 30 things in Pi, 3 per team, 2 per project, 3 per session; 50 persons, 10 groups, two put
 // into each team; each session's agent put into it. 100 sessions run: each agent holds every thing its session gives
 // it; 30 persons hold 15 things each. Every hold goes over an in-memory link from a client host of its own, as a
-// worker's and a page's do. Three variants, each in a process of its own, alternated: - `plain`: the thing's object
-// with no admission; - `baseline`: the bench's variant 0: admitted by a derive over one shared local object per thing
-// (Chord's admission, a reference and a derive per hold, no access model); - `things`: the things admission
-// (`admitThing` over `Gives` and the index). After the seed the things plugin is reloaded, so the holds start cold: its
-// index has nothing loaded. Measured: the heap per held thing (after GC; server and clients together, one process; in
-// `things` the index's loads included), the index's reads while the holds start (every workspace and person they need,
-// read once), and in `things` a change at the root (a tick given to the agents on one of Pi's things, then taken back:
-// the write as its caller waits for it, its transaction alone (`things.store.commit`) and the index's work after it
-// (`things.access.adopt`), and the last of its holders rebound), a change at a leaf (the same, and its holder rebound),
-// a new session. Run from apps/p3 with Node 26: node --expose-gc --conditions=source
-// --disable-warning=ExperimentalWarning bench/things.ts
+// worker's and a page's do. Three variants, each in a process of its own, alternated:
+// - `plain`: the thing's object with no admission;
+// - `baseline`: the bench's variant 0: admitted by a derive over one shared local object per thing (Chord's
+//   admission, a reference and a derive per hold, no access model);
+// - `things`: the things admission (`admitThing` over `Gives` and the index).
+// After the seed the things plugin is reloaded, so the holds start cold: its index has nothing loaded. Measured:
+// - the heap per held thing (after GC; server and clients together, one process; in `things` the index's loads too);
+// - the index's reads while the holds start (every workspace and person they need, read once);
+// - one session's worker starting: its first question, cold for its workspace, and its holds started together;
+// - in `things`, a change at the root (a tick given to the agents on one of Pi's things, then taken back): the write
+//   as its caller waits for it, its wait in the queue (`things.store.wait`), its transaction (`things.store.commit`),
+//   the index's work after it (`things.access.adopt`), and the last of its holders rebound; the same at a leaf; a new
+//   session.
+// Run from apps/p3 with Node 26:
+//   node --expose-gc --conditions=source --disable-warning=ExperimentalWarning bench/things.ts
 
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
@@ -200,6 +204,7 @@ async function measure(which: Variant): Promise<void> {
 	const holdMs = performance.now() - start;
 	const perHold = ((await heap()) - before) / held.length;
 	const result: Record<string, number> = { holds: held.length, perHold, holdMs };
+	Object.assign(result, await oneWorker(server, Type, sessions, which, telemetry));
 	if (which === "things") {
 		result.coldReads = counted("things.access.reads") - reads;
 		result.queryRuns = counted("chord.query.runs");
@@ -210,6 +215,56 @@ async function measure(which: Variant): Promise<void> {
 	await server.close(context);
 	await store.close(context);
 	console.log(JSON.stringify(result));
+}
+
+/**
+ * One session's worker starting, as a worker does: for 10 sessions nobody held yet, its first question (`Gives` on
+ * its workspace, cold there: the session's own entries, its ancestors already loaded; `things` only), then every
+ * thing it is given held at once over a link of its own, until all are live. Medians.
+ */
+async function oneWorker(
+	server: Host<P3Principal>,
+	Type: typeof Board.contract,
+	sessions: readonly { id: string; things: string[] }[],
+	which: Variant,
+	telemetry: InMemoryTelemetryContext,
+): Promise<Record<string, number>> {
+	const questions: number[] = [];
+	const starts: number[] = [];
+	const reads: number[] = [];
+	const sizes: number[] = [];
+	const counted = () =>
+		telemetry
+			.getMetrics()
+			.filter((metric) => metric.name === "things.access.reads")
+			.reduce((sum, metric) => sum + metric.value, 0);
+	for (const session of sessions.filter((_, i) => i % 20 === 10).slice(0, 10)) {
+		const before = counted();
+		const t0 = performance.now();
+		const gives = await server.get(Gives, { workspace: session.id, caller: `worker:${session.id}` }, context);
+		questions.push(performance.now() - t0);
+		reads.push(counted() - before);
+		const mine = Object.keys(gives.answers.value);
+		sizes.push(mine.length);
+		gives.release();
+		const [toServer, fromClient] = memoryLinkPair();
+		const client = createHost<P3Principal>({ readyTimeout: 60_000, onError: (error) => console.error(error) });
+		server.accept(fromClient, { principal: { kind: "worker", session: session.id } }, context);
+		client.connect(toServer, { principal: { kind: "server" } }, context);
+		await client.load([], context);
+		const t1 = performance.now();
+		const refs = mine.map((thing) => client.hold(Type, { workspace: session.id, thing }, context));
+		for (const ref of refs) await until(ref.state, (state) => state.kind === "live", context);
+		starts.push(performance.now() - t1);
+		for (const ref of refs) ref.release();
+		await client.close(context);
+	}
+	const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!;
+	return {
+		workerHolds: median(sizes),
+		workerStartMs: median(starts),
+		...(which === "things" ? { coldQuestionMs: median(questions), coldQuestionReads: median(reads) } : {}),
+	};
 }
 
 /** S2, written through the store; who holds what. */
@@ -302,11 +357,14 @@ async function changes(
 		await things.setGrants({ source, grants: [grant] }, context);
 		const write = performance.now() - t0;
 		for (const ref of holders) await until(ref.state, (state) => state.kind === "live" && done(ref), context);
+		const last = performance.now() - t0;
+		// After the clock stopped: reading the metrics copies every measurement so far.
 		return {
 			write,
+			wait: recorded("things.store.wait", since),
 			commit: recorded("things.store.commit", since),
 			adopt: recorded("things.access.adopt", since),
-			last: performance.now() - t0,
+			last,
 		};
 	};
 	const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!;

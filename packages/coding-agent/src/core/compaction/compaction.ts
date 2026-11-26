@@ -335,6 +335,8 @@ export function estimateTokens(message: AgentMessage): number {
 			return Math.ceil(chars / 4);
 		}
 		case "bashExecution": {
+			// !! output is excluded from the LLM context (see convertToLlm)
+			if (message.excludeFromContext) return 0;
 			chars = message.command.length + message.output.length;
 			return Math.ceil(chars / 4);
 		}

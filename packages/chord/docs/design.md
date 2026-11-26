@@ -686,7 +686,7 @@ export const NoteStore = local("notes.store", { version, params, members });
 // One shape for every caller (slice 15 §1): a grantable member exists for a caller only if its admission granted it.
 state: { notes: arr(PublicNote), authored: grantable(arr(Note)) },
 methods: { add: grantable(method(AddArgs, NoteId)), remove: grantable(method(RemoveArgs)), read: method() },
-flags: { export: "Export the notes" },               // a right that is no member; its label is the access UI's
+flags: { export: messages.message("flagExport") },  // a right that is no member; its label a message of the plugin's
 host.serve(Notes, ({ session }, principal, admitted, self) => ({
   notes, authored: () => authoredNotes, add, remove, read,   // grantable state and events are builders
 }), { admit: (params, principal) => constant(principal.kind === "owner" ? allow({ granted: ["authored", "add", "remove", "export"] }) : allow({})) });
@@ -695,7 +695,12 @@ host.serve(Notes, ({ session }, principal, admitted, self) => ({
 - **Grantable members and flags** (slice 15 §1; decision "Grantable members and flags replace variants", 2026-11-25):
   a remote contract declares one shape for every caller; a member marked `grantable(...)` (state, event or method)
   exists for a caller only if its admission granted it, a plain one for everyone admitted. `flags: { name: label }`
-  are rights that are no member (the label English, for the access UI). A name is one member or one flag, never two
+  are rights that are no member; the label is a message as data (`MessageData`, §23: `messages.message("flagExport")`
+  of the plugin's `defineMessages`, typed by its catalog), which the access UI renders in the viewer's language
+  (decision "Flag labels are messages", 2026-11-26); declaration refuses a label that is no message
+  (`MessageSchema`): the declaration checks only the label's shape, `messages.message(key)` checks the key against
+  the catalog (by its type). A contract file may import its plugin's `messages.ts` (`plugin-authoring.md`, "What a
+  plugin may import"). A name is one member or one flag, never two
   (types and declaration). `GrantableName<C>` is the union of a contract's grantable members and flags. A contract
   with grantable members or flags takes an admission (`admit` required, §6). `local` contracts have neither.
 - **Admission** (slice 14; slice 15 §1.2): a remote contract may declare `admission: obj(...)`, the data its factory

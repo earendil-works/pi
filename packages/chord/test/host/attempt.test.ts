@@ -40,6 +40,7 @@ import {
 	failLive,
 	failures,
 	fakeTimers,
+	flagLabel,
 	flushed,
 	instancesOf,
 	loaded,
@@ -599,7 +600,7 @@ describe("grantable members (slice 15 §1.3)", () => {
 		state: { n: int(), secret: grantable(int()) },
 		events: { pinged: grantable(int()) },
 		methods: { bump: grantable(method()), read: method() },
-		flags: { export: "Export" },
+		flags: { export: flagLabel("export") },
 	});
 	const owner = { kind: "owner" } as const;
 

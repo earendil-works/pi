@@ -214,7 +214,7 @@ describe("a canvas's shapes", () => {
 		const ann = await person("Ann", s1);
 		await things.putParty({ workspace: s2, party: { kind: "person", person: ann.id }, source: BY }, context);
 		const shared = await canvasIn(s1, "Shared");
-		await things.link({ workspace: s2, thing: shared, by: BY }, context);
+		await things.link({ workspace: s2, thing: shared }, context);
 		// In s2 everyone here may look only: the kind's default grant there replaced.
 		await things.setGrants(
 			{
@@ -320,7 +320,7 @@ describe("a canvas's motion", () => {
 		const s1 = await workspace("s1");
 		const [ann, ben] = [await person("Ann", s1), await person("Ben", s1)];
 		const [board, other] = [await canvasIn(s1), await canvasIn(s1)];
-		await things.link({ workspace: pi, thing: board, by: BY }, context);
+		await things.link({ workspace: pi, thing: board }, context);
 		await things.putParty({ workspace: pi, party: { kind: "person", person: ann.id }, source: BY }, context);
 		// Ben keeps a viewer: Draw withheld from him removes everyone's Draw from him (item 106).
 		await things.setGrants(

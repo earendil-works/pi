@@ -3,7 +3,7 @@
 // and its plugin's facet, which serves it with `serveThing` (the object members as the ticks give them; hooks that
 // record what they were called with).
 
-import { constant, defineFacet, method, type P3Principal, type PluginFacet, str } from "@earendil-works/p3/v1";
+import { constant, defineFacet, method, obj, type P3Principal, type PluginFacet, str } from "@earendil-works/p3/v1";
 import { defineThing } from "../kind.ts";
 import { serveThing } from "../serve.ts";
 
@@ -22,7 +22,8 @@ const label = (key: string) => ({ namespace: "test", key, params: [] });
 export const Board = defineThing("test.board", {
 	version: 1,
 	makers: "anyone",
-	state: { title: str() },
+	// `notes` is given by Moderate: a grantable state member (its type must stay nameable when exported).
+	state: { title: str(), notes: obj({ text: str() }) },
 	methods: {
 		read: method(undefined, str()),
 		write: method(),
@@ -35,7 +36,7 @@ export const Board = defineThing("test.board", {
 		read: { label: label("read"), gives: ["read"] },
 		write: { label: label("write"), gives: ["write"] },
 		draw: { label: label("draw"), gives: ["draw"] },
-		moderate: { label: label("moderate"), gives: ["moderate"] },
+		moderate: { label: label("moderate"), gives: ["moderate", "notes"] },
 		bash: { label: label("bash"), for: "agents", gives: ["bash"] },
 		look: { label: label("look"), for: "people", gives: ["look"] },
 	},
@@ -52,6 +53,7 @@ export const boardFacet = defineFacet((host) => {
 			BUILDS.push(caller.kind === "person" ? caller.person : caller.kind === "agent" ? caller.session : "server");
 			return {
 				title: constant(thing),
+				notes: () => constant({ text: "" }),
 				read: async () => `${caller.kind}`,
 				write: async () => null,
 				draw: async () => null,

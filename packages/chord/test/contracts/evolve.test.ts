@@ -24,6 +24,7 @@ import {
 	str,
 } from "../../src/contracts/index.ts";
 import type { Ungranted } from "../../src/contracts/internal.ts";
+import { flagLabel } from "../support.ts";
 
 const Server = hostKind("server");
 
@@ -212,7 +213,7 @@ describe("kinds and fixed parts", () => {
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			flags: { export: "Export" },
+			flags: { export: flagLabel("export") },
 		});
 		const V2 = evolve(Flagged, (e) => e.addState("n", int()));
 		expect([...contractData(V2).flags.keys()]).toEqual(["export"]);

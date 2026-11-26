@@ -65,7 +65,11 @@ export type ServerRuntime = {
 	workerScripts(context: Context): Promise<readonly PluginScript[]>;
 	/** Where the server listens, once it does. */
 	listening(): ListenAddress | undefined;
-	/** Builds the changed plugins and rolls them out: the server, then the running workers (the runner's step). */
+	/**
+	 * Builds the changed plugins and rolls them out: the server, the running workers (the runner's step), then the page.
+	 * Applies run one at a time: a call waits for the previous one; one whose context aborts while it waits stops
+	 * waiting and builds nothing.
+	 */
 	apply(context: Context): Promise<RolloutResult>;
 	/** Stops the server, as `SIGTERM` does (the control plugin's command `stop`). */
 	stop(): void;

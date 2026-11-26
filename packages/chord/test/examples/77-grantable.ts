@@ -23,6 +23,7 @@ import {
 } from "../../src/contracts/index.ts";
 import { allow, createHost, defineFacet, deny } from "../../src/host/index.ts";
 import { memoryLinkPair } from "../../src/link/index.ts";
+import { defineMessages } from "../../src/surfaces/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -32,6 +33,9 @@ const Server = hostKind("server");
 
 const Shape = obj({ id: str(), kind: oneOf("stroke", "rect", "text") });
 const Change = obj({ seq: int(), what: oneOf("added", "cleared"), by: str() });
+
+// The plugin's messages (its `messages.ts`): what its UI shows, a flag's label too.
+const messages = defineMessages("example.canvas", { en: { flagExport: "Export as image" } });
 
 // 1. One shape for everyone: `shapes` and `report` for every admitted caller; drawers may add and clear, moderators also
 //    see the history and hear reports as they come in. `export` is a right that is no call on the object.
@@ -46,7 +50,9 @@ const Canvas = remote("example.canvas", {
 		add: grantable(method(Shape)),
 		clear: grantable(method()),
 	},
-	flags: { export: "Export as image" },
+	// A flag's label is a message of the plugin's catalog (`messages.ts`; a contract file may import it), which the
+	// access UI renders in the viewer's language.
+	flags: { export: messages.message("flagExport") },
 });
 
 // What each role gets: names of the contract's grantable members and flags (a typo does not compile).

@@ -27,7 +27,8 @@ try {
 - `broken(cause)`: thrown by an open to mark a bad configuration; `FailureCause` is what Chord reports.
 - `MessageData` (`{ namespace, key, params }`), `MessageParam` and `MessageSchema`: a message as data, rendered by
   each client in its language (`surfaces` builds and renders them); a denial carries one for the person
-  (`deny(reason, message)`, slice 15 §2).
+  (`deny(reason, message)`, slice 15 §2). Declared in `contracts/message.ts` (a flag's label is one) and re-exported
+  here.
 - `new PluginError(code, message, details?)`: what a method throws to give its callers a code of its own. On one host
   callers get the thrown value itself; over a link only `code`, `message` and JSON `details` cross and the consumer
   rethrows a PluginError. Any other thrown value crosses as a PluginError with the code `internal` and its message.
@@ -47,7 +48,6 @@ try {
 - `principalKey(principal, context, customKey?)`, `canonicalJson(value, context)`.
 - `sameJson(kept, value, skip?)`: whether a plain JSON value is one read before (as canonical JSON's texts were the
   same), without making text.
-- `isMessageData(value, context)`: whether plugin code handed a message as data (`MessageSchema`, compiled once).
 - `invalid`, `asChordError`, `chordErrorFromJson`, `PROTOCOL_VERSION`, `CHORD_ERROR_REASONS`;
   `openFailure(thrown, label)`.
 

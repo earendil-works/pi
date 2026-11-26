@@ -8,6 +8,7 @@ import { defineMessages } from "@earendil-works/p3/v1";
 export const messages = defineMessages("things", {
 	en: {
 		notGiven: "You have no access to this here.",
+		catchingUp: "This was just updated. Try again in a moment.",
 		tickNotFor: (tick: string, party: string) => `${tick} cannot be given to ${party}.`,
 		belowLink: (workspace: string) =>
 			`This is linked in ${workspace}. Ticks are given there; here they can only be taken away.`,

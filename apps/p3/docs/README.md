@@ -32,7 +32,7 @@ surfaces) and its plugin guide (`packages/chord/docs/plugin-authoring.md`).
 | Path | What |
 | --- | --- |
 | `apps/p3/plugins/<name>/` | the built-in plugins; `sessions` is the model plugin |
-| `apps/p3/src/api/v1/` | the API plugins import: `@earendil-works/p3/v1`, `/v1/server`, `/v1/worker`, `/v1/web` (web facets: views, the route, icons, and the built-in plugins' web contracts, the `layout` plugin's pane layout among them), and `/v1/testing` for their tests (`testPlugin`, `testServer`) |
+| `apps/p3/src/api/v1/` | the API plugins import: `@earendil-works/p3/v1`, `/v1/server`, `/v1/worker`, `/v1/web` (web facets: the components plugins offer each other, the route, icons, and the built-in plugins' web contracts, the `layout` plugin's pane layout among them), and `/v1/testing` for their tests (`testPlugin`, `testServer`) |
 | `apps/p3/src/` | the base: `bin.ts` (the `p3` command), `server.ts`, `worker.ts`, `supervisor.ts`, the Pis and their data directories (`files.ts`), the sockets that are the locks and the command's channel (`local-socket.ts`), what p3 is (`app.ts`: its API, facet kinds, principals) |
 | `apps/p3/test/` | the tests of the base and of the whole, their harness (`topology.ts`, `support.ts`, `until.ts`) and the tests' probe plugin (`test/plugins/probe/`); a plugin's own tests, unit and end to end, sit in its `test/` folder |
 | `apps/p3/bench/` | benchmarks, one per slice or package |

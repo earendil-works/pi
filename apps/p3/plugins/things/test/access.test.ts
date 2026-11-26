@@ -181,8 +181,7 @@ class Run {
 			const workspace = this.nearTheRoot();
 			const index = this.below(this.things.length);
 			const exists = (await s.things.one.page({ thing: this.things[index]! }, 1, context)).items.length > 0;
-			if (exists)
-				await s.link({ workspace, thing: this.things[index]!, by: { kind: "plugin", plugin: "test" } }, context);
+			if (exists) await s.link({ workspace, thing: this.things[index]! }, context);
 			else
 				this.things[index] = await s.create(
 					{ kind: Board.name, name: "t", workspace, by: { kind: "person", person: this.pick(this.persons) } },
@@ -412,7 +411,7 @@ class SecondIndex {
 	}
 
 	async changed(): Promise<void> {
-		await this.#index.changed({ workspaces: new Set(this.#r.workspaces), persons: new Set(this.#r.persons) });
+		await changed(this.#index, { workspaces: new Set(this.#r.workspaces), persons: new Set(this.#r.persons) });
 		this.#index.forgetUnwatched();
 	}
 
@@ -430,6 +429,15 @@ class SecondIndex {
 	#watched(): number {
 		return new Set(this.#watchers.map(({ workspace }) => workspace)).size;
 	}
+}
+
+/** Tells `index` that a commit wrote `touched` (a commit of nothing, followed as one that touched them). */
+function changed(index: AccessIndex, touched: { workspaces: Set<string>; persons: Set<string> }): Promise<null> {
+	return index.commit(async (into) => {
+		for (const id of touched.workspaces) into.workspaces.add(id);
+		for (const id of touched.persons) into.persons.add(id);
+		return null;
+	});
 }
 
 /** The test kind as the store's index looks kinds up. */
@@ -457,7 +465,6 @@ describe("the index's own mechanics", () => {
 				links: new Map(found.parent === "" ? [["sketch", Board.name]] : []),
 				members: new Set(found.members),
 				switches: new Map(),
-				hides: new Set(),
 				grants:
 					found.parent === ""
 						? [
@@ -490,8 +497,8 @@ describe("the index's own mechanics", () => {
 		const attached = await index.attach("later", ada, observer(told), context);
 		assert.deepEqual(attached?.value, {});
 		workspaces.set("later", { parent: "team", members: ["person/ada"] });
-		await index.changed({ workspaces: new Set(["later"]), persons: new Set() });
-		assert.deepEqual(told, [{ sketch: { ticks: ["read"] } }]);
+		await changed(index, { workspaces: new Set(["later"]), persons: new Set() });
+		assert.deepEqual(told, [{ sketch: { kind: Board.name, ticksVersion: 1, ticks: ["read"] } }]);
 		assert.deepEqual(index.loaded().workspaces, 3);
 	});
 
@@ -511,10 +518,10 @@ describe("the index's own mechanics", () => {
 	});
 });
 
-describe("round 1's reproductions (Astra)", () => {
+describe("the index under races, failures and load", () => {
 	const who = { kind: "person", person: "p" } as const;
 	const none: FollowObserver<unknown> = { advance() {}, end() {} };
-	const kinds = { tickFor: () => "all" as const, ticksOf: () => ["a"] };
+	const kinds = { tickFor: () => "all" as const, ticksOf: () => ["a"], ticksVersionOf: () => 1 };
 	const person = async () => ({ owner: true, groups: [] });
 	const rows = (...ids: string[]) => ({
 		parent: "",
@@ -523,12 +530,11 @@ describe("round 1's reproductions (Astra)", () => {
 		links: new Map(ids.map((id) => [id, "board"])),
 		members: new Set<string>(),
 		switches: new Map<string, boolean>(),
-		hides: new Set<string>(),
 		grants: [],
 	});
 	const touched = (id: string) => ({ workspaces: new Set([id]), persons: new Set<string>() });
 
-	it("Astra 6: close fences an attach that is loading", async () => {
+	it("close fences an attach that is loading", async () => {
 		const started = Promise.withResolvers<void>();
 		const release = Promise.withResolvers<void>();
 		const workspace = async () => {
@@ -545,7 +551,7 @@ describe("round 1's reproductions (Astra)", () => {
 		assert.equal(index.loaded().views, 0);
 	});
 
-	it("Astra 2: a failed re-read serves nothing stale: its watchers end, the next attach loads what is on disk", async () => {
+	it("a failed re-read serves nothing stale: its watchers end, the next attach loads what is on disk", async () => {
 		let fail = false;
 		let entries = rows();
 		const workspace = async () => {
@@ -558,7 +564,7 @@ describe("round 1's reproductions (Astra)", () => {
 		entries = rows("new-board");
 		fail = true;
 		const reported = mock.method(console, "error", () => {});
-		await index.changed(touched("w"));
+		await changed(index, touched("w"));
 		reported.mock.restore();
 		assert.deepEqual(ended, ["failed"]);
 		assert.deepEqual(index.loaded(), { workspaces: 0, persons: 0, views: 0 });
@@ -568,7 +574,7 @@ describe("round 1's reproductions (Astra)", () => {
 		assert.equal(index.open, true);
 	});
 
-	it("Astra 7: unwatched persons count against the budget", async () => {
+	it("unwatched persons count against the budget", async () => {
 		const index = new AccessIndex({ person, workspace: async () => rows() }, () => kinds, context, 2);
 		for (let i = 0; i < 256; i++) {
 			(await index.attach("w", { kind: "person", person: String(i) }, none, context))?.detach();
@@ -578,7 +584,7 @@ describe("round 1's reproductions (Astra)", () => {
 		assert.ok(size.persons <= 3, `${size.persons} persons kept, none watched`);
 	});
 
-	it("Astra 11: a watcher detached by another's advance is not told; one that throws keeps no other from being told", async () => {
+	it("a watcher detached by another's advance is not told; one that throws keeps no other from being told", async () => {
 		let entries = rows();
 		const index = new AccessIndex({ person, workspace: async () => entries }, () => kinds, context);
 		let detachSecond = () => {};
@@ -597,27 +603,31 @@ describe("round 1's reproductions (Astra)", () => {
 		detachSecond = attached!.detach;
 		entries = rows("new-board");
 		const reported = mock.method(console, "error", () => {});
-		await index.changed(touched("w"));
+		await changed(index, touched("w"));
 		reported.mock.restore();
 		assert.deepEqual([second, third], [0, 1]);
 		assert.equal(reported.mock.callCount(), 1);
 	});
 
-	it("Astra 8: a write with no access change walks no loaded workspace", async () => {
+	it("a write with no access change walks no loaded workspace", async () => {
 		const index = new AccessIndex({ person, workspace: async () => rows() }, () => kinds, context);
 		for (let i = 0; i < 256; i++) (await index.attach(String(i), who, none, context))?.detach();
-		let probes = 0;
-		class Counted extends Set<string> {
-			override has(value: string) {
-				probes++;
-				return super.has(value);
-			}
+		// Every loaded workspace is a Map entry: a walk would visit them.
+		const iterate = Map.prototype[Symbol.iterator];
+		let visited = 0;
+		Map.prototype[Symbol.iterator] = function (this: Map<unknown, unknown>) {
+			visited += this.size;
+			return iterate.call(this);
+		};
+		try {
+			await index.commit(async () => null);
+		} finally {
+			Map.prototype[Symbol.iterator] = iterate;
 		}
-		await index.changed({ workspaces: new Counted(), persons: new Set() });
-		assert.equal(probes, 0);
+		assert.ok(visited < 16, `${visited} Map entries visited`);
 	});
 
-	it("Astra 9: the grants of a wide workspace are classified in linear time", () => {
+	it("the grants of a wide workspace are classified in linear time", () => {
 		const n = 128;
 		let visits = 0;
 		const ids = Array.from({ length: n }, (_, i) => String(i));
@@ -635,6 +645,39 @@ describe("round 1's reproductions (Astra)", () => {
 		assert.ok(visits <= 2 * n, `${visits} reads of a grant's thing for ${n} links and ${n} grants`);
 	});
 
+	it("a burst of held callers released returns to the budget, in steady state too", async () => {
+		const index = new AccessIndex({ person, workspace: async () => rows() }, () => kinds, context, 2);
+		const held = [];
+		for (let i = 0; i < 256; i++)
+			held.push(await index.attach("w", { kind: "person", person: String(i) }, none, context));
+		for (const attached of held) attached?.detach();
+		for (let i = 0; i < 256; i++) (await index.attach("w", { kind: "person", person: "0" }, none, context))?.detach();
+		assert.ok(index.loaded().persons <= 3, JSON.stringify(index.loaded()));
+	});
+
+	it("the withheld rows of a wide workspace are applied in linear time", () => {
+		const n = 128;
+		const grants = Array.from({ length: n }, (_, i) => ({
+			thing: "board",
+			audience: "people" as const,
+			party: `person/${i}`,
+			tick: "a",
+			gives: false,
+		}));
+		const iterate = Map.prototype[Symbol.iterator];
+		let visited = 0;
+		Map.prototype[Symbol.iterator] = function (this: Map<unknown, unknown>) {
+			visited += this.size;
+			return iterate.call(this);
+		};
+		try {
+			accessHere(ABOVE_THE_ROOT, { ...rows("board"), grants }, kinds);
+		} finally {
+			Map.prototype[Symbol.iterator] = iterate;
+		}
+		assert.ok(visited < 5 * n, `${visited} Map entries visited for ${n} rows`);
+	});
+
 	it("an answer handed out never changes; an unchanged thing's answer keeps its object", async () => {
 		let entries = rows("kept");
 		let next: Answers | undefined;
@@ -649,7 +692,7 @@ describe("round 1's reproductions (Astra)", () => {
 		const old = attached.value;
 		const copy = structuredClone(old);
 		entries = rows("kept", "added");
-		await index.changed(touched("w"));
+		await changed(index, touched("w"));
 		assert.deepEqual(old, copy);
 		assert.notEqual(next, old);
 		assert.equal(next?.kept, old.kept);

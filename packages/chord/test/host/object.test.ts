@@ -51,6 +51,7 @@ import {
 	failLive,
 	failures,
 	fakeTimers,
+	flagLabel,
 	flushed,
 	holdNextCommit,
 	instancesOf,
@@ -2638,7 +2639,7 @@ describe("a version refused while its object lives (review round 3, Astra 1, 3 a
 			version: 1,
 			params: {},
 			hostAddress: () => Server(),
-			flags: { x: "x" },
+			flags: { x: flagLabel("x") },
 		});
 		const V2 = evolve(V1, (e) => e.addState("v", str()));
 		const host = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
@@ -2905,7 +2906,7 @@ describe("a holder refused a member (review round 2, Sol)", () => {
 			version: 1,
 			params: {},
 			hostAddress: Server,
-			flags: { write: "Write" },
+			flags: { write: flagLabel("write") },
 		});
 		const V2 = evolve(V1, (edit) => edit.addState("extra", str()));
 		const host = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
@@ -3229,7 +3230,7 @@ describe("refusals are static per provider and version (final review, Astra and 
 			params: { id: str() },
 			hostAddress: () => Server(),
 			events: { e: str() },
-			flags: { select: "Select" },
+			flags: { select: flagLabel("select") },
 		});
 		const V2 = evolve(V1, (e) => e.event("e", obj({ x: str() })));
 		const V3 = evolve(V2, (e) => e.addState("title", str()));

@@ -1,8 +1,9 @@
 // A removed thing's `delete` hook (clearing what its kind keeps in it), run by the things store and kept durable in
 // `things.pending`, written in the commit that removed the thing: a hook that fails is tried again, with backoff and
 // at every start, until it succeeds. A delete whose kind no loaded plugin contributes waits until one does; a kind
-// that contributes no delete hook needs none. (A new thing's `create` hook runs before the commit that makes it, item
-// 34: see `store.ts`; a commit that fails after it gets the kind's delete hook here, once, `undo`.)
+// that contributes no delete hook needs none. One thing's delete never runs twice at once: a store attempt that ends
+// waits for the hooks it started before the next one resumes. (A new thing's `create` hook runs before the commit that
+// makes it, item 34: see `store.ts`; what it prepared for an id that does not stand is cleared the same way, `undo`.)
 
 import {
 	type Ctx,
@@ -48,25 +49,31 @@ const LONGEST = 60_000;
 export class Lifecycle {
 	readonly #store: LifecycleStore;
 	readonly #live = Promise.withResolvers<Ctx<P3Principal>>();
-	/** The things whose delete is being tried, so one is never tried twice at once. */
-	readonly #retiring = new Set<string>();
+	/** The things whose delete is being tried, so one is never tried twice at once, and their tries. */
+	readonly #retiring = new Map<string, Promise<void>>();
 
 	constructor(store: LifecycleStore) {
 		this.#store = store;
 	}
 
-	/** The store's routine while it is live (its `ctx` the store's own): resumes what was pending, then waits. */
+	/**
+	 * The store's routine while it is live (its `ctx` the store's own): resumes what was pending, then waits; once the
+	 * attempt ends, it ends after the delete hooks it started (the next attempt's `resume` never overlaps them).
+	 */
 	async serve(ctx: Ctx<P3Principal>): Promise<void> {
 		this.#live.resolve(ctx);
 		await this.resume();
 		await untilAborted(ctx);
+		await Promise.all(this.#retiring.values());
 	}
 
 	/**
 	 * `thing`, removed in a commit that wrote its pending row: its kind's delete hook runs (again, until it succeeds).
 	 */
 	retire(thing: string, kind: string): void {
-		void this.#retire(thing, kind);
+		if (this.#retiring.has(thing)) return;
+		const trying = this.#retire(thing, kind).finally(() => this.#retiring.delete(thing));
+		this.#retiring.set(thing, trying);
 	}
 
 	/** Every pending delete, tried again: at the start, and whenever the kinds' hooks change (a missing plugin back). */
@@ -76,23 +83,28 @@ export class Lifecycle {
 	}
 
 	/**
-	 * The commit making `thing` failed after its kind's create hook prepared it: the kind's delete hook clears it, once,
-	 * under the store's own context (a failure is reported; nothing on disk names the thing).
+	 * Kind `kind`'s create hook prepared `thing`, which does not stand (its commit failed, or another seeded thing won):
+	 * a pending row, written under the store's own context (`ctx`, the caller's, may be cancelled), keeps the cleanup
+	 * due until the kind's delete hook ran, also when its plugin went meanwhile (it runs once one serves the kind
+	 * again). A storage failure is reported: what is left is the accepted crash case, content under an id nobody knows.
 	 */
-	async undo(thing: string, kind: string): Promise<void> {
-		const ctx = await this.#live.promise;
+	async undo(thing: string, kind: string, ctx: Ctx<P3Principal>): Promise<void> {
+		const own = await this.#live.promise;
 		try {
-			await this.#store.hooks().get(kind)?.value.delete?.(thing, ctx);
+			await this.#store.write(async (tx) => {
+				tx.put(this.#store.table, { thing, kind });
+				return null;
+			}, own);
 		} catch (error) {
-			reportError(`things: the delete hook of ${kind} for ${thing}, never made`, error, ctx);
+			reportError(`things: the cleanup of ${kind}'s ${thing}, never made, could not be kept`, error, ctx);
+			return;
 		}
+		this.retire(thing, kind);
 	}
 
 	async #retire(thing: string, kind: string): Promise<void> {
-		if (this.#retiring.has(thing)) return;
-		this.#retiring.add(thing);
+		const ctx = await this.#live.promise;
 		try {
-			const ctx = await this.#live.promise;
 			for (
 				let delay = FIRST_DELAY;
 				!(await this.#retireOnce(thing, kind, ctx));
@@ -100,10 +112,10 @@ export class Lifecycle {
 			) {
 				await sleep(delay, ctx);
 			}
-		} catch {
+		} catch (error) {
 			// The store's attempt ended (its context aborted the wait): the next one resumes from what is pending.
-		} finally {
-			this.#retiring.delete(thing);
+			if (ctx.abortSignal?.aborted === true) return;
+			reportError(`things: the delete of ${kind}'s ${thing}; tried again at the next start`, error, ctx);
 		}
 	}
 

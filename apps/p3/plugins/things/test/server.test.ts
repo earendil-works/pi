@@ -1,14 +1,17 @@
 // The things plugin's server facet alone (`testPlugin`: built as production builds it, beside the test kind's plugin):
 // nothing it asks for is unserved; Pi exists; a kind registers itself (`ThingKinds`, `ThingHooks`); a person made a
-// thing and put in holds it with the ticks its grants give, a session's worker as its agent, and nobody else.
+// thing and put in holds it with the ticks its grants give, a session's worker as its agent, and nobody else; every
+// kind's data reaches workers and pages (`ThingKindsView`).
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import { within } from "../../../test/until.ts";
 import { ThingsStore } from "../contract.server.ts";
-import { BOARD, Board } from "./kinds.ts";
+import { ThingKindsView } from "../kind.ts";
+import { BOARD, BOARD_PLUGIN, Board } from "./kinds.ts";
 
 let t: TestedPlugin<P3Principal>;
 
@@ -42,6 +45,7 @@ describe("the things plugin on the server", () => {
 			"draw",
 			"look",
 			"moderate",
+			"notes",
 			"read",
 			"write",
 		]);
@@ -49,5 +53,31 @@ describe("the things plugin on the server", () => {
 		await assert.rejects(granted({ kind: "person", id: ben, name: "Ben" }), /nothing given here/);
 		await assert.rejects(granted({ kind: "worker", session: "s2" }), /nothing given here/);
 		assert.deepEqual(t.unserved(), []);
+	});
+
+	it("gives every kind's data to a session's worker and a person, without its migration", async () => {
+		for (const principal of [
+			{ kind: "worker", session: "s1" },
+			{ kind: "person", id: "p", name: "P" },
+		] as const) {
+			const kinds = await t.root(
+				async (ctx) => {
+					const view = await ctx.get(ThingKindsView, {});
+					return until(view.kinds, (table) => table[Board.name] !== undefined, within("the board kind", ctx));
+				},
+				context,
+				{ principal },
+			);
+			assert.deepEqual(
+				kinds[Board.name]?.ticks.map(({ name }) => name),
+				Board.info.ticks.map(({ name }) => name),
+			);
+			assert.deepEqual(
+				[kinds[Board.name]?.ticksVersion, kinds[Board.name]?.defaultGrants],
+				[1, Board.info.defaultGrants],
+			);
+			// The plugin that contributes the kind: the picker groups kinds by it.
+			assert.equal(kinds[Board.name]?.plugin, BOARD_PLUGIN);
+		}
 	});
 });

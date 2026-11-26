@@ -143,6 +143,40 @@ describe("a thing held by a person or an agent", () => {
 		}
 	});
 
+	it("a thing of another kind is denied, whatever its ticks are named (an id held under the wrong contract)", async () => {
+		const label = (key: string) => ({ namespace: "test", key, params: [] });
+		const Other = defineThing("test.other", {
+			version: 1,
+			methods: { draw: method() },
+			ticks: { draw: { label: label("draw"), gives: ["draw"] } },
+			defaultGrants: { everyone: ["draw"] },
+		});
+		await w.close(context);
+		w = await world(context, [
+			{
+				name: "p3-test-other",
+				facet: defineFacet((host) => serveThing(host, Other, { implement: () => ({ draw: async () => null }) })),
+			},
+		]);
+		store = await w.host.get(ThingsStore, {}, context);
+		pi = (await store.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const ada = await person("Ada");
+		await put(pi, { kind: "person", person: ada.id });
+		// Ada gets Draw on a thing of `test.other`; held as a Board, Board's `draw` would be granted.
+		const other = await store.create({ kind: Other.name, name: "o", workspace: pi, by: BY }, context);
+		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
+		assert.deepEqual(gives.answers.value[other], { kind: Other.name, ticksVersion: 1, ticks: ["draw"] });
+		gives.release();
+		await as(ada, async (ctx) => {
+			// As its own kind it is admitted, with Draw.
+			assert.ok((await ctx.get(Other.contract, { workspace: pi, thing: other })).draw !== undefined);
+			await assert.rejects(
+				ctx.get(Board.contract, { workspace: pi, thing: other }, { readyTimeout: 500 }),
+				/nothing given here/,
+			);
+		});
+	});
+
 	it("the server is granted everything", async () => {
 		const thing = await board(pi);
 		const ref = await w.host.get(Board.contract, { workspace: pi, thing }, context);
@@ -195,7 +229,7 @@ describe("counted work", () => {
 		const held = [team, other, pi].map((workspace) =>
 			w.host.hold(Gives, { workspace, caller: `person:${ada.id}` }, context),
 		);
-		for (const ref of held) await until(ref.state, (state) => state.kind === "live", context);
+		for (const ref of held) await until(ref.state, (state) => state.kind === "live", within("live", context));
 		const [reads, computes] = [w.count("things.access.reads"), w.count("things.access.computes")];
 		await put(team, { kind: "person", person: ada.id });
 		assert.equal(w.count("things.access.reads") - reads, 5);
@@ -205,102 +239,6 @@ describe("counted work", () => {
 });
 
 describe("the kinds registry", () => {
-	/** The test kind's next version (contract version 2): `draw` renamed `paint`, its ticks at `ticksVersion`. */
-	const next = (ticksVersion: number, migrateTicks?: (ticks: readonly string[], from: number) => string[]) =>
-		defineThing(Board.name, {
-			version: 2,
-			methods: { read: method(), paint: method() },
-			ticks: {
-				read: { label: { namespace: "test", key: "read", params: [] }, gives: ["read"] },
-				paint: { label: { namespace: "test", key: "paint", params: [] }, gives: ["paint"] },
-			},
-			ticksVersion,
-			...(migrateTicks === undefined ? {} : { migrateTicks }),
-		});
-	const rename = (ticks: readonly string[]) => ticks.map((tick) => (tick === "draw" ? "paint" : tick));
-	const facetOf = (kind: ReturnType<typeof next>) =>
-		defineFacet((host) =>
-			serveThing(host, kind, { implement: () => ({ read: async () => null, paint: async () => null }) }),
-		);
-	/** The lines reported about grants that count for nothing. */
-	const refusals = (reported: { mock: { calls: { arguments: unknown[] }[] } }) =>
-		reported.mock.calls.filter((call) => String(call.arguments[0]).includes("counts for nothing")).length;
-
-	it("a new contract version leaves stored ticks as they are; a new ticks version migrates them on load (item 105)", async () => {
-		const ada = await person("Ada");
-		await put(pi, { kind: "person", person: ada.id });
-		const thing = await board(pi);
-		await grant(pi, thing, { kind: "person", person: ada.id }, ["draw", "read"]);
-		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
-		assert.deepEqual(gives.answers.value[thing], { ticks: ["draw", "read"] });
-		// Contract version 2, ticks version 1: the grants read as written; `draw` is no tick of it and is ignored.
-		await w.reload(BOARD_PLUGIN, context, facetOf(next(1)));
-		await until(gives.answers, (answers) => answers[thing]?.ticks.join() === "read", within("as written", context));
-		// Ticks version 2 with its migration: `draw` reads as `paint`.
-		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
-		await until(
-			gives.answers,
-			(answers) => answers[thing]?.ticks.includes("paint") === true,
-			within("the migration", context),
-		);
-		assert.deepEqual(gives.answers.value[thing], { ticks: ["paint", "read"] });
-		// A grant written now records ticks version 2.
-		await grant(pi, thing, { kind: "person", person: ada.id }, ["paint"]);
-		const mine = w.rows("grants").find(({ party, tick }) => String(party).includes(ada.id) && tick === "paint");
-		assert.equal(mine?.ticksVersion, 2);
-		gives.release();
-	});
-
-	for (const how of ["without a migration", "whose migration throws"] as const) {
-		it(`a ticks version ${how} refuses the older grants: they count for nothing, reported once (items 105, 33)`, async (t) => {
-			const ada = await person("Ada");
-			await put(pi, { kind: "person", person: ada.id });
-			const thing = await board(pi);
-			await grant(pi, thing, { kind: "person", person: ada.id }, ["draw"]);
-			const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
-			assert.deepEqual(gives.answers.value[thing], { ticks: ["draw", "read"] });
-			const reported = t.mock.method(console, "error", () => {});
-			const migrate =
-				how === "without a migration"
-					? undefined
-					: () => {
-							throw new Error("cannot migrate");
-						};
-			await w.reload(BOARD_PLUGIN, context, facetOf(next(2, migrate)));
-			// Her grant and the kind's defaults (all at ticks version 1) count for nothing: nothing is given.
-			await until(gives.answers, (answers) => answers[thing] === undefined, within("refused", context));
-			assert.equal(refusals(reported), 3);
-			// Read again after a commit touching the workspace: not reported again.
-			await put(pi, { kind: "agent", session: "s" });
-			assert.equal(refusals(reported), 3);
-			// A grant written now, at ticks version 2, counts.
-			await grant(pi, thing, { kind: "person", person: ada.id }, ["paint"]);
-			assert.deepEqual(gives.answers.value[thing], { ticks: ["paint"] });
-			assert.deepEqual(w.errors, []);
-			gives.release();
-		});
-	}
-
-	it("a grant of a newer ticks version (the plugin went back) counts for nothing, reported once", async (t) => {
-		const ada = await person("Ada");
-		await put(pi, { kind: "person", person: ada.id });
-		const thing = await board(pi);
-		await grant(pi, thing, { kind: "person", person: ada.id }, ["draw"]);
-		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
-		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
-		await until(gives.answers, (answers) => answers[thing]?.ticks.includes("paint") === true, context);
-		// Rewritten at ticks version 2: her row of `draw` removed, one of `paint` written.
-		const party = { kind: "person", person: ada.id } as const;
-		await store.setGrants({ source: BY, grants: [{ workspace: pi, thing, party, tick: "draw" }] }, context);
-		await grant(pi, thing, party, ["paint"]);
-		const reported = t.mock.method(console, "error", () => {});
-		await w.reload(BOARD_PLUGIN, context, BOARD.facet);
-		await until(gives.answers, (answers) => answers[thing]?.ticks.join() === "read", within("refused", context));
-		await grant(pi, thing, { kind: "person", person: "nobody" }, ["read"]);
-		assert.equal(refusals(reported), 1);
-		gives.release();
-	});
-
 	it("a kind's plugin removed: its ticks count for nothing; back again, they count", async () => {
 		const ada = await person("Ada");
 		await put(pi, { kind: "person", person: ada.id });
@@ -313,23 +251,7 @@ describe("the kinds registry", () => {
 		);
 		// Its rows' ticks are no kind's ticks now: they let nobody in.
 		await until(gives.answers, (answers) => answers[thing] === undefined, within("the removal", context));
-		await w.reload(
-			BOARD_PLUGIN,
-			context,
-			defineFacet((host) =>
-				serveThing(host, Board, {
-					implement: () => ({
-						title: { kind: "constant" } as never,
-						read: async () => "",
-						write: async () => null,
-						draw: async () => null,
-						moderate: async () => null,
-						bash: async () => null,
-						look: async () => null,
-					}),
-				}),
-			),
-		);
+		await w.reload(BOARD_PLUGIN, context, BOARD.facet);
 		await until(gives.answers, (answers) => answers[thing]?.ticks.length === 1, within("the return", context));
 		gives.release();
 	});
@@ -419,7 +341,7 @@ describe("caches and handles", () => {
 		w = await world(context, [{ name: "test-handles", facet: handles }]);
 		store = await w.host.get(ThingsStore, {}, context);
 		const watcher = await w.host.get(Watcher, {}, context);
-		await until(store.state, (state) => state.kind === "live", context);
+		await until(store.state, (state) => state.kind === "live", within("the store live", context));
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		const first = seen.length;
 		assert.ok(first >= 1);

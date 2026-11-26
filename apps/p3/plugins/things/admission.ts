@@ -30,8 +30,11 @@ type Decision = Admission<ThingAdmitted>;
 
 /**
  * The admission of `Kind`'s object: the server is granted everything; anyone else what their answer for the thing in
- * the workspace gives (through `Gives`, live), or denied with `notGiven` when they get nothing there. Each answer's
- * decision is made once and kept while the answer object lives (the index hands out a new one on every change).
+ * the workspace gives (through `Gives`, live), or denied with `notGiven` when they get nothing there or the thing is
+ * of another kind (an id held under the wrong contract). While the index still reads the thing's grants at another
+ * ticks version than `Kind`'s (a kind's plugin just reloaded), the names would mean something else: denied with
+ * `catchingUp` until its answer is read anew. Each answer's decision is made once and kept while the answer object
+ * lives (the index hands out a new one on every change).
  */
 export function admitThing(Kind: ThingKind) {
 	const decisions = new WeakMap<Answer, Decision>();
@@ -47,7 +50,8 @@ export function admitThing(Kind: ThingKind) {
 		const gives = self.get(Gives, { workspace, caller: callerKey(principal) }).answers;
 		return self.derive([gives], ([answers]) => {
 			const mine = answers[thing];
-			if (mine === undefined) return DENIED;
+			if (mine === undefined || mine.kind !== Kind.name) return DENIED;
+			if (mine.ticksVersion !== Kind.info.ticksVersion) return CATCHING_UP;
 			let decision = decisions.get(mine);
 			if (decision === undefined) {
 				decision = allow({ granted: expand(Kind, mine.ticks) as string[], caller });
@@ -60,6 +64,9 @@ export function admitThing(Kind: ThingKind) {
 
 /** The denial of a caller given nothing here: one value, so an unchanged denial is the same decision. */
 const DENIED: Decision = deny("things: nothing given here", messages.message("notGiven"));
+
+/** The denial while the index reads a reloaded kind's grants anew (see `admitThing`). */
+const CATCHING_UP: Decision = deny("things: the kind's grants are being read again", messages.message("catchingUp"));
 
 /** The server as a caller. */
 const SERVER: Caller = { kind: "server" };
@@ -91,7 +98,7 @@ export function serveGives(host: FacetHost<P3Principal>): void {
 					const attached = await handle!.attach(workspace, callerOfKey(caller), observer, ctx);
 					if (attached !== undefined) return attached;
 				}
-			}) as Watchable<Record<string, { ticks: string[] }>>,
+			}) as Watchable<Record<string, { kind: string; ticksVersion: number; ticks: string[] }>>,
 		};
 	});
 }

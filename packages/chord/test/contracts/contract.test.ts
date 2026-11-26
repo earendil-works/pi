@@ -34,7 +34,7 @@ import { bindProvider, checkParams } from "../../src/data/internal.ts";
 import { allow, createHost, defineFacet } from "../../src/host/index.ts";
 import { binaryCodec, type Codec, memoryLinkPair } from "../../src/link/index.ts";
 import { constant, type Watchable } from "../../src/state/index.ts";
-import { expectCollected, Server, type TestPrincipal } from "../support.ts";
+import { expectCollected, flagLabel, Server, type TestPrincipal } from "../support.ts";
 
 const Notes = remote("notes", {
 	version: 1,
@@ -294,7 +294,7 @@ describe("granted indexes in bound messages", () => {
 			params: { n: int() },
 			hostAddress: () => Server(),
 			state: { name: str() },
-			flags: { export: "Export" },
+			flags: { export: flagLabel("export") },
 		});
 		const lists: unknown[] = [];
 		const clearing: Codec = {

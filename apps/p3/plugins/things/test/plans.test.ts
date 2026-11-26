@@ -114,6 +114,11 @@ describe("the plans of the things store's queries", () => {
 			const T = "things.store:things";
 			const cases: readonly (readonly [string, readonly Read[], string | undefined])[] = [
 				["things.one", pages(things.things.one, { thing: ids[0]! }), undefined],
+				[
+					"things.ofMaker",
+					pages(things.things.ofMaker, { sourceKey: `person/${ann}`, kind: Board.name }),
+					`${T}.things:by_maker`,
+				],
 				["workspaces.one", pages(things.workspaces.one, { workspace: team }), undefined],
 				["workspaces.children", pages(things.workspaces.children, { parent: pi }), `${T}.workspaces:children`],
 				["links.here", pages(things.links.here, { workspace: team }), undefined],
@@ -121,10 +126,11 @@ describe("the plans of the things store's queries", () => {
 				["switches.here", pages(things.switches.here, { workspace: team }), undefined],
 				["grants.here", pages(things.grants.here, { workspace: team }), undefined],
 				["persons.one", pages(things.persons.one, { person: ann }), undefined],
+				["persons.ofIds", pages(things.persons.ofIds, { persons: [ann, "none"] }), undefined],
 				[
 					"groupMembers.ofPerson",
 					pages(things.groupMembers.ofPerson, { person: ann }),
-					`${T}.group_members:by_person`,
+					`${T}.group-members:by_person`,
 				],
 			];
 			for (const [name, read, expected] of cases) {
