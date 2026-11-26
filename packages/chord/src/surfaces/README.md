@@ -33,7 +33,8 @@ from `@earendil-works/chord`.
   object in the background (it starts, a page renders, offline too) and applies the set it shows when following
   begins as well as later ones, and a reconnect re-applies the newest
   set when a plugin kept its old code (the scripts object shows an unchanged set no second time); a set with another
-  `base` calls `outdated`. At each reconnect, beside the next attempt, it asks the server's base (`serverBase`): another
+  `base` calls `outdated`, except the server's set with no base (`""`) before its surface built, which a client
+  reconnecting to a restarted server may hold first: it is skipped, and the first set follows as a frame. At each reconnect, beside the next attempt, it asks the server's base (`serverBase`): another
   one stops the loop (ending an attempt made meanwhile), then calls `outdated` (a new link protocol comes with a new base
   bundle, Chord being in it). A static client
   (`follow: false`) neither follows the scripts object nor asks the server's base. `limits` sets the limits per part of

@@ -3,9 +3,9 @@
 // runs again), the admission (a person put in gets Add and Tick, the session's agent Tick only; each tick on its own;
 // `@open` alone, or a tick withheld, leaves a reader on the same hold, live; the owner gets both without being put in;
 // a checklist hidden in a workspace, or a caller removed, is denied), items keyed by the checklist (the same in every
-// workspace it is linked in), ticks live for every holder, refusals and the limit of 500 items. The cost of the one
-// shared read, whoever holds the checklist, is counted (`chord.query.runs`), and so is its release with the last
-// holder.
+// workspace it is linked in), ticks live for every holder, refusals and the limit of 500 items, an add committed after
+// the delete refused. The cost of the read, one however many hold the checklist (Chord shares identical reads), is
+// counted (`chord.query.runs`), and so is its release with the last holder.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -52,6 +52,22 @@ describe("the kind", () => {
 			await c.things.rename({ thing: unnamed, name: "Packing" }, context);
 			await until(list.name, (name) => name === "Packing", within("the new name", ctx));
 		});
+	});
+
+	it("refuses an add that commits after the delete: no item under a dead id (Opus, explainer check)", async () => {
+		const ann = await c.person("Ann");
+		const thing = await c.thingIn(c.pi);
+		const store = await c.host.get(ChecklistStore, {}, context);
+		const stored = async () => (await store.items.of.page({ checklist: thing }, 10, context)).items;
+		await c.holding(ann, c.pi, thing, async (list, ctx) => {
+			await list.addItem!({ text: "before" }, ctx);
+			// The last link goes while Ann still holds the checklist; her add, in flight, reaches the store after the
+			// delete hook's clear.
+			await c.things.unlink({ workspace: c.pi, thing }, context);
+			await eventually(stored, (rows) => rows.length === 0, 2000);
+			await refused(store.add({ checklist: thing, text: "in flight" }, context), "invalid", "gone");
+		});
+		assert.deepEqual(await stored(), []);
 	});
 
 	it("drops a checklist's items when it goes with its last link, and only its; its delete may run again", async () => {
@@ -214,6 +230,7 @@ describe("a checklist's items", () => {
 });
 
 describe("the cost of a checklist's read", () => {
+	// Each caller's object reads the items with its own live query; Chord shares identical reads (ERNDL-1176).
 	it("is one run of its items per tick, however many hold it", async () => {
 		const persons = [await c.person("Ann"), await c.person("Ben"), await c.person("Cy")];
 		const thing = await c.thingIn(c.pi);
@@ -239,17 +256,17 @@ describe("the cost of a checklist's read", () => {
 });
 
 describe("a released checklist", () => {
-	it("releases its shared read with its last holder: the next holder opens it again", async () => {
+	it("releases the shared read with its last holder: the next holder opens it again", async () => {
 		const [ann, ben] = [await c.person("Ann"), await c.person("Ben")];
 		const thing = await c.thingIn(c.pi);
 		const first = await c.holders([ann, ben], c.pi, thing);
-		// Another holder joins the open shared read: it reads nothing.
+		// Another holder joins the open read (Chord shares it): it reads nothing.
 		const joined = c.count("chord.query.runs");
 		const third = await c.holders([await c.person("Cy")], c.pi, thing);
 		assert.equal(c.count("chord.query.runs"), joined);
 		await third.release();
 		await first.release();
-		// With every holder gone the shared read closes (its object ends); a new holder opens it again.
+		// With every holder gone the read closes; a new holder opens it again.
 		await eventually(
 			async () => {
 				const before = c.count("chord.query.runs");

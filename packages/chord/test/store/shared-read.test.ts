@@ -13,7 +13,7 @@ import { OwnQuery } from "../../src/host/named-query.ts";
 import { eq } from "../../src/store/expression.ts";
 import { query } from "../../src/store/query.ts";
 import { Read } from "../../src/store/read.ts";
-import { SharedRead } from "../../src/store/shared-read.ts";
+import { type ReadSubscriber, SharedRead } from "../../src/store/shared-read.ts";
 import { defineTable } from "../../src/store/table.ts";
 import { changesOf, delivered, expectCollected, flushed, instancesOf, memoryStore, metered } from "../support.ts";
 
@@ -702,5 +702,43 @@ describe("arguments as keys (round 1, Astra 4)", () => {
 			await host.close(context);
 			await store.close(context);
 		}
+	});
+});
+
+describe("subscribers leaving while a frame is delivered (ERNDL-1176, step 4)", () => {
+	it("one leaving in another's call is not told; the last one leaving closes the read, which is collected", async () => {
+		const { notes, readers, reads, close } = await hosted();
+		const from = shared.length;
+		const [reader] = await readers("a", 1);
+		let window: SharedRead | undefined = madeSince(from)[0];
+		const told: string[] = [];
+		let leaving = false;
+		const second: ReadSubscriber = { adopted: () => void told.push("second") };
+		const first: ReadSubscriber = {
+			adopted: (read) => {
+				told.push("first");
+				if (!leaving) return;
+				// Both leave in the first one's call of the write's frame: the read has no subscriber left.
+				read.unsubscribe(second);
+				read.unsubscribe(first);
+			},
+		};
+		// Each takes the read's current value at once.
+		window!.subscribe(first, context);
+		window!.subscribe(second, context);
+		expect(told).toEqual(["first", "second"]);
+		told.length = 0;
+		leaving = true;
+		reader!.release();
+		await flushed();
+		// The reader left; the window stays open for the two, its count closed with the reader.
+		expect([window!.query.closed, reads()]).toEqual([false, 1]);
+		await notes.put({ id: 4, board: "a", text: "n4" }, context);
+		expect(told).toEqual(["first"]);
+		expect([window!.query.closed, reads()]).toEqual([true, 0]);
+		const collected = new WeakRef(window!);
+		window = undefined;
+		await expectCollected(collected);
+		await close();
 	});
 });

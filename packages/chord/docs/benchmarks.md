@@ -1504,6 +1504,33 @@ Each cell is before → after.
 
 | Case | before | after |
 | --- | --- | --- |
-| 4, a local object with a live query of its own (each object its own window) | 6.81 KiB | 6.89 KiB |
+| 4, a local object with a live query of its own (each object its own window) | 6.81 KiB | 6.93 KiB |
 | 9 (new), a local object whose live query every object of it shares | 6.81 KiB | 4.92 KiB |
 
+**Step 4 (2026-11-26): the commit index files only the keys that come or go, a window shift is found by identity.**
+Same bench and method, 3 rounds alternating 9a6cbcedc (before) and the change (after), load about 5. Each cell is
+before → after.
+
+| load | read | where | N | to the last delivery (ms) |
+| --- | --- | --- | --- | --- |
+| notes | live | local | 1 | 0.25 → 0.20 |
+| notes | live | remote | 1 / 100 | 0.35 → 0.29 / 1.54 → 1.48 |
+| checklist | live | local | 1 | 0.62 → 0.55 |
+| checklist | live | remote | 1 / 100 | 0.69 → 0.63 / 1.82 → 1.77 |
+| notes | list (not shared) | local / remote | 100 | 8.51 → 7.46 / 9.45 → 8.89 |
+| checklist | list (not shared) | local / remote | 100 | 54.03 → 46.25 / 54.64 → 45.12 |
+
+- **Commit index:** a run walks its new key set once and its old one once, adding and removing only the keys that came
+  or went. Several reads keeping one key are candidates in the order they came to keep it (the set's own order; a
+  read run again keeps its place), so a key kept again is not moved and candidates sort nothing. Two reads keeping
+  the same 500 keys, one edit: 6,000 changes of the sets of filed reads before, 0 after (`read-index.test.ts`). The
+  unshared lists, 100 reads keeping the same keys, gain the most.
+- **Window shift:** an array that moved by k items is found by identity before the permutation and region passes.
+  A 50-row window shifted by one: 8n + 10 items read before, 2n + 9 after (`delta-diff.test.ts`); diffs of a shifted
+  window of 50 rows about 10 → 3 µs, of 500 rows about 80 → 3 µs (an ad-hoc loop of 2,000 diffs on one CPU). The ops
+  are the region diff's when the rows that came are new, correct ones otherwise; a rotation, edited or not, is left to
+  the permutation and the region diff (an edited rotation of 500 rows of 1 KiB sends one row, not 499).
+- **The issue's test 9** asked for a shifted window diffed "in time independent of the window". What is built is
+  linear in the window with a small constant (2n + 9 identity reads): a correct diff must confirm that the other
+  n − k rows are the same objects, so this is the bound, and the carry-over entry is closed with it.
+- **Heap:** unchanged (heap per extra holder as before; hold-heap case 4 6.93 KiB, case 9 4.92 KiB).
