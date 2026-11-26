@@ -65,7 +65,8 @@ async function session(t: TestServer, folder: string, script: Step[]): Promise<s
 		{ app: "coding", title: "s", location: { environment: await thisDevice(owner, context), folder } },
 		context,
 	);
-	await scriptFaux(owner, id, script, context);
+	// The session's faux login, made in its workspace by the server, answering from `script`.
+	await scriptFaux(t.host, id, script, context);
 	return id;
 }
 

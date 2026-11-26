@@ -13,20 +13,18 @@ import {
 	type Host,
 	type P3Principal,
 	remote,
-	SESSION_THINGS_WRITES,
 	Session,
-	SessionInfo,
 	Sessions,
 	SessionsList,
-	SessionThings,
 	str,
 	ThisDevice,
 	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
 } from "@earendil-works/p3/v1";
+import { ensureLogin, setCredential } from "../plugins/providers/logins.ts";
 import { assertGranted } from "./granted.ts";
-import { FauxLogin, type Step } from "./plugins/faux-login/contract.ts";
+import { FAUX_PROVIDER, keyOf, type Step } from "./plugins/faux-login/contract.ts";
 
 /** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
 export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
@@ -38,33 +36,33 @@ export const FAUX = fileURLToPath(new URL("./plugins/faux-login/", import.meta.u
 const UNTIL_GATE = "until [ -e gate ]; do sleep 0.05; done; echo opened";
 
 /**
- * Scripts the Pi's faux login (`FAUX`, made by its plugin "in all my sessions") in `session`, which follows the owner:
- * the session's options for it, for everyone, once the session has it. As the owner of `client`.
+ * Scripts the faux login (`FAUX`) of `workspace` (a session's): makes it there the first time, as the server (its
+ * kind's default grants give the agents Use), and replaces its credential, the script, afterwards. `server` is the
+ * test server's host (`testServer`'s `host`); answers the login's thing id.
  */
 export async function scriptFaux(
-	client: Host<P3Principal>,
-	session: string,
+	server: Host<P3Principal>,
+	workspace: string,
 	script: readonly Step[],
 	context: Context,
-): Promise<void> {
-	await client.root(async (ctx) => {
-		const info = await ctx.get(SessionInfo, { session });
-		const things = await until(info.things, (now) => now.some(({ kind }) => kind === FauxLogin.name), ctx);
-		const faux = things.find(({ kind }) => kind === FauxLogin.name)!;
-		const options = { provider: "faux", script, tool: false };
-		const manage = await ctx.get(SessionThings, { session });
-		assertGranted(manage, ...SESSION_THINGS_WRITES);
-		await manage.setOptions({ thing: faux.thing, for: { kind: "everyone" }, options }, ctx);
+): Promise<string> {
+	const credential = { type: "api_key", key: keyOf(script) };
+	const by = { kind: "plugin", plugin: "p3-test-faux-login" } as const;
+	return server.root(async (ctx) => {
+		const thing = await ensureLogin({ name: "Faux", workspace, by, provider: FAUX_PROVIDER, credential }, ctx);
+		await setCredential(thing, { provider: FAUX_PROVIDER, credential }, ctx);
+		return thing;
 	}, context);
 }
 
 /**
- * A coding session titled `title` in `folder`, made by the owner of `client` (so it follows them: the Pi's coding
- * tools and faux login), whose agent works until `folder` has a file `gate` (`openGate`): the faux login answers every
+ * A coding session titled `title` in `folder`, made by the owner of `client`, with the faux login made in it by
+ * `server` (the test server's host; `scriptFaux`), whose agent works until `folder` has a file `gate` (`openGate`): the faux login answers every
  * request with a bash call waiting for it (a run cut off asks again and waits again) until the gate is open. Its row
  * says `working` because the harness says so, as for any run: a test never reports a state the harness owns.
  */
 export async function gatedSession(
+	server: Host<P3Principal>,
 	client: Host<P3Principal>,
 	title: string,
 	folder: string,
@@ -80,7 +78,7 @@ export async function gatedSession(
 		{ app: "coding", title, location: { environment: await thisDevice(client, context), folder } },
 		context,
 	);
-	await scriptFaux(client, session, script, context);
+	await scriptFaux(server, session, script, context);
 	return session;
 }
 
