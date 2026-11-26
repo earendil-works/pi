@@ -405,7 +405,11 @@ const KEPT = 16 * 1024;
 /** Writes messages, one at a time, into one growing buffer; each right-sized at its end. */
 class Writer {
 	#buffer = new Uint8Array(BASE);
+	/** The buffer it keeps across messages, grown up to `KEPT`; a message past it gets a buffer of its own. */
+	#kept = this.#buffer;
 	#length = 0;
+	/** The length of the last message past `KEPT`: the next one like it gets its buffer at once, no regrowth. */
+	#large = 0;
 
 	byte(byte: number): void {
 		this.#reserve(1);
@@ -615,32 +619,39 @@ class Writer {
 	}
 
 	/**
-	 * The message: a right-sized copy, or for a message that grew the buffer past `KEPT` and fills it but for a little
-	 * (less than 64 bytes or an eighth of the message) a view of it, handed off: a large message ends within its 4 KiB
-	 * of room and is not copied, and the writer takes a new buffer (`reset`).
+	 * The message: a right-sized copy out of the kept buffer; a message past it in a buffer of its own, handed off as a
+	 * view when it ends within `SPARE` of its end (a large message is not copied), else copied right-sized.
 	 */
 	finish(): Uint8Array {
 		const buffer = this.#buffer;
-		const spare = buffer.byteLength - this.#length;
-		if (buffer.byteLength <= KEPT || (spare >= 64 && spare * 8 > this.#length)) return buffer.slice(0, this.#length);
-		return buffer.subarray(0, this.#length);
+		const length = this.#length;
+		if (buffer === this.#kept) return buffer.slice(0, length);
+		this.#large = length;
+		return buffer.byteLength - length <= SPARE ? buffer.subarray(0, length) : buffer.slice(0, length);
 	}
 
-	/**
-	 * Ready for the next message: empty; a buffer grown past `KEPT` is not kept past its message (a base one again),
-	 * one up to it is: a stream of 5 KiB messages grows it once, not once per message.
-	 */
+	/** Ready for the next message: empty, in its kept buffer (a buffer of a message past it is that message's). */
 	reset(): void {
 		this.#length = 0;
-		if (this.#buffer.byteLength > KEPT) this.#buffer = new Uint8Array(BASE);
+		this.#buffer = this.#kept;
 	}
 
 	/** Grows the buffer to fit `bytes` more: doubled, or for a large chunk to its end plus room for the small fields after it. */
 	#reserve(bytes: number): void {
-		if (this.#length + bytes <= this.#buffer.byteLength) return;
-		const grown = new Uint8Array(Math.max(this.#buffer.byteLength * 2, this.#length + bytes + SPARE));
+		const needed = this.#length + bytes;
+		if (needed <= this.#buffer.byteLength) return;
+		const kept = this.#buffer === this.#kept;
+		let size = Math.max(this.#buffer.byteLength * 2, needed + SPARE);
+		if (kept && size > KEPT) {
+			// Leaving the kept buffer: room for the last message past it, or what this one needs, and for small fields
+			// after it: a stream of frames of one size allocates one buffer each and never regrows from the kept one (a
+			// smaller frame after a larger one is copied out of it once, then sets the size).
+			size = Math.max(needed, this.#large) + SPARE;
+		}
+		const grown = new Uint8Array(size);
 		grown.set(this.#buffer.subarray(0, this.#length));
 		this.#buffer = grown;
+		if (kept && size <= KEPT) this.#kept = grown;
 	}
 }
 
@@ -654,8 +665,8 @@ function varintBytes(value: number): number {
 /**
  * The writer of every encode, with its buffer (an encode runs no code that encodes): encoding into one buffer kept
  * across messages costs a message one right-sized copy, where a fresh zeroed buffer per message and its copy cost 2.5
- * KiB per held object (`hot-paths.ts`, case 1) and made an encode 3.5 times as slow. It keeps no message: `finish`
- * copies or hands its buffer off, and `reset` drops one grown past `KEPT` (16 KiB).
+ * KiB per held object (`hot-paths.ts`, case 1) and made an encode 3.5 times as slow. It keeps one buffer of at most
+ * `KEPT` (16 KiB) and no message: a message past it gets a buffer of its own, which `finish` hands off or copies.
  */
 const WRITER = new Writer();
 
