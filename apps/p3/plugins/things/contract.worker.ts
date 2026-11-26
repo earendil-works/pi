@@ -66,8 +66,8 @@ export type HarnessContribution = {
 
 /**
  * A kind's harness part: the kind, and what every thing of it the agent holds gives. `part` is called with the
- * held things in the session's order (nearest last), again whenever that list changes (a reference added, removed or
- * granted anew), and never with none. State a part reads at use (a setting in a prompt section) is read there, live.
+ * held things in a stable order (nearest last once the holding knows depth; open), again whenever that list changes
+ * (a reference added, removed or granted anew), and never with none. State a part reads at use (a setting in a prompt section) is read there, live.
  */
 export type ThingHarnessPart = {
 	readonly kind: ThingKind;
@@ -90,8 +90,8 @@ export function thingHarnessPart<C extends Contract>(
 }
 
 /**
- * What the session's worker holds as its agent, by kind name: one entry per thing available to the agent, in the
- * session's order (nearest last), only of kinds with a part in `ThingHarnessParts` here. A new map whenever a list
+ * What the session's worker holds as its agent, by kind name: one entry per thing available to the agent, in a stable
+ * order (nearest last once the holding knows depth; open), only of kinds with a part in `ThingHarnessParts` here. A new map whenever a list
  * changes; a kind whose list did not change keeps the same array, so the harness gives only kinds whose array is new
  * (a reference granted anew makes its kind's array new). One contributor, the holding (slice 5); read by the harness.
  */

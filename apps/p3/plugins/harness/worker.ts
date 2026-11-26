@@ -1,7 +1,7 @@
 // The harness plugin on a session's worker: Durable's harness on the session's store, which gets exactly what the
 // session's agent holds. One host-lifetime object opens it once the session's row arrived (`SessionFacts`), with a
 // registry, models and an environment kept in step with the things the worker holds as the agent (`HeldThings`) and
-// the kinds' parts (`ThingHarnessParts`, `agent-things.ts`); the environment at the session's location is a kind's (a
+// the kinds' parts (`ThingHarnessParts`, `agent-parts.ts`); the environment at the session's location is a kind's (a
 // machine's), and until a kind gives environments, the environments plugin's. It resumes the work left only for a session that is not archived. It
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
@@ -38,7 +38,7 @@ import {
 } from "@earendil-works/p3/v1/worker";
 import { type HarnessLocation, type Held, HeldThings, ThingHarnessParts } from "../things/contract.worker.ts";
 import { activityOf, serialized } from "./activity.ts";
-import { AgentThings, type Parts } from "./agent-things.ts";
+import { AgentParts, type Parts } from "./agent-parts.ts";
 import { SUBAGENT_TASKS, subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
@@ -133,7 +133,7 @@ type Sources = {
 };
 
 /** The session's agent: what it holds applied, then Durable opened over it (paused). */
-async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentThings }> {
+async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentParts }> {
 	const { runtime, facts, parts, held, environments } = sources;
 	const { session, host: worker, store } = runtime;
 	// Every conversation works at the session's location until slice 5 gives each its own.
@@ -141,7 +141,7 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 		const row = facts.session.value;
 		return row === null ? undefined : { machine: row.location.environment, folder: row.location.folder };
 	};
-	const things = new AgentThings({
+	const things = new AgentParts({
 		session,
 		// The session's workspace has the session's id (slice 5); the parts take it from here, never assume it.
 		workspace: session,
@@ -177,7 +177,7 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
  * model still offered is kept, and without a login nothing changes (its run fails `no_model`). A placeholder for
  * ERNDL-705's choice of models.
  */
-async function offerModel(conversation: Conversation, things: AgentThings, context: Context): Promise<void> {
+async function offerModel(conversation: Conversation, things: AgentParts, context: Context): Promise<void> {
 	const model = (await conversation.agent(context)).model;
 	if (model !== undefined && things.models.getModel(model.provider, model.modelId) !== undefined) return;
 	const first = things.firstModel();
