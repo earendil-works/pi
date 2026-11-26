@@ -114,18 +114,14 @@ type HoldState =
 type Bound = Extract<HoldState, { readonly kind: "bound" }>;
 
 /**
- * What calls need of a binding: the members granted at the hold's version and the names the wire's indexes point into.
- * Only contract data: kept after an unbind, it keeps no instance and no source.
- */
-type BoundNames = { readonly members: MembersData; readonly names: MemberNames };
-
-/**
- * What a call is decoded by: the names of a binding (while the hold rebinds after a `loading` its object's gate takes
- * the call by name, design §22), or the failure its consumer was told (the call is refused with it: sent before the
- * consumer learnt of the failure, its indexes are of a binding that is gone).
+ * What a call is decoded by: the names of a binding, the members granted at the hold's version and the names the
+ * wire's indexes point into (while the hold rebinds after a `loading` its object's gate takes the call by name, design
+ * §22; only contract data: kept after an unbind, it keeps no instance and no source), or the failure its consumer was
+ * told (the call is refused with it: sent before the consumer learnt of the failure, its indexes are of a binding that
+ * is gone).
  */
 type Decoding =
-	| { readonly kind: "names"; readonly bound: BoundNames }
+	| { readonly kind: "names"; readonly members: MembersData; readonly names: MemberNames }
 	| { readonly kind: "refused"; readonly error: ChordError };
 
 /**
@@ -180,8 +176,11 @@ export class Hold implements Holder, UnboundRequest {
 	#fences: Fence[] | undefined;
 	/** The members the current batch changed, with their ops, in order. */
 	#changes: readonly (readonly [Followed, readonly Op[]])[] = NO_ITEMS;
-	/** The members that failed since the last message that carried this hold. */
-	#failed: FailedMember[] = [];
+	/**
+	 * The members that failed since the last message that carried this hold: the shared empty list while none did (most
+	 * holds never have one), built by `appended`.
+	 */
+	#failed: readonly FailedMember[] = NO_ITEMS;
 	/** The members whose document was retired since the last message that carried this hold (ORed while it waits). */
 	#retired: readonly number[] = NO_RETIRED;
 	#touched = false;
@@ -382,7 +381,7 @@ export class Hold implements Holder, UnboundRequest {
 		const failure = { member: followed.index, error: wireError(error) };
 		const at = this.#failed.findIndex(({ member }) => member === followed.index);
 		// A new list when one is replaced (rare): a list handed to an entry is never written to.
-		if (at === -1) this.#failed.push(failure);
+		if (at === -1) this.#failed = appended(this.#failed, failure);
 		else this.#failed = this.#failed.map((pending, i) => (i === at ? failure : pending));
 	}
 
@@ -404,7 +403,7 @@ export class Hold implements Holder, UnboundRequest {
 		const state = this.#state;
 		if (state.kind === "bound") this.#unfollow(state);
 		this.#changes = NO_ITEMS;
-		this.#failed = [];
+		this.#failed = NO_ITEMS;
 		this.#retired = NO_RETIRED;
 		this.#touched = false;
 		if (cause !== undefined) {
@@ -478,7 +477,7 @@ export class Hold implements Holder, UnboundRequest {
 	 */
 	method(index: number): { readonly name: string; readonly resultBytes: boolean } {
 		const decoding = this.#decoding();
-		const bound = decoding?.kind === "names" ? decoding.bound : undefined;
+		const bound = decoding?.kind === "names" ? decoding : undefined;
 		const name = bound?.names.methods[index];
 		if (name === undefined) throw new Error(`hold ${this.id}: no method ${index}`);
 		return { name, resultBytes: bound!.members.methods.get(name)!.result.bytes };
@@ -526,7 +525,7 @@ export class Hold implements Holder, UnboundRequest {
 		// A binding without event members taps nothing (no cost per binding for contracts without events).
 		if (state.names.events.length > 0) this.#tapEvents(state, instance, version);
 		this.#changes = NO_ITEMS;
-		this.#failed = [];
+		this.#failed = NO_ITEMS;
 		this.#retired = NO_RETIRED;
 		chordMetrics(context.telemetry.metrics).counter("chord.link.encodes").add(1);
 		const granted = grantIndexes(versionAt(contract, version), instance.granted);
@@ -619,7 +618,7 @@ export class Hold implements Holder, UnboundRequest {
 			this.#fences.push({ until: this.#provider.nextOwn, before: latest });
 			this.#provider.fenced(this);
 		}
-		this.#latest = { kind: "names", bound: { members, names } };
+		this.#latest = { kind: "names", members, names };
 		this.#state = state;
 		return state;
 	}
@@ -671,7 +670,7 @@ export class Hold implements Holder, UnboundRequest {
 		if (state.kind === "released" || this.#object === undefined) return;
 		if (state.kind === "bound") this.#unfollow(state);
 		this.#changes = NO_ITEMS;
-		this.#failed = [];
+		this.#failed = NO_ITEMS;
 		this.#retired = NO_RETIRED;
 		this.#touched = false;
 		this.#provider.unbound(this, removal.cause.error);
@@ -727,7 +726,7 @@ export class Hold implements Holder, UnboundRequest {
 	#entry(members: StateEntry["members"], context: Context): StateEntry {
 		const failed = this.#failed;
 		let retired = this.#retired;
-		this.#failed = [];
+		this.#failed = NO_ITEMS;
 		this.#retired = NO_RETIRED;
 		if (retired.length > 0 && failed.length > 0) {
 			// A failed member's retirement travels with its next value, never with its failure.
