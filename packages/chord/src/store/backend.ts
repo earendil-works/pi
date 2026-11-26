@@ -13,7 +13,11 @@ export class Backend {
 	}
 }
 
-/** A backend over a SQLite database (`openNodeSqliteDatabase(path)`, a Durable Object's storage, `:memory:` in tests). */
+/**
+ * A backend over a SQLite database (`openNodeSqliteDatabase(path)`, a Durable Object's storage, `:memory:` in tests).
+ * The rows its `get` and `all` return are plain data: the store reads their columns, perhaps more than once, and the
+ * database does not change a row after returning it.
+ */
 export function sqliteBackend(db: SqliteDatabase): Backend {
 	return new Backend(db);
 }
