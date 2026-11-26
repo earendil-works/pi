@@ -1,6 +1,7 @@
 // Data for apps: Chord's errors (with `invalid` and `forbidden`, the two a plugin throws), plugin errors, principals,
 // and how a plugin's open reports a broken configuration.
 
+export { type MessageData, type MessageParam, MessageSchema } from "../contracts/message.ts";
 export {
 	ChordError,
 	type ChordErrorCode,
@@ -11,5 +12,4 @@ export {
 	PluginError,
 } from "./errors.ts";
 export { broken, type FailureCause } from "./failure.ts";
-export { type MessageData, type MessageParam, MessageSchema } from "./message.ts";
 export type { Principal, PrincipalKeyFunction } from "./principal.ts";

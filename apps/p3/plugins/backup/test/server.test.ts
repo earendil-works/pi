@@ -13,6 +13,8 @@ import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } 
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
+import appsServer from "../../apps/server.ts";
+import codingServer from "../../coding/server.ts";
 import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
 import sessionsServer from "../../sessions/server.ts";
@@ -25,8 +27,10 @@ const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
 const WORKER: P3Principal = { kind: "worker", session: "s1" };
 
 /**
- * The plugin's server facet, with the people plugin (who the owner is), the sessions plugin (which sessions exist) and
- * the environments plugin (where a new session works); `test` gets the owner and the ids of two new sessions.
+ * The plugin's server facet, with the people plugin (who the owner is), the sessions plugin (which sessions exist),
+ * the environments plugin (where a new session works), and the apps plugin's `Apps` registry with the coding app in it
+ * (the sessions plugin's store makes a session only of an app `Apps` has); `test` gets the owner and the ids of two
+ * new sessions.
  */
 async function withServerFacet(
 	test: (t: Awaited<ReturnType<typeof testPlugin>>, owner: P3Principal, sessions: [string, string]) => Promise<void>,
@@ -35,6 +39,8 @@ async function withServerFacet(
 		{ name: "@earendil-works/p3-people", facet: peopleServer },
 		{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+		{ name: "@earendil-works/p3-apps", facet: appsServer },
+		{ name: "@earendil-works/p3-coding", facet: codingServer },
 	];
 	const t = await testPlugin(PLUGIN, { kind: "server", stubs }, context);
 	try {

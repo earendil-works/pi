@@ -1,7 +1,8 @@
 // p3's API v1 for web facets (`@earendil-works/p3/v1/web`): Chord's React bindings, the page's one slot (`PageRoot`,
-// the chrome plugin's), the connection state, views as typed tokens (`defineView`, `Views`, `useView`), the page's
-// route (`useRoute`, `navigate`, `redirect`), and the icons p3 offers. The built-in plugins' web contracts p3 promises
-// are re-exported here (the layout plugin's pane layout among them). Browser only.
+// the chrome plugin's), the connection state, the components plugins offer each other as typed tokens
+// (`defineComponent`, `Components`, `useComponent`), the page's route (`useRoute`, `navigate`, `redirect`), and the
+// icons p3 offers. The built-in plugins' web contracts p3 promises are re-exported here (the layout plugin's pane
+// layout among them). Browser only.
 
 /// <reference path="./css.d.ts" />
 
@@ -75,47 +76,52 @@ export const PageRoot = defineRegistry<ComponentType, ComponentType | undefined>
 /** The page's connection to its server, as the base follows it: connecting, connected, or waiting to retry. */
 export const PageConnection = defineRegistry<ConnectionState, ConnectionState>("p3.page-connection", { version: 1 });
 
-/** A view: a component a plugin offers for others to place, named once, with the props it takes. */
-export type ViewToken<Props> = { readonly name: string; readonly "~props"?: (props: Props) => Props };
+/** A component a plugin offers others to place, named once, with the props it takes (`defineComponent`). */
+export type ComponentToken<Props> = { readonly name: string; readonly "~props"?: (props: Props) => Props };
 
-/** Defines a view (in its plugin's `contract.web.ts`): its name and, by type, its props. */
-export function defineView<Props>(name: string): ViewToken<Props> {
+/** Defines a component (in its plugin's `contract.web.ts`): its name and, by type, its props. */
+export function defineComponent<Props>(name: string): ComponentToken<Props> {
 	return { name };
 }
 
-/** One view and its component, as `Views` takes it (`viewOf` makes one with the types checked). */
-export type ViewEntry = { readonly view: ViewToken<never>; readonly component: ComponentType<never> };
+/** One component and its implementation, as `Components` takes it (`componentOf` makes one with the types checked). */
+export type ComponentEntry = { readonly token: ComponentToken<never>; readonly component: ComponentType<never> };
 
-/** `component` as the view `view`: the props are the view's. */
-export function viewOf<Props>(view: ViewToken<Props>, component: ComponentType<Props>): ViewEntry {
-	// A view's props are its token's by construction; the registry keeps them erased.
-	return { view, component } as unknown as ViewEntry;
+/** `component` as the component `token`: the props are the token's. */
+export function componentOf<Props>(token: ComponentToken<Props>, component: ComponentType<Props>): ComponentEntry {
+	// A component's props are its token's by construction; the registry keeps them erased.
+	return { token, component } as unknown as ComponentEntry;
 }
 
-/** The views every plugin offers: a plugin contributes its list; a view's name taken twice keeps the first by plugin name. */
-export const Views = defineRegistry<readonly ViewEntry[], ReadonlyMap<string, TableItem<ViewEntry>>>("p3.views", {
-	version: 1,
-});
+/**
+ * The components every plugin offers: a plugin contributes its list; a name taken twice keeps the first by plugin
+ * name.
+ */
+export const Components = defineRegistry<readonly ComponentEntry[], ReadonlyMap<string, TableItem<ComponentEntry>>>(
+	"p3.components",
+	{ version: 1 },
+);
 
 /**
- * The component of `view`, or `undefined` while no plugin offers it, and for a token the running page does not have
- * (reported once per mount): a plugin built against a newer API than this page's base, whose token is undefined here.
+ * The implementation of `token`, or `undefined` while no plugin offers it, and for a token the running page does not
+ * have (reported once per mount): a plugin built against a newer API than this page's base, whose token is undefined
+ * here.
  */
-export function useView<Props>(view: ViewToken<Props>): ComponentType<Props> | undefined {
-	const views = useRegistry(Views);
+export function useComponent<Props>(token: ComponentToken<Props>): ComponentType<Props> | undefined {
+	const components = useRegistry(Components);
 	// Trust boundary: version skew between a plugin and the page's base, which the types cannot see.
-	const missing = (view as ViewToken<Props> | undefined) === undefined;
+	const missing = (token as ComponentToken<Props> | undefined) === undefined;
 	useEffect(() => {
 		if (missing)
 			reportError(
-				"p3 web: a view this page's base does not have (restart the server)",
+				"p3 web: a component this page's base does not have (restart the server)",
 				undefined,
 				BACKGROUND_CONTEXT,
 			);
 	}, [missing]);
 	if (missing) return undefined;
-	// The entry was registered for this token's name with its props (`viewOf`).
-	return views?.get(view.name)?.value.component as ComponentType<Props> | undefined;
+	// The entry was registered for this token's name with its props (`componentOf`).
+	return components?.get(token.name)?.value.component as ComponentType<Props> | undefined;
 }
 
 /** Where the page is: the app (the first segment of the path) and the rest of the path, split by `/`. */

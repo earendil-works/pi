@@ -1,10 +1,9 @@
-// The canvas plugin on the server (`testPlugin`, beside the real sessions, people, environments, apps, coding and
-// sign-in facets): the kind (content, which a writer makes in a session; its shapes dropped when it goes), the
-// admission (a viewer: who reads, or writes with options that say no draw; a drawer; the agent by its own options; a
-// removed member denied live; nobody outside), shapes keyed by the canvas's id, so the same canvas linked into two
-// sessions shows the same drawing while who may draw stays each session's, authors as `Me` says, removing and
-// clearing, the list with `more`, and motion as events: everyone on the canvas in the session sees a pointer move
-// with the shape being drawn, a viewer's pointer without a draft, nothing of another canvas or another session.
+// The canvas plugin on the server (`testPlugin`, beside the things plugin's server facet): the kind (registered with
+// the things plugin, made by anyone; its shapes dropped when the canvas goes with its last link), the one admission (a
+// person put in and the session's agent get Draw by the kind's default grants; Moderate is given to people only; a
+// changed grant rebinds a held canvas live; nobody else is admitted), shapes keyed by the canvas's id (the same
+// drawing in every workspace it is linked in), authors as the admission says, removing one's own shapes and, with
+// Moderate, anyone's and clearing; the list with `more`; and motion as events, per workspace.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -13,31 +12,17 @@ import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
 	isChordError,
-	type Member,
-	type OptionsFor,
 	type P3Principal,
 	type Reference,
-	SESSION_THINGS_WRITES,
-	SessionThings,
-	THIS_DEVICE,
 	until,
-	type With,
 } from "@earendil-works/p3/v1";
-import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import { assertGranted } from "../../../test/granted.ts";
 import { eventually, within } from "../../../test/until.ts";
-import appsServer from "../../apps/server.ts";
-import codingServer from "../../coding/server.ts";
-import environmentsServer from "../../environments/server.ts";
-import peopleServer from "../../people/server.ts";
-import sessionsServer from "../../sessions/server.ts";
-import signInServer from "../../sign-in/server.ts";
-import { CANVAS_DRAWS, Canvas, CanvasKind, type Motion, type Shape } from "../contract.ts";
+import { ThingsStore } from "../../things/contract.server.ts";
+import { OPEN, type Party, type Source } from "../../things/contract.ts";
+import thingsServer from "../../things/server.ts";
+import { Canvas, CanvasKind, type Motion, type Shape } from "../contract.ts";
 import { CanvasStore } from "../store.ts";
-
-/** Where the tests' sessions work. */
-const HERE = { environment: THIS_DEVICE, folder: "/tmp/p3-canvas-test" };
 
 /** A person's principal. */
 type Person = Extract<P3Principal, { kind: "person" }>;
@@ -45,171 +30,103 @@ type Person = Extract<P3Principal, { kind: "person" }>;
 /** `Canvas` as a test holds it. */
 type CanvasRef = Reference<typeof Canvas>;
 
-/** `SessionThings`' writer, as a test holds it. */
-type Writer = With<Reference<typeof SessionThings>, (typeof SESSION_THINGS_WRITES)[number]>;
-
 /** A short red stroke. */
 const STROKE: Shape = { kind: "line", color: "#cf222e", width: 6, points: [10, 10, 20, 20, 30, 10] };
 
 /** A blue box. */
 const BOX: Shape = { kind: "rect", color: "#0969da", x: 100, y: 100, w: 50, h: 40, fill: false };
 
-let t: TestedPlugin<P3Principal>;
+/** The canvas plugin: the source of its kind's default grants. */
+const CANVAS_PLUGIN: Source = { kind: "plugin", plugin: "@earendil-works/p3-canvas" };
 
-/** The owner's person in this test's Pi. */
-let OWNER: Person;
+/** Who sets things up in the tests. */
+const BY: Source = { kind: "plugin", plugin: "test" };
+
+let t: TestedPlugin<P3Principal>;
+let things: Reference<typeof ThingsStore>;
+let pi: string;
 
 beforeEach(async () => {
 	t = await testPlugin(
 		fileURLToPath(new URL("../", import.meta.url)),
-		{
-			kind: "server",
-			stubs: [
-				{ name: "@earendil-works/p3-apps", facet: appsServer },
-				{ name: "@earendil-works/p3-coding", facet: codingServer },
-				{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-				{ name: "@earendil-works/p3-people", facet: peopleServer },
-				{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
-				{ name: "@earendil-works/p3-sign-in", facet: signInServer },
-			],
-		},
+		{ kind: "server", stubs: [{ name: "@earendil-works/p3-things", facet: thingsServer }] },
 		context,
 	);
-	const [owner] = await t.root(
-		async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
-		context,
-	);
-	OWNER = { kind: "person", id: owner!.id, name: owner!.name };
+	things = await t.host.get(ThingsStore, {}, context);
+	pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 });
 
 afterEach(() => t.close(context));
 
-/** Makes person `name`; their principal. */
-async function person(name: string): Promise<Person> {
-	const id = await t.root(async (ctx) => (await ctx.get(PeopleStore, {})).createPerson({ name }, ctx), context);
+/** Makes person `name`, put into `workspace`; their principal. */
+async function person(name: string, workspace = pi): Promise<Person> {
+	const id = await things.createPerson({ name, madeBy: BY }, context);
+	await things.putParty({ workspace, party: { kind: "person", person: id }, source: BY }, context);
 	return { kind: "person", id, name };
 }
 
-/** Makes a coding session with `members`, following nobody; its id. */
-function session(members: Member[]): Promise<string> {
-	return t.root(
-		async (ctx) =>
-			(await ctx.get(SessionsStore, {})).create({ app: "coding", location: HERE, members, follows: null }, ctx),
-		context,
-	);
+/** A workspace under Pi with session `session`'s agent put in (as a session's will be). */
+async function workspace(session: string): Promise<string> {
+	const id = await things.createWorkspace({ kind: "things.workspace", name: session, parent: pi, by: BY }, context);
+	await things.putParty({ workspace: id, party: { kind: "agent", session }, source: BY }, context);
+	return id;
 }
 
-/** Runs `fn` with `principal`'s `SessionThings` writer of session `id`. */
-function managing<T>(principal: P3Principal, id: string, fn: (things: Writer, ctx: Ctx<P3Principal>) => Promise<T>) {
+/** Makes a canvas named `name` in `where`, by the test (no maker's grant). */
+const canvasIn = (where: string, name = "") =>
+	things.create({ kind: CanvasKind.name, name, workspace: where, by: BY }, context);
+
+/** Gives `party` the ticks `ticks` on `thing` where it is linked, `where`. */
+const grant = (where: string, thing: string, party: Party, ticks: string[]) =>
+	things.setGrants(
+		{ source: BY, grants: ticks.map((tick) => ({ workspace: where, thing, party, tick, gives: true })) },
+		context,
+	);
+
+/** Runs `fn` with `principal`'s canvas `thing` held in `where`. */
+function holding<T>(
+	principal: P3Principal,
+	where: string,
+	thing: string,
+	fn: (canvas: CanvasRef, ctx: Ctx<P3Principal>) => Promise<T>,
+) {
 	return t.root(
-		async (ctx) => {
-			const things = await ctx.get(SessionThings, { session: id });
-			assertGranted(things, ...SESSION_THINGS_WRITES);
-			return fn(things, ctx);
-		},
+		async (ctx) => fn(await ctx.get(Canvas, { workspace: where, thing }, { readyTimeout: 500 }), ctx),
 		context,
 		{ principal },
 	);
 }
 
-/** `principal` makes a canvas (named `name`) in session `id`; its id. */
-function canvasIn(principal: P3Principal, id: string, name?: string): Promise<string> {
-	return managing(principal, id, (things, ctx) =>
-		things.create({ kind: CanvasKind.name, ...(name === undefined ? {} : { name }) }, ctx),
-	);
-}
-
-/** A session with Ann (writes), Ben (reads) and Cleo (writes), and two canvases the owner made there. */
-async function setup() {
-	const ann = await person("Ann");
-	const ben = await person("Ben");
-	const cleo = await person("Cleo");
-	const id = await session([
-		{ kind: "person", id: ann.id, access: "write" },
-		{ kind: "person", id: ben.id, access: "read" },
-		{ kind: "person", id: cleo.id, access: "write" },
-	]);
-	return { ann, ben, cleo, id, board: await canvasIn(OWNER, id, "Plan"), other: await canvasIn(OWNER, id) };
-}
-
-/** Sets the options of canvas `thing` in session `id` for `forWhom`, as the owner. */
-function setOptions(id: string, thing: string, forWhom: OptionsFor, draw: boolean): Promise<null> {
-	return managing(OWNER, id, (things, ctx) => things.setOptions({ thing, for: forWhom, options: { draw } }, ctx));
-}
-
-/** Runs `fn` with `principal`'s `Canvas` of canvas `thing` in session `id`. */
-function holding<T>(
-	principal: P3Principal,
-	id: string,
-	thing: string,
-	fn: (canvas: CanvasRef, ctx: Ctx<P3Principal>) => Promise<T>,
-) {
-	return t.root(async (ctx) => fn(await ctx.get(Canvas, { session: id, thing }), ctx), context, { principal });
-}
-
-/** The drawer of `canvas`, failing the test for a viewer. */
-function drawerOf(canvas: CanvasRef) {
-	assertGranted(canvas, ...CANVAS_DRAWS);
-	return canvas;
-}
-
-/** `canvas`' variant now (a reference's variant changes with its admission). */
-function variantOf(canvas: CanvasRef): string {
-	return canvas.granted.has("add") ? "drawer" : "viewer";
-}
-
-/** The variant `principal` gets of canvas `thing` in session `id`. */
-function variant(principal: P3Principal, id: string, thing: string): Promise<string> {
-	return holding(principal, id, thing, async (canvas) => (canvas.granted.has("add") ? "drawer" : "viewer"));
-}
-
-/** The shapes of canvas `thing` as `principal` sees them in session `id`. */
-function shapesOf(principal: P3Principal, id: string, thing: string) {
-	return holding(principal, id, thing, async (canvas) => canvas.shapes.value.rows);
-}
+/** What `principal` is granted on canvas `thing` in `where`. */
+const grantedTo = (principal: P3Principal, where: string, thing: string) =>
+	holding(principal, where, thing, async (canvas) => [...canvas.granted].sort());
 
 /** Whether `promise` rejects with a ChordError of `code`. */
 async function refused(promise: Promise<unknown>, code = "forbidden"): Promise<void> {
 	await assert.rejects(promise, (error: unknown) => isChordError(error) && error.code === code);
 }
 
-/** Whether `principal` is refused canvas `thing` in session `id`. */
-function denied(principal: P3Principal, id: string, thing: string): Promise<void> {
-	return refused(
-		t.root(async (ctx) => ctx.get(Canvas, { session: id, thing }, { readyTimeout: 500 }), context, { principal }),
-	);
-}
-
 describe("the kind", () => {
-	it("is content: a writer makes a canvas in a session, named by its thing, else Canvas", async () => {
+	it("is registered with the things plugin; a canvas is named by its thing, else Canvas, and follows a rename", async () => {
 		const ann = await person("Ann");
-		const id = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const kinds = await managing(ann, id, async (things) => things.kinds.value);
-		assert.deepEqual(
-			kinds.filter(({ kind }) => kind === CanvasKind.name),
-			[{ kind: CanvasKind.name, title: "Canvas" }],
-		);
-		const named = await canvasIn(ann, id, "Sketches");
-		const unnamed = await canvasIn(ann, id);
-		assert.equal(await holding(ann, id, named, async (canvas) => canvas.name.value), "Sketches");
-		assert.equal(await holding(ann, id, unnamed, async (canvas) => canvas.name.value), "Canvas");
-		// Renamed, the same everywhere: the view follows.
-		await holding(ann, id, unnamed, async (canvas, ctx) => {
-			await managing(ann, id, (things, inner) => things.rename({ thing: unnamed, name: "Ideas" }, inner));
+		const named = await canvasIn(pi, "Sketches");
+		const unnamed = await canvasIn(pi);
+		assert.equal(await holding(ann, pi, named, async (canvas) => canvas.name.value), "Sketches");
+		await holding(ann, pi, unnamed, async (canvas, ctx) => {
+			assert.equal(canvas.name.value, "Canvas");
+			await things.rename({ thing: unnamed, name: "Ideas" }, context);
 			await until(canvas.name, (name) => name === "Ideas", within("the new name", ctx));
 		});
 	});
 
-	it("drops a canvas's shapes when the canvas goes with its last link, and only its", async () => {
-		const { id, board, other } = await setup();
-		await holding(OWNER, id, board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [STROKE, BOX] }, ctx));
-		await holding(OWNER, id, other, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
-		await managing(OWNER, id, (things, ctx) => things.remove({ thing: board }, ctx));
-		const stored = (canvas: string) =>
-			t.root(
-				async (ctx) => (await (await ctx.get(CanvasStore, {})).shapes.of.page({ canvas }, 10, ctx)).items,
-				context,
-			);
+	it("drops a canvas's shapes when it goes with its last link, and only its", async () => {
+		const ann = await person("Ann");
+		const [board, other] = [await canvasIn(pi), await canvasIn(pi)];
+		await holding(ann, pi, board, (canvas, ctx) => canvas.add!({ shapes: [STROKE, BOX] }, ctx));
+		await holding(ann, pi, other, (canvas, ctx) => canvas.add!({ shapes: [BOX] }, ctx));
+		await things.unlink({ workspace: pi, thing: board }, context);
+		const stored = async (canvas: string) =>
+			(await (await t.host.get(CanvasStore, {}, context)).shapes.of.page({ canvas }, 10, context)).items;
 		await eventually(
 			() => stored(board),
 			(rows) => rows.length === 0,
@@ -220,160 +137,172 @@ describe("the kind", () => {
 });
 
 describe("who may do what on a canvas", () => {
-	it("gives a reader and a writer whose options say no draw the viewer, writers and the owner the drawer", async () => {
-		const { ann, ben, cleo, id, board } = await setup();
-		await setOptions(id, board, { kind: "person", id: cleo.id }, false);
-		assert.equal(await variant(ann, id, board), "drawer");
-		assert.equal(await variant(OWNER, id, board), "drawer");
-		assert.equal(await variant(ben, id, board), "viewer");
-		assert.equal(await variant(cleo, id, board), "viewer");
-		// The default turned to no draw: Ann, without options of her own, looks only, at once.
-		await holding(ann, id, board, async (canvas, ctx) => {
-			assert.equal(canvas.granted.has("add") ? "drawer" : "viewer", "drawer");
-			await setOptions(id, board, { kind: "everyone" }, false);
-			await until(
-				canvas.state,
-				(state) => state.kind === "live" && variantOf(canvas) === "viewer",
-				within("the viewer", ctx),
-			);
+	it("gives a person put in and the session's agent Draw; Moderate only to people; nobody outside anything", async () => {
+		const s1 = await workspace("s1");
+		const ann = await person("Ann", s1);
+		const board = await canvasIn(s1);
+		const agent: P3Principal = { kind: "worker", session: "s1" };
+		assert.deepEqual(await grantedTo(ann, s1, board), ["add", "export", "remove"]);
+		assert.deepEqual(await grantedTo(agent, s1, board), ["add", "export", "remove"]);
+		await grant(s1, board, { kind: "person", person: ann.id }, ["draw", "moderate"]);
+		assert.deepEqual(await grantedTo(ann, s1, board), ["add", "clear", "export", "remove", "removeAny"]);
+		await refused(grant(s1, board, { kind: "agents" }, ["moderate"]), "invalid");
+		await refused(grantedTo({ kind: "worker", session: "s2" }, s1, board));
+		const dana = await things.createPerson({ name: "Dana", madeBy: BY }, context);
+		await refused(grantedTo({ kind: "person", id: dana, name: "Dana" }, s1, board));
+	});
+
+	it("a flag tick given on its own grants its flag alone: Export without Draw", async () => {
+		const s1 = await workspace("s1");
+		const bo = await person("Bo", s1);
+		const board = await canvasIn(s1);
+		// Everyone's Draw withheld from Bo, Export given to him: two rows (item 112).
+		const party = { kind: "person", person: bo.id } as const;
+		await things.setGrants(
+			{
+				source: BY,
+				grants: [
+					{ workspace: s1, thing: board, party, tick: "export", gives: true },
+					{ workspace: s1, thing: board, party, tick: "draw", gives: false },
+				],
+			},
+			context,
+		);
+		await holding(bo, s1, board, async (canvas) => {
+			assert.ok(canvas.granted.has("export"));
+			assert.equal(canvas.add, undefined);
+			assert.deepEqual([...canvas.granted], ["export"]);
 		});
 	});
 
-	it("gives the agent the drawer or the viewer as its own options say, and no other session's worker anything", async () => {
-		const { id, board } = await setup();
-		const agent: P3Principal = { kind: "worker", session: id };
-		assert.equal(await variant(agent, id, board), "drawer");
-		await setOptions(id, board, { kind: "agent" }, false);
-		assert.equal(await variant(agent, id, board), "viewer");
-		// The members' default is unchanged.
-		assert.equal(await variant(OWNER, id, board), "drawer");
-		await denied({ kind: "worker", session: "other" }, id, board);
-	});
-
-	it("denies a member the moment they are removed, a person outside, and a canvas the session does not have", async () => {
-		const { ben, id, board } = await setup();
-		await denied(await person("Dana"), id, board);
-		const elsewhere = await canvasIn(OWNER, await session([]));
-		await denied(OWNER, id, elsewhere);
-		await denied(OWNER, id, "no-such-thing");
-		await holding(ben, id, board, async (canvas, ctx) => {
-			assert.equal(canvas.granted.has("add") ? "drawer" : "viewer", "viewer");
-			await t.root(
-				async (server) =>
-					(await server.get(SessionsStore, {})).removeMember(
-						{ session: id, party: { kind: "person", id: ben.id } },
-						server,
-					),
+	it("follows a change of the grants live, on the same hold: Draw taken from everyone leaves a viewer", async () => {
+		const ann = await person("Ann");
+		const board = await canvasIn(pi);
+		await holding(ann, pi, board, async (canvas, ctx) => {
+			assert.ok(canvas.add !== undefined);
+			await things.setGrants(
+				{
+					source: CANVAS_PLUGIN,
+					// The kind's Draw row removed, one of no tick (`OPEN`) instead.
+					grants: [
+						{ workspace: pi, thing: board, party: { kind: "everyone" }, tick: "draw" },
+						{ workspace: pi, thing: board, party: { kind: "everyone" }, tick: OPEN, gives: true },
+					],
+				},
 				context,
 			);
 			await until(
 				canvas.state,
+				(state) => state.kind === "live" && canvas.add === undefined,
+				within("the viewer", ctx),
+			);
+			// A viewer's pointer travels without a draft.
+			await canvas.point({ x: 1, y: 2, draft: STROKE }, ctx);
+			await things.removeParty({ workspace: pi, party: { kind: "person", person: ann.id } }, context);
+			await until(
+				canvas.state,
 				(state) => state.kind === "failed" && state.cause.kind === "denied",
-				within("Ben denied", ctx),
+				within("Ann denied", ctx),
 			);
 		});
 	});
 });
 
 describe("a canvas's shapes", () => {
-	it("are the canvas's: the same drawing in every session it is linked into, who may draw each session's", async () => {
-		const ann = await person("Ann");
-		const first = await session([{ kind: "person", id: ann.id, access: "write" }]);
-		const second = await session([{ kind: "person", id: ann.id, access: "read" }]);
-		const shared = await canvasIn(ann, first, "Shared");
-		// Ann keeps it (it is hers now), and the owner links it into the second session, where Ann only reads.
-		await managing(ann, first, (things, ctx) =>
-			things.keep({ thing: shared, owner: { kind: "person", id: ann.id } }, ctx),
-		);
-		await t.root(
-			async (ctx) => (await ctx.get(SessionsStore, {})).addThing({ session: second, thing: shared }, ctx),
+	it("are the canvas's: the same drawing in every workspace it is linked in; who may draw each link's", async () => {
+		const [s1, s2] = [await workspace("s1"), await workspace("s2")];
+		const ann = await person("Ann", s1);
+		await things.putParty({ workspace: s2, party: { kind: "person", person: ann.id }, source: BY }, context);
+		const shared = await canvasIn(s1, "Shared");
+		await things.link({ workspace: s2, thing: shared }, context);
+		// In s2 everyone here may look only: the kind's default grant there replaced.
+		await things.setGrants(
+			{
+				source: CANVAS_PLUGIN,
+				// The kind's Draw row removed, one of no tick (`OPEN`) instead.
+				grants: [
+					{ workspace: s2, thing: shared, party: { kind: "everyone" }, tick: "draw" },
+					{ workspace: s2, thing: shared, party: { kind: "everyone" }, tick: OPEN, gives: true },
+				],
+			},
 			context,
 		);
-		const [stroke] = await holding(ann, first, shared, (canvas, ctx) =>
-			drawerOf(canvas).add({ shapes: [STROKE] }, ctx),
-		);
-		await holding(ann, second, shared, async (canvas) => {
-			assert.equal(canvas.granted.has("add") ? "drawer" : "viewer", "viewer");
+		const [stroke] = await holding(ann, s1, shared, (canvas, ctx) => canvas.add!({ shapes: [STROKE] }, ctx));
+		await holding(ann, s2, shared, async (canvas) => {
+			assert.equal(canvas.add, undefined);
 			assert.equal(canvas.name.value, "Shared");
 			assert.deepEqual(canvas.shapes.value.rows, [{ id: stroke, author: `person:${ann.id}`, shape: STROKE }]);
 		});
-		// Drawing off in the first session leaves the second's rights alone, and the other way round.
-		await setOptions(first, shared, { kind: "everyone" }, false);
-		assert.equal(await variant(OWNER, first, shared), "viewer");
-		assert.equal(await variant(OWNER, second, shared), "drawer");
 	});
 
-	it("are kept per canvas, with who drew them as Me says", async () => {
-		const { ann, id, board, other } = await setup();
-		const [stroke] = await holding(ann, id, board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [STROKE] }, ctx));
-		await holding(OWNER, id, board, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
-		await holding({ kind: "worker", session: id }, id, board, (canvas, ctx) =>
-			drawerOf(canvas).add({ shapes: [BOX] }, ctx),
-		);
-		const rows = await shapesOf(ann, id, board);
+	it("are kept per canvas, with who drew them as the admission says", async () => {
+		const s1 = await workspace("s1");
+		const ann = await person("Ann", s1);
+		const [board, other] = [await canvasIn(s1), await canvasIn(s1)];
+		await holding(ann, s1, board, (canvas, ctx) => canvas.add!({ shapes: [STROKE] }, ctx));
+		await holding({ kind: "worker", session: "s1" }, s1, board, (canvas, ctx) => canvas.add!({ shapes: [BOX] }, ctx));
+		const rows = await holding(ann, s1, board, async (canvas) => canvas.shapes.value.rows);
 		assert.deepEqual(
 			rows.map(({ author, shape }) => [author, shape.kind]),
 			[
 				[`person:${ann.id}`, "line"],
-				[`person:${OWNER.id}`, "rect"],
-				["agent", "rect"],
+				["agent:s1", "rect"],
 			],
 		);
-		assert.deepEqual(rows[0], { id: stroke, author: `person:${ann.id}`, shape: STROKE });
-		assert.deepEqual(await shapesOf(ann, id, other), []);
+		assert.deepEqual(await holding(ann, s1, other, async (canvas) => canvas.shapes.value.rows), []);
 	});
 
-	it("are removed one by one and cleared by a drawer, live for every holder", async () => {
-		const { ann, ben, id, board, other } = await setup();
-		await holding(OWNER, id, other, (canvas, ctx) => drawerOf(canvas).add({ shapes: [BOX] }, ctx));
-		await holding(ben, id, board, async (watching, ctx) => {
-			assert.equal(watching.granted.has("add") ? "drawer" : "viewer", "viewer");
-			await holding(ann, id, board, async (canvas, inner) => {
-				const drawer = drawerOf(canvas);
-				const [first, second, third] = await drawer.add({ shapes: [STROKE, BOX, STROKE] }, inner);
-				await until(watching.shapes, (list) => list.rows.length === 3, within("three shapes", ctx));
-				await drawer.remove({ id: second! }, inner);
+	it("a drawer removes their own; with Moderate anyone's, and clears, live for every holder", async () => {
+		const [ann, ben] = [await person("Ann"), await person("Ben")];
+		const board = await canvasIn(pi);
+		await holding(ben, pi, board, async (watching, outer) => {
+			const [bens] = await watching.add!({ shapes: [BOX] }, outer);
+			await holding(ann, pi, board, async (canvas, ctx) => {
+				const [first, second] = await canvas.add!({ shapes: [STROKE, BOX] }, ctx);
+				await until(watching.shapes, (list) => list.rows.length === 3, within("three shapes", outer));
+				await canvas.remove!({ id: second! }, ctx);
+				await refused(canvas.remove!({ id: bens! }, ctx), "invalid");
+				assert.equal(canvas.clear, undefined);
+				await grant(pi, board, { kind: "person", person: ann.id }, ["draw", "moderate"]);
+				await until(canvas.state, () => canvas.clear !== undefined, within("Moderate", ctx));
+				await canvas.remove!({ id: bens! }, ctx);
 				await until(
 					watching.shapes,
-					(list) => list.rows.map((row) => row.id).join() === [first, third].join(),
-					within("the box removed", ctx),
+					(list) => list.rows.map((row) => row.id).join() === first,
+					within("two removed", outer),
 				);
-				await refused(drawer.remove({ id: second! }, inner), "invalid");
-				await drawer.clear(inner);
-				await until(watching.shapes, (list) => list.rows.length === 0, within("cleared", ctx));
+				await canvas.clear!(ctx);
+				await until(watching.shapes, (list) => list.rows.length === 0, within("cleared", outer));
 			});
 		});
-		// Clearing one canvas leaves the other.
-		assert.equal((await shapesOf(OWNER, id, other)).length, 1);
 	});
 
 	it("refuses shapes outside the schema", async () => {
-		const { id, board } = await setup();
-		await holding(OWNER, id, board, async (canvas, ctx) => {
-			const drawer = drawerOf(canvas);
+		const ann = await person("Ann");
+		const board = await canvasIn(pi);
+		await holding(ann, pi, board, async (canvas, ctx) => {
 			const bad = [
 				{ ...STROKE, color: "red" },
 				{ ...STROKE, points: [1, 2] },
 				{ kind: "circle", color: "#000000" },
-				{ kind: "text", color: "#000000", x: 1, y: 1, text: "", size: 20 },
 			];
-			// Shapes a page could send: the schema is the trust boundary.
-			for (const shape of bad) await refused(drawer.add({ shapes: [shape as Shape] }, ctx), "invalid");
+			for (const shape of bad) await refused(canvas.add!({ shapes: [shape as Shape] }, ctx), "invalid");
 			assert.deepEqual(canvas.shapes.value.rows, []);
 		});
 	});
 
 	it("loads a page of 500, oldest first, and the next with more", async () => {
-		const { id, board } = await setup();
-		await holding(OWNER, id, board, async (canvas, ctx) => {
-			const drawer = drawerOf(canvas);
+		const ann = await person("Ann");
+		const board = await canvasIn(pi);
+		await holding(ann, pi, board, async (canvas, ctx) => {
 			for (let batch = 0; batch < 6; batch++) {
-				const shapes = Array.from({ length: 100 }, (_, i): Shape => ({ ...BOX, x: batch * 100 + i }));
-				await drawer.add({ shapes }, ctx);
+				await canvas.add!(
+					{ shapes: Array.from({ length: 100 }, (_, i): Shape => ({ ...BOX, x: batch * 100 + i })) },
+					ctx,
+				);
 			}
 		});
-		// A new list (the rows exist before it opens): the first page, then `more`.
-		await holding(OWNER, id, board, async (canvas, ctx) => {
+		await holding(ann, pi, board, async (canvas, ctx) => {
 			assert.equal(canvas.shapes.value.rows.length, 500);
 			assert.equal(canvas.shapes.value.moreAfter, true);
 			await canvas.more(ctx);
@@ -387,32 +316,41 @@ describe("a canvas's shapes", () => {
 });
 
 describe("a canvas's motion", () => {
-	it("shows every holder in the session a pointer with the shape being drawn, a viewer's without, nothing elsewhere", async () => {
-		const { ann, ben, id, board, other } = await setup();
-		// The same canvas in another session: its people see nothing of this session's.
-		await managing(OWNER, id, (things, ctx) => things.keep({ thing: board, owner: { kind: "pi" } }, ctx));
-		const second = await session([]);
-		await t.root(
-			async (ctx) => (await ctx.get(SessionsStore, {})).addThing({ session: second, thing: board }, ctx),
+	it("shows every holder in the workspace a pointer with its draft, a viewer's without, nothing elsewhere", async () => {
+		const s1 = await workspace("s1");
+		const [ann, ben] = [await person("Ann", s1), await person("Ben", s1)];
+		const [board, other] = [await canvasIn(s1), await canvasIn(s1)];
+		await things.link({ workspace: pi, thing: board }, context);
+		await things.putParty({ workspace: pi, party: { kind: "person", person: ann.id }, source: BY }, context);
+		// Ben keeps a viewer: Draw withheld from him removes everyone's Draw from him (item 106).
+		await things.setGrants(
+			{
+				source: BY,
+				grants: [
+					{ workspace: s1, thing: board, party: { kind: "person", person: ben.id }, tick: "draw", gives: false },
+				],
+			},
 			context,
 		);
 		const seen: Motion[] = [];
 		const elsewhere: Motion[] = [];
-		await holding(OWNER, id, other, async (away, outer) => {
+		await holding(ann, s1, other, async (away, outer) => {
 			await away.motion.on(({ value }) => elsewhere.push(value), outer);
-			await holding(OWNER, second, board, async (there, inner) => {
+			await holding(ann, pi, board, async (there, inner) => {
 				await there.motion.on(({ value }) => elsewhere.push(value), inner);
-				await holding(OWNER, id, board, async (watching, ctx) => {
+				await holding(ann, s1, board, async (watching, ctx) => {
 					await watching.motion.on(({ value }) => seen.push(value), ctx);
-					await holding(ann, id, board, async (canvas, call) => {
+					await holding(ann, s1, board, async (canvas, call) => {
 						await canvas.point({ x: 5, y: 6, draft: STROKE }, call);
 						await canvas.leave(call);
 					});
-					await holding(ben, id, board, (canvas, call) => canvas.point({ x: 7, y: 8, draft: STROKE }, call));
-					// Events show in no watchable: the listener's log is polled.
+					await holding(ben, s1, board, (canvas, call) => canvas.point({ x: 7, y: 8, draft: STROKE }, call));
+					await holding({ kind: "worker", session: "s1" }, s1, board, (canvas, call) =>
+						canvas.point({ x: 1, y: 1, draft: null }, call),
+					);
 					await eventually(
 						() => seen.length,
-						(count) => count === 3,
+						(count) => count === 4,
 						2000,
 					);
 				});
@@ -422,6 +360,7 @@ describe("a canvas's motion", () => {
 			{ kind: "point", who: `person:${ann.id}`, name: "Ann", x: 5, y: 6, draft: STROKE },
 			{ kind: "leave", who: `person:${ann.id}` },
 			{ kind: "point", who: `person:${ben.id}`, name: "Ben", x: 7, y: 8, draft: null },
+			{ kind: "point", who: "agent:s1", name: "Agent", x: 1, y: 1, draft: null },
 		]);
 		assert.deepEqual(elsewhere, []);
 	});

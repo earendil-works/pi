@@ -10,7 +10,7 @@
 import { createHash } from "node:crypto";
 import { basename, relative } from "node:path";
 import { Script } from "node:vm";
-import { build } from "esbuild";
+import { esbuildBuild } from "../esbuild.ts";
 
 /** A CSS module scoped: its stylesheet with unique class names, and the mapping its import gives. */
 export type ScopedCss = { readonly css: string; readonly classes: Readonly<Record<string, string>> };
@@ -29,7 +29,7 @@ export async function scopeCssModule(plugin: string, dir: string, file: string, 
 		.slice(0, 8);
 	// esbuild names a local class `<file name>_<class>`: the file name carries the prefix.
 	const name = `chord_${scope}_${basename(file, ".module.css").replace(/[^\w-]/g, "_")}`;
-	const result = await build({
+	const result = await esbuildBuild({
 		stdin: { contents: `export { default } from "scoped:${name}.module.css";`, loader: "js" },
 		bundle: true,
 		write: false,

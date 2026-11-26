@@ -3,7 +3,7 @@
 // session holds), its members ("Share") and My things.
 
 import { defineFacet, keyedEntries } from "@earendil-works/p3/v1";
-import { Views, viewOf } from "@earendil-works/p3/v1/web";
+import { Components, componentOf } from "@earendil-works/p3/v1/web";
 import {
 	MyThingsView,
 	NewSessionView,
@@ -22,11 +22,11 @@ export default defineFacet((host, self) => {
 	host.serve(ThingViews, {
 		compose: (table, { report }) => keyedEntries(table, (entry) => ({ [entry.kind]: entry }), report),
 	});
-	self.contribute(Views, [
-		viewOf(SessionListView, SessionList),
-		viewOf(NewSessionView, NewSession),
-		viewOf(SessionThingsView, SessionThings),
-		viewOf(MyThingsView, MyThingsList),
-		viewOf(SessionMembersView, SessionMembers),
+	self.contribute(Components, [
+		componentOf(SessionListView, SessionList),
+		componentOf(NewSessionView, NewSession),
+		componentOf(SessionThingsView, SessionThings),
+		componentOf(MyThingsView, MyThingsList),
+		componentOf(SessionMembersView, SessionMembers),
 	]);
 });

@@ -181,6 +181,6 @@ export const Served = remote("fixture.served", {
 	state,
 	methods: { plain: methods.plain, put: grantable(methods.put) },
 	events: { changed: grantable(item) },
-	flags: { export: "Export" },
+	flags: { export: { namespace: "fixture", key: "flagExport", params: [] } },
 });
 `;

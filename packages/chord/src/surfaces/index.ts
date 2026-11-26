@@ -3,7 +3,7 @@
 // languages.
 
 // Messages as data live in the kernel since slice 15 (a denial carries one); re-exported here, where they were.
-export { type MessageData, type MessageParam, MessageSchema } from "../data/message.ts";
+export { type MessageData, type MessageParam, MessageSchema } from "../contracts/message.ts";
 export { followActiveLanguage, hostLanguage, type LanguageFollower } from "./active-language.ts";
 export { followActiveTheme, type ThemeFollower } from "./active-theme.ts";
 export {

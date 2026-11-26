@@ -6,7 +6,7 @@ import { AppCatalog, type AppInfo, type ConnectionState, Me } from "@earendil-wo
 import { PageConnection, redirect, useHold, useLive, useRegistry, useRoute, useWatch } from "@earendil-works/p3/v1/web";
 import { useEffect, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
-// its page started with, whose `/v1/web` may not have a newer contract yet (a view token would be `undefined`).
+// its page started with, whose `/v1/web` may not have a newer contract yet (a component token would be `undefined`).
 import { AppPages } from "../apps/contract.web.ts";
 import { AppBoundary } from "./app-boundary.tsx";
 import { CornerMenu } from "./corner-menu.tsx";
