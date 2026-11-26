@@ -18,6 +18,7 @@ import {
 	HistoryUnavailableError,
 	LOG_START,
 	type PutBatchResult,
+	type RefusalReason,
 	remoteHead,
 	remoteHistory,
 	type Seq,
@@ -113,7 +114,12 @@ export type UploadResult =
 	 * commits would reuse their sequences, so nothing is uploaded. Pull what it lost before the copy commits again; a pull
 	 * applies from the local head.
 	 */
-	| { readonly type: "behind"; readonly head: Seq; readonly syncedHead: Seq };
+	| { readonly type: "behind"; readonly head: Seq; readonly syncedHead: Seq }
+	/**
+	 * The remote refused the next slot for good (`RefusalReason`): the bookmark and the outbox stay as they were, and
+	 * uploading again sends the same slot. The host stops uploading until whatever was refused is fixed.
+	 */
+	| { readonly type: "refused"; readonly reason: RefusalReason };
 
 /**
  * Upload what this copy committed since it last shared the remote's history, from the store's outbox, and trim the
@@ -170,6 +176,7 @@ export async function uploadSession(options: {
 			// A remote that answered without reading the archive leaves the export holding the commit queue.
 			await close?.();
 		}
+		if (result.type === "refused") return { type: "refused", reason: result.reason };
 		// A history that does not end at `after` is another one too: the remote never held this copy's past `after`.
 		if (result.type === "not_head")
 			return result.head === LOG_START ? { type: "remote_empty", at: after } : { type: "diverged", at: after };

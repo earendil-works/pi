@@ -459,6 +459,30 @@ describe("syncing a session between devices", () => {
 		expect(await reads(await replica.store())).toEqual(await reads(source));
 	});
 
+	it("reports a slot the remote refuses for good, keeping its bookmark and outbox", async () => {
+		const store = await remote();
+		const laptop = device("laptop", store);
+		await laptop.commit(seedBatches().slice(0, 3));
+		const refusing = overriding(store, {
+			putBatch: async () => ({ type: "refused", reason: "next_id_regression" }),
+		});
+		const source = await laptop.store();
+		expect(
+			await uploadSession({
+				sessionId: SESSION,
+				device: "laptop",
+				source,
+				store: refusing,
+				state: laptop.state,
+				context,
+			}),
+		).toEqual({ type: "refused", reason: "next_id_regression" });
+		expect(await laptop.state.get(SESSION, context)).toBeUndefined();
+		expect(source.outbox!.floor).toBe(0);
+		// Nothing was written: the remote that accepts takes the same slot.
+		expect((await laptop.upload()).type).toBe("uploaded");
+	});
+
 	it("refuses to upload a copy that lost uploaded commits, and pulls them back", async () => {
 		const store = await remote();
 		const batches = seedBatches();
