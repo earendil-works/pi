@@ -499,28 +499,29 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			sorted === undefined
 				? last?.low === low && last.high === high
 				: last !== undefined && sameList(sorted, namesOf(last.verdict.granted));
-		if (last !== undefined && sameNames && sameJson(last.value, value, "granted")) return last.equal(decision, value);
+		if (last !== undefined && sameNames && sameJson(last.value, value, "granted"))
+			return readAgain(last, decision, value);
 		const names = sorted ?? namesOfBits(grants, low, high);
 		const { granted: _, ...data } = value;
 		const granted = names.length === 0 ? NO_GRANTS : grantedSet(grants, names);
 		const verdict: Allowed = { kind: "allow", value: { ...data, granted } as AdmittedValue, granted };
-		this.#decided = new DecidedAllow(verdict, decision, value, low, high);
+		this.#decided = { kind: "allow", verdict, decision, value, low, high };
 		return verdict;
 	}
 
 	/** A route's allowed value, passed on as it is: compared with the value the last allow was read from. */
 	#allowRoute(decision: unknown, value: JsonValue): Allowed {
 		const last = this.#decided?.kind === "allow" ? this.#decided : undefined;
-		if (last !== undefined && sameJson(last.value, value)) return last.equal(decision, value);
+		if (last !== undefined && sameJson(last.value, value)) return readAgain(last, decision, value);
 		const verdict: Allowed = { kind: "allow", value, granted: NO_GRANTS };
-		this.#decided = new DecidedAllow(verdict, decision, value, 0, 0);
+		this.#decided = { kind: "allow", verdict, decision, value, low: 0, high: 0 };
 		return verdict;
 	}
 
 	/** A denial (its message checked, its walk counted): the last one when its reason and message are the same. */
 	#deny(decision: unknown, reason: string, message: unknown): Denied {
 		const last = this.#decided?.kind === "deny" ? this.#decided : undefined;
-		if (last !== undefined && last.reason === reason && sameMessage(last.message, message)) {
+		if (last !== undefined && last.reason === reason && sameJson(last.message, message)) {
 			last.decision = decision;
 			last.message = message;
 			return last.verdict;
@@ -567,45 +568,30 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 	return true;
 }
 
-/** Whether a denial's message is the last one's: both none, or the same message as data. */
-function sameMessage(kept: unknown, message: unknown): boolean {
-	if (kept === undefined || message === undefined) return kept === message;
-	return sameJson(kept, message);
-}
-
 /** One walk of a decision's value per read, as canonical JSON counted it. */
 function countWalk(context: Context): void {
 	chordMetrics(context.telemetry.metrics).counter("chord.data.walks").add(1);
 }
 
 /**
- * The last allow a decision read: its verdict and the decision object and value it was read from (the latest of
- * equal ones: an earlier object is not kept). Values handed to Chord are immutable by convention: a later read is
- * compared with this value.
+ * The last allow a decision read: its verdict, the decision object and value it was read from (the latest of equal
+ * ones: an earlier object is not kept; values are immutable by convention) and its names as bits of their grants'
+ * indexes (a contract of up to 60 grants; none for a route).
  */
-class DecidedAllow {
-	readonly kind = "allow";
+type DecidedAllow = {
+	readonly kind: "allow";
 	readonly verdict: Allowed;
 	decision: unknown;
 	value: JsonValue;
-	/** Its names as bits of their grants' indexes (a contract of up to 60 grants; none for a route). */
 	readonly low: number;
 	readonly high: number;
+};
 
-	constructor(verdict: Allowed, decision: unknown, value: JsonValue, low: number, high: number) {
-		this.verdict = verdict;
-		this.decision = decision;
-		this.value = value;
-		this.low = low;
-		this.high = high;
-	}
-
-	/** An equal read of `decision` and `value`: this decision, kept as read from them. */
-	equal(decision: unknown, value: JsonValue): Allowed {
-		this.decision = decision;
-		this.value = value;
-		return this.verdict;
-	}
+/** An equal read of `decision` and `value`: `last`'s verdict, kept as read from them. */
+function readAgain(last: DecidedAllow, decision: unknown, value: JsonValue): Allowed {
+	last.decision = decision;
+	last.value = value;
+	return last.verdict;
 }
 
 /** What a decision read last: an allow, a denial with what it was read from, or once released only the verdict. */
