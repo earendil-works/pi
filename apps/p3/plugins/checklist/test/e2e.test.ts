@@ -58,68 +58,72 @@ async function send(client: Host<P3Principal>, session: string, text: string): P
 	}, context);
 }
 
-describe("the checklist end to end", { skip: "until sessions are workspaces, ERNDL-704 push 3" }, () => {
-	it("shows the agent's tick in a person's open view; offers checklist_tick only while its options say check", async () => {
-		const t = await testServer({ plugins: [FAUX] }, context);
-		running = t;
-		const ann = await t.host.root(
-			async (ctx) => (await ctx.get(PeopleStore, {})).createPerson({ name: "Ann" }, ctx),
-			context,
-		);
-		const session = await t.host.root(
-			async (ctx) =>
-				(await ctx.get(SessionsStore, {})).create(
-					{
-						app: "coding",
-						title: "Groceries",
-						members: [{ kind: "person", id: ann, access: "write" }],
-						things: [thingOf(FauxLogin)],
-					},
-					ctx,
-				),
-			context,
-		);
-		// Ann makes a checklist, adds an item and keeps it open.
-		const client = await t.client(context, { kind: "person", id: ann, name: "Ann" });
-		const things = await client.get(SessionThings, { session }, context);
-		assertGranted(things, ...SESSION_THINGS_WRITES);
-		const checklist = await things.create({ kind: ChecklistKind.name, name: "Groceries" }, context);
-		const list = await client.get(Checklist, { session, thing: checklist }, context);
-		assertGranted(list, ...CHECKLIST_CHECKS);
-		const milk = await list.add({ text: "milk" }, context);
-		// The login's script, which needs the checklist's and the item's ids.
-		await t.host.root(async (ctx) => {
-			const store = await ctx.get(SessionsStore, {});
-			const links = (await store.links.of.page({ session }, 10, ctx)).items;
-			const login = links.find(({ kind }) => kind === FauxLogin.name)?.thing ?? assert.fail("no faux login");
-			const options = { provider: "faux", script: script(checklist, milk), tool: false };
-			await store.setOptions({ session, thing: login, for: { kind: "everyone" }, options }, ctx);
-		}, context);
-		const owner = await t.client(context);
-		await send(owner, session, "@tick");
-		await until(
-			list.items,
-			(items) => items.some(({ id, done }) => id === milk && done),
-			within("the agent's tick", context, 20_000),
-		);
-		// The agent's own options: no check. Its next request offers no ticking.
-		const managed = await owner.get(SessionThings, { session }, context);
-		assertGranted(managed, ...SESSION_THINGS_WRITES);
-		await managed.setOptions({ thing: checklist, for: { kind: "agent" }, options: { check: false } }, context);
-		await send(owner, session, "plain");
-		const requests = await owner.get(FauxRequests, { session }, context);
-		const seen = await until(
-			requests.requests,
-			(all) => all.some(({ last }) => last === "plain"),
-			within("the plain request", context, 20_000),
-		);
-		const plain = seen.find(({ last }) => last === "plain")!;
-		assert.ok(plain.tools.includes("checklist_read"), plain.tools.join());
-		assert.ok(!plain.tools.includes("checklist_tick"), plain.tools.join());
-		assert.ok(seen.find(({ last }) => last === "@tick")?.tools.includes("checklist_tick"));
-		assert.equal(list.granted.has("add") ? "checker" : "reader", "checker", "Ann's own options stay the default");
-		assert.deepEqual(t.errors, []);
-	});
+describe("the checklist end to end", () => {
+	it(
+		"shows the agent's tick in a person's open view; offers checklist_tick only while its options say check",
+		{ skip: "until sessions are workspaces, ERNDL-704 push 3" },
+		async () => {
+			const t = await testServer({ plugins: [FAUX] }, context);
+			running = t;
+			const ann = await t.host.root(
+				async (ctx) => (await ctx.get(PeopleStore, {})).createPerson({ name: "Ann" }, ctx),
+				context,
+			);
+			const session = await t.host.root(
+				async (ctx) =>
+					(await ctx.get(SessionsStore, {})).create(
+						{
+							app: "coding",
+							title: "Groceries",
+							members: [{ kind: "person", id: ann, access: "write" }],
+							things: [thingOf(FauxLogin)],
+						},
+						ctx,
+					),
+				context,
+			);
+			// Ann makes a checklist, adds an item and keeps it open.
+			const client = await t.client(context, { kind: "person", id: ann, name: "Ann" });
+			const things = await client.get(SessionThings, { session }, context);
+			assertGranted(things, ...SESSION_THINGS_WRITES);
+			const checklist = await things.create({ kind: ChecklistKind.name, name: "Groceries" }, context);
+			const list = await client.get(Checklist, { session, thing: checklist }, context);
+			assertGranted(list, ...CHECKLIST_CHECKS);
+			const milk = await list.add({ text: "milk" }, context);
+			// The login's script, which needs the checklist's and the item's ids.
+			await t.host.root(async (ctx) => {
+				const store = await ctx.get(SessionsStore, {});
+				const links = (await store.links.of.page({ session }, 10, ctx)).items;
+				const login = links.find(({ kind }) => kind === FauxLogin.name)?.thing ?? assert.fail("no faux login");
+				const options = { provider: "faux", script: script(checklist, milk), tool: false };
+				await store.setOptions({ session, thing: login, for: { kind: "everyone" }, options }, ctx);
+			}, context);
+			const owner = await t.client(context);
+			await send(owner, session, "@tick");
+			await until(
+				list.items,
+				(items) => items.some(({ id, done }) => id === milk && done),
+				within("the agent's tick", context, 20_000),
+			);
+			// The agent's own options: no check. Its next request offers no ticking.
+			const managed = await owner.get(SessionThings, { session }, context);
+			assertGranted(managed, ...SESSION_THINGS_WRITES);
+			await managed.setOptions({ thing: checklist, for: { kind: "agent" }, options: { check: false } }, context);
+			await send(owner, session, "plain");
+			const requests = await owner.get(FauxRequests, { session }, context);
+			const seen = await until(
+				requests.requests,
+				(all) => all.some(({ last }) => last === "plain"),
+				within("the plain request", context, 20_000),
+			);
+			const plain = seen.find(({ last }) => last === "plain")!;
+			assert.ok(plain.tools.includes("checklist_read"), plain.tools.join());
+			assert.ok(!plain.tools.includes("checklist_tick"), plain.tools.join());
+			assert.ok(seen.find(({ last }) => last === "@tick")?.tools.includes("checklist_tick"));
+			assert.equal(list.granted.has("add") ? "checker" : "reader", "checker", "Ann's own options stay the default");
+			assert.deepEqual(t.errors, []);
+		},
+	);
 
 	it("keeps a person's items and open view through a reload of the plugin", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "p3-checklist-reload-"));
@@ -140,7 +144,7 @@ describe("the checklist end to end", { skip: "until sessions are workspaces, ERN
 		assertGranted(list, ...CHECKLIST_CHECKS);
 		await list.add({ text: "before" }, context);
 		// Real edits of both facets, applied as `p3 apply` does once the watcher saw them.
-		for (const facet of ["server.ts", "worker.ts"]) {
+		for (const facet of ["server.ts", "web.tsx"]) {
 			const file = join(root, "checklist", facet);
 			await writeFile(file, `${await readFile(file, "utf8")}\n// edited\n`);
 		}

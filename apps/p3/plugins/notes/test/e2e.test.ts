@@ -165,7 +165,7 @@ describe("the notes end to end", { skip: "until sessions are workspaces, ERNDL-7
 		await send(owner, session, "@first");
 		await written(notes, "first");
 		// Real edits of both facets, applied as `p3 apply` does once the watcher saw them.
-		for (const facet of ["server.ts", "worker.ts"]) {
+		for (const facet of ["server.ts", "web.tsx"]) {
 			const file = join(root, "notes", facet);
 			await writeFile(file, `${await readFile(file, "utf8")}\n// edited\n`);
 		}
