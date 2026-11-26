@@ -234,10 +234,9 @@ describe("linking (R9, scenario 5)", () => {
 		assert.equal((await answers(fam, `person:${leo.id}`))[tools], undefined);
 	});
 
-	it("a workspace is never linked, and a kind of one workspace is linked once (7)", async () => {
-		const { leo, fam, robot } = await family();
+	it("a workspace is never linked: its parent places it (a kind of one workspace: store.test.ts)", async () => {
+		const { fam, robot } = await family();
 		await assert.rejects(store.link({ workspace: robot, thing: fam }, context), /placed by its parent/);
-		void leo;
 	});
 });
 
@@ -601,7 +600,8 @@ describe("the lists (R34 to R38)", () => {
 				children.list.value.rows.map((row) => row.workspace),
 				[open, robot],
 			);
-			void mine;
+			// Leo's private one is not Anna's to see.
+			assert.ok(!children.list.value.rows.some((row) => row.workspace === mine));
 		});
 	});
 
@@ -706,7 +706,14 @@ describe("the lists (R34 to R38)", () => {
 		const sketch = await store.create({ kind: Board.name, name: "sketch", workspace: fam, by: BY }, context);
 		await own(fam, party(anna), ["manageAccess"]);
 		await holding(leo, fam, async () => undefined);
-		await as(leo, (ctx) => assert.rejects(ctx.get(WhoMay, { workspace: fam, thing: sketch }, { readyTimeout: 200 })));
+		// Anyone present reads it (decided against R40); without Manage access they cannot change a cell.
+		await holding(leo, fam, async (ref, ctx) => {
+			assert.equal(ref.setTick, undefined);
+			const read = await ctx.get(WhoMay, { workspace: fam, thing: sketch });
+			assert.ok(read.table.value.rows.some((row) => row.party.kind === "everyone"));
+		});
+		const kim = await person("Kim");
+		await as(kim, (ctx) => assert.rejects(ctx.get(WhoMay, { workspace: fam, thing: sketch }, { readyTimeout: 200 })));
 		await listOf(anna, async (ctx) => {
 			const who = await ctx.get(WhoMay, { workspace: fam, thing: sketch });
 			const table = who.table.value;

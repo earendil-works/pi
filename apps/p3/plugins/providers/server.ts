@@ -44,7 +44,7 @@ export default defineFacet((host, self) => {
 				authorize: (_args: Record<never, never>, ctx: Ctx<P3Principal>) => store.authorize({ thing }, ctx),
 			};
 		},
-		create: async (thing, input, by, ctx) => {
+		create: async ({ thing, input, by }, ctx) => {
 			// The only guard of `makers: "people"` until the workspaces enforce makers (slice 2).
 			if (by.kind === "agent") throw invalid("args", "providers: a login is made by a person, never an agent");
 			// Only its maker's own finished sign-in: a person's from their page, the server's for its own logins.

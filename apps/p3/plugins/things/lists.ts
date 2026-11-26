@@ -2,9 +2,10 @@
 // children, what is here, who is here, what may be linked here, one thing as it is available here, and who may do what
 // with a thing here. Each is computed over the access index as a probe (`access.ts`), live: asked again after every
 // commit it can depend on, told only when it changed; names and other display columns are joined from the store by
-// named queries. Admitted by the caller's answer on the workspace (anyone present; WhoMay: Manage access, R40;
-// ThingInfo: an answer on the thing). No list names a workspace the caller is not present in (item 96). The lists are
-// bounded by one workspace (its contents, its people, its children), each read whole: a list has no further pages.
+// named queries. Admitted by the caller's answer on the workspace: anyone present (WhoMay too, read-only: changing a
+// cell is `Workspace.setTick`, Manage access; decided against R40 for the Settings view); ThingInfo by an answer on the
+// thing. No list names a workspace the caller is not present in (item 96). The lists are bounded by one workspace (its
+// contents, its people, its children), each read whole: a list has no further pages.
 
 import {
 	type Admission,
@@ -142,7 +143,7 @@ export function serveLists(host: FacetHost<P3Principal>): void {
 			const table = followProbe(self, () => withRowsNamed(store, probe));
 			return { table };
 		},
-		{ admit: admitManageAccess },
+		{ admit: admitPresent },
 	);
 }
 
@@ -182,18 +183,6 @@ function admitAnswer(
 ): Watchable<Admission<Record<never, never>>> {
 	const gives = self.get(Gives, { workspace, caller: callerKey(principal) }).answers;
 	return self.derive([gives], ([answers]) => (answers[thing] === undefined ? NOT_PRESENT : ALLOWED));
-}
-
-/** Admits whoever has Manage access in the workspace (R40): its own answer names the tick. */
-function admitManageAccess(
-	{ workspace }: { readonly workspace: string },
-	principal: P3Principal,
-	self: AdmitSelf,
-): Watchable<Admission<Record<never, never>>> {
-	const gives = self.get(Gives, { workspace, caller: callerKey(principal) }).answers;
-	return self.derive([gives], ([answers]) =>
-		answers[workspace]?.ticks.includes("manageAccess") === true ? ALLOWED : NOT_PRESENT,
-	);
 }
 
 const ALLOWED = allow({});
