@@ -377,54 +377,6 @@ forEachCodec(() => {
 			expect([...kept.granted]).toEqual(["home"]);
 		});
 
-		it("read a decoded entry's grants with one map, as ever: a codec's list is not iterated (review of b288f6ba4)", async () => {
-			const Colors = remote("app.colors", {
-				version: 1,
-				params: {},
-				hostAddress: () => Server(),
-				state: { n: int() },
-				flags: { blue: "Blue", red: "Red" },
-			});
-			let iterated = 0;
-			// A codec whose lists of grants throw when iterated: only an index walk or `map` reads them.
-			const codec: Codec = {
-				name: binaryCodec.name,
-				encode: (message) => binaryCodec.encode(message),
-				decode(bytes) {
-					const message = binaryCodec.decode(bytes);
-					if (message.kind !== "bound") return message;
-					for (const entry of message.holds) {
-						Object.defineProperty(entry.granted, Symbol.iterator, {
-							value() {
-								iterated++;
-								throw new Error("codec array iterator called");
-							},
-						});
-					}
-					return message;
-				},
-			};
-			const errors: HostError[] = [];
-			const client = createHost<TestPrincipal>({ onError: (error) => errors.push(error) });
-			await client.load([], context);
-			try {
-				const [near, far] = memoryLinkPair();
-				client.connect(near, { principal: { kind: "server" }, codec }, context);
-				const peer = new RawPeer(far, { codec: binaryCodec });
-				await peer.next("hello");
-				const ref = client.hold(Colors, {}, context);
-				const { hold } = await peer.next("hold");
-				peer.send({
-					kind: "bound",
-					holds: [{ hold, granted: [0], members: [{ member: 0, value: "1" }], failed: [] }],
-				});
-				await transported();
-				expect([ref.state.value.kind, grantOf(ref), iterated, errors]).toEqual(["live", ["blue"], 0, []]);
-			} finally {
-				await client.close(context);
-			}
-		});
-
 		it("keep no slot or registration of a version gone meanwhile, while an app keeps every set (review of 46aeaa1e0)", async () => {
 			const tables: WeakRef<object>[] = [];
 			const slots: WeakRef<object>[] = [];

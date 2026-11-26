@@ -672,25 +672,25 @@ export class RemoteObject implements Target {
 	 * last binding's set when equal, so a re-hold granted the same changes nothing a UI compares (`useLive`).
 	 */
 	#grantedFrom(entry: BoundEntry): ReadonlySet<string> {
-		if (entry.granted.length === 0) return NO_GRANTS;
+		const indexes = entry.granted;
+		if (indexes.length === 0) return NO_GRANTS;
 		const version = currentVersion(this.contract);
 		const { grants } = version;
-		// One `map` over the entry's list, as ever (a codec's list is read only so); with the bit set of its indexes
-		// while they ascend, as providers send them, into at most 30 grants (a small integer): other input gets a set
-		// of its own in its order.
+		// The bit set of its indexes while they ascend, as providers send them, into at most 30 grants (a small
+		// integer): other input gets a set of its own in its order.
 		let bits = 0;
-		let previous = -1;
 		let shared = grants.length <= 30;
-		const names = entry.granted.map((index) => {
-			const name = grants[index];
-			if (name === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
-			if (index > previous) bits |= 1 << index;
-			else shared = false;
-			previous = index;
-			return name;
-		});
+		for (let at = 0; at < indexes.length; at++) {
+			const index = indexes[at]!;
+			if (grants[index] === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
+			if (at > 0 && index <= indexes[at - 1]!) shared = false;
+			else bits |= 1 << index;
+		}
 		const last = this.#bound?.granted;
-		if (last !== undefined && last.size === names.length && names.every((name) => last.has(name))) return last;
+		if (last !== undefined && last.size === indexes.length && indexes.every((index) => last.has(grants[index]!))) {
+			return last;
+		}
+		const names = indexes.map((index) => grants[index]!);
 		return shared ? grantedSet(version, bits, names) : new Set(names);
 	}
 
