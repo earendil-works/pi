@@ -1,10 +1,12 @@
 // The things plugin on the server: the store with its access index (`store.ts`), `Gives` (what every thing's
 // admission derives from), `OneThing` (a kind's seeded thing), `ThingKindsView` (every kind's data for workers and
 // pages), `Group` (a group's members and its own tick's calls), and the registries kinds and admissions meet in:
-// `ThingKinds` (each kind's data), `ThingHooks` (each kind's hooks), `AccessHandles` (the store's index, R5).
+// `ThingKinds` (each kind's data), `ThingHooks` (each kind's hooks), `AccessHandles` (the store's index, R5); `MyAnswer`,
+// a caller's answer for admissions off the server.
 
 import { defineFacet, keyedEntries } from "@earendil-works/p3/v1";
 import { serveGives } from "./admission.ts";
+import { serveMyAnswer } from "./answer.ts";
 import { AccessHandles, OwnerSeeds, ThingHooks } from "./contract.server.ts";
 import { serveGroup } from "./group.ts";
 import { kindView, ThingKinds, ThingKindsView } from "./kind.ts";
@@ -33,6 +35,7 @@ export default defineFacet((host) => {
 	}));
 	serveStore(host);
 	serveGives(host);
+	serveMyAnswer(host);
 	serveOne(host);
 	serveWorkspaceKind(host);
 	serveWorkspace(host);

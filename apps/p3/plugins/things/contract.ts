@@ -4,7 +4,20 @@
 // (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`). And a group's object
 // (`Group`): its members and the calls its own tick gives.
 
-import { arr, bool, grantable, lit, method, obj, remote, Server, type Static, str, union } from "@earendil-works/p3/v1";
+import {
+	arr,
+	bool,
+	grantable,
+	lit,
+	method,
+	nul,
+	obj,
+	remote,
+	Server,
+	type Static,
+	str,
+	union,
+} from "@earendil-works/p3/v1";
 
 /** The prefix of the reserved tick names (item 113): a kind's own tick names cannot start with it. */
 export const RESERVED = "@";
@@ -197,4 +210,17 @@ export const Group = remote("things.group", {
 		/** Removes the group (`ThingsStore.removeGroup`); the call ends with the object, denied once the group is gone. */
 		remove: grantable(method()),
 	},
+});
+
+/**
+ * Caller `caller`'s (a `callerKey`) answer for `thing` in `workspace`, live: the ticks they have there (`null`: given
+ * nothing, so not let in). For admissions off the server (a session's objects on its worker, the route to a worker),
+ * which cannot read the index. Asked by the server about anyone, by a session's worker about anyone in its own
+ * session's workspace (its admissions ask as the worker), and by anyone else about themselves only.
+ */
+export const MyAnswer = remote("things.answer", {
+	version: 1,
+	params: { workspace: str(), thing: str(), caller: str() },
+	hostAddress: () => Server(),
+	state: { answer: union([obj({ ticks: arr(str()) }), nul()]) },
 });
