@@ -8,8 +8,15 @@
 // factory's error at its activation, a decision change while its old attempt drains or its successor opens a native).
 
 import { performance } from "node:perf_hooks";
+import { NOOP_TELEMETRY_CONTEXT, NOOP_TELEMETRY_METRICS } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
-import { awaitWithContext, type Context, BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
+import {
+	awaitWithContext,
+	type Context,
+	BACKGROUND_CONTEXT as context,
+	withCancel,
+	withTelemetry,
+} from "../../src/context/index.ts";
 import {
 	evolve,
 	grantable,
@@ -731,6 +738,28 @@ describe("the order of a read", () => {
 				expect(read({ granted: [...listed].reverse().concat(listed.slice(0, 1)) })).toBe(verdict);
 			}
 		}
+	});
+
+	// Found by the review of the pass (second reviewer, 2026-11-26): the last decision is taken after the walk is counted.
+	it("a read made while the walk is counted leaves the outer read's verdict kept", () => {
+		const read = reader(["a", "b"]);
+		read({ p: 1, granted: ["a"] });
+		let once = true;
+		const metrics = {
+			...NOOP_TELEMETRY_METRICS,
+			counter: (name: string) => ({
+				add: () => {
+					if (name !== "chord.data.walks" || !once) return;
+					once = false;
+					read({ p: 2, granted: ["b"] });
+				},
+			}),
+		};
+		const outer = read(
+			{ p: 1, granted: ["a"] },
+			withTelemetry({ ...NOOP_TELEMETRY_CONTEXT, metrics } as never, context),
+		);
+		expect(read({ p: 1, granted: ["a"] })).toBe(outer);
 	});
 
 	it("the admitted value has the rest copy's own keys in their order and its prototype", () => {
