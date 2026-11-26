@@ -7,12 +7,11 @@ import { defineMessages } from "@earendil-works/p3/v1";
 /** The terminals plugin's messages, by key. */
 export const messages = defineMessages("terminals", {
 	en: {
-		tickRead: "Watch",
-		tickWrite: "Use",
+		tickWatch: "Watch",
+		tickUse: "Use",
 		notAbsolute: "A folder starts at the machine's root (/).",
 		noTerminal: "This terminal does not exist here.",
-		tooMany: "Too many terminals are open here; close one first.",
-		exited: "This terminal has ended.",
+		noHost: "Terminals cannot be reached now.",
 		pane: "Terminals",
 		open: "New terminal",
 		close: "Close",

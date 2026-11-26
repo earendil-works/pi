@@ -1,93 +1,98 @@
 // The terminals plugin on the server: Terminals' members for one caller (`serveThing`: the things plugin admits every
-// caller and registers the kind) over the open terminals (`TerminalsHere`, here.ts), each caller seeing the ones of
-// its workspace. Each call reaches
-// the terminal's machine as the caller (`reachMachine`: available to the caller in this workspace, through the things
-// plugin's index); the list and the output show only terminals on machines the caller may use here. Anyone with Use
-// types in any terminal here: limiting an agent to the terminals it opened is a limit, postponed (decision 89).
+// caller and registers the kind) over the machines' terminal host (the environments plugin's `TerminalHosts`, which
+// runs the programs for its whole lifetime, so a reload of this plugin loses none), and the attach route (attach.ts).
+// A terminal belongs to its Terminals thing and workspace (the host's owner key); each caller sees the ones of its
+// workspace on machines it may use there, reached as the caller (`reachMachine`, through the things plugin's index).
+// Anyone with Use types in any terminal here: limiting an agent to the terminals it opened is a limit, postponed
+// (decision 89). A Terminals thing that goes takes its terminals with it (its delete hook).
 
-import { type Ctx, defineFacet, invalid, type P3Principal } from "@earendil-works/p3/v1";
-import { MachineHosts, machineAvailable, reachMachine } from "../environments/contract.server.ts";
-import { Gives } from "../things/contract.server.ts";
-import type { Caller } from "../things/contract.ts";
+import { defineFacet, forbidden, invalid } from "@earendil-works/p3/v1";
+import {
+	MachineHosts,
+	machineAvailable,
+	reachMachine,
+	type TerminalHost,
+	TerminalHosts,
+	TerminalKeeper,
+	TerminalList,
+} from "../environments/contract.server.ts";
+import { givesTo } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
-import { type Output, TerminalsKind } from "./contract.ts";
-import { type OpenTerminal, serveHere, TerminalsHere } from "./here.ts";
+import { serveAttach } from "./attach.ts";
+import { ATTACH_PATH, TerminalsKind } from "./contract.ts";
 import { messages } from "./messages.ts";
 
+/** How many terminals one workspace has open at most. */
+const MAX_TERMINALS = 20;
+
 export default defineFacet((host) => {
-	serveHere(host);
 	serveThing(host, TerminalsKind, {
 		one: { name: "Terminals" },
-		implement: ({ workspace }, { caller }, self) => {
-			const here = self.get(TerminalsHere, {});
+		implement: ({ workspace, thing }, { caller }, self) => {
+			const terminals = self.registry(TerminalHosts);
 			const hosts = self.registry(MachineHosts);
-			// The server (trusted code) is no party anywhere: it reaches every machine without an answer.
-			const gives = caller.kind === "server" ? undefined : self.get(Gives, { workspace, caller: keyOf(caller) });
-			const by = openerOf(caller);
-			const answer = (machine: string) => gives?.answers.value[machine];
-			/** Whether the caller sees `open`: opened in this workspace, on a machine it may use here. */
-			const sees = ({ workspace: where, terminal }: OpenTerminal) =>
-				where === workspace && machineAvailable(caller, answer(terminal.machine));
-			const openOf = (id: string) => here.terminals.value.find((open) => open.terminal.id === id);
-			/** Terminal `id` as the caller may use it: refused unless it is here, on a machine available to the caller. */
-			const usable = (id: string) => {
-				const open = openOf(id);
-				if (open === undefined || open.workspace !== workspace) {
+			const answers = givesTo(self, workspace, caller);
+			const owner = `${thing}/${workspace}`;
+			const list = self.get(TerminalList, { owner }).terminals;
+			const at = (): TerminalHost => {
+				const found = terminals.value;
+				if (found === undefined)
+					throw forbidden("terminals: no terminal host", { message: messages.message("noHost") });
+				return found;
+			};
+			/** Terminal `id` as one of this workspace's; refused otherwise. */
+			const here = (id: string) => {
+				const row = list.value.find((each) => each.id === id);
+				if (row === undefined) {
 					throw invalid("args", `terminals: no terminal ${id}`, { message: messages.message("noTerminal") });
 				}
-				reachMachine(open.terminal.machine, caller, answer(open.terminal.machine), hosts.value);
+				return row;
+			};
+			/** Terminal `id` as the caller may use it: here, on a machine available to the caller. */
+			const usable = (id: string) => {
+				const { machine } = here(id);
+				reachMachine(machine, caller, answers.value[machine], hosts.value);
 				return id;
 			};
 			return {
 				terminals: () =>
-					self.derive([here.terminals, ...(gives === undefined ? [] : [gives.answers])], ([all]) =>
-						all.filter(sees).map((open) => open.terminal),
+					self.derive([list, answers], ([rows, given]) =>
+						rows.filter((row) => machineAvailable(caller, given[row.machine])),
 					),
-				// Each watcher gets the pieces of the terminals it sees: one subscription, ended with the object.
-				output: () => {
-					const output = self.events<Output>();
-					self.open(
-						(ctx) =>
-							here.output.on(({ value }) => {
-								const open = openOf(value.terminal);
-								if (open !== undefined && sees(open)) output.emit(value);
-							}, ctx),
-						(subscription) => subscription.stop(),
-					);
-					return output;
-				},
-				backlog: ({ terminal }, ctx) => here.backlog({ terminal: usable(terminal) }, ctx),
-				open: ({ machine, folder, columns, rows }, ctx: Ctx<P3Principal>) => {
-					reachMachine(machine, caller, answer(machine), hosts.value);
+				attach: async ({ terminal }) => ({
+					url: `${ATTACH_PATH}?${new URLSearchParams({ workspace, thing, terminal: usable(terminal) })}`,
+				}),
+				backlog: async ({ terminal }) => ({
+					data: Buffer.from(at().tail(usable(terminal)).bytes).toString("base64"),
+				}),
+				open: async ({ machine, folder, columns, rows }, ctx) => {
+					reachMachine(machine, caller, answers.value[machine], hosts.value);
 					if (!folder.startsWith("/")) {
 						throw invalid("args", `terminals: ${folder} is not absolute`, {
 							message: messages.message("notAbsolute"),
 						});
 					}
-					return here.open({ workspace, machine, folder, columns, rows, openedBy: by }, ctx);
+					return at().open({ owner, machine, folder, columns, rows, openedBy: caller, max: MAX_TERMINALS }, ctx);
 				},
-				input: ({ terminal, data }, ctx) => here.input({ terminal: usable(terminal), data }, ctx),
-				resize: ({ terminal, columns, rows }, ctx) =>
-					here.resize({ terminal: usable(terminal), columns, rows }, ctx),
-				close: ({ terminal }, ctx) => here.close({ terminal: usable(terminal) }, ctx),
+				type: async ({ terminal, bytes }) => {
+					at().write(usable(terminal), bytes);
+					return null;
+				},
+				resize: async ({ terminal, columns, rows }) => {
+					at().resize(usable(terminal), columns, rows);
+					return null;
+				},
+				// Closing only ends a program: anyone with Use here may, the machine available to them or not (so a
+				// terminal on a machine hidden since stays closable).
+				close: async ({ terminal }) => {
+					at().close(here(terminal).id);
+					return null;
+				},
 			};
 		},
+		delete: async (thing, ctx) => {
+			await (await ctx.get(TerminalKeeper, {})).closeOwners({ prefix: `${thing}/` }, ctx);
+		},
 	});
+	serveAttach(host);
 });
-
-/** Who opened a terminal, as the list keeps it: `person:<id>`, `agent:<session>`, `server`. */
-function openerOf(caller: Caller): string {
-	switch (caller.kind) {
-		case "person":
-			return `person:${caller.person}`;
-		case "agent":
-			return `agent:${caller.session}`;
-		case "server":
-			return "server";
-	}
-}
-
-/** The caller's key as `Gives` takes it (`callerKey` of its principal). */
-function keyOf(caller: Exclude<Caller, { kind: "server" }>): string {
-	return caller.kind === "person" ? `person:${caller.person}` : `worker:${caller.session}`;
-}

@@ -1,7 +1,7 @@
 // The terminals' harness part, called as the harness calls it (a stand-in reference with its grants and members):
-// no tools without Use on the nearest Terminals; with it, `terminal_open` opens at the conversation's location,
-// `terminal_send` types (Enter after unless told not to), `terminal_read` answers the output as plain text and
-// `terminal_close` closes; Use withheld after the part was built refuses the next call.
+// no tool without Use on the nearest Terminals; with it, one tool `terminal` whose actions list the terminals, open
+// one at the conversation's location, type a line (Enter after it) or keys, read the output as plain text and close;
+// Use withheld after the part was built refuses the next call.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -34,17 +34,25 @@ function held(granted: readonly string[], calls: Calls, output = ""): HeldThing<
 	const ref: Record<string, unknown> = { granted: new Set(granted) };
 	const answers: Record<string, unknown> = {
 		open: "t1",
-		input: null,
+		type: null,
 		close: null,
-		backlog: { seq: 1, data: Buffer.from(output).toString("base64") },
+		backlog: { data: Buffer.from(output).toString("base64") },
 	};
 	for (const [name, answer] of Object.entries(answers)) if (granted.includes(name)) ref[name] = recorded(name, answer);
+	if (granted.includes("terminals")) {
+		ref.terminals = {
+			value: [
+				{ id: "t1", folder: "/work", exitCode: null },
+				{ id: "t2", folder: "/", exitCode: 1 },
+			],
+		};
+	}
 	// A stand-in for the holding's reference: the part reads only `granted` and the members.
 	return { thing: "terms", workspace: "w", ref: ref as unknown as HeldThing<typeof Terminals>["ref"] };
 }
 
 /** What Use grants. */
-const USE = ["backlog", "open", "input", "resize", "close"];
+const USE = ["terminals", "attach", "backlog", "open", "type", "resize", "close"];
 
 /** Runs tool `name` of `tools` with `args`; its output text. */
 async function run(tools: ReturnType<typeof toolsOf>, name: string, args: object): Promise<string> {
@@ -62,40 +70,40 @@ function toolsOf(things: HeldThing<typeof Terminals>[], at = session({ machine: 
 }
 
 describe("the terminals' harness part", () => {
-	it("gives no tools without Use on the nearest Terminals", () => {
-		assert.deepEqual(toolsOf([held(["terminals", "output", "backlog"], {})]), []);
+	it("gives no tool without Use on the nearest Terminals", () => {
+		assert.deepEqual(toolsOf([held(["terminals", "attach", "backlog"], {})]), []);
 		assert.deepEqual(toolsOf([held(USE, {}), held(["backlog"], {})]), [], "the nearest (last) decides");
 	});
 
-	it("opens at the location, types, reads plain text and closes", async () => {
+	it("gives one tool that lists, opens at the location, types, reads plain text and closes", async () => {
 		const calls: Calls = {};
 		const tools = toolsOf([held(USE, calls, "\u001b[1m$ \u001b[0mls\r\nREADME.md\r\n")]);
-		assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-			"terminal_close",
-			"terminal_open",
-			"terminal_read",
-			"terminal_send",
-		]);
-		assert.equal(await run(tools, "terminal_open", {}), "opened terminal t1 in /work");
+		assert.deepEqual(
+			tools.map((tool) => tool.name),
+			["terminal"],
+		);
+		assert.equal(await run(tools, "terminal", { action: "list" }), "t1 /work\nt2 / (ended with code 1)");
+		assert.equal(await run(tools, "terminal", { action: "open" }), "opened terminal t1 in /work");
 		assert.deepEqual(calls.open, [{ machine: "m1", folder: "/work", columns: 120, rows: 40 }]);
-		await run(tools, "terminal_send", { terminal: "t1", text: "ls" });
-		await run(tools, "terminal_send", { terminal: "t1", text: "q", enter: false });
-		assert.deepEqual(calls.input, [
-			{ terminal: "t1", data: "ls\r" },
-			{ terminal: "t1", data: "q" },
+		await run(tools, "terminal", { action: "type", terminal: "t1", input: "ls" });
+		await run(tools, "terminal", { action: "keys", terminal: "t1", input: "q" });
+		assert.deepEqual(calls.type, [
+			{ terminal: "t1", bytes: "ls\r" },
+			{ terminal: "t1", bytes: "q" },
 		]);
-		assert.equal(await run(tools, "terminal_read", { terminal: "t1" }), "$ ls\nREADME.md\n");
-		await run(tools, "terminal_close", { terminal: "t1" });
+		assert.equal(await run(tools, "terminal", { action: "read", terminal: "t1" }), "$ ls\nREADME.md\n");
+		await run(tools, "terminal", { action: "close", terminal: "t1" });
 		assert.deepEqual(calls.close, [{ terminal: "t1" }]);
+		await assert.rejects(run(tools, "terminal", { action: "close" }), /needs `terminal`/);
 	});
 
 	it("refuses to open where the conversation works on no machine, and once Use is withheld", async () => {
 		const thing = held(USE, {});
 		const nowhere = toolsOf([thing], session(undefined));
-		await assert.rejects(run(nowhere, "terminal_open", {}), /no machine/);
+		await assert.rejects(run(nowhere, "terminal", { action: "open" }), /no machine/);
 		const tools = toolsOf([thing]);
 		// The holding's reference loses its members in the flush in which Use is withheld.
-		(thing.ref as unknown as Record<string, unknown>).input = undefined;
-		await assert.rejects(run(tools, "terminal_send", { terminal: "t1", text: "x" }), /no longer use/);
+		(thing.ref as unknown as Record<string, unknown>).type = undefined;
+		await assert.rejects(run(tools, "terminal", { action: "type", terminal: "t1", input: "x" }), /no longer use/);
 	});
 });

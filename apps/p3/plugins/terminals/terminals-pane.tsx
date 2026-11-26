@@ -1,14 +1,16 @@
 // The terminal pane: the terminals open in a workspace as tabs, one shown at a time on a `TerminalScreen` (screen.tsx;
 // `PlainScreen` until a renderer is decided), and, with Use, New terminal (on the pane's machine, in its folder),
 // typing and Close. A component until slice 4's `Views` registers panes; what it opens on is its props. The screen
-// gets the backlog first, then the output events numbered after it; Watch withheld takes the list and the output
-// away at once.
+// reads the shown terminal's bytes from the address `attach` answers (kept output, then what follows, raw); Watch and
+// Use withheld take the list away at once and end the bytes.
 
 import { Button, IconButton } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type EventSubscription, type Reference, withCancel } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Reference, reportError, withCancel } from "@earendil-works/p3/v1";
 import { CloseIcon, useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useCallback, useState } from "react";
-import { type Output, Terminals } from "./contract.ts";
+import { messages as machineMessages } from "../environments/messages.ts";
+import { refusalText } from "../environments/refusal.ts";
+import { Terminals } from "./contract.ts";
 import { messages } from "./messages.ts";
 import { PlainScreen, type TerminalScreen } from "./screen.tsx";
 import styles from "./terminals-pane.module.css";
@@ -29,6 +31,7 @@ const START = { columns: 80, rows: 24 };
 /** The pane on `props.workspace`'s terminals. */
 export function TerminalsPane(props: TerminalsPaneProps) {
 	const { t } = useMessages(messages);
+	const environments = useMessages(machineMessages).t;
 	const ref = useHold(Terminals, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const state = useRefState(ref);
@@ -40,7 +43,7 @@ export function TerminalsPane(props: TerminalsPaneProps) {
 	if (live === undefined) return <p className={styles.note}>{t("loading")}</p>;
 	if (list === undefined) return <p className={styles.note}>{t("denied")}</p>;
 	const shown = list.find((terminal) => terminal.id === chosen) ?? list[list.length - 1];
-	const failed = (failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure));
+	const failed = (failure: unknown) => setError(refusalText(failure, { terminals: t, environments }));
 	const open = live.open;
 	const Screen = props.Screen ?? PlainScreen;
 	return (
@@ -112,13 +115,13 @@ function Shown(props: {
 		(onBytes: (bytes: Uint8Array) => void) => followBytes(live, terminal, onBytes),
 		[live, terminal],
 	);
-	const input = live.input;
+	const type = live.type;
 	const resize = live.resize;
 	return (
 		<Screen
 			label={props.label}
 			subscribe={subscribe}
-			{...(input === undefined ? {} : { onInput: (data) => void input({ terminal, data }, BACKGROUND_CONTEXT) })}
+			{...(type === undefined ? {} : { onInput: (bytes) => void type({ terminal, bytes }, BACKGROUND_CONTEXT) })}
 			{...(resize === undefined
 				? {}
 				: { onResize: (columns, rows) => void resize({ terminal, columns, rows }, BACKGROUND_CONTEXT) })}
@@ -127,8 +130,8 @@ function Shown(props: {
 }
 
 /**
- * Hands `onBytes` terminal `terminal`'s output in order until the returned stop: the output events are followed
- * first and held back, then the backlog is read, then the held pieces numbered after it and every later one.
+ * Hands `onBytes` terminal `terminal`'s bytes in order until the returned stop: the address `attach` answers, read as
+ * a stream (kept output first, then each piece as it comes); a failure is reported and leaves the screen as it was.
  */
 function followBytes(
 	live: Reference<typeof Terminals>,
@@ -136,36 +139,16 @@ function followBytes(
 	onBytes: (bytes: Uint8Array) => void,
 ): () => void {
 	const { context, cancel } = withCancel(BACKGROUND_CONTEXT);
-	let stopped = false;
-	let after: number | undefined;
-	const held: Output[] = [];
-	const piece = (output: Output) => {
-		if (output.terminal !== terminal) return;
-		if (after === undefined) held.push(output);
-		else if (output.seq > after) {
-			after = output.seq;
-			onBytes(bytesOf(output.data));
-		}
-	};
-	let subscription: EventSubscription | undefined;
 	const start = async () => {
-		subscription = await live.output?.on(({ value }) => piece(value), context);
-		const backlog = await live.backlog?.({ terminal }, context);
-		if (backlog === undefined || stopped) return;
-		after = backlog.seq;
-		onBytes(bytesOf(backlog.data));
-		for (const output of held.splice(0)) piece(output);
+		const attached = await live.attach?.({ terminal }, context);
+		if (attached === undefined) return;
+		const response = await fetch(attached.url, { signal: context.abortSignal });
+		const reader = response.body?.getReader();
+		if (!response.ok || reader === undefined) throw new Error(`terminals: attach answered ${response.status}`);
+		for (let next = await reader.read(); !next.done; next = await reader.read()) onBytes(next.value);
 	};
-	// A failure leaves the screen as it was; the pane shows the reference's state.
-	start().catch(() => {});
-	return () => {
-		stopped = true;
-		cancel();
-		subscription?.stop();
-	};
-}
-
-/** Base64 `data` as bytes. */
-function bytesOf(data: string): Uint8Array {
-	return Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+	start().catch((error: unknown) => {
+		if (!context.abortSignal?.aborted) reportError("terminals: a terminal's bytes", error, BACKGROUND_CONTEXT);
+	});
+	return cancel;
 }
