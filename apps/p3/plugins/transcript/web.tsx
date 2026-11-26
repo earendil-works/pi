@@ -7,7 +7,10 @@ import { Views } from "../things/contract.web.tsx";
 import { messages } from "./messages.ts";
 import { SessionView } from "./session-view.tsx";
 
-/** The session kind (slice 5's `SessionKind`), whose view this is. */
+/**
+ * The session kind's name (the sessions plugin's `SessionKind`), whose view this is. By name: its contract file imports
+ * the things plugin's files, and a file copied into this plugin's bundle may import only its own plugin's.
+ */
 const SESSION_KIND = "sessions.session";
 
 export default defineFacet((_host, self) => {

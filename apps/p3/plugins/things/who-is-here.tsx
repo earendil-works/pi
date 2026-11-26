@@ -15,9 +15,10 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { partyKey } from "./contract.ts";
+import { useScreenId } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useErrorText, useFromText, usePartyName, useScreenId } from "./use-page.ts";
+import { useErrorText, useFromText, usePartyName } from "./use-page.ts";
 import { Workspace, WorkspacePeople } from "./workspace.ts";
 
 /** Who is here in `workspace`, with its switches; `onInvite` opens the invite dialog (none: no Manage people). */

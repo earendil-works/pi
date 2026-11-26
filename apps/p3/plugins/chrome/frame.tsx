@@ -1,9 +1,10 @@
 // The page's frame, the chrome's `PageRoot` (decisions 59, 64, 66, 74): the top bar, the navigator slot (the things
 // plugin's `Navigator`, or another plugin's) and the main area with the route's target in its view, the gear opening
 // its Settings view. A view that takes the whole page (`area: "page"`) gets it; the chrome keeps one corner button
-// with the navigator and the gear. On a phone one screen at a time: a workspace with no view of its own shows the
-// navigator first; everything else fills the screen with a back button. `/` goes to the person's first topmost
-// workspace; `/me` is the person's own page.
+// with the navigator and the gear. Both areas are one tree, so a view keeps its place (and its state) when the chrome
+// learns its area. On a phone one screen at a time: a workspace with no view of its own shows the navigator first;
+// everything else fills the screen with a back button. `/` goes to the person's first topmost workspace; `/me` is
+// the person's own page.
 
 import { IconButton } from "@earendil-works/elanor-react";
 import { type ConnectionState, Me } from "@earendil-works/p3/v1";
@@ -24,10 +25,10 @@ import {
 	useRoute,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
 // its page started with, whose `/v1/web` may not have a newer contract yet (a component token would be `undefined`).
-import { Navigator, Settings, type Shown, TargetView } from "../things/contract.web.tsx";
+import { Navigator, Settings, type Shown, TargetView, useScreenId } from "../things/contract.web.tsx";
 import { Roots } from "../things/workspace.ts";
 import { CornerMenu } from "./corner-menu.tsx";
 import styles from "./frame.module.css";
@@ -36,17 +37,12 @@ import { messages } from "./messages.ts";
 import { TopBar } from "./top-bar.tsx";
 import { ViewBoundary } from "./view-boundary.tsx";
 
-/** Who the caller is, as `Me` answers: a person (the owner among them), or a session's agent (never a page). */
-export type Caller =
-	| { readonly kind: "person"; readonly id: string; readonly name: string; readonly owner: boolean }
-	| { readonly kind: "agent"; readonly session: string };
-
-/** What the bar and the corner button show: the route's target, the connection and the caller. */
+/** What the bar shows: the route's target, the connection and the person's name (`Me`; none until known). */
 export type ChromeProps = {
 	readonly target: Target | undefined;
 	readonly settings: boolean;
 	readonly connection: ConnectionState;
-	readonly caller: Caller | undefined;
+	readonly person: string | undefined;
 };
 
 /** The frame: the chrome around the route. */
@@ -54,11 +50,11 @@ export function Frame() {
 	const route = useRoute();
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	// A page is never a session's worker: `Me` answers it a person.
-	const caller = me?.kind === "agent" ? undefined : me;
+	const person = me?.kind === "person" ? me.name : undefined;
 	const connection = useRegistry(PageConnection) ?? "connecting";
 	const target = route.kind === "target" ? route.target : undefined;
 	const settings = route.kind === "target" && route.settings;
-	const chrome: ChromeProps = { target, settings, connection, caller };
+	const chrome: ChromeProps = { target, settings, connection, person };
 	switch (route.kind) {
 		case "landing":
 			return <Shell chrome={chrome} main={<Landing />} screen="main" />;
@@ -73,8 +69,7 @@ export function Frame() {
 
 /** `/`: the person's first topmost workspace, in place of `/` (a redirect); with none, says so. */
 function Landing() {
-	const [view] = useState(randomId);
-	const roots = useWatch(useLive(useHold(Roots, { view }))?.list);
+	const roots = useWatch(useLive(useHold(Roots, { view: useScreenId() }))?.list);
 	const first = roots?.rows[0]?.workspace;
 	useEffect(() => {
 		if (first !== undefined) redirect(targetPath({ kind: "workspace", workspace: first }));
@@ -92,59 +87,58 @@ function TargetFrame(props: {
 	const View = useComponent(TargetView);
 	const SettingsView = useComponent(Settings);
 	const [shown, setShown] = useState<Shown | undefined>(undefined);
-	const onShown = useCallback((next: Shown) => setShown(next), []);
-	const at = targetPath(route.target, route.view === undefined ? {} : { view: route.view });
+	const at = targetPath(route.target, { view: route.view });
 	const main = route.settings ? (
 		SettingsView === undefined ? null : (
 			<SettingsView target={route.target} />
 		)
 	) : View === undefined ? null : (
-		<View onShown={onShown} target={route.target} {...(route.view === undefined ? {} : { view: route.view })} />
+		<View onShown={setShown} target={route.target} view={route.view} />
 	);
 	const framed = (
 		<ViewBoundary at={route.settings ? `${at}/settings` : at} title={t("stopped")}>
 			{main}
 		</ViewBoundary>
 	);
-	if (!route.settings && shown === "page") {
-		return (
-			<div className={styles.frame} data-area="page">
-				<main className={styles.page}>{framed}</main>
-				<CornerMenu {...props.chrome} />
-			</div>
-		);
-	}
+	if (!route.settings && shown === "page") return <Shell chrome={props.chrome} main={framed} screen="page" />;
 	// On a phone, a workspace with no view of its own opens as its navigator; its Settings view is one step on.
 	const navigatorFirst = route.target.kind === "workspace" && !route.settings && shown === "settings";
 	return <Shell chrome={props.chrome} main={framed} screen={navigatorFirst ? "navigator" : "main"} />;
 }
 
-/** The bar, the navigator and the main area; `screen` says which a phone shows. */
+/**
+ * The bar, the navigator and the main area; `screen` says which of the two a phone shows, or `page`: the main area
+ * alone with the corner button. `main` keeps its place in the tree whatever `screen` says.
+ */
 function Shell(props: {
 	readonly chrome: ChromeProps;
 	readonly main: ReactNode;
-	readonly screen: "navigator" | "main";
+	readonly screen: "navigator" | "main" | "page";
 }) {
 	const NavigatorView = useComponent(Navigator);
 	const { target, settings } = props.chrome;
+	const page = props.screen === "page";
 	return (
-		<div className={styles.frame} data-area="main" data-screen={props.screen}>
-			<TopBar {...props.chrome} />
+		<div className={styles.frame} data-area={page ? "page" : "main"} data-screen={props.screen}>
+			{page ? null : <TopBar {...props.chrome} />}
 			<div className={styles.body}>
-				<aside className={styles.navigator}>
-					{NavigatorView === undefined ? null : (
-						<NavigatorView
-							onMe={() => navigate("/me")}
-							onOpen={(next) => navigate(targetPath(next))}
-							target={target}
-						/>
-					)}
-				</aside>
+				{page ? null : (
+					<aside className={styles.navigator}>
+						{NavigatorView === undefined ? null : (
+							<NavigatorView
+								onMe={() => navigate("/me")}
+								onOpen={(next) => navigate(targetPath(next))}
+								target={target}
+							/>
+						)}
+					</aside>
+				)}
 				<main className={styles.main}>
-					<MainHead settings={settings} target={target} />
+					{page ? null : <MainHead settings={settings} target={target} />}
 					{props.main}
 				</main>
 			</div>
+			{page ? <CornerMenu target={target} /> : null}
 		</div>
 	);
 }
@@ -183,9 +177,4 @@ function Note(props: { readonly text: "nothingYet" | "notFound" }) {
 			{t(props.text)}
 		</p>
 	);
-}
-
-/** A fresh id for one mounted list (its `view`): two pages of one person never share it. */
-function randomId(): string {
-	return Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

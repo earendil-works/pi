@@ -1,24 +1,13 @@
-// What the things plugin's page parts share: a list's screen id, every registered kind by name, a message of any
-// plugin as text, how a "from" reads, what a party opens, how a party is named, and what a failed call says.
+// What the things plugin's page parts share: every registered kind by name, a message of any plugin as text, how a
+// "from" reads, what a party opens, how a party is named, and what a failed call or a denial says.
 
 import { type MessageData, Translations } from "@earendil-works/p3/v1";
 import { type Target, useHold, useLive, useMessages, useRegistry, useWatch } from "@earendil-works/p3/v1/web";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Party } from "./contract.ts";
 import { type KindView, ThingKindsView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import type { Origin } from "./workspace.ts";
-
-/**
- * A fresh id for one mounted list (a list contract's `view`), kept while it stays mounted: two pages of one person
- * never share a list. `getRandomValues` works on a page served over plain HTTP too.
- */
-export function useScreenId(): string {
-	const [id] = useState(() =>
-		Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join(""),
-	);
-	return id;
-}
 
 /** Every registered kind, by name (`undefined` until known). */
 export function useKinds(): ReadonlyMap<string, KindView> | undefined {
@@ -88,20 +77,26 @@ export function usePartyName(): (party: Party, name: string) => string {
 	};
 }
 
-/**
- * What a failed call says to the person: the message the server sent with it (`details.message`, as data), else the
- * error's own text (a trust boundary: an error from the server).
- */
+/** What a failed call says to the person: the message the server sent with it, else the error's own text. */
 export function useErrorText(): (error: unknown) => string {
 	const text = useMessageText();
 	return (error) => {
-		const details: unknown =
-			typeof error === "object" && error !== null && "details" in error ? error.details : undefined;
-		const message =
-			typeof details === "object" && details !== null && "message" in details ? details.message : undefined;
-		if (typeof message === "object" && message !== null && "namespace" in message && "key" in message) {
-			return text(message as MessageData);
-		}
+		const message = messageOf(error);
+		if (message !== undefined) return text(message);
 		return error instanceof Error ? error.message : String(error);
 	};
+}
+
+/**
+ * The message the server sent with an error (`details.message`, as data: a denial's, a refused call's), if it sent
+ * one (a trust boundary: an error from the server).
+ */
+export function messageOf(error: unknown): MessageData | undefined {
+	const details: unknown =
+		typeof error === "object" && error !== null && "details" in error ? error.details : undefined;
+	const message =
+		typeof details === "object" && details !== null && "message" in details ? details.message : undefined;
+	return typeof message === "object" && message !== null && "namespace" in message && "key" in message
+		? (message as MessageData)
+		: undefined;
 }

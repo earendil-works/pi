@@ -159,7 +159,11 @@ export function useRoute(): Route {
 /** The link of `target`: in `view` (`?view=`), as its Settings view, or with the view's own `rest` after it. */
 export function targetPath(
 	target: Target,
-	options: { readonly view?: string; readonly settings?: boolean; readonly rest?: readonly string[] } = {},
+	options: {
+		readonly view?: string | undefined;
+		readonly settings?: boolean;
+		readonly rest?: readonly string[];
+	} = {},
 ): string {
 	const segments = ["w", target.workspace, ...targetSegments(target)];
 	if (options.settings === true) segments.push("settings");

@@ -12,14 +12,6 @@
 	background: var(--semantic-color-background-canvas);
 }
 
-.page {
-	position: relative;
-	display: flex;
-	min-block-size: 0;
-	flex: 1 1 auto;
-	flex-direction: column;
-}
-
 .masthead {
 	position: relative;
 	z-index: var(--semantic-number-layer-sticky);
@@ -193,12 +185,6 @@
 	white-space: pre-wrap;
 	color: var(--semantic-color-text-secondary);
 	font: var(--semantic-typography-code-secondary);
-}
-
-.error {
-	margin: 0;
-	color: var(--semantic-color-text-negative);
-	font: var(--semantic-typography-ui-secondary);
 }
 
 @keyframes pulse {

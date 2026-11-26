@@ -19,10 +19,10 @@ import {
 import { ThingInfo, Workspace } from "../things/workspace.ts";
 import { ConnectionStatus } from "./connection.tsx";
 import styles from "./frame.module.css";
-import type { Caller, ChromeProps } from "./frame.tsx";
+import type { ChromeProps } from "./frame.tsx";
 import { messages } from "./messages.ts";
 
-/** The bar: where the page is, the connection, and the caller's menu. */
+/** The bar: where the page is, the connection, and the person's menu. */
 export function TopBar(props: ChromeProps) {
 	return (
 		<Layout.Header className={styles.masthead} data-top-bar="" render={<TopNavigation.Root />}>
@@ -32,7 +32,7 @@ export function TopBar(props: ChromeProps) {
 			</TopNavigation.Identity>
 			<TopNavigation.Actions className={styles.actions}>
 				<ConnectionStatus state={props.connection} />
-				{props.caller === undefined ? null : <PersonMenu caller={props.caller} />}
+				{props.person === undefined ? null : <PersonMenu name={props.person} />}
 			</TopNavigation.Actions>
 		</Layout.Header>
 	);
@@ -74,10 +74,10 @@ function ThingCrumb(props: { readonly workspace: string; readonly thing: string 
 	);
 }
 
-/** The caller's menu: who is signed in, and their own page. */
-function PersonMenu(props: { readonly caller: Caller }) {
+/** The person's menu: who is signed in, and their own page. */
+function PersonMenu(props: { readonly name: string }) {
 	const { t } = useMessages(messages);
-	const name = props.caller.kind === "person" ? props.caller.name : t("agent");
+	const { name } = props;
 	return (
 		<Menu.Root>
 			<Menu.Trigger

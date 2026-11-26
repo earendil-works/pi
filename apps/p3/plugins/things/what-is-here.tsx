@@ -17,10 +17,10 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { AddThing, ThingParts } from "./contract.web.tsx";
+import { AddThing, ThingParts, useScreenId } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useErrorText, useFromText, useScreenId } from "./use-page.ts";
+import { useErrorText, useFromText } from "./use-page.ts";
 import { Workspace, WorkspaceContents } from "./workspace.ts";
 
 /** What is here in `workspace`, with its switches and the picker. */

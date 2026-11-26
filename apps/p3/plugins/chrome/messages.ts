@@ -10,7 +10,6 @@ export const messages = defineMessages("chrome", {
 		connecting: "Connecting…",
 		offline: "Offline",
 		signedInAs: (name: string) => `Signed in as ${name}`,
-		agent: "Agent",
 		me: "Me",
 		settings: "Settings",
 		back: "Back",

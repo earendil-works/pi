@@ -20,11 +20,11 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { type ComponentType, type MouseEvent, type ReactNode, useEffect, useState } from "react";
-import { partyKey } from "./contract.ts";
-import { ThingParts } from "./contract.web.tsx";
+import { type Party, partyKey } from "./contract.ts";
+import { ThingParts, useScreenId } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { partyTarget, useFromText, useScreenId } from "./use-page.ts";
+import { partyTarget, useFromText } from "./use-page.ts";
 import { Roots, Workspace, WorkspaceChildren, WorkspaceContents, WorkspacePeople } from "./workspace.ts";
 
 /** What the navigator gets from the chrome (`Navigator`'s props). */
@@ -99,7 +99,7 @@ function WorkspaceEntry(
 	return (
 		<SideNavigation.Item>
 			<EntryLink
-				active={isOpen && props.target?.kind === "workspace"}
+				current={props.target}
 				data={{ "data-nav-workspace": row.workspace }}
 				Icon={useKindIcon(row.kind)}
 				onOpen={props.onOpen}
@@ -226,7 +226,7 @@ function ThingEntry(
 	return (
 		<SideNavigation.Item className={props.from === undefined ? undefined : styles.faded}>
 			<EntryLink
-				active={props.target?.kind === "thing" && props.target.thing === props.row.thing}
+				current={props.target}
 				data={{ "data-nav-thing": props.row.thing }}
 				from={props.from}
 				Icon={useKindIcon(props.row.kind)}
@@ -243,19 +243,16 @@ function ThingEntry(
 function PartyEntry(
 	props: NavigatorProps & {
 		readonly workspace: string;
-		readonly row: { readonly party: Parameters<typeof partyKey>[0]; readonly name: string; readonly key: string };
+		readonly row: { readonly party: Party; readonly name: string; readonly key: string };
 		readonly from: string | undefined;
 	},
 ) {
 	const target = partyTarget(props.workspace, props.row.party);
 	if (target === undefined) return null;
-	const active =
-		(props.target?.kind === "person" && target.kind === "person" && props.target.person === target.person) ||
-		(props.target?.kind === "group" && target.kind === "group" && props.target.group === target.group);
 	return (
 		<SideNavigation.Item className={props.from === undefined ? undefined : styles.faded}>
 			<EntryLink
-				active={active}
+				current={props.target}
 				data={{ "data-nav-party": props.row.key }}
 				from={props.from}
 				Icon={props.row.party.kind === "group" ? GroupIcon : PersonIcon}
@@ -268,10 +265,13 @@ function PartyEntry(
 	);
 }
 
-/** A link to `target`: a real link (it opens in a new tab too), a plain click asks the chrome to open it. */
+/**
+ * A link to `target`: a real link (it opens in a new tab too), a plain click asks the chrome to open it; active while
+ * `current`, what the main area shows, is its target.
+ */
 function EntryLink(props: {
 	readonly target: Target;
-	readonly active: boolean;
+	readonly current: Target | undefined;
 	readonly Icon: ComponentType;
 	readonly from?: string | undefined;
 	readonly onOpen: (target: Target) => void;
@@ -279,10 +279,11 @@ function EntryLink(props: {
 	readonly children: ReactNode;
 }) {
 	const { Icon } = props;
+	const href = targetPath(props.target);
 	return (
 		<SideNavigation.Link
-			active={props.active}
-			href={targetPath(props.target)}
+			active={props.current !== undefined && targetPath(props.current) === href}
+			href={href}
 			iconEnd={props.from === undefined ? undefined : <span className={styles.from}>{props.from}</span>}
 			iconStart={<Icon />}
 			onClick={(event) => follow(event, () => props.onOpen(props.target))}

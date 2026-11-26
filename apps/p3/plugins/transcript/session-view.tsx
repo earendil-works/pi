@@ -19,7 +19,7 @@ import {
 	useRoute,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
 // its page started with, whose `/v1/web` may not have a newer contract yet (a component token would be `undefined`).
 import {
@@ -35,7 +35,7 @@ import {
 	parsePaneTree,
 	sameTree,
 } from "../layout/contract.web.tsx";
-import { TargetView, type ThingViewProps, Views, viewsKey } from "../things/contract.web.tsx";
+import { TargetView, type ThingViewProps, useScreenId, Views, viewsKey } from "../things/contract.web.tsx";
 import { WorkspaceContents } from "../things/workspace.ts";
 import { messages } from "./messages.ts";
 import styles from "./session-view.module.css";
@@ -60,8 +60,7 @@ function SessionPanes(props: { readonly session: string; readonly person: string
 	const Layout = useComponent(PaneLayout);
 	const Target = useComponent(TargetView);
 	const views = useRegistry(Views);
-	const [screen] = useState(randomId);
-	const list = useWatch(useLive(useHold(WorkspaceContents, { workspace: session, view: screen }))?.list);
+	const list = useWatch(useLive(useHold(WorkspaceContents, { workspace: session, view: useScreenId() }))?.list);
 	const things = useMemo(
 		() =>
 			(list?.rows ?? []).filter(
@@ -72,7 +71,7 @@ function SessionPanes(props: { readonly session: string; readonly person: string
 	const [tree, setTree] = useLayout(session, props.person);
 	const seen = useRef<Set<string> | undefined>(undefined);
 	const at = (thing: string | undefined) =>
-		targetPath({ kind: "workspace", workspace: session }, thing === undefined ? {} : { rest: [thing] });
+		targetPath({ kind: "workspace", workspace: session }, { rest: thing === undefined ? [] : [thing] });
 	const tidied = list === undefined ? tree : tidiedTree(tree, new Set(things.map(({ thing }) => thing)));
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `at` and `setTree` are made anew each render; what they read is listed.
 	useEffect(() => {
@@ -160,9 +159,4 @@ function storedTree(key: string): PaneNode | undefined {
 function tidiedTree(tree: PaneNode, things: ReadonlySet<string>): PaneNode {
 	const kept = keepPanes(tree, (pane) => pane === TRANSCRIPT || things.has(pane)) ?? paneTree([TRANSCRIPT]);
 	return panesOf(kept).includes(TRANSCRIPT) ? kept : activatePane(openPane(kept, TRANSCRIPT, TRANSCRIPT), TRANSCRIPT);
-}
-
-/** A fresh id for this view's list (its `view`): two pages of one person never share it. */
-function randomId(): string {
-	return Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

@@ -274,10 +274,34 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press(`[data-nav-thing="${wall}"]`);
 		await browser.wait(`document.querySelector("[data-wall]") && document.querySelector('[data-area="page"]')`);
 		assert.equal(await browser.evaluate(`document.querySelector("[data-navigator]")`), null);
+		// The chrome learns the view's area from the view itself: giving it the page must not mount it a second time.
+		assert.equal(await browser.evaluate("window.wallMounts"), 1);
 		await press("[data-corner-menu]");
 		await press("[data-corner-navigator]");
 		await browser.settled("[data-corner-drawer]");
 		await shots("11-page-view-drawer-desktop");
+		await press(`[data-corner-drawer] [data-nav-workspace="${pi}"]`);
+		await browser.wait(`document.querySelector('[data-area="main"] [data-settings="${pi}"]')`);
+	});
+
+	it("mounts a view anew for another thing of its kind", async () => {
+		await add("make:page-kinds.wall", "Wall 2");
+		const walls = `[...document.querySelectorAll('[data-nav-thing]')].filter((e) => e.textContent.startsWith("Wall"))`;
+		await browser.wait(`${walls}.length === 2`);
+		const [first, second] = await browser.evaluate<string[]>(`${walls}.map((e) => e.dataset.navThing)`);
+		await press(`[data-nav-thing="${first}"]`);
+		await browser.wait(`document.querySelector('[data-wall="${first}"]')`);
+		const mounted = await browser.evaluate<number>("window.wallMounts");
+		await press("[data-corner-menu]");
+		await press("[data-corner-navigator]");
+		await browser.settled("[data-corner-drawer]");
+		await press(`[data-corner-drawer] [data-nav-thing="${second}"]`);
+		await browser.wait(`document.querySelector('[data-wall="${second}"]')`);
+		// A view's own state (a draft, a selection, what it has seen) is one thing's: it never moves on to the next.
+		assert.equal(await browser.evaluate("window.wallMounts"), mounted + 1);
+		await press("[data-corner-menu]");
+		await press("[data-corner-navigator]");
+		await browser.settled("[data-corner-drawer]");
 		await press(`[data-corner-drawer] [data-nav-workspace="${pi}"]`);
 		await browser.wait(`document.querySelector('[data-area="main"] [data-settings="${pi}"]')`);
 	});
@@ -405,8 +429,15 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await eventually(reported, (count) => count === before + 1);
 	});
 
-	it("leaves nothing reported on the server, and no error in the page but the component the base lacks", () => {
+	it("leaves nothing reported on the server, and no error in the page but the component the base lacks", async () => {
 		assert.deepEqual(t.errors, []);
+		// A web facet that does not build is left out of the page without a word at the start; only an apply's report
+		// names it. Every plugin's page part must be there.
+		const { steps } = await t.apply(context);
+		const failed = steps.flatMap(({ hosts }) =>
+			hosts.flatMap((host) => (host.kind === "reloaded" ? host.report.failed : [])),
+		);
+		assert.deepEqual(failed, []);
 		assert.deepEqual(
 			browser.console.filter((line) => !line.includes(MISSING_COMPONENT)),
 			[],

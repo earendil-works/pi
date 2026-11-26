@@ -2,14 +2,26 @@
 // target (`Views`: things of a kind, persons, groups; 0 to n each), what a kind has once (`ThingParts`: its icon,
 // create step, settings form, default view), and the components the page places: `TargetView`, which draws a target
 // in its chosen view, the Settings view, the navigator, the add-thing picker and the invite dialog; the plugins'
-// titles for the picker's headings and the sections of `/me`. Tokens and data only (the base bundle carries this
-// file, so no implementation lives here); `/v1/web` re-exports it.
+// titles for the picker's headings and the sections of `/me`; and `useScreenId`, the id every list a view holds
+// takes. Tokens and data only (the base bundle carries this file, so no component lives here); `/v1/web` re-exports
+// it.
 
 import { defineRegistry, type JsonValue, type MessageData, type TableItem } from "@earendil-works/p3/v1";
 import { defineComponent, type Target } from "@earendil-works/p3/v1/web";
-import type { ComponentType } from "react";
+import { type ComponentType, useState } from "react";
 
 export type { Target } from "@earendil-works/p3/v1/web";
+
+/**
+ * A fresh id for one mounted list (a list contract's `view`: `Roots`, `WorkspaceContents`, ...), kept while it stays
+ * mounted: two pages of one person never share a list. `getRandomValues` works on a page served over plain HTTP too.
+ */
+export function useScreenId(): string {
+	const [id] = useState(() =>
+		Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join(""),
+	);
+	return id;
+}
 
 /** A thing as its view gets it, seen from a workspace; a workspace's own view gets `thing === workspace`. */
 export type ThingViewProps = { readonly workspace: string; readonly thing: string };
@@ -67,7 +79,7 @@ export type ThingPartsEntry = {
 	readonly defaultView?: string;
 };
 
-/** The kinds' parts by kind name; an entry from another plugin than the kind's own is reported and left out. */
+/** The kinds' parts by kind name: the first by plugin name wins a kind, a second is reported. */
 export const ThingParts = defineRegistry<ThingPartsEntry, ReadonlyMap<string, TableItem<ThingPartsEntry>>>(
 	"things.parts",
 	{ version: 1 },
@@ -83,7 +95,7 @@ export type Shown = "main" | "page" | "settings";
  */
 export const TargetView = defineComponent<{
 	readonly target: Target;
-	readonly view?: string;
+	readonly view?: string | undefined;
 	readonly onShown?: (shown: Shown) => void;
 }>("things.target-view");
 

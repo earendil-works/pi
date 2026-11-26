@@ -18,21 +18,13 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { type Party, partyKey } from "./contract.ts";
+import { kindOfMakeTick, MAKE_ANY, makeTick, OPEN, type Party, partyKey } from "./contract.ts";
 import type { KindView } from "./kind.ts";
 import { page } from "./page-messages.ts";
+import { audienceOf, isFor, makeTickFor } from "./rules.ts";
 import styles from "./things.module.css";
 import { useErrorText, useKinds, useMessageText, usePartyName } from "./use-page.ts";
 import { type Cell, WhoMay, Workspace } from "./workspace.ts";
-
-/** The reserved tick that lets a party in with no tick, or keeps it out ("No access", item 113). */
-const OPEN = "@open";
-
-/** The Make tick of every kind, also ones added later (item 114). */
-const MAKE_ANY = "@make:*";
-
-/** The Make tick of one kind. */
-const MAKE_PREFIX = "@make:";
 
 /** What one checkbox shows (item 112). */
 type Look = "given" | "inherited" | "withheld" | "empty";
@@ -108,7 +100,9 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 		onSet:
 			setter === undefined ? undefined : (tick: string, gives: boolean | undefined) => set(row.party, tick, gives),
 	});
-	const ticksFor = (row: Row) => table.ticks.filter((tick) => fits(tick.for, row.party));
+	// A tick shows only in the rows of the parties it is for (item 91), by the rule the index gives by (`isFor`).
+	const fits = (tick: { readonly for: "agents" | "people" | "all" }, row: Row) =>
+		isFor(tick.for, audienceOf(row.party.kind));
 	return (
 		<section className={styles.whoMay} data-who-may={props.thing}>
 			<h2 className={styles.partTitle}>{t("whoMayWith", props.name)}</h2>
@@ -148,7 +142,7 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 								) : null}
 								{table.ticks.map((tick) => (
 									<Table.Cell align="center" key={tick.name}>
-										{fits(tick.for, row.party) ? <TickBox {...cellProps(row)} tick={tick.name} /> : null}
+										{fits(tick, row) ? <TickBox {...cellProps(row)} tick={tick.name} /> : null}
 									</Table.Cell>
 								))}
 							</Table.Row>
@@ -162,21 +156,16 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 						<strong>{nameOf(row.party, row.name)}</strong>
 						<AccessChoice {...cellProps(row)} />
 						{isWorkspace ? <MakeChoice {...cellProps(row)} kinds={kinds} /> : null}
-						{ticksFor(row).map((tick) => (
-							<TickBox {...cellProps(row)} key={tick.name} label={text(tick.label)} tick={tick.name} />
-						))}
+						{table.ticks.map((tick) =>
+							fits(tick, row) ? (
+								<TickBox {...cellProps(row)} key={tick.name} label={text(tick.label)} tick={tick.name} />
+							) : null,
+						)}
 					</li>
 				))}
 			</ul>
 		</section>
 	);
-}
-
-/** Whether a tick for `forWhom` may be given to `party` (item 91): agents ticks to agents, people ticks to people. */
-function fits(forWhom: "agents" | "people" | "all", party: Party): boolean {
-	if (forWhom === "all") return true;
-	const agent = party.kind === "agents" || party.kind === "agent";
-	return forWhom === "agents" ? agent : !agent;
 }
 
 /** What every cell control gets: its row, whether the thing is linked here, and the setter (none: read only). */
@@ -266,22 +255,24 @@ function AccessChoice(props: CellProps) {
  */
 function MakeChoice(props: CellProps & { readonly kinds: ReadonlyMap<string, KindView> }) {
 	const { t } = useMessages(page);
-	const agent = props.row.party.kind === "agents" || props.row.party.kind === "agent";
+	const audience = audienceOf(props.row.party.kind);
+	const makersOf = (kind: string) => props.kinds.get(kind)?.makers;
 	const has = (tick: string) => {
 		const look = lookOf(props.row.ticks[tick]);
 		return look === "given" || look === "inherited";
 	};
-	const offered = [...props.kinds.values()].filter(
-		(kind) => !(agent && kind.makers === "people") && kind.makers !== "plugin",
-	);
-	const peopleOnly = agent ? [...props.kinds.values()].filter((kind) => kind.makers === "people") : [];
-	const unknown = Object.keys(props.row.ticks).filter(
-		(tick) => tick.startsWith(MAKE_PREFIX) && tick !== MAKE_ANY && !props.kinds.has(tick.slice(MAKE_PREFIX.length)),
-	);
+	// A kind is offered to the parties its Make tick is for, by the rule a grant is written by (`makeTickFor`).
+	const kinds = [...props.kinds.values()];
+	const offered = kinds.filter((kind) => isFor(makeTickFor(kind.name, makersOf), audience));
+	const peopleOnly = audience === "agents" ? kinds.filter((kind) => kind.makers === "people") : [];
+	const unknown = Object.keys(props.row.ticks).filter((tick) => {
+		const kind = kindOfMakeTick(tick);
+		return kind !== undefined && tick !== MAKE_ANY && !props.kinds.has(kind);
+	});
 	const summary = has(MAKE_ANY)
 		? t("makeAll")
 		: offered
-				.filter((kind) => has(`${MAKE_PREFIX}${kind.name}`))
+				.filter((kind) => has(makeTick(kind)))
 				.map((kind) => kind.name)
 				.join(", ") || t("makeNothing");
 	return (
@@ -298,11 +289,11 @@ function MakeChoice(props: CellProps & { readonly kinds: ReadonlyMap<string, Kin
 						<Popover.Title>{t("makeFor", props.row.name)}</Popover.Title>
 						<TickBox {...props} label={t("makeAllKinds")} tick={MAKE_ANY} />
 						{offered.map((kind) => (
-							<TickBox {...props} key={kind.name} label={kind.name} tick={`${MAKE_PREFIX}${kind.name}`} />
+							<TickBox {...props} key={kind.name} label={kind.name} tick={makeTick(kind)} />
 						))}
 						{unknown.map((tick) => (
 							<span className={styles.faded} key={tick}>
-								<TickBox {...props} label={t("unknownKind", tick.slice(MAKE_PREFIX.length))} tick={tick} />
+								<TickBox {...props} label={t("unknownKind", kindOfMakeTick(tick) ?? tick)} tick={tick} />
 							</span>
 						))}
 						{peopleOnly.length === 0 ? null : (

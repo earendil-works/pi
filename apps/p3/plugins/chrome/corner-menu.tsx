@@ -2,16 +2,23 @@
 // no view can cover. It opens the navigator in a drawer and the target's Settings view (the gear).
 
 import { Drawer, IconButton, Menu } from "@earendil-works/elanor-react";
-import { MenuIcon, navigate, SettingsIcon, targetPath, useComponent, useMessages } from "@earendil-works/p3/v1/web";
+import {
+	MenuIcon,
+	navigate,
+	SettingsIcon,
+	type Target,
+	targetPath,
+	useComponent,
+	useMessages,
+} from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web` (see `frame.tsx`).
 import { Navigator } from "../things/contract.web.tsx";
 import styles from "./frame.module.css";
-import type { ChromeProps } from "./frame.tsx";
 import { messages } from "./messages.ts";
 
-/** The corner button: the navigator (in a drawer) and the gear. */
-export function CornerMenu(props: ChromeProps) {
+/** The corner button: the navigator (in a drawer) and the gear of `target`. */
+export function CornerMenu(props: { readonly target: Target | undefined }) {
 	const { t } = useMessages(messages);
 	const NavigatorView = useComponent(Navigator);
 	const [open, setOpen] = useState(false);
