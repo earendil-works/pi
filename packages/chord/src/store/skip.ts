@@ -6,7 +6,7 @@
 import type { Context } from "../context/index.ts";
 import type { SqliteValue } from "../sqlite/index.ts";
 import { chordMetrics } from "../telemetry.ts";
-import { identityOf, type Read, type ReadResult } from "./read.ts";
+import { identity, type KeptRows, type Read } from "./read.ts";
 import type { Use } from "./read-plan.ts";
 import type { Step } from "./step.ts";
 
@@ -39,8 +39,8 @@ const PROBES_PER_READ = 8;
  */
 export async function skips(read: Read, changes: readonly Change[], step: Step, context: Context): Promise<boolean> {
 	const latest = read.latest(step.executor);
-	if (latest === undefined || latest.kind === "failed") return false;
-	const result = latest.kind === "rows" ? latest.result : undefined;
+	if (latest === undefined) return false;
+	const result = latest.kind === "rows" ? latest : undefined;
 	const budget = { probes: PROBES_PER_READ };
 	for (const change of changes) {
 		for (const use of read.plan.uses) {
@@ -56,31 +56,41 @@ async function skipped(
 	read: Read,
 	use: Use,
 	change: Change,
-	result: ReadResult | undefined,
+	result: KeptRows | undefined,
 	step: Step,
 	context: Context,
 	budget: { probes: number },
 ): Promise<boolean> {
-	const assigns = (columns: ReadonlySet<string>): boolean =>
-		change.assigned === undefined || change.assigned.some((name) => columns.has(name));
 	// "Any": an `update` (a bulk one too) that assigns none of the columns the read depends on in that table.
-	if (change.kind !== "put" && change.kind !== "delete" && !assigns(use.depends)) return true;
+	if (change.kind !== "put" && change.kind !== "delete" && !assigns(change, use.depends)) return true;
 	// A bulk write names no rows, and a count keeps none: nothing more can be proved.
 	if (change.kind === "bulk" || result === undefined) return false;
 	// Where the value before is unknown and matters, the read runs: a matched column outside the key may have been
 	// re-pointed, and the rows it paired with before are unknown.
 	if (!use.stable) return false;
-	const values = use.pairedBy.map((name) => change.key[name]!);
 	const fetched = use.role === "own" ? result.keys : result.paired.get(use);
-	// Before: a fetched row the written row pairs with decided the result (unknown pairs count as one).
-	if (fetched === undefined || fetched.has(identityOf(values))) return false;
+	// Before: a fetched row the written row pairs with decided the result (unknown pairs count as one). Its identity
+	// made from the written key itself: no list of its values unless a probe binds them.
+	if (fetched === undefined || fetched.has(identity(use.pairedBy, change.key))) return false;
 	// After. A row that was not in the result cannot enter it by leaving (its own delete, its partner's), nor by an
 	// `update` of columns that decide neither membership nor position. An `exists` row's delete or update can bring
 	// its own rows in (`not(exists(…))`): only the probe tells.
-	if (use.role !== "exists" && (change.kind === "delete" || (change.kind === "update" && !assigns(use.enters))))
+	if (
+		use.role !== "exists" &&
+		(change.kind === "delete" || (change.kind === "update" && !assigns(change, use.enters)))
+	)
 		return true;
 	if (!use.keyed || budget.probes-- === 0) return false;
+	const values = use.pairedBy.map((name) => change.key[name]!);
 	return !(await probe(read, use.pairs!, values, result, step, context));
+}
+
+/** Whether `change` may assign one of `columns`: a write that names none assigns every column (a put, a delete). */
+function assigns(change: Change, columns: ReadonlySet<string>): boolean {
+	const { assigned } = change;
+	if (assigned === undefined) return true;
+	for (let at = 0; at < assigned.length; at++) if (columns.has(assigned[at]!)) return true;
+	return false;
 }
 
 /** The probe: whether, after the step's writes, a row with `values` in `columns` is in the read's range. */
@@ -88,7 +98,7 @@ async function probe(
 	read: Read,
 	columns: readonly string[],
 	values: readonly SqliteValue[],
-	result: ReadResult,
+	result: KeptRows,
 	step: Step,
 	context: Context,
 ): Promise<boolean> {

@@ -2,10 +2,11 @@
 // other sessions. Case 1: one write to one session's row with 10,000 open reads, one per session (a server holding
 // every session's list). Case 2: an import of 3,549 rows into one session with 4,020 open reads (bench round 1's
 // case). For each: the reads skip-tested (candidates), skipped, probed and run (exact, from the counters) and the
-// median time of the commit. Runs on the store's reads directly (open queries, a transaction's refresh), on SQLite
+// median time of the commit. Case 3 (the hot-path pass): the heap one open read keeps, the index's filing included,
+// at case 1's world (after collections; the rows are in SQLite, not on the heap). Runs on the store's reads directly (open queries, a transaction's refresh), on SQLite
 // `:memory:`.
 // Run by hand from packages/chord (not in CI):
-//   node --conditions=source --experimental-strip-types test/bench/commit-index.ts
+//   node --conditions=source --experimental-strip-types --expose-gc test/bench/commit-index.ts
 import { performance } from "node:perf_hooks";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { BACKGROUND_CONTEXT, type Context, withTelemetry } from "../../src/context/index.ts";
@@ -117,3 +118,23 @@ await measure("2. an import of 3,549 rows into one session, 4,020 reads", 4_020,
 	for (let id = 0; id < 3_549; id++)
 		changes.put({ session: "s1", id: 1_000 + id + run * 10_000, kind: "note", text: "imported" });
 });
+
+/** The heap one open read keeps in a world of 10,000 sessions of 3 rows, one read each, after a warm-up world. */
+async function heapPerRead(): Promise<void> {
+	const settled = async (): Promise<number> => {
+		for (let round = 0; round < 6; round++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			globalThis.gc!();
+		}
+		return process.memoryUsage().heapUsed;
+	};
+	const warm = await world(10, 3);
+	const before = await settled();
+	const measured = await world(10_000, 3);
+	const per = ((await settled()) - before) / 10_000;
+	console.log(`3. the heap of one open read of 3 rows, 10,000 reads: ${per.toFixed(0)} B`);
+	await warm.store.close(BACKGROUND_CONTEXT);
+	await measured.store.close(BACKGROUND_CONTEXT);
+}
+
+await heapPerRead();

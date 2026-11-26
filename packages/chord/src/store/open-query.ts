@@ -8,8 +8,8 @@
 import type { Context } from "../context/index.ts";
 import type { Batch } from "../state/internal.ts";
 import type { Query } from "./query.ts";
-import { Read, type ReadKind, type ReadRun, type ReadSink } from "./read.ts";
-import { type Projection, type Range, ReadPlan, type StoredRead } from "./read-plan.ts";
+import { Read, type ReadKind, type ReadRun, type ReadSink, type RunSink } from "./read.ts";
+import { type Projection, type Range, ReadPlan, type ShapeSlot, type StoredRead } from "./read-plan.ts";
 import { setsOf } from "./reads.ts";
 import type { ChordStore } from "./store.ts";
 
@@ -21,6 +21,8 @@ export type QuerySpec = {
 	readonly projection: Projection;
 	/** Who offers the query (the attempt's table handle): when it retires, the query's reads leave the index. */
 	readonly owner: object;
+	/** Where the plans of its named query share their shape; none for a window of the owner's own (`self.query`). */
+	readonly shapes?: ShapeSlot;
 };
 
 /** Where an open query lives: the store whose index its reads are in, and the batch adoptions outside a commit run in. */
@@ -31,6 +33,9 @@ type Compiled =
 	| { readonly kind: "compiled"; readonly plan: ReadPlan }
 	| { readonly kind: "failed"; readonly error: unknown };
 
+const NO_WATCHES: (() => void)[] = [];
+const NO_READS: readonly OpenRead[] = [];
+
 /** A query compiled for the bindings as they are, with its open reads. */
 export class OpenQuery {
 	readonly spec: QuerySpec;
@@ -39,7 +44,12 @@ export class OpenQuery {
 	readonly context: Context;
 	readonly #shape: "rows" | "count";
 	readonly #rebound: () => void;
-	readonly #reads = new Set<OpenRead>();
+	/**
+	 * Its open reads: without a set while there is at most one (a live query's one read; a set of one costs 152 B),
+	 * in a set from the second on (a list's pages), kept once made.
+	 */
+	#read: OpenRead | undefined;
+	#reads: Set<OpenRead> | undefined;
 	/** The releases of its binding watches; `undefined` once closed. */
 	#watches: (() => void)[] | undefined;
 	#compiled: Compiled;
@@ -55,7 +65,9 @@ export class OpenQuery {
 		this.#shape = shape;
 		this.#rebound = rebound;
 		const reads = site.store.reads;
-		this.#watches = [...setsOf(spec.query)].map((set) => reads.watch(set, () => this.#recompile()));
+		const sets = setsOf(spec.query);
+		// No set besides its own table (most queries): the shared empty list, none made per query.
+		this.#watches = sets.size === 0 ? NO_WATCHES : [...sets].map((set) => reads.watch(set, () => this.#recompile()));
 		reads.opened(this);
 		this.#compiled = this.#compile();
 	}
@@ -77,7 +89,13 @@ export class OpenQuery {
 	 */
 	read(what: ReadKind, sink: ReadSink): OpenRead {
 		const read = new OpenRead(this, what, sink);
-		if (!this.closed) this.#reads.add(read);
+		if (this.closed) return read;
+		if (this.#reads !== undefined) this.#reads.add(read);
+		else if (this.#read === undefined) this.#read = read;
+		else {
+			this.#reads = new Set([this.#read, read]);
+			this.#read = undefined;
+		}
 		return read;
 	}
 
@@ -93,7 +111,8 @@ export class OpenQuery {
 
 	/** `read` was closed: the query keeps nothing of it. */
 	forget(read: OpenRead): void {
-		this.#reads.delete(read);
+		if (this.#reads !== undefined) this.#reads.delete(read);
+		else if (this.#read === read) this.#read = undefined;
 	}
 
 	/** Its reads leave the index and it stops following bindings: no commit runs them again. */
@@ -102,13 +121,20 @@ export class OpenQuery {
 		for (const release of this.#watches) release();
 		this.#watches = undefined;
 		this.site.store.reads.closed(this);
-		for (const read of [...this.#reads]) read.close();
+		for (const read of this.#opened()) read.close();
+	}
+
+	/** Its open reads now, in the order they were opened: a copy, which what is done with them may change. */
+	#opened(): readonly OpenRead[] {
+		if (this.#reads !== undefined) return [...this.#reads];
+		return this.#read === undefined ? NO_READS : [this.#read];
 	}
 
 	#compile(): Compiled {
-		const { query, table, projection } = this.spec;
+		const { query, table, projection, shapes } = this.spec;
 		try {
-			return { kind: "compiled", plan: new ReadPlan(query, table, projection, this.#shape, this.site.store.reads) };
+			const plan = new ReadPlan(query, table, projection, this.#shape, this.site.store.reads, shapes);
+			return { kind: "compiled", plan };
 		} catch (error) {
 			return { kind: "failed", error };
 		}
@@ -118,13 +144,13 @@ export class OpenQuery {
 	#recompile(): void {
 		if (this.#watches === undefined) return;
 		this.#compiled = this.#compile();
-		for (const read of [...this.#reads]) read.register();
+		for (const read of this.#opened()) read.register();
 		this.#rebound();
 	}
 }
 
 /** One read of an open query: registered with the store while the query compiles. */
-export class OpenRead {
+export class OpenRead implements RunSink {
 	readonly what: ReadKind;
 	readonly #query: OpenQuery;
 	readonly #sink: ReadSink;
@@ -165,15 +191,15 @@ export class OpenRead {
 		if (this.#closed) return;
 		const registration = ++this.#registration;
 		if (compiled.kind === "failed") return;
-		const adopting: ReadSink = {
-			adopt: (run) => {
-				if (registration !== this.#registration) return;
-				this.#generation++;
-				this.#sink.adopt(run);
-			},
-		};
-		this.#read = new Read(compiled.plan, this.what, adopting);
+		this.#read = new Read(compiled.plan, this.what, this, registration);
 		reads.add(this.#read);
+	}
+
+	/** A run of one of its reads, inside a batch: handed to its sink unless an earlier registration made it. */
+	adopt(run: ReadRun, read: Read): void {
+		if (read.registration !== this.#registration) return;
+		this.#generation++;
+		this.#sink.adopt(run);
 	}
 
 	/**

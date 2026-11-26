@@ -11,8 +11,15 @@ import type { KeyedChange } from "./skip.ts";
 import { quote } from "./sql.ts";
 import type { Step } from "./step.ts";
 
+/**
+ * The reads filed under one value: the read itself while it is the only one, a set of them from the second on. Most
+ * values are filed by one read (a session's bucket, its rows' keys), and a set of one costs 152 B: a read of 100 rows
+ * filed by its kept keys made 100 of them at each run.
+ */
+type Filed = Read | Set<Read>;
+
 /** The reads of one bucket shape on a table: by the identity of their columns' values. */
-type Group = { readonly columns: readonly string[]; readonly byValues: Map<unknown, Set<Read>> };
+type Group = { readonly name: string; readonly columns: readonly string[]; readonly byValues: Map<unknown, Filed> };
 
 /** A filed read's entries: its table's index, its group and value identities there, the key sets it is filed by. */
 type Filing = {
@@ -62,7 +69,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		read.watchKept(undefined);
 		const { index, group } = filing;
 		for (const id of filing.identities) removeFrom(group.byValues, id, read);
-		if (group.byValues.size === 0) index.groups.delete(group.columns.join(","));
+		if (group.byValues.size === 0) index.drop(group);
 		this.#unkeep(read, filing);
 		if (index.isEmpty()) this.#tables.delete(read.plan.table);
 	}
@@ -73,15 +80,22 @@ export class ReadIndex implements KeptKeysWatcher {
 		const kept = read.kept();
 		if (kept?.length === filing.kept?.length && (kept ?? NO_KEYS).every((keys, at) => keys === filing.kept![at]))
 			return;
-		this.#unkeep(read, filing);
+		const before = filing.kept;
 		filing.kept = kept;
 		const { index } = filing;
 		if (kept === undefined) {
+			for (const keys of before ?? NO_KEYS) for (const key of keys) removeFrom(index.kept, key, read);
 			index.unindexed.add(read);
 			return;
 		}
 		index.unindexed.delete(read);
-		for (const keys of kept) for (const key of keys) addTo(index.kept, key, read);
+		// What filing it anew after removing it from every key gave, without the map's removals and insertions of the
+		// keys it keeps again (a run of 100 rows keeps 99 of them): a key it no longer keeps loses it; a key it keeps
+		// has it last among the reads filed there.
+		for (const keys of before ?? NO_KEYS) {
+			for (const key of keys) if (!keepsKey(kept, key)) removeFrom(index.kept, key, read);
+		}
+		for (const keys of kept) for (const key of keys) refile(index.kept, key, read);
 	}
 
 	/**
@@ -104,7 +118,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		const after = new Map<unknown, RowValues | undefined>();
 		for (const change of changes) {
 			const id = identityOf(key.map((name) => change.key[name]!));
-			for (const read of index.kept.get(id) ?? NO_READS) addChange(into, read, change);
+			addChanges(into, index.kept.get(id), change);
 			if (change.kind === "delete" || index.groups.size === 0) continue;
 			let row = after.get(id);
 			if (!after.has(id)) {
@@ -116,10 +130,8 @@ export class ReadIndex implements KeptKeysWatcher {
 				after.set(id, row);
 			}
 			if (row === undefined) continue;
-			for (const group of index.groups.values()) {
-				for (const read of group.byValues.get(identity(group.columns, row)) ?? NO_READS)
-					addChange(into, read, change);
-			}
+			for (const group of index.groups.values())
+				addChanges(into, group.byValues.get(identity(group.columns, row)), change);
 		}
 		return index.unindexed;
 	}
@@ -147,14 +159,28 @@ class TableIndex {
 	readonly unindexed = new Set<Read>();
 	/** The groups by their columns, joined. */
 	readonly groups = new Map<string, Group>();
-	readonly kept = new Map<unknown, Set<Read>>();
-	/** The statement reading the buckets' columns back by key, for the groups it was rendered for. */
-	#lookup: { readonly groups: string; readonly sql: string | undefined } | undefined;
+	readonly kept = new Map<unknown, Filed>();
+	/** Counts the changes of `groups`: the lookup is rendered again after one, not compared by a text key per commit. */
+	#changes = 0;
+	/** The statement reading the buckets' columns back by key, for the groups as they were at its change. */
+	#lookup: { readonly changes: number; readonly sql: string | undefined } | undefined;
 
 	/** The group of reads whose buckets fix `columns` (sorted). */
 	group(columns: readonly string[]): Group {
 		const name = columns.join(",");
-		return this.groups.get(name) ?? this.groups.set(name, { columns, byValues: new Map() }).get(name)!;
+		let group = this.groups.get(name);
+		if (group === undefined) {
+			group = { name, columns, byValues: new Map() };
+			this.groups.set(name, group);
+			this.#changes++;
+		}
+		return group;
+	}
+
+	/** Drops `group`, which has no reads left. */
+	drop(group: Group): void {
+		this.groups.delete(group.name);
+		this.#changes++;
 	}
 
 	isEmpty(): boolean {
@@ -166,15 +192,15 @@ class TableIndex {
 	 * when the key holds them all (the written key is the row's values then). Rendered again when the groups changed.
 	 */
 	lookup(table: string): string | undefined {
-		const groups = [...this.groups.keys()].join("|");
-		if (this.#lookup?.groups === groups) return this.#lookup.sql;
+		const changes = this.#changes;
+		if (this.#lookup?.changes === changes) return this.#lookup.sql;
 		const key = this.key!;
 		const columns = [...new Set([...this.groups.values()].flatMap((group) => group.columns))];
 		const where = key.map((column) => `${quote(column)} = ?`).join(" AND ");
 		const sql = columns.every((column) => key.includes(column))
 			? undefined
 			: `SELECT ${columns.map(quote).join(", ")} FROM ${quote(table)} WHERE ${where}`;
-		this.#lookup = { groups, sql };
+		this.#lookup = { changes, sql };
 		return sql;
 	}
 }
@@ -192,10 +218,15 @@ const COMBINATIONS = 32;
 function bucketOf(read: Read): { readonly columns: string[]; readonly identities: unknown[] } | undefined {
 	const { plan } = read;
 	if (read.what.kind === "count") return undefined;
-	if (plan.uses.filter((use) => use.table === plan.table).length > 1) return undefined;
+	let own = 0;
+	for (const use of plan.uses) if (use.table === plan.table) own++;
+	if (own > 1) return undefined;
 	const columns: string[] = [];
 	let combinations: SqliteValue[][] = [[]];
-	for (const [column, values] of [...plan.equalities].sort(([a], [b]) => (a < b ? -1 : 1))) {
+	// Sorted by column: one term (most reads) is sorted already.
+	const terms =
+		plan.equalities.length > 1 ? [...plan.equalities].sort(([a], [b]) => (a < b ? -1 : 1)) : plan.equalities;
+	for (const [column, values] of terms) {
 		// An empty `in` matches no row: no bucket of it (a bucket without values would be dropped by its first leaver).
 		if (values.length === 0 || combinations.length * values.length > COMBINATIONS) continue;
 		columns.push(column);
@@ -205,6 +236,13 @@ function bucketOf(read: Read): { readonly columns: string[]; readonly identities
 	return { columns, identities: [...new Set(combinations.map(identityOf))] };
 }
 
+/** Adds `change` to each read `filed` holds, in the order they were filed. */
+function addChanges(into: Map<Read, KeyedChange[]>, filed: Filed | undefined, change: KeyedChange): void {
+	if (filed === undefined) return;
+	if (filed instanceof Set) for (const read of filed) addChange(into, read, change);
+	else addChange(into, filed, change);
+}
+
 function addChange(into: Map<Read, KeyedChange[]>, read: Read, change: KeyedChange): void {
 	const changes = into.get(read);
 	if (changes === undefined) into.set(read, [change]);
@@ -212,15 +250,32 @@ function addChange(into: Map<Read, KeyedChange[]>, read: Read, change: KeyedChan
 	else if (changes.at(-1) !== change) changes.push(change);
 }
 
-function addTo<K>(map: Map<K, Set<Read>>, key: K, read: Read): void {
-	const reads = map.get(key);
-	if (reads === undefined) map.set(key, new Set([read]));
-	else reads.add(read);
+function addTo<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
+	if (filed === undefined) map.set(key, read);
+	else if (filed instanceof Set) filed.add(read);
+	else if (filed !== read) map.set(key, new Set([filed, read]));
 }
 
-function removeFrom<K>(map: Map<K, Set<Read>>, key: K, read: Read): void {
-	const reads = map.get(key);
-	if (reads === undefined) return;
-	reads.delete(read);
-	if (reads.size === 0) map.delete(key);
+/** Whether one of the key sets `kept` holds `key`. */
+function keepsKey(kept: readonly ReadonlySet<unknown>[], key: unknown): boolean {
+	for (const keys of kept) if (keys.has(key)) return true;
+	return false;
+}
+
+/** Files `read` under `key` as the last read there: added, or moved behind the reads filed after it. */
+function refile<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
+	if (filed === read) return;
+	if (filed instanceof Set && filed.delete(read)) filed.add(read);
+	else addTo(map, key, read);
+}
+
+function removeFrom<K>(map: Map<K, Filed>, key: K, read: Read): void {
+	const filed = map.get(key);
+	if (filed === undefined) return;
+	if (filed instanceof Set) {
+		filed.delete(read);
+		if (filed.size === 0) map.delete(key);
+	} else if (filed === read) map.delete(key);
 }

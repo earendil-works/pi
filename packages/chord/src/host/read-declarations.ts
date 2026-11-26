@@ -8,9 +8,10 @@ import { snapshotArguments } from "../contracts/internal.ts";
 import { ChordError } from "../data/index.ts";
 import { asChordError, waitingFor } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
-import type { Dependent } from "../state/internal.ts";
+import type { Batch, Dependent, FramedOwner } from "../state/internal.ts";
 import { LiveQuery, type LiveShape } from "../store/live-query.ts";
 import type { ReadSite } from "../store/open-query.ts";
+import type { ChordStore } from "../store/store.ts";
 import { type Blocked, type Parking, waitingOn } from "./dependencies.ts";
 import type { AnyHost } from "./host.ts";
 import { List, type ListMemory } from "./list.ts";
@@ -139,12 +140,36 @@ export type ReaderSite = {
  */
 export function readerSite(host: AnyHost, label: string, wake: () => void): ReaderSite {
 	if (host.store === undefined) throw new Error(`${label}: reading a named query needs a store`);
-	return {
-		site: { store: host.store, batch: host.batch },
-		label,
-		report: (query, error) => host.report({ kind: "query_failed", object: label, query, error }),
-		wake,
-	};
+	return new HostReaderSite(host, host.store, label, wake);
+}
+
+/**
+ * A reader site as a class that is its own read site (`site` returns it): an object for the site, one for the reader
+ * site and a report closure with its context cost 200 B per reader (an attempt makes one per declaration), this 56 B.
+ */
+class HostReaderSite implements ReaderSite, ReadSite {
+	readonly store: ChordStore;
+	readonly batch: Batch;
+	readonly label: string;
+	readonly wake: () => void;
+	readonly #host: AnyHost;
+
+	constructor(host: AnyHost, store: ChordStore, label: string, wake: () => void) {
+		this.#host = host;
+		this.store = store;
+		this.batch = host.batch;
+		this.label = label;
+		this.wake = wake;
+	}
+
+	/** It is its own read site. */
+	get site(): ReadSite {
+		return this;
+	}
+
+	report(query: string, error: unknown): void {
+		this.#host.report({ kind: "query_failed", object: this.label, query, error });
+	}
 }
 
 /** The reader of `self.liveQuery(query, args, range)`: its value the first `range.first` rows as `{ rows, more }`. */
@@ -172,7 +197,7 @@ export function liveReader(
 	shape: LiveShape,
 ): { readonly reader: Reader; readonly source: LiveQuery } {
 	const given = givenQuery(at, declaration, query, args);
-	const source = new LiveQuery(at.site, ownerOf(at, given), shape);
+	const source = new LiveQuery(at.site, new ReaderOwner(at, given), shape);
 	return { reader: new Reader(given, source, at.wake), source };
 }
 
@@ -185,7 +210,7 @@ export function listReader(
 	memory: ListMemory,
 ): { readonly reader: Reader; readonly list: List } {
 	const given = givenQuery(at, `list "${name}"`, source[0], source[1]);
-	const list = new List(at.site, ownerOf(at, given), first, memory);
+	const list = new List(at.site, new ReaderOwner(at, given), first, memory);
 	return { reader: new Reader(given, list, at.wake), list };
 }
 
@@ -201,7 +226,22 @@ function givenQuery(at: ReaderSite, declaration: string, query: unknown, args: u
 	return new GivenQuery(query, given, at.site.batch);
 }
 
-/** Who a reader's source belongs to: its object, reporting failures under the query's name. */
-function ownerOf(at: ReaderSite, given: GivenQuery): { readonly label: string; report(error: unknown): void } {
-	return { label: at.label, report: (error) => at.report(given.handle.label, error) };
+/**
+ * Who a reader's source belongs to: its object, reporting failures under the query's name. A class: an object with a
+ * closure and its context cost 144 B per reader, this 40 B (the hold-memory bench's live query).
+ */
+class ReaderOwner implements FramedOwner {
+	readonly label: string;
+	readonly #at: ReaderSite;
+	readonly #given: GivenQuery;
+
+	constructor(at: ReaderSite, given: GivenQuery) {
+		this.label = at.label;
+		this.#at = at;
+		this.#given = given;
+	}
+
+	report(error: unknown): void {
+		this.#at.report(this.#given.handle.label, error);
+	}
 }

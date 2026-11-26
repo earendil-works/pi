@@ -68,53 +68,60 @@ const PARTNER = "p";
 const NO_COLUMNS: readonly never[] = [];
 const UNBOUNDED: Range = { limit: 0 };
 const NO_PARAMS: readonly SqliteValue[] = [];
+const NO_EQUALITIES: readonly (readonly [string, readonly SqliteValue[]])[] = [];
+
+/**
+ * The last shape the plans of one named query shared (one slot per `OwnQuery`): two reads of the query whose
+ * arguments differ only in the condition's values compile to equal shapes, and the second takes the first's. The
+ * shape is held weakly: it lives exactly while a plan holds it.
+ */
+export type ShapeSlot = { last: WeakRef<PlanShape> | undefined };
 
 /**
  * A query compiled against the store's bindings. Its statements select the columns the mapping gets, the own key,
- * the matched own columns and the order columns, so a run can keep the keys the skip test needs.
+ * the matched own columns and the order columns, so a run can keep the keys the skip test needs. What depends on the
+ * query's structure alone (uses, select list, statement texts: about 1 KiB) is its shape, shared through a
+ * `ShapeSlot`; a plan keeps of its own only the query and the condition's parameters.
  */
 export class ReadPlan {
 	readonly query: Query;
-	/** The own table's SQL name. */
-	readonly table: string;
-	readonly order: Order;
-	readonly uses: readonly Use[];
 	/**
-	 * The own columns its condition fixes in its top-level `and` terms, each with the values a row of its result may
-	 * have there: an `eq`'s value, an `inArray`'s list (the first term of a column counts). As stored: a boolean as 0
-	 * or 1, an address as its key. The commit index files the read under them (slice 15 §3).
+	 * The own columns its condition fixes in its top-level `and` terms, in their order, each with the values a row of
+	 * its result may have there: an `eq`'s value, an `inArray`'s list (the first term of a column counts). As stored:
+	 * a boolean as 0 or 1, an address as its key. The commit index files the read under them (slice 15 §3) at every
+	 * registration (a list's pages register again as they split and merge), so they are made once, with the plan: a
+	 * list of entries of exactly their number (a map of one costs 240 B, this 120 B).
 	 */
-	readonly equalities: ReadonlyMap<string, readonly SqliteValue[]>;
-	readonly #bindings: Bindings;
-	readonly #sides: Sides;
-	readonly #select: string;
-	readonly #from: string;
-	/** The condition rendered once, with its parameters; no text without a condition. */
-	readonly #where: { readonly sql: string | undefined; readonly params: readonly SqliteValue[] };
-	/** The text of the statement shape rendered first (a read's one `select`, mostly), by its key (`#text`). */
-	#first: { readonly key: string; readonly text: string } | undefined;
-	/** Its other statements' texts by shape, made by the second shape. */
-	#texts: Map<string, string> | undefined;
+	readonly equalities: readonly (readonly [string, readonly SqliteValue[]])[];
+	readonly #shape: PlanShape;
+	/** The condition's parameters, kept for the plan's life: a list of exactly them. */
+	readonly #params: readonly SqliteValue[];
 
-	/** `shape`: what the plan is read as. A count depends on its condition and match columns only (slice 14 §3.3). */
-	constructor(query: Query, table: string, projection: Projection, shape: "rows" | "count", bindings: Bindings) {
+	/**
+	 * `shape`: what the plan is read as. A count depends on its condition and match columns only (slice 14 §3.3).
+	 * `slot`: where the plans of its named query share their shape, taken only once the whole query was checked.
+	 */
+	constructor(
+		query: Query,
+		table: string,
+		projection: Projection,
+		shape: "rows" | "count",
+		bindings: Bindings,
+		slot?: ShapeSlot,
+	) {
 		const { joined, condition } = query;
 		this.query = query;
-		this.table = table;
-		this.order = query.order;
-		this.#bindings = bindings;
+		const order = query.order;
 		const sides = sidesOf(joined);
-		this.#sides = sides;
 		const partner = joined === undefined ? undefined : boundPartner(joined, bindings);
 		checkExpected(query.expected, bindings);
 		// A count reads no rows: nothing is mapped and nothing ordered.
 		const counted = shape === "count";
 		const reads = counted ? NO_COLUMNS : (projection.reads ?? query.table.columns.map(({ name }) => name));
 		const partnerReads = counted ? NO_COLUMNS : (projection.partnerReads ?? [...(joined?.set.byName.keys() ?? [])]);
-		const used = [...(condition === undefined ? [] : columnsOf(condition)), ...(counted ? [] : this.order.columns)];
-		const fixed = new Map<string, readonly SqliteValue[]>();
-		if (condition !== undefined) collectEqualities(condition, sides, fixed);
-		this.equalities = fixed;
+		const used = [...(condition === undefined ? [] : columnsOf(condition)), ...(counted ? [] : order.columns)];
+		const fixed = equalitiesOf(condition, sides);
+		this.equalities = fixed.size === 0 ? NO_EQUALITIES : entriesOf(fixed);
 		const what = `${query.table.name}: exists`;
 		const tested = condition === undefined ? [] : existsUses(condition, (name) => query.column(name), bindings, what);
 		const own = ownUse(
@@ -124,105 +131,254 @@ export class ReadPlan {
 			reads,
 		);
 		const joinedUses = partner === undefined ? [] : [joinedUse(query, partner, used, partnerReads, fixed, sides)];
-		this.uses = [own, ...joinedUses, ...tested.map((use) => pairedWithOwn(use, query, fixed, sides))];
-		this.#select = selectList(
-			query,
-			this.uses,
-			reads,
-			partnerReads,
-			counted ? NO_COLUMNS : this.order.columns,
-			sides,
-		);
-		this.#from = fromClause(table, joined, partner);
+		const uses = [own, ...joinedUses, ...tested.map((use) => pairedWithOwn(use, query, fixed, sides))];
+		const select = selectList(query, uses, reads, partnerReads, counted ? NO_COLUMNS : order.columns, sides);
+		const from = fromClause(table, joined, partner);
 		const params: SqliteValue[] = [];
-		const sql = condition === undefined ? undefined : whereSql(condition, params, this.#render());
-		// Kept for the plan's life: a list of exactly its parameters (the one they were pushed to has room for 16 more).
-		this.#where = { sql, params: params.length === 0 ? NO_PARAMS : params.slice() };
+		const where = condition === undefined ? undefined : whereSql(condition, params, conditionSql(sides, bindings));
+		// A list of exactly its parameters (the one they were pushed to has room for 16 more).
+		this.#params = params.length === 0 ? NO_PARAMS : params.slice();
+		const made = new PlanShape(table, order, uses, sides, joined?.set.name, select, from, where);
+		// Every check above passed: only now may the query's last shape be taken, or this one become it.
+		const last = slot?.last?.deref();
+		if (last?.sameAs(made)) this.#shape = last;
+		else {
+			this.#shape = made;
+			if (slot !== undefined) slot.last = new WeakRef(made);
+		}
+	}
+
+	/** The own table's SQL name. */
+	get table(): string {
+		return this.#shape.table;
+	}
+
+	get order(): Order {
+		return this.#shape.order;
+	}
+
+	get uses(): readonly Use[] {
+		return this.#shape.uses;
 	}
 
 	/** The rows of `range` in the plan's order. */
 	select(range: Range): Statement {
-		const sql = this.#text("select", range, NO_COLUMNS, (filter) => {
-			const direction = this.order.direction === "asc" ? "ASC" : "DESC";
-			const sorting = this.order.columns.map((name) => `${this.#sides.sql(name)} ${direction}`).join(", ");
-			return `SELECT ${this.#select} FROM ${this.#from}${filter} ORDER BY ${sorting} LIMIT ?`;
+		const shape = this.#shape;
+		const sql = shape.text("select", range, NO_COLUMNS, (filter) => {
+			const direction = shape.order.direction === "asc" ? "ASC" : "DESC";
+			const sorting = shape.order.columns.map((name) => `${shape.sides.sql(name)} ${direction}`).join(", ");
+			return `SELECT ${shape.select} FROM ${shape.from}${filter} ORDER BY ${sorting} LIMIT ?`;
 		});
 		return { sql, params: [...this.#bound(range), range.limit] };
 	}
 
 	/** `count(*)` of the rows matching the condition. */
 	count(): Statement {
-		const render = (filter: string): string => `SELECT count(*) AS count FROM ${this.#from}${filter}`;
-		return { sql: this.#text("count", UNBOUNDED, NO_COLUMNS, render), params: this.#bound(UNBOUNDED) };
+		const from = this.#shape.from;
+		const render = (filter: string): string => `SELECT count(*) AS count FROM ${from}${filter}`;
+		return { sql: this.#shape.text("count", UNBOUNDED, NO_COLUMNS, render), params: this.#bound(UNBOUNDED) };
 	}
 
 	/**
 	 * The probe (slice 14 §3.3): whether a row of `range` has `values` in the own columns `columns`. One row or none.
 	 */
 	probe(range: Range, columns: readonly string[], values: readonly SqliteValue[]): Statement {
-		const sql = this.#text("probe", range, columns, (filter) => {
+		const from = this.#shape.from;
+		const sql = this.#shape.text("probe", range, columns, (filter) => {
 			const limited = columns.map((name) => `${OWN}.${quote(name)} = ?`).join(" AND ");
-			return `SELECT 1 AS found FROM ${this.#from}${filter}${filter === "" ? " WHERE " : " AND "}${limited} LIMIT 1`;
+			return `SELECT 1 AS found FROM ${from}${filter}${filter === "" ? " WHERE " : " AND "}${limited} LIMIT 1`;
 		});
 		return { sql, params: [...this.#bound(range), ...values] };
+	}
+
+	/** The parameters of a statement's filter, in the order `filter` renders them: the condition's, then the bounds'. */
+	#bound(range: Range): SqliteValue[] {
+		return [...this.#params, ...(range.after ?? NO_COLUMNS), ...(range.through ?? NO_COLUMNS)];
+	}
+}
+
+const NO_TEXTS: readonly Rendered[] = [];
+
+/**
+ * How many statement texts besides the first a shape finds by comparing fields; past them a map by text key. A scan
+ * of 8 costs about what building the key does (measured with probes of 4 to 4,960 shapes, \`read-plan.test.ts\`).
+ */
+const SCANNED = 8;
+
+/**
+ * What the plans of one named query share when their products are equal (`sameAs`): the uses, the order, the select
+ * list, the tables read and the condition's text, and the statement texts rendered from them. Only strings are
+ * cached: nothing of a read, its parameters or its bindings.
+ */
+class PlanShape {
+	readonly table: string;
+	readonly order: Order;
+	readonly uses: readonly Use[];
+	readonly sides: Sides;
+	/** The joined set's name, which its columns are named and rendered by; `undefined` without a join. */
+	readonly partner: string | undefined;
+	readonly select: string;
+	readonly from: string;
+	/** The condition's text; `undefined` without a condition. */
+	readonly where: string | undefined;
+	/** The statement rendered first (a read's one `select`, mostly), and the others, by what they were rendered for. */
+	#first: Rendered | undefined;
+	#texts: Rendered[] | undefined;
+	/** The texts past the first `SCANNED` others, by a text key of what they were rendered for. */
+	#byKey: Map<string, string> | undefined;
+
+	constructor(
+		table: string,
+		order: Order,
+		uses: readonly Use[],
+		sides: Sides,
+		partner: string | undefined,
+		select: string,
+		from: string,
+		where: string | undefined,
+	) {
+		this.table = table;
+		this.order = order;
+		this.uses = uses;
+		this.sides = sides;
+		this.partner = partner;
+		this.select = select;
+		this.from = from;
+		this.where = where;
+	}
+
+	/**
+	 * Whether `other` renders the same statements and gives the same skip test: every product equal, field by field
+	 * (the texts by value, the uses in order).
+	 */
+	sameAs(other: PlanShape): boolean {
+		return (
+			this.table === other.table &&
+			this.partner === other.partner &&
+			this.from === other.from &&
+			this.select === other.select &&
+			this.where === other.where &&
+			this.order.direction === other.order.direction &&
+			sameList(this.order.columns, other.order.columns) &&
+			this.uses.length === other.uses.length &&
+			this.uses.every((use, at) => sameUse(use, other.uses[at]!))
+		);
 	}
 
 	/**
 	 * The text of one of its statements, rendered once per shape (which bounds the range has and how long, which
 	 * columns a probe is limited by): a probe runs per written key and read, so only its parameters are built per call.
 	 */
-	#text(kind: string, range: Range, columns: readonly string[], render: (filter: string) => string): string {
-		const key = `${kind}|${range.after?.length ?? "-"}|${range.through?.length ?? "-"}|${columns.join(",")}`;
+	text(kind: string, range: Range, columns: readonly string[], render: (filter: string) => string): string {
+		// Found field by field among the first few, not by a text key built per call (a probe runs per written key and
+		// read); past them by a text key in a map: a plan of hundreds of probe shapes would scan them all per probe.
+		const after = range.after?.length ?? -1;
+		const through = range.through?.length ?? -1;
 		const first = this.#first;
-		if (first?.key === key) return first.text;
-		let text = this.#texts?.get(key);
-		if (text === undefined) {
-			text = render(this.#filter(range));
-			if (first === undefined) this.#first = { key, text };
-			else {
-				this.#texts ??= new Map();
-				this.#texts.set(key, text);
-			}
+		if (first !== undefined && renders(first, kind, after, through, columns)) return first.text;
+		const texts = this.#texts ?? NO_TEXTS;
+		for (const each of texts) if (renders(each, kind, after, through, columns)) return each.text;
+		const key = texts.length < SCANNED ? undefined : `${kind}|${after}|${through}|${columns.join(",")}`;
+		const found = key === undefined ? undefined : this.#byKey?.get(key);
+		if (found !== undefined) return found;
+		const text = render(this.#filter(range));
+		if (key !== undefined) {
+			this.#byKey ??= new Map();
+			this.#byKey.set(key, text);
+			return text;
 		}
+		const rendered = { kind, after, through, columns: columns.slice(), text };
+		if (first === undefined) this.#first = rendered;
+		else if (this.#texts === undefined) this.#texts = [rendered];
+		else this.#texts.push(rendered);
 		return text;
-	}
-
-	/** The parameters of a statement's filter, in the order `#filter` renders them: the condition's, then the bounds'. */
-	#bound(range: Range): SqliteValue[] {
-		return [...this.#where.params, ...(range.after ?? NO_COLUMNS), ...(range.through ?? NO_COLUMNS)];
 	}
 
 	/** ` WHERE …` of the condition and the range's bounds (row-value comparisons over the leading order columns). */
 	#filter(range: Range): string {
-		const conditions: string[] = this.#where.sql === undefined ? [] : [this.#where.sql];
+		const conditions: string[] = this.where === undefined ? [] : [this.where];
 		const asc = this.order.direction === "asc";
 		const bound = (position: Position, operator: string): void => {
-			const columns = this.order.columns.slice(0, position.length).map(this.#sides.sql).join(", ");
+			const columns = this.order.columns.slice(0, position.length).map(this.sides.sql).join(", ");
 			conditions.push(`(${columns}) ${operator} (${position.map(() => "?").join(", ")})`);
 		};
 		if (range.after !== undefined) bound(range.after, asc ? ">" : "<");
 		if (range.through !== undefined) bound(range.through, asc ? "<=" : ">=");
 		return conditions.length === 0 ? "" : ` WHERE ${conditions.join(" AND ")}`;
 	}
+}
 
-	/** How the condition's columns and `exists` render: own and partner columns by alias, an `exists` as a subquery. */
-	#render(): ConditionSql {
-		const column = this.#sides.sql;
-		return { column, exists: (node, params) => this.#existsSql(node, params, column, 0) };
-	}
+/** A statement's text with what it was rendered for: its kind, its bounds' lengths (-1: none), a probe's columns. */
+type Rendered = {
+	readonly kind: string;
+	readonly after: number;
+	readonly through: number;
+	readonly columns: readonly string[];
+	readonly text: string;
+};
 
-	#existsSql(node: ExistsNode, params: SqliteValue[], outer: (name: string) => string, depth: number): string {
-		const [set, pairs, inner] = node;
-		const alias = `e${depth}`;
-		const column = (name: string): string => `${alias}.${quote(name)}`;
-		const matched = pairs.map(([name, enclosing]) => `${column(name)} = ${outer(enclosing)}`);
-		const render: ConditionSql = {
-			column,
-			exists: (nested, into) => this.#existsSql(nested, into, column, depth + 1),
-		};
-		if (inner !== null) matched.push(whereSql(inner, params, render));
-		return `EXISTS (SELECT 1 FROM ${quote(served(this.#bindings, set).table)} AS ${alias} WHERE ${matched.join(" AND ")})`;
-	}
+function renders(
+	rendered: Rendered,
+	kind: string,
+	after: number,
+	through: number,
+	columns: readonly string[],
+): boolean {
+	return (
+		rendered.kind === kind &&
+		rendered.after === after &&
+		rendered.through === through &&
+		sameList(rendered.columns, columns)
+	);
+}
+
+/** Whether two uses are the same, field by field (their column sets by members). */
+function sameUse(a: Use, b: Use): boolean {
+	return (
+		a.role === b.role &&
+		a.table === b.table &&
+		a.keyed === b.keyed &&
+		a.stable === b.stable &&
+		sameList(a.pairedBy, b.pairedBy) &&
+		(a.pairs === undefined ? b.pairs === undefined : b.pairs !== undefined && sameList(a.pairs, b.pairs)) &&
+		sameSet(a.depends, b.depends) &&
+		sameSet(a.enters, b.enters)
+	);
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((name, at) => name === b[at]);
+}
+
+function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+	if (a.size !== b.size) return false;
+	for (const name of a) if (!b.has(name)) return false;
+	return true;
+}
+
+/** How the condition's columns and `exists` render: own and partner columns by alias, an `exists` as a subquery. */
+function conditionSql(sides: Sides, bindings: Bindings): ConditionSql {
+	const column = sides.sql;
+	return { column, exists: (node, params) => existsSql(node, params, column, 0, bindings) };
+}
+
+function existsSql(
+	node: ExistsNode,
+	params: SqliteValue[],
+	outer: (name: string) => string,
+	depth: number,
+	bindings: Bindings,
+): string {
+	const [set, pairs, inner] = node;
+	const alias = `e${depth}`;
+	const column = (name: string): string => `${alias}.${quote(name)}`;
+	const matched = pairs.map(([name, enclosing]) => `${column(name)} = ${outer(enclosing)}`);
+	const render: ConditionSql = {
+		column,
+		exists: (nested, into) => existsSql(nested, into, column, depth + 1, bindings),
+	};
+	if (inner !== null) matched.push(whereSql(inner, params, render));
+	return `EXISTS (SELECT 1 FROM ${quote(served(bindings, set).table)} AS ${alias} WHERE ${matched.join(" AND ")})`;
 }
 
 /** The two sides of a query's column names: own columns as they are, a joined set's as `<set>:<column>`. */
@@ -431,7 +587,22 @@ function checkColumn(expected: Column | undefined, found: Column | undefined, se
 	throw invalid("args", `column "${name}" of column set "${set}" is not what this read was written for`);
 }
 
-/** A plan's `equalities`: the own `eq` and `inArray` terms of `node`'s top-level `and`, added to `into`. */
+/** The own `eq` and `inArray` terms of `condition`'s top-level `and`, in their order. */
+function equalitiesOf(condition: WhereNode | undefined, sides: Sides): Map<string, readonly SqliteValue[]> {
+	const fixed = new Map<string, readonly SqliteValue[]>();
+	if (condition !== undefined) collectEqualities(condition, sides, fixed);
+	return fixed;
+}
+
+/** The entries of `map` in its order, in a list of exactly their number. */
+function entriesOf<K, V>(map: ReadonlyMap<K, V>): (readonly [K, V])[] {
+	const entries = new Array<readonly [K, V]>(map.size);
+	let at = 0;
+	for (const entry of map) entries[at++] = entry;
+	return entries;
+}
+
+/** The own `eq` and `inArray` terms of `node`'s top-level `and`, added to `into` (the first term of a column counts). */
 function collectEqualities(node: WhereNode, sides: Sides, into: Map<string, readonly SqliteValue[]>): void {
 	if ("and" in node) {
 		for (const each of node.and) collectEqualities(each, sides, into);
