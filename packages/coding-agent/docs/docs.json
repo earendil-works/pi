@@ -161,10 +161,6 @@
           "path": "environment-variables.md"
         },
         {
-          "title": "Telemetry",
-          "path": "telemetry.md"
-        },
-        {
           "title": "Keybindings",
           "path": "keybindings.md"
         },
@@ -179,6 +175,10 @@
         {
           "title": "Compaction and Branch Summaries",
           "path": "compaction.md"
+        },
+        {
+          "title": "Telemetry",
+          "path": "telemetry.md"
         },
         {
           "title": "JSON Event Stream",
