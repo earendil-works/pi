@@ -131,27 +131,31 @@ export type Launched = {
 };
 
 /**
- * `env` with the providers' catalog requests off (`P3_CATALOG_URL=off`) unless it names a catalog itself: a test's p3
- * never reaches pi.dev.
+ * `env` with the providers' catalog requests off (`P3_CATALOG_URL=off`), whatever the shell set: a test's p3 never
+ * reaches pi.dev (Astra, round 2 of the catalog).
  */
 export function offline(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	return env.P3_CATALOG_URL === undefined ? { ...env, P3_CATALOG_URL: "off" } : env;
+	return { ...env, P3_CATALOG_URL: "off" };
 }
 
 /**
  * Launches `p3 server` on `dataDir` on a free port, `command` being Node's arguments that run `p3` (a checkout's
- * `COMMAND`, or an installed release's `p3.js`), with `env` (this process's by default); resolves once it printed its
- * port and owner link.
+ * `COMMAND`, or an installed release's `p3.js`), with `env` (this process's by default) and its catalog requests off,
+ * or at `catalog` (a test's fake); resolves once it printed its port and owner link. `stderr` gets its standard error
+ * (this process's by default).
  */
 export async function launch(
 	command: readonly string[],
 	dataDir: string,
 	env: NodeJS.ProcessEnv = process.env,
+	options: { readonly catalog?: string; readonly stderr?: (text: string) => void } = {},
 ): Promise<Launched> {
+	const catalog = options.catalog ?? "off";
 	const child = spawn(process.execPath, [...command, "server", "--dir", dataDir, "--port", "0"], {
-		stdio: ["ignore", "pipe", "inherit"],
-		env: offline(env),
+		stdio: ["ignore", "pipe", options.stderr === undefined ? "inherit" : "pipe"],
+		env: { ...env, P3_CATALOG_URL: catalog },
 	});
+	child.stderr?.on("data", (chunk: Buffer) => options.stderr?.(chunk.toString()));
 	const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
 	const port = await new Promise<number>((resolve, reject) => {
 		let out = "";

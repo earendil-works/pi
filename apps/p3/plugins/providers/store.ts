@@ -247,8 +247,9 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					version: crypto.randomUUID(),
 					failedAt: 0,
 				});
-				// The rotation is stored: a failure to cut it again only waits for the next catalog.
-				await recutIfNewer(thing, provider, offered, context).catch(() => undefined);
+				// The rotation is stored, its cut too whatever the caller does since (Astra, round 2 of the catalog); a
+				// failure to cut it again only waits for the next catalog.
+				await recutIfNewer(thing, provider, offered, BACKGROUND_CONTEXT).catch(() => undefined);
 				return next;
 			},
 			delete: async () => {

@@ -1,6 +1,7 @@
-// The catalog requests of p3's real command (`p3 server`, launched as its own process; Opus and Astra, round 1 of the
-// catalog): it asks the catalog server `P3_CATALOG_URL` names, and with the variable `off` (as every test's p3 has it,
-// `offline` in `test/support.ts`) no catalog request leaves it, also none to pi.dev.
+// The catalog requests of p3's real command (`p3 server`, launched as its own process; Opus and Astra, rounds 1 and 2
+// of the catalog): it asks the catalog server `P3_CATALOG_URL` names, and with the variable `off` (as every test's p3
+// has it, `launch` and `offline` in `test/support.ts`, whatever the shell set) no catalog request leaves it, none to
+// pi.dev either, and no type reports a failed one (the switch, not an address that fails).
 
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -14,11 +15,11 @@ import { eventually } from "../../../test/until.ts";
 import { fakePiDev } from "./fake-pi-dev.ts";
 
 /**
- * p3's command launched on a fresh data directory with `catalog` as `P3_CATALOG_URL`, every `fetch` of its process
- * written down (its URL only, by a module Node loads first); stopped and removed after the test. Answers the catalog
- * requests it made so far.
+ * p3's command launched on a fresh data directory with `catalog` as `P3_CATALOG_URL` (none: `off`), every `fetch` of
+ * its process written down (its URL only, by a module Node loads first) and its standard error kept; stopped and
+ * removed after the test. Answers the catalog requests it made so far, and its standard error.
  */
-async function launched(t: TestContext, catalog: string): Promise<() => Promise<string[]>> {
+async function launched(t: TestContext, catalog: string | undefined) {
 	const dir = await mkdtemp(join(tmpdir(), "p3-catalog-"));
 	t.after(() => rm(dir, { recursive: true, force: true }));
 	const log = join(dir, "fetches.log");
@@ -35,17 +36,29 @@ async function launched(t: TestContext, catalog: string): Promise<() => Promise<
 		].join("\n"),
 	);
 	await writeFile(log, "");
-	const env = { ...process.env, P3_CATALOG_URL: catalog, NODE_OPTIONS: `--import ${pathToFileURL(hook).href}` };
-	const server = await launch(COMMAND, join(dir, "pi"), env);
+	// As if the shell named pi.dev: the test's own setting wins.
+	const env = {
+		...process.env,
+		P3_CATALOG_URL: "https://pi.dev",
+		NODE_OPTIONS: `--import ${pathToFileURL(hook).href}`,
+	};
+	let stderr = "";
+	const server = await launch(COMMAND, join(dir, "pi"), env, {
+		...(catalog === undefined ? {} : { catalog }),
+		stderr: (text) => {
+			stderr += text;
+		},
+	});
 	t.after(() => server.stop());
-	return async () => (await readFile(log, "utf8")).split("\n").filter((url) => url.includes("/api/models/"));
+	const fetches = async () => (await readFile(log, "utf8")).split("\n").filter((url) => url.includes("/api/models/"));
+	return { fetches, stderr: () => stderr };
 }
 
 describe("the command's catalog requests", () => {
 	it("go to the catalog server P3_CATALOG_URL names", async (t) => {
 		const fake = await fakePiDev();
 		t.after(() => fake.close());
-		const fetches = await launched(t, fake.baseUrl);
+		const { fetches } = await launched(t, fake.baseUrl);
 		await eventually(
 			async () => fake.hits.length,
 			(count) => count > 0,
@@ -58,10 +71,11 @@ describe("the command's catalog requests", () => {
 		);
 	});
 
-	it("leave nothing with P3_CATALOG_URL off: no request to pi.dev or anywhere", async (t) => {
-		const fetches = await launched(t, "off");
-		// An absence: the types' catalogs start with the server, so a while after it is ready is when a request would be.
+	it("leave nothing with P3_CATALOG_URL off, whatever the shell set: no request, no failure reported", async (t) => {
+		const { fetches, stderr } = await launched(t, undefined);
+		// An absence (testing.md 2): the types' catalogs start with the server, a request or a failure would come at once.
 		await new Promise((resolve) => setTimeout(resolve, 1_500));
 		assert.deepEqual(await fetches(), []);
+		assert.ok(!stderr().includes("catalog"), stderr());
 	});
 });

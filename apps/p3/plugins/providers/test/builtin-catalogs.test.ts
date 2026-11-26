@@ -1,11 +1,12 @@
 // The built-in provider types' catalogs (`builtin-catalogs.ts`) against a fake pi.dev, with the login's models: every
 // built-in type but Radius requests its catalog once at the start, as the bundled pi-ai, without `?types`; a newer
-// catalog's model reaches a login of the type (its `login` and its `catalog`) with the shipped endpoint and headers,
-// an older one doesn't; a reload starts the types again from their stored catalogs: one checked a moment ago requests
-// nothing, one due revalidates by its ETag and a 304 keeps its body; a failed answer, a malformed body and one too
-// large keep the stored catalog, and the failure's retry waits across a reload; without network no type requests
-// anything. On a mocked clock, the loop itself: four hours after an answer, a quarter of an hour after a failure, a
-// request given ten seconds, a store that fails waited out (Opus, Astra and Fable, round 1 of the catalog).
+// catalog's model reaches a login of the type (its `login` and its `catalog`) with the shipped endpoint and headers, an
+// older one doesn't; a reload starts the types again from their stored catalogs: one checked a moment ago requests
+// nothing, one due revalidates by its ETag and a 304 keeps its body; a failed answer, a malformed body, one too large
+// (streamed: the reader stops early; declared: not read at all) keep the stored catalog, and the failure's retry waits
+// across a reload; without network no type requests anything. On a mocked clock, the loop itself: four hours after an
+// answer, a quarter of an hour after a failure, a request given ten seconds, a store that fails waited out (Opus, Astra
+// and Fable, rounds 1 and 2 of the catalog).
 
 import assert from "node:assert/strict";
 import { afterEach, describe, it, type TestContext } from "node:test";
@@ -21,7 +22,7 @@ import { type CatalogEntry, type CatalogStatus, CatalogStore } from "../contract
 import { Login } from "../kind.ts";
 import type { CatalogContext } from "../login-catalogs.ts";
 import { makeLogin } from "../logins.ts";
-import { type FakePiDev, fakePiDev } from "./fake-pi-dev.ts";
+import { type FakeAnswer, type FakePiDev, fakePiDev } from "./fake-pi-dev.ts";
 import { PROVIDERS, providersWorld } from "./hosts.ts";
 
 /** Who sets things up. */
@@ -232,6 +233,50 @@ describe("the built-in types' catalogs", () => {
 			);
 			assert.deepEqual(await stored(), first, bad);
 		}
+	});
+
+	it("stop reading a body over 4 MiB streamed without a Content-Length (Opus, round 2)", async () => {
+		let streaming = false;
+		const total = 16 * 1024 * 1024;
+		const { world, stored, status } = await served(
+			(): FakeAnswer =>
+				streaming
+					? {
+							status: 200,
+							headers: { "last-modified": AFTER },
+							stream: {
+								prefix: '{"big":{"id":"big","padding":"',
+								chunk: "x".repeat(64 * 1024),
+								count: total / (64 * 1024),
+							},
+						}
+					: { status: 200, headers: { "last-modified": AFTER, etag: '"e1"' }, body: { [NEWER.id]: NEWER } },
+		);
+		const first = await stored();
+		streaming = true;
+		await dueAgain(world, first);
+		await eventually(status, (now) => now !== null && now.failedAt > 0, 10_000);
+		const [, big] = hitsOf("anthropic");
+		assert.ok(big!.sent < total / 2, `the reader stopped early: ${big!.sent} bytes sent`);
+		assert.deepEqual(await stored(), first);
+	});
+
+	it("refuse a body that declares a Content-Length over 4 MiB, without reading it (Opus, round 2)", async () => {
+		let declaring = false;
+		const { world, stored, status } = await served(
+			(): FakeAnswer =>
+				declaring
+					? { status: 200, headers: { "content-length": String(5 * 1024 * 1024) }, body: {}, open: true }
+					: { status: 200, headers: { "last-modified": AFTER, etag: '"e1"' }, body: { [NEWER.id]: NEWER } },
+		);
+		const first = await stored();
+		declaring = true;
+		const started = Date.now();
+		await dueAgain(world, first);
+		await eventually(status, (now) => now !== null && now.failedAt > 0, 10_000);
+		// At once, not at the request's ten seconds: the declared length alone refuses it.
+		assert.ok(Date.now() - started < 5_000);
+		assert.deepEqual(await stored(), first);
 	});
 
 	it("serve a catalog model with the shipped endpoint and headers, never its own (Astra, Opus)", async () => {

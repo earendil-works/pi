@@ -104,10 +104,29 @@ export function catalogWait(status: CatalogStatus | null, now: number): number {
 }
 
 /**
+ * The fields a catalog may set of a model: its metadata. Everything else (its endpoint, headers, API, routing and
+ * retention policy in `compat`, its type) is the shipped provider's (Astra and Opus, rounds 1 and 2 of the catalog).
+ */
+const METADATA = [
+	"name",
+	"reasoning",
+	"input",
+	"inputLimits",
+	"cost",
+	"contextWindow",
+	"maxTokens",
+	"thinkingLevelMap",
+	"promptCache",
+	"samplingParams",
+	"samplingParamsByThinkingLevel",
+] as const;
+
+/**
  * The shipped chat models `shipped` with the ones of `entry` laid over by id, when the entry's catalog is newer than
- * the shipped model data (`shippedAt`; unknown: any catalog is); `shipped` itself otherwise. A catalog model keeps
- * its metadata, never its endpoint: its `api`, `baseUrl` and `headers` are the shipped model's of the same id, or of
- * the first shipped model of the same `api` for a new id; a new id of an `api` no shipped model has is left out.
+ * the shipped model data (`shippedAt`; unknown: any catalog is); `shipped` itself otherwise. A catalog model gives its
+ * metadata only (`METADATA`): over the shipped model of its id, or for a new id over the policy (`provider`, `api`,
+ * `baseUrl`, `headers`, `compat`) of the first shipped model of its `api`; a new id of an `api` no shipped model has is
+ * left out.
  */
 export function overlay(
 	shipped: readonly Model<Api>[],
@@ -121,15 +140,26 @@ export function overlay(
 	for (const model of shipped) if (!byApi.has(model.api)) byApi.set(model.api, model);
 	// Only `catalogAnswer` stores models, each checked as a chat definition (`isChatModel`).
 	for (const model of entry.models as readonly Model<Api>[]) {
-		const base = byId.get(model.id) ?? byApi.get(model.api);
+		const metadata = Object.fromEntries(
+			METADATA.filter((field) => model[field] !== undefined).map((field) => [field, model[field]]),
+		);
+		const same = byId.get(model.id);
+		if (same !== undefined) {
+			byId.set(model.id, { ...same, ...metadata });
+			continue;
+		}
+		const base = byApi.get(model.api);
 		if (base === undefined) continue;
-		const { headers: _dropped, ...metadata } = model;
-		const endpoint = { provider: base.provider, api: base.api, baseUrl: base.baseUrl };
-		byId.set(model.id, {
-			...metadata,
-			...endpoint,
-			...(base.headers === undefined ? {} : { headers: base.headers }),
-		});
+		const { provider, api, baseUrl, headers, compat } = base;
+		const policy = {
+			provider,
+			api,
+			baseUrl,
+			...(headers === undefined ? {} : { headers }),
+			...(compat === undefined ? {} : { compat }),
+		};
+		// The required metadata is there: `isChatModel` checked it.
+		byId.set(model.id, { id: model.id, ...policy, ...metadata } as Model<Api>);
 	}
 	return [...byId.values()];
 }
@@ -163,6 +193,8 @@ function isChatModel(value: unknown): value is Record<string, unknown> {
 	const model = value as Record<string, unknown>;
 	const cost = model.cost as Record<string, unknown> | undefined;
 	return (
+		// A chat model: no other type (an image model under a chat model's id would hide it).
+		(model.type === undefined || model.type === "chat") &&
 		typeof model.id === "string" &&
 		model.id !== "" &&
 		typeof model.name === "string" &&

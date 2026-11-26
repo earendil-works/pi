@@ -1,11 +1,11 @@
 // The pi.dev catalog's pure steps (`catalog.ts`): the request asks for the provider's chat models (no `?types`) as the
 // given client, revalidating only a stored body; an answer is a new body (a map of checked chat models by id under the
-// provider's id; no models for a provider pi.dev keeps no catalog of), unchanged (a 304 to a conditional request), or
-// a failure (any other status, an unsolicited 304, a body too large, not JSON, not a map, or with too many models);
-// the next request waits until four hours after an answer or a quarter of an hour after a failure, never longer
-// whatever the clock did; the overlay lays a newer catalog's models over the shipped ones by id, leaves the shipped
-// list itself when there is nothing newer, and never takes a model's endpoint, headers or API from the catalog
-// (Astra and Opus, round 1 of the catalog).
+// provider's id; no models for a provider pi.dev keeps no catalog of), unchanged (a 304 to a conditional request), or a
+// failure (any other status, an unsolicited 304, a body too large, not JSON, not a map, or with too many models); the
+// next request waits until four hours after an answer or a quarter of an hour after a failure, never longer whatever
+// the clock did; the overlay lays a newer catalog's models over the shipped ones by id, leaves the shipped list itself
+// when there is nothing newer, takes only metadata from the catalog (never a model's endpoint, headers, API, routing
+// and retention policy, or a type other than chat) (Astra and Opus, rounds 1 and 2 of the catalog).
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -108,6 +108,19 @@ describe("an answer", () => {
 		);
 	});
 
+	it("leaves out a model of another type: an image model under a chat model's id (Astra, round 2)", () => {
+		const answer = catalogAnswer(
+			"p",
+			PLAIN,
+			ok({ a: { ...model("a"), type: "image" }, b: { ...model("b"), type: "chat" } }),
+		);
+		assert.ok(answer.kind === "body");
+		assert.deepEqual(
+			answer.entry.models.map((found) => (found as Model<Api>).id),
+			["b"],
+		);
+	});
+
 	it("reads a missing or bad Last-Modified as 0", () => {
 		const answer = catalogAnswer("p", PLAIN, { status: 200, lastModified: "soon", etag: null, text: "{}" });
 		assert.deepEqual(answer, { kind: "body", entry: { models: [], lastModified: 0 } });
@@ -119,7 +132,8 @@ describe("an answer", () => {
 			JSON.stringify([model("a")]),
 			JSON.stringify("text"),
 			JSON.stringify(null),
-			"x".repeat(MAX_BODY_BYTES + 1),
+			// Valid JSON, only too large (Opus, round 2).
+			JSON.stringify({ m: { ...model("m"), padding: "x".repeat(MAX_BODY_BYTES) } }),
 			JSON.stringify(
 				Object.fromEntries(Array.from({ length: MAX_MODELS + 1 }, (_, n) => [`m${n}`, model(`m${n}`)])),
 			),
@@ -192,6 +206,20 @@ describe("the overlay", () => {
 		assert.deepEqual(
 			overlay(shipped, entry([model("c")], { lastModified: 0 }), undefined).map(({ id }) => id),
 			["a", "b", "c"],
+		);
+	});
+
+	it("keeps the shipped routing and retention policy (`compat`) whatever the catalog says (Astra, round 2)", () => {
+		const retained = { ...model("a"), compat: { openRouterRouting: { zdr: true } } } as Model<Api>;
+		const relaxed = { ...model("a", "A2"), compat: { openRouterRouting: { zdr: false } } };
+		const brandNew = { ...model("new"), compat: { openRouterRouting: { zdr: false } } };
+		const laid = overlay([retained], entry([relaxed, brandNew] as Model<Api>[]), 1_000);
+		assert.deepEqual(
+			laid.map(({ id, name, compat }) => ({ id, name, compat })),
+			[
+				{ id: "a", name: "A2", compat: { openRouterRouting: { zdr: true } } },
+				{ id: "new", name: "new", compat: { openRouterRouting: { zdr: true } } },
+			],
 		);
 	});
 

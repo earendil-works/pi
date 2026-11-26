@@ -4,10 +4,10 @@
 // store's object in a reload) and is written over the credential it read only (a replacement, a removal and a new login
 // meanwhile win); one refresh at a time across a reload, a clock set forward too, a refresh still running never taken
 // over (its waiter fails), a lease of a process that is gone holding nothing; a rotation is stored when its account's
-// models cannot be told, nothing of the provider's error logged; a failed refresh refuses the login for a while (a
-// request that waited for it too), then one request tries again, and a success clears it; a failed derivation of an
-// unexpired token refuses nothing (Astra's and Opus's reproductions, rounds 1 to 4); the device id is made once and
-// kept across a reload.
+// models cannot be told, and cut over a catalog stored while it ran, also when its caller went away, nothing of the
+// provider's error logged; a failed refresh refuses the login for a while (a request that waited for it too), then one
+// request tries again, and a success clears it; a failed derivation of an unexpired token refuses nothing (Astra's and
+// Opus's reproductions, rounds 1 to 4); the device id is made once and kept across a reload.
 
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -268,6 +268,38 @@ describe("credentials while a refresh runs", () => {
 });
 
 describe("a rotation", () => {
+	it("keeps its cut over a catalog stored meanwhile when its caller went away (Astra, catalog round 2)", async (t) => {
+		const { entered, release, plugin } = cutting();
+		const host = await served(t, [plugin]);
+		const store = await host.store();
+		await store.create({ thing: "t", provider: "cutting", credential: OLD }, context);
+		const caller = withCancel(context);
+		const first = store.authorize({ thing: "t" }, caller.context).catch(() => undefined);
+		await entered.promise;
+		const catalogs = await host.catalogs();
+		const shipped = fauxProvider({
+			provider: "cutting",
+			api: "cutting",
+			models: [{ id: "m" }],
+		}).provider.getModels()[0]!;
+		const models = [{ ...shipped, id: "new" }];
+		await catalogs.write(
+			{ provider: "cutting", entry: { models, lastModified: Date.now() }, at: Date.now() },
+			context,
+		);
+		await store.recut({ provider: "cutting" }, context);
+		caller.cancel(new Error("left"));
+		release.resolve();
+		await first;
+		// The rotation and its cut are written after the caller left, under a context of their own.
+		const row = await eventually(
+			async () => host.stored("t"),
+			(found) => JSON.parse(String(found.credential)).access === "rotated" && found.models === '["m","new"]',
+			5_000,
+		);
+		assert.deepEqual(JSON.parse(String(row.models)), ["m", "new"]);
+	});
+
 	it("is cut over the catalog stored while its refresh ran (Astra, round 1 of the catalog)", async (t) => {
 		const { entered, release, plugin } = cutting();
 		const host = await served(t, [plugin]);
