@@ -436,8 +436,12 @@ export class ConsumerSide {
 	#loading(hold: number): void {
 		const holder = this.#entries.get(hold);
 		if (holder === undefined) return;
-		const error = stackless({ code: "unavailable", message: `hold ${hold}: rebinding` });
-		for (const call of this.#window.removeHold(hold)) call.reject(error);
+		const waiting = this.#window.removeHold(hold);
+		// Made only for a call that waits (most rebindings have none: 0.3 KiB each).
+		if (waiting.length > 0) {
+			const error = stackless({ code: "unavailable", message: `hold ${hold}: rebinding` });
+			for (const call of waiting) call.reject(error);
+		}
 		holder.loading();
 	}
 

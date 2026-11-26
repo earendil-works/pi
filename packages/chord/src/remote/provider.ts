@@ -348,13 +348,16 @@ export class ProviderSide implements EventSender {
 	 */
 	forget(hold: Hold | RelayedHold, error?: ChordError): void {
 		if (this.#entries.get(hold.id) === hold) this.#entries.delete(hold.id);
-		const reason = error ?? stackless({ code: "released", message: `hold ${hold.id}: released` });
+		// Made by the first served call it aborts (most holds end with none): one reason for all of them, as before.
+		let reason = error;
 		let relayed: RelayedCall[] | undefined;
 		for (const [id, call] of this.#calls) {
 			if (call.hold !== hold) continue;
 			this.#calls.delete(id);
-			if (call.kind === "served") call.abort.abort(reason);
-			else {
+			if (call.kind === "served") {
+				reason ??= stackless({ code: "released", message: `hold ${hold.id}: released` });
+				call.abort.abort(reason);
+			} else {
 				relayed ??= [];
 				relayed.push(call);
 			}
