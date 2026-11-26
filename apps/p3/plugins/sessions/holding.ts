@@ -1,13 +1,12 @@
 // The holding on a session's worker: one reference per thing the session's workspace gives its agent (`AgentThings`),
 // held as the worker (the agent), of the kinds with a harness part here (`ThingHarnessParts`), contributed to
 // `HeldThings` for the harness, by thing id within a kind (until the index gives depth) and the kinds in the order of
-// their first things. `undefined` until every reference of the first sync settled (live, failed or ended), so the
-// harness runs no step against a partial set. A thing is listed while its reference is live. A new map whenever a list
-// changes; a kind whose list did not change keeps its array. A kind is published once none of its new references is
-// still loading (one publication for 39 things going live), a thing taken away at once. A part replaced gives its
-// kind a new array and keeps the references while the contract is the same (a kind's plugin reloaded); a reload of
-// this plugin hands over: the old holding keeps its references a while, so calls under way through them finish.
-
+// their first things. `undefined` until every reference of the first sync settled (live, failed or ended), at most
+// 4 s, so the harness runs no step against a partial set. A thing is listed while its reference is live. A new map
+// whenever a list changes; a kind whose list did not change keeps its array. A kind is published once none of its new
+// references is still loading (one publication for 39 things going live), a thing taken away at once. A part replaced
+// gives its kind a new array and keeps the references while the contract is the same (a kind's plugin reloaded); a
+// reload of this plugin hands over: the old holding keeps its references a while, so calls under way finish.
 import {
 	type Context,
 	type Contract,
@@ -56,6 +55,12 @@ export function serveHolding(host: FacetHost<P3Principal>): void {
 const HAND_OVER_MS = 5000;
 
 /**
+ * How long the first set may take to settle before the holding publishes what has (below the harness's wait for it,
+ * 10 s): one thing whose object loads slowly keeps none of the others from the agent; it joins as a change later.
+ */
+const FIRST_SET_MS = 4000;
+
+/**
  * One held thing: its part (a new one gives its kind a new array), what `HeldThings` lists of it, the grant last seen
  * live (`undefined`: not listed: not live yet, failed or ended), and whether its reference settled once (live, failed
  * or ended) and ended.
@@ -79,11 +84,18 @@ class Holding {
 	readonly #changed = new Set<string>();
 	/** The kinds that lost a listed thing since their last publication: published at once, loading or not. */
 	readonly #lost = new Set<string>();
+	/** Publishes the first set as far as it settled once `FIRST_SET_MS` passed; cleared by the holding's end. */
+	readonly #bound: ReturnType<typeof setTimeout>;
+	#bounded = false;
 
 	constructor(runtime: WorkerRuntime, held: Writable<Held | undefined>, context: Context) {
 		this.#runtime = runtime;
 		this.#held = held;
 		this.#context = context;
+		this.#bound = setTimeout(() => {
+			this.#bounded = true;
+			this.#publish();
+		}, FIRST_SET_MS).unref();
 	}
 
 	/** Holds what `given` names of the kinds with a part in `parts`, releases the rest, and publishes the change. */
@@ -120,6 +132,7 @@ class Holding {
 
 	/** Releases every reference: the holding's attempt ended. */
 	release(): void {
+		clearTimeout(this.#bound);
 		const entries = this.#entries;
 		this.#entries = new Map();
 		for (const entry of entries.values()) entry.held.ref.release();
@@ -127,6 +140,7 @@ class Holding {
 
 	/** Stops publishing and releases every reference after `HAND_OVER_MS` (the plugin reloaded). */
 	handOver(): void {
+		clearTimeout(this.#bound);
 		const entries = this.#entries;
 		this.#entries = new Map();
 		setTimeout(() => {
@@ -177,13 +191,13 @@ class Holding {
 	}
 
 	/**
-	 * Publishes a new map once the first sync settled: each changed kind with no reference still loading, or one that
-	 * lost a thing, gets a new array; the others keep the arrays last published.
+	 * Publishes a new map once the first sync settled (or `FIRST_SET_MS` passed): each changed kind with no reference
+	 * still loading, or one that lost a thing, gets a new array; the others keep the arrays last published.
 	 */
 	#publish(): void {
 		const last = this.#held.value;
 		const entries = [...this.#entries.values()];
-		if (last === undefined && !entries.every((entry) => entry.settled)) return;
+		if (last === undefined && !this.#bounded && !entries.every((entry) => entry.settled)) return;
 		const due = new Set(
 			[...this.#changed].filter(
 				(kind) =>

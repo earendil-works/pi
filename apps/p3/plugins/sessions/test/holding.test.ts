@@ -178,7 +178,8 @@ beforeEach(async () => {
 	worker = createHost<P3Principal>({
 		address: Session({ id: session }),
 		principal: { kind: "worker", session },
-		readyTimeout: 5000,
+		// Above the holding's own bound for its first set (4 s): a gated thing stays loading past it.
+		readyTimeout: 20_000,
 		onError: (error) => console.error("holding test: the worker:", error),
 	});
 	const [up, down] = memoryLinkPair();
@@ -386,6 +387,75 @@ describe("the holding's readiness and batches", () => {
 		assert.deepEqual(ids(seen.values.at(-1)!, Pad.name), [pad]);
 	});
 
+	// Fable, round 2: one thing whose object loads slowly keeps none of the others from the agent.
+	it("publishes its first set as far as it settled after 4 s; a thing still loading joins later", async () => {
+		const gate = Promise.withResolvers<void>();
+		const entered = Promise.withResolvers<void>();
+		await w.reload("p3-test-pad", context, gatedPad(gate.promise, entered.resolve));
+		await make(Board.name);
+		const pad = await make(Pad.name);
+		await entered.promise;
+		await reloadHolding();
+		const registry = await worker.registry(HeldThings, context);
+		const started = Date.now();
+		const first = await until(registry, (v) => v?.has(Board.name) === true, within("the bound", context, 8000));
+		// Before the server's own deadline for the pad's object (the test host's 5 s), which would settle it as failed.
+		const took = Date.now() - started;
+		assert.ok(took >= 3500 && took < 4900, `published after ${took} ms`);
+		assert.equal(first!.has(Pad.name), false);
+		gate.resolve();
+		const later = await held((v) => v.has(Pad.name), "the slow pad");
+		assert.deepEqual(ids(later, Pad.name), [pad]);
+		assert.equal(later.get(Board.name), first!.get(Board.name));
+	});
+
+	// Opus, round 2 (should 5): after the first set, a kind waits for its new references, in one value.
+	it("publishes things given later, while their references load, in one value once all settled", async () => {
+		await make(Board.name);
+		const first = await held((v) => v.has(Board.name), "the board");
+		const gate = Promise.withResolvers<void>();
+		const n = 10;
+		let entered = 0;
+		const all = Promise.withResolvers<void>();
+		await w.reload(
+			"p3-test-pad",
+			context,
+			gatedPad(gate.promise, () => {
+				if (++entered === n) all.resolve();
+			}),
+		);
+		const seen = await publications();
+		for (let i = 0; i < n; i++) await make(Pad.name, `p${i}`);
+		await all.promise;
+		gate.resolve();
+		await held((v) => ids(v, Pad.name).length === n, "every pad");
+		await seen.stop();
+		assert.deepEqual(
+			seen.values.map((value) => ids(value!, Pad.name).length),
+			[n],
+		);
+		assert.equal(seen.values[0]!.get(Board.name), first.get(Board.name));
+	});
+
+	// Opus, round 2 (should 5): a thing taken away does not wait for the kind's references still loading.
+	it("publishes a thing taken away at once while another of its kind still loads", async () => {
+		const pad = await make(Pad.name);
+		await held((v) => v.has(Pad.name), "the pad");
+		const gate = Promise.withResolvers<void>();
+		const entered = Promise.withResolvers<void>();
+		await w.reload("p3-test-pad", context, gatedPad(gate.promise, entered.resolve));
+		const late = await make(Pad.name, "late");
+		await entered.promise;
+		await store.unlink({ workspace: session, thing: pad }, context);
+		try {
+			await held((v) => !v.has(Pad.name), "the pad taken away");
+		} finally {
+			gate.resolve();
+		}
+		const back = await held((v) => v.has(Pad.name), "the late pad");
+		assert.deepEqual(ids(back, Pad.name), [late]);
+	});
+
 	// Astra, round 1 (must 3).
 	it("takes a failed reference out of its kind's list and lists it again once it recovers", async () => {
 		await make(Board.name);
@@ -478,10 +548,10 @@ describe("the holding's calls under way", () => {
 
 	// Astra, round 1 (must 4, its first case): Chord seals the admitted object on a regrant, so a call under way through
 	// it fails `unavailable` whatever the holding does; the next step has no tool. Accepted for now as the narrower
-	// promise (main, 2026-11-27); item 116 wants it to finish: the Chord issue "a regrant lets calls under way finish".
+	// promise (main, 2026-11-27); item 116 wants it to finish: ERNDL-1182 (Chord: a regrant lets calls under way finish).
 	it(
 		"lets a call under way finish when a tick is withheld from the agents",
-		{ todo: "Chord issue: a regrant lets calls under way finish" },
+		{ todo: "ERNDL-1182: a regrant lets calls under way finish" },
 		async () => {
 			const entered = Promise.withResolvers<void>();
 			const finish = Promise.withResolvers<void>();
