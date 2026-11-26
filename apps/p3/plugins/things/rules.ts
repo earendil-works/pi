@@ -173,10 +173,11 @@ const NO_TICKS: ReadonlyMap<PartyKey, ReadonlySet<string>> = new Map();
 /** What a workspace ends up with (rules 1 to 3): shares with `above` whatever its own entries leave as it is. */
 export function accessHere(above: WorkspaceAccess, own: WorkspaceEntries, kinds: KindsLookup): WorkspaceAccess {
 	if (above === GONE) return GONE;
+	const out = takenOut(own);
 	return {
 		things: thingsHere(above.things, own, kinds),
-		present: partiesHere(above.present, own),
-		hidden: hiddenHere(above.hidden, own),
+		present: partiesHere(above.present, own, out),
+		hidden: hiddenHere(above.hidden, own, out),
 		own: ownHere(own, kinds),
 	};
 }
@@ -253,18 +254,14 @@ function ownHere(own: WorkspaceEntries, kinds: KindsLookup): OwnHere {
 	return { ...thing, id: own.id, makesWithheld };
 }
 
-/** Whom a Make tick is for (item 114): its kind's `makers` (anyone: all, people: people); `undefined`: nobody. */
-function makeTickFor(tick: string, kinds: KindsLookup): TickFor | undefined {
-	const kind = kindOfMakeTick(tick)!;
-	if (kind === "*") return "all";
-	switch (kinds.makersOf(kind)) {
-		case "anyone":
-			return "all";
-		case "people":
-			return "people";
-		default:
-			return undefined;
-	}
+/**
+ * Whom the Make tick of kind `made` (`*`: every kind) is for (item 114): its kind's `makers` (anyone: all, people:
+ * people); `undefined`: nobody (a kind that is not registered, or that only its plugin makes).
+ */
+export function makeTickFor(made: string, makersOf: (kind: string) => Makers | undefined): TickFor | undefined {
+	if (made === "*") return "all";
+	const makers = makersOf(made);
+	return makers === "anyone" ? "all" : makers === "people" ? "people" : undefined;
 }
 
 /**
@@ -279,7 +276,7 @@ function linkedHere(kind: string, at: string, grants: readonly GrantEntry[], kin
 		const forWhom = !isReserved(grant.tick)
 			? kinds.tickFor(kind, grant.tick)
 			: kindOfMakeTick(grant.tick) !== undefined && kinds.sortOf(kind) !== "no"
-				? makeTickFor(grant.tick, kinds)
+				? makeTickFor(kindOfMakeTick(grant.tick)!, kinds.makersOf)
 				: undefined;
 		if (!open && !isFor(forWhom, grant.audience)) continue;
 		const own = ticks.get(grant.party) ?? new Set<string>();
@@ -331,11 +328,27 @@ function withheldFromNamed(party: PartyKey): boolean {
 	return party.startsWith("person/") || party.startsWith("agent/");
 }
 
-/** Rule 3: the parties present here: its members, and those present above that are shown here. */
-function partiesHere(above: ReadonlySet<PartyKey>, own: WorkspaceEntries): ReadonlySet<PartyKey> {
-	if (own.showsPeople && own.members.size === 0 && own.switches.size === 0) return above;
+/**
+ * "No access" on a workspace's own thing (`OPEN` withheld there, main session, round 1): the parties it is withheld
+ * from are taken out of the workspace entirely, as a people switch hiding them there would (a person by every route).
+ */
+function takenOut(own: WorkspaceEntries): readonly PartyKey[] {
+	return own.ownGrants.filter((grant) => !grant.gives && grant.tick === OPEN).map((grant) => grant.party);
+}
+
+/**
+ * Rule 3: the parties present here: its members, and those present above that are shown here; less the groups and
+ * named agents taken out here (`out`; a person taken out is hidden, `hiddenHere`).
+ */
+function partiesHere(
+	above: ReadonlySet<PartyKey>,
+	own: WorkspaceEntries,
+	out: readonly PartyKey[],
+): ReadonlySet<PartyKey> {
+	if (own.showsPeople && own.members.size === 0 && own.switches.size === 0 && out.length === 0) return above;
 	const here = new Set(own.members);
 	for (const party of above) if (own.switches.get(party) ?? own.showsPeople) here.add(party);
+	for (const party of out) if (!party.startsWith("person/")) here.delete(party);
 	return here;
 }
 
@@ -344,11 +357,17 @@ function partiesHere(above: ReadonlySet<PartyKey>, own: WorkspaceEntries): Reado
  * everyone), until a workspace below puts them in again. Returning `above` as it is would make the switch hide only
  * their own party (rule 3).
  */
-function hiddenHere(above: ReadonlySet<PartyKey>, own: WorkspaceEntries): ReadonlySet<PartyKey> {
+function hiddenHere(
+	above: ReadonlySet<PartyKey>,
+	own: WorkspaceEntries,
+	out: readonly PartyKey[],
+): ReadonlySet<PartyKey> {
 	const put = [...above].filter((person) => own.members.has(person));
 	const hides = [...own.switches]
 		.filter(([item, shown]) => !shown && item.startsWith("person/") && !own.members.has(item) && !above.has(item))
 		.map(([person]) => person);
+	// Taken out here ("No access" on the workspace itself): hidden even if put in here.
+	hides.push(...out.filter((party) => party.startsWith("person/")));
 	if (put.length === 0 && hides.length === 0) return above;
 	const hidden = new Set(above);
 	for (const person of put) hidden.delete(person);

@@ -1,8 +1,10 @@
 // The plans of the things store's named queries, as SQLite runs them: each read (its first page and the page after a
 // bookmark) searches the index its comment names, or the key, with no temporary B-tree; and the reads of the writes
-// that look rows up (unlink, a thing's removal, the cleanup by source) search an index too. One read is a whole-table
-// scan on purpose: the pending deletes (`things.pending`), removals (`things.removing`) and gone workspaces
-// (`things.gone`), few rows each, read at the start and when the kinds' hooks change. The test opens the store on a SQLite database of its own and records the statements Chord prepares.
+// that look rows up (unlink, a thing's removal, the cleanup by source, a person's and a group's removal) search an
+// index too. Some reads are whole-table scans on purpose: the pending deletes (`things.pending`), removals
+// (`things.removing`) and gone workspaces (`things.gone`), few rows each, read at the start and when the kinds' hooks
+// change, and the sign-outs still to end (`things.sign-outs`), read at the start. The test opens the store on a SQLite
+// database of its own and records the statements Chord prepares.
 
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -20,7 +22,7 @@ import { eventually } from "../../../test/until.ts";
 import { ThingsStore } from "../contract.server.ts";
 import type { Source } from "../contract.ts";
 import { BOARD, Board } from "./kinds.ts";
-import { THINGS } from "./world.ts";
+import { RUNTIME, THINGS } from "./world.ts";
 
 /** A query's pages, read once each. */
 type Read = () => Promise<unknown>;
@@ -58,7 +60,7 @@ describe("the plans of the things store's queries", () => {
 			onError: (e) => assert.fail(e.kind),
 		});
 		try {
-			await host.load([THINGS, BOARD], context);
+			await host.load([RUNTIME, THINGS, BOARD], context);
 			const things = await host.get(ThingsStore, {}, context);
 			const by: Source = { kind: "plugin", plugin: "test" };
 			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
@@ -68,6 +70,18 @@ describe("the plans of the things store's queries", () => {
 			await things.createPerson({ name: "Ben", madeBy: by }, context);
 			const group = await things.makeGroup({ name: "g", managedBy: { kind: "people" }, outside: false }, context);
 			await things.addToGroup({ group, person: ann, source: by }, context);
+			const ben = await things.createPerson({ name: "Ben", madeBy: { kind: "person", person: ann } }, context);
+			await things.addToGroup({ group, person: ben, source: { kind: "person", person: ann } }, context);
+			await things.setGroupManagers(
+				{
+					group,
+					parties: [
+						{ kind: "person", person: ann },
+						{ kind: "person", person: ben },
+					],
+				},
+				context,
+			);
 			const ids: string[] = [];
 			for (const workspace of [team, team, pi])
 				ids.push(
@@ -137,11 +151,15 @@ describe("the plans of the things store's queries", () => {
 				["grants.here", pages(things.grants.here, { workspace: team }), undefined],
 				["persons.one", pages(things.persons.one, { person: ann }), undefined],
 				["persons.ofIds", pages(things.persons.ofIds, { persons: [ann, "none"] }), undefined],
+				["persons.owners", pages(things.persons.owners, {}), `${T}.persons:by_owner`],
 				[
 					"groupMembers.ofPerson",
 					pages(things.groupMembers.ofPerson, { person: ann }),
 					`${T}.group-members:by_person`,
 				],
+				["groups.one", pages(things.groups.one, { group }), undefined],
+				["groupManagers.of", pages(things.groupManagers.of, { group }), undefined],
+				["groupMembersNamed.ofGroup", pages(things.groupMembersNamed.ofGroup, { group }), undefined],
 			];
 			for (const [name, read, expected] of cases) {
 				const plans = (await Promise.all(read.map((each) => plansOf(each)))).flat();
@@ -157,12 +175,15 @@ describe("the plans of the things store's queries", () => {
 					assert.match(step, /^SEARCH p USING PRIMARY KEY /, `${name}: ${plans.join(" | ")}`);
 				}
 			}
-			// The writes that look rows up: an unlink that removes the thing with its last link, and a cleanup by source.
+			// The writes that look rows up: an unlink that removes the thing with its last link, a cleanup by source (the
+			// persons it made among it), a person's removal and a group's, a tick set, a workspace's removal.
 			const sub = await things.createWorkspace({ kind: "things.workspace", name: "sub", parent: team, by }, context);
 			await things.create({ kind: Board.name, name: "b", workspace: sub, by }, context);
 			for (const write of [
 				() => things.unlink({ workspace: pi, thing: ids[2]! }, context),
 				() => things.deleteEverythingFrom({ source: by }, context),
+				() => things.removePerson({ person: ann }, context),
+				() => things.removeGroup({ group }, context),
 				() =>
 					things.setTick(
 						{ workspace: team, thing: team, party: { kind: "everyone" }, tick: "link", gives: true, source: by },
@@ -182,10 +203,10 @@ describe("the plans of the things store's queries", () => {
 					assert.ok(/^SEARCH [tp] USING /.test(step) && !step.includes("TEMP B-TREE"), plans.join(" | "));
 				}
 			}
-			// Of everything read since the start, only the pending deletes, removals and gone workspaces (few rows, read at
-			// the start and when the hooks change) are read whole.
+			// Of everything read since the start, only the pending deletes, removals, gone workspaces and sign-outs still to
+			// end (few rows, read at the start and when the hooks change) are read whole.
 			const scans = [...ever].filter((sql) => plan(sql).some((step) => /^SCAN t( |$)/.test(step)));
-			const whole = [`"${T}.pending"`, `"${T}.removing"`, `"${T}.gone"`];
+			const whole = [`"${T}.pending"`, `"${T}.removing"`, `"${T}.gone"`, `"${T}.sign-outs"`];
 			assert.ok(
 				scans.length > 0 && scans.every((sql) => whole.some((table) => sql.includes(table))),
 				scans.join(" | "),

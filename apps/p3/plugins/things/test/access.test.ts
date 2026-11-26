@@ -20,19 +20,16 @@ import { MAKE_ANY, makeTick, OPEN, type Party, type Source } from "../contract.t
 import { lookupOf, readerOf } from "../reader.ts";
 import { ABOVE_THE_ROOT, accessHere, type KindsLookup } from "../rules.ts";
 import { THINGS_PLUGIN, WorkspaceKind } from "../workspaces.ts";
-import { BOARD_PLUGIN, Board } from "./kinds.ts";
-import { answersFrom, type Caller, type Everything, type KindTicks, readEverything } from "./reference.ts";
+import { BOARD_PLUGIN, Board, Defaults, Login, SPACES, SPACES_PLUGIN, TestSession } from "./kinds.ts";
+import { answersFrom, type Caller, type Everything, type KindTicks, kindTicksOf, readEverything } from "./reference.ts";
 import { type World, world } from "./world.ts";
 
 const TICKS = ["read", "write", "draw", "moderate", "read", "write", "draw", "moderate", "bash", "look"];
-const KINDS: KindTicks = new Map(
-	[Board, WorkspaceKind].map((Kind) => [
-		Kind.name,
-		{ ticks: new Map(Kind.info.ticks.map((tick) => [tick.name, tick.for])), makers: Kind.info.makers },
-	]),
-);
+const KINDS: KindTicks = kindTicksOf([Board, WorkspaceKind, Defaults, TestSession, Login]);
 /** The ticks a workspace's own grants name in the random writes: its workspace ticks and Make ticks. */
 const OWN_TICKS = [
+	makeTick(Defaults),
+	makeTick(TestSession),
 	"link",
 	"hide",
 	"configure",
@@ -161,6 +158,15 @@ class Run {
 			);
 			this.links.push({ workspace: pi!.workspace, thing: this.things[i]! });
 		}
+		// Three of a kind that stacks `nearest` (decision 75): linked nearer later, they replace the farther below.
+		for (let i = 0; i < 3; i++) {
+			const thing = await this.store.create(
+				{ kind: Defaults.name, name: `d${i}`, workspace: pi!.workspace, by: plugin },
+				context,
+			);
+			this.things.push(thing);
+			this.links.push({ workspace: pi!.workspace, thing });
+		}
 	}
 
 	/** One random write; one the store refuses (`invalid`) leaves the disk as it was. */
@@ -178,7 +184,9 @@ class Run {
 		if (roll < 8) {
 			const parent = this.pick(this.workspaces.filter((w) => (this.depth.get(w) ?? 0) < MAX_DEPTH));
 			const by: Source = { kind: "plugin", plugin: "test" };
-			const id = await s.createWorkspace({ kind: "things.workspace", name: "w", parent, by }, context);
+			// Some are leaves (sessions): a workspace under one is refused; the agents may make what anyone makes there.
+			const kind = this.chance(0.25) ? TestSession.name : "things.workspace";
+			const id = await s.createWorkspace({ kind, name: "w", parent, by }, context);
 			this.workspaces.push(id);
 			this.parents.set(id, parent);
 			this.depth.set(id, (this.depth.get(parent) ?? 0) + 1);
@@ -202,7 +210,13 @@ class Run {
 			if (exists) await s.link({ workspace, thing: this.things[index]! }, context);
 			else
 				this.things[index] = await s.create(
-					{ kind: Board.name, name: "t", workspace, by: { kind: "person", person: this.pick(this.persons) } },
+					{
+						// Some of a kind that stacks `nearest` (decision 75): a nearer one replaces it below.
+						kind: this.chance(0.3) ? Defaults.name : Board.name,
+						name: "t",
+						workspace,
+						by: { kind: "person", person: this.pick(this.persons) },
+					},
 					context,
 				);
 			const thing = this.things[index]!;
@@ -331,7 +345,7 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 /** Runs seed `seed`: `writes` random writes after the setup; with `forgetting`, the second index too. */
 async function run(t: TestContext, seed: number, writes: number, forgetting: boolean): Promise<void> {
-	const w = await world(context);
+	const w = await world(context, [SPACES]);
 	t.after(() => w.close(context));
 	const r = new Run(w, seed);
 	await r.setUp();
@@ -394,6 +408,12 @@ async function run(t: TestContext, seed: number, writes: number, forgetting: boo
 	const calls = [...watchers].reduce((sum, watcher) => sum + watcher.calls, 0);
 	for (const watcher of watchers) watcher.stop();
 	assert.ok(withTicks / sampled > 0.1, `only ${withTicks} of ${sampled} questions gave ticks`);
+	// The world had leaves (their ceiling) and things of a `nearest` kind (their stacking) in it.
+	assert.ok([...all.workspaceKinds.values()].includes(TestSession.name), "no leaf was made");
+	assert.ok(
+		all.links.some((link) => link.of === Defaults.name),
+		"no nearest thing was linked",
+	);
 	assert.ok(withOwn / sampled > 0.05, `only ${withOwn} of ${sampled} questions gave a workspace's own ticks or makes`);
 	assert.ok(calls > 30, `watchers were told only ${calls} times`);
 	assert.deepEqual(w.errors, []);
@@ -478,6 +498,9 @@ const LOOKUP = lookupOf(
 	new Map([
 		[Board.name, { plugin: BOARD_PLUGIN, value: Board.info }],
 		[WorkspaceKind.name, { plugin: THINGS_PLUGIN, value: WorkspaceKind.info }],
+		[Defaults.name, { plugin: SPACES_PLUGIN, value: Defaults.info }],
+		[TestSession.name, { plugin: SPACES_PLUGIN, value: TestSession.info }],
+		[Login.name, { plugin: SPACES_PLUGIN, value: Login.info }],
 	]),
 );
 

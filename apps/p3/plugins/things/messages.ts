@@ -10,8 +10,8 @@ export const messages = defineMessages("things", {
 		notGiven: "You have no access to this here.",
 		catchingUp: "This was just updated. Try again in a moment.",
 		tickNotFor: (tick: string, party: string) => `${tick} cannot be given to ${party}.`,
-		belowLink: (workspace: string) =>
-			`This is linked in ${workspace}. Ticks are given there; here they can only be taken away.`,
+		// No workspace named: the person may not be present where the thing is linked (decision 96).
+		belowLink: "Ticks are given where this is linked; here they can only be taken away.",
 		lastOwner: "A Pi needs at least one owner.",
 		tickLink: "Link",
 		tickHide: "Hide",
@@ -22,7 +22,7 @@ export const messages = defineMessages("things", {
 		mayNotLink: "To link this here you need Link here and where it is linked now.",
 		notLinkedHere: "This is not linked here.",
 		fromAboveOnly: "Only what comes from above can be hidden here; unlink what is linked here.",
-		leafHoldsNoWorkspaces: "A session holds no workspaces.",
+		leafHoldsNoWorkspaces: "This holds no workspaces.",
 		notYet: "This comes later.",
 	},
 });

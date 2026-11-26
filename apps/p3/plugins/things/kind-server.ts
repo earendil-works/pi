@@ -24,16 +24,10 @@ export async function make<C extends Contract, I>(
 	ctx: Ctx<P3Principal>,
 ): Promise<string> {
 	const store = await ctx.get(ThingsStore, {});
-	const { workspace, input, defaults, ...rest } = args;
-	const common = {
-		kind: Kind.name,
-		...rest,
-		...(input === undefined ? {} : { input }),
-		...(defaults === undefined ? {} : { defaults }),
-	};
+	const { workspace, ...rest } = args;
 	return Kind.info.workspace === "no"
-		? store.create({ ...common, workspace }, ctx)
-		: store.createWorkspace({ ...common, parent: workspace }, ctx);
+		? store.create({ kind: Kind.name, ...rest, workspace }, ctx)
+		: store.createWorkspace({ kind: Kind.name, ...rest, parent: workspace }, ctx);
 }
 
 /**

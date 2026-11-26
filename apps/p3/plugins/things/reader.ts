@@ -147,3 +147,17 @@ function grantEntries(
 function entryOf({ thing, party, source, gives }: GrantItem, tick: string): GrantEntry {
 	return { thing, party: partyKey(party), who: party, source, audience: audienceOf(party.kind), tick, gives };
 }
+
+/** How many rows `readWhole` reads at most. */
+const WHOLE = 5000;
+
+/**
+ * Every item of `named` for `args` in one read, for a set something else bounds (a list's names, where one thing is
+ * linked): past `WHOLE` it fails closed, never answers a part. Counted as one of the index's reads.
+ */
+export async function readWhole<T, A>(named: NamedQuery<T, A>, args: A, context: Context): Promise<T[]> {
+	const page = await named.page(args, WHOLE, context);
+	context.telemetry.metrics?.counter("things.access.reads").add(1);
+	if (page.next !== undefined) throw new Error(`things: more than ${WHOLE} rows in one read`);
+	return page.items;
+}

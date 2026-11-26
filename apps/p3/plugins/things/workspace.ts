@@ -1,8 +1,8 @@
 // The objects the page holds about a workspace and what is in it (ERNDL-1141 §6, §8, §9, and the page's additions
 // recorded there): the workspace itself (`Workspace`: its info, and every change a workspace tick allows), its lists
 // (the caller's roots, its children, what is here, who is here, what the caller may link here), one thing as it is
-// available here (`ThingInfo`), who may do what with a thing here (`WhoMay`), and every registered kind as data
-// (`ThingKindsView`, slice 1's). Every list is paged and live; a "from" never names a workspace the caller is not present in (item 96).
+// available here (`ThingInfo`) and who may do what with a thing here (`WhoMay`). Every list is live and bounded by one
+// workspace (no further pages until slice 6); a "from" never names a workspace the caller is not present in (item 96).
 
 import {
 	arr,
@@ -75,8 +75,21 @@ export const Workspace = remote("things.workspace", {
 	admission: obj({ makes: arr(str()) }),
 	state: { info: WorkspaceInfo, makes: grantable(arr(str())) },
 	methods: {
+		/**
+		 * Make: a thing of `kind` here (`kind` one of `makes`). For a workspace kind, `private` makes it with people
+		 * from above hidden in the same commit (its maker is put in); private wins over its kind's create hook.
+		 */
 		make: grantable(
-			method(obj({ kind: str(), name: opt(str()), input: opt(unknown()), defaults: opt(DefaultsChoice) }), str()),
+			method(
+				obj({
+					kind: str(),
+					name: opt(str()),
+					input: opt(unknown()),
+					defaults: opt(DefaultsChoice),
+					private: opt(bool()),
+				}),
+				str(),
+			),
 		),
 		link: grantable(method(obj({ thing: str(), defaults: opt(DefaultsChoice) }))),
 		unlink: grantable(method(obj({ thing: str() }))),
@@ -160,7 +173,7 @@ export const WorkspacePeople = remote("things.people", {
 
 /**
  * The things the caller may link here (Link where each is linked now: in the workspaces above where they have Link), by
- * a name prefix; held by anyone with Link here.
+ * a name prefix; held by anyone present here (linking itself needs Link here, `Workspace.link`).
  */
 export const Linkable = remote("things.linkable", {
 	version: 1,
@@ -202,8 +215,8 @@ export const TickFor = oneOf("agents", "people", "all");
 
 /**
  * Who may do what with a thing here: the kind's own ticks, where its grants are written, and per party the `@open`
- * cell and one cell per tick. On a workspace `ticks` also has cells `@make:*` and `@make:<kind>` (item 114). Admitted
- * for anyone present here, read-only (decided against R40): changing a cell is `Workspace.setTick`, Manage access.
+ * cell and one cell per tick. On a workspace `ticks` also has cells `@make:*` and `@make:<kind>` (item 114). Read by
+ * anyone present here; changing a cell is `Workspace.setTick` (Manage access).
  */
 export const WhoMay = remote("things.who-may", {
 	version: 1,

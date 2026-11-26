@@ -31,7 +31,7 @@ import { OPEN, type Party, type Source } from "../contract.ts";
 import { defineThing, ThingKinds } from "../kind.ts";
 import { serveThing } from "../serve.ts";
 import { BOARD, BOARD_PLUGIN, Board } from "./kinds.ts";
-import { THINGS, type World, world } from "./world.ts";
+import { RUNTIME, THINGS, type World, world } from "./world.ts";
 
 const BY: Source = { kind: "plugin", plugin: "test" };
 const label = (key: string) => ({ namespace: "test", key, params: [] });
@@ -459,7 +459,7 @@ describe("a kind's new ticks version while it loads", () => {
 			await host.close(context);
 			await database.close(context);
 		});
-		await host.load([THINGS, marker(1)], context);
+		await host.load([RUNTIME, THINGS, marker(1)], context);
 		const s = await host.get(ThingsStore, {}, context);
 		const root = (await s.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 		const leaf = await s.createWorkspace({ parent: root, name: "leaf", kind: "things.workspace", by: BY }, context);
@@ -483,7 +483,7 @@ describe("a kind's new ticks version while it loads", () => {
 		const pending = host.get(Gives, { workspace: leaf, caller: `person:${p}` }, context);
 		await reached.promise;
 		const kinds = await host.registry(ThingKinds, context);
-		const reloading = host.reload([THINGS, marker(2)], context);
+		const reloading = host.reload([RUNTIME, THINGS, marker(2)], context);
 		try {
 			await until(
 				kinds,
@@ -504,6 +504,26 @@ describe("a kind's new ticks version while it loads", () => {
 		);
 		// One in the root, one in the leaf: alike but for how far above each is linked.
 		assert.deepEqual({ ...first[a], depth: 0 }, { ...first[b], depth: 0 });
+		gives.release();
+	});
+});
+
+describe("round 1: Astra's migration case", () => {
+	it("setTick resets all sources of a cell using its current migrated tick name", async () => {
+		const ada = await personIn("Ada");
+		const thing = await store.create({ kind: Board.name, workspace: pi, by: BY, name: "board" }, context);
+		await write(thing, ada.party, ["draw"], true);
+		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
+		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
+		await until(gives.answers, (v) => v[thing]?.ticks.includes("paint") === true, within("v2", context));
+		await store.setTick(
+			{ workspace: pi, thing, party: ada.party, tick: "paint", source: { kind: "plugin", plugin: "editor" } },
+			context,
+		);
+		assert.equal(
+			(await store.answerOf({ workspace: pi, thing, caller: `person:${ada.id}` }, context))?.ticks.includes("paint"),
+			false,
+		);
 		gives.release();
 	});
 });

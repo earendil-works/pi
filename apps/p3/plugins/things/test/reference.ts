@@ -26,11 +26,44 @@ export type Answer =
 	  }
 	| undefined;
 
-/** Whom each tick of each kind is for, and who makes the kind's things. */
+/**
+ * Whom each tick of each kind is for, who makes the kind's things, how several of them reaching one workspace combine,
+ * and whether its things are workspaces.
+ */
 export type KindTicks = ReadonlyMap<
 	string,
-	{ readonly ticks: ReadonlyMap<string, "agents" | "people" | "all">; readonly makers: "anyone" | "people" | "plugin" }
+	{
+		readonly ticks: ReadonlyMap<string, "agents" | "people" | "all">;
+		readonly makers: "anyone" | "people" | "plugin";
+		readonly stacking: "all" | "nearest";
+		readonly workspace: "no" | "plain" | "leaf";
+	}
 >;
+
+/** The reference's data of `kinds` (each kind's ticks, makers, stacking, sort). */
+export function kindTicksOf(
+	kinds: readonly {
+		readonly name: string;
+		readonly info: {
+			readonly ticks: readonly { readonly name: string; readonly for: "agents" | "people" | "all" }[];
+			readonly makers: "anyone" | "people" | "plugin";
+			readonly stacking: "all" | "nearest";
+			readonly workspace: "no" | "plain" | "leaf";
+		};
+	}[],
+): KindTicks {
+	return new Map(
+		kinds.map(({ name, info }) => [
+			name,
+			{
+				ticks: new Map(info.ticks.map((tick) => [tick.name, tick.for])),
+				makers: info.makers,
+				stacking: info.stacking,
+				workspace: info.workspace,
+			},
+		]),
+	);
+}
 
 /** Every row of every table the rules read. */
 export type Everything = {
@@ -168,6 +201,8 @@ export function ownFrom(all: Everything, kinds: KindTicks, workspace: string, ca
 	const kind = all.workspaceKinds.get(workspace)!;
 	const ticksOf = kinds.get(kind)?.ticks ?? new Map();
 	const makeable = (made: string) => {
+		// A leaf holds no workspaces (decision 13).
+		if (kinds.get(kind)?.workspace === "leaf" && kinds.get(made)?.workspace !== "no") return false;
 		const makers = kinds.get(made)?.makers;
 		return makers === "anyone" || (makers === "people" && caller.kind === "person");
 	};
@@ -314,6 +349,13 @@ function walk(all: Everything, kinds: KindTicks, workspace: string, thing: strin
 			}
 		} else if (state.kind !== undefined && !(switchFor(`thing/${thing}`) ?? here.showsThings)) {
 			state.kind = undefined;
+		} else if (
+			state.kind !== undefined &&
+			kinds.get(state.kind)?.stacking === "nearest" &&
+			all.links.some((l) => l.workspace === here.id && l.of === state.kind)
+		) {
+			// Decision 75: another thing of a `nearest` kind linked here replaces this one here and below.
+			state.kind = undefined;
 		}
 		if (state.kind !== undefined) {
 			for (const grant of grantsHere.filter((g) => !g.gives)) {
@@ -333,6 +375,12 @@ function walk(all: Everything, kinds: KindTicks, workspace: string, thing: strin
 		const hides = all.switches.filter((s) => s.workspace === here.id && s.person && !s.shown).map((s) => s.item);
 		state.hidden = [...state.hidden, ...hides].filter((person) => !members.includes(person));
 		state.present = [...state.present.filter((party) => switchFor(party) ?? here.showsPeople), ...members];
+		// "No access" on the workspace itself: who it is withheld from is out of it entirely (a person by every route).
+		const out = all.grants
+			.filter((g) => g.workspace === here.id && g.thing === here.id && g.tick === "@open" && !g.gives)
+			.map((g) => g.party);
+		state.hidden = [...state.hidden, ...out.filter((party) => party.startsWith("person/"))];
+		state.present = state.present.filter((party) => party.startsWith("person/") || !out.includes(party));
 	}
 	return state;
 }

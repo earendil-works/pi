@@ -41,8 +41,8 @@ export type RemovalStore = {
 	readonly gone: TableOf<typeof Gone>;
 	/** Runs `fn` as one transaction of the store that writes nothing the index reads. */
 	read<R>(fn: (tx: Tx) => Promise<R>, ctx: Ctx<P3Principal>): Promise<R>;
-	/** One workspace under `pathPrefix` that still has its line, if any. */
-	under(tx: Tx, pathPrefix: string): Promise<string | undefined>;
+	/** One workspace under `pathPrefix` that still has its line, if any (the named query `workspaces.under`). */
+	under(pathPrefix: string, ctx: Ctx<P3Principal>): Promise<string | undefined>;
 	/**
 	 * Clears workspace `workspace` in one write: everything written there, its line and thing; its `Gone` row put;
 	 * with `removed`, its `Removing` row goes in the same commit.
@@ -116,7 +116,7 @@ export class Removal {
 		await this.#retried(`things: the removal of workspace ${workspace}`, async (ctx) => {
 			const store = this.#store;
 			for (;;) {
-				const below = await store.read((tx) => store.under(tx, pathText), ctx);
+				const below = await store.under(pathText, ctx);
 				if (below === undefined) break;
 				await store.clear(below, false, ctx);
 				this.tell(below);

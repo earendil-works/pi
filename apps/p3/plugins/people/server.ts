@@ -8,6 +8,7 @@ import {
 	type Ctx,
 	callerKey,
 	constant,
+	contribute,
 	defineColumns,
 	defineFacet,
 	defineTable,
@@ -23,6 +24,7 @@ import {
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { SessionsStore } from "../sessions/contract.server.ts";
 import { SignIns } from "../sign-in/contract.ts";
+import { OwnerSeeds } from "../things/contract.server.ts";
 import { PeopleStore } from "./contract.server.ts";
 import { admitOwner, Me, OwnerAccess, People, PeopleList } from "./contract.ts";
 import { Invites, serveInviteRoutes } from "./invites.ts";
@@ -307,6 +309,18 @@ export default defineFacet((host) => {
 	);
 
 	serveInviteRoutes(host, invites);
+	// The owner's person handed to the things plugin, which makes the same person its owner: a bridge until this
+	// plugin goes (ERNDL-1144 push B removes it, and this).
+	contribute(host, "people.owner-seed", (self) => {
+		const found = self.liveQuery(self.get(PeopleStore, {}).persons.owner, {}, { first: 1 });
+		self.contribute(
+			OwnerSeeds,
+			self.derive([found], ([{ rows }]) => {
+				const owner = rows[0];
+				return owner === undefined ? null : { person: owner.id, name: owner.name };
+			}),
+		);
+	});
 });
 
 /** The owner's person's first name: their OS user's (`user`), capitalised (the owner renames it later). */
