@@ -79,7 +79,8 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 	const kinds = useKinds();
 	const text = useMessageText();
 	const [failure, setFailure] = useState<string | undefined>(undefined);
-	// Who may is shown to those with Manage access here (its admission, R40): anyone else reads why.
+	// Who may is held by anyone present (Manage access writes ticks, item 113's grid read-only otherwise); someone
+	// not present reads why.
 	if (state?.kind === "failed" && state.cause.kind === "denied") {
 		return (
 			<p className={styles.hint} data-who-may-hidden="">
