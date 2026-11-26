@@ -469,25 +469,29 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			return brokenRead("its admission's value is an object (allow({ granted, ...data }))", label);
 		}
 		const listed = value.granted;
-		const { indexes } = grantTable(grants);
 		// The names as bits of their grants' indexes (a contract of up to 60 grants): repeated names and their order do
 		// not count, an equal read compares two numbers.
 		let low = 0;
 		let high = 0;
 		if (listed !== undefined) {
 			if (!Array.isArray(listed)) return brokenRead("its admission's granted is a list of names", label);
-			// Indexed: a for-of allocates an iterator per list.
-			for (let index = 0; index < listed.length; index++) {
-				const name = listed[index];
-				const at = typeof name === "string" ? indexes.get(name) : undefined;
-				if (at === undefined) {
-					return brokenRead(
-						`its admission granted ${JSON.stringify(name)}: no grantable member or flag of its contract`,
-						label,
-					);
+			// The table only for a listed name: a version whose decisions grant none never makes its index (115 KB at
+			// 4,096 flags).
+			if (listed.length > 0) {
+				const { indexes } = grantTable(grants);
+				// Indexed: a for-of allocates an iterator per list.
+				for (let index = 0; index < listed.length; index++) {
+					const name = listed[index];
+					const at = typeof name === "string" ? indexes.get(name) : undefined;
+					if (at === undefined) {
+						return brokenRead(
+							`its admission granted ${JSON.stringify(name)}: no grantable member or flag of its contract`,
+							label,
+						);
+					}
+					if (at < BITS) low |= 1 << at;
+					else high |= 1 << (at - BITS);
 				}
-				if (at < BITS) low |= 1 << at;
-				else high |= 1 << (at - BITS);
 			}
 		}
 		countWalk(context);
