@@ -125,7 +125,8 @@ export function answerFrom(
 	const state = walk(all, kinds, workspace, thing);
 	if (state.kind === undefined) return undefined;
 	if (caller.kind === "person" && all.persons.some((p) => p.id === caller.person && p.owner)) {
-		return { ticks: [...(kinds.get(state.kind)?.keys() ?? [])].sort() };
+		const forPeople = [...(kinds.get(state.kind) ?? [])].filter(([, forWhom]) => forWhom !== "agents");
+		return { ticks: forPeople.map(([tick]) => tick).sort() };
 	}
 	const { parties, self } = counted(all, caller, state);
 	let ticks: string[] | undefined;

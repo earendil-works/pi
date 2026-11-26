@@ -19,6 +19,7 @@ import {
 	type Counted,
 	type KindsLookup,
 	NOBODY,
+	ownerAnswer,
 	type PersonEntries,
 	personCounts,
 	sameAnswer,
@@ -252,7 +253,7 @@ export class AccessIndex {
 	}
 
 	/**
-	 * The view's answers now (rule 5): an owner every tick of each available thing, anyone else the answer of their
+	 * The view's answers now (rule 5): an owner every tick for people of each available thing (item 99), anyone else the answer of their
 	 * counted parties. The last answers when nothing differs, and each unchanged thing's answer object kept.
 	 */
 	#answers(view: View, context: Context): Answers {
@@ -266,7 +267,7 @@ export class AccessIndex {
 		let same = true;
 		let size = 0;
 		for (const [thing, given] of access.things) {
-			const answer = owner ? { ticks: [...kinds.ticksOf(given.kind)].sort() } : answerOf(given, counted);
+			const answer = owner ? ownerAnswer(given.kind, kinds) : answerOf(given, counted);
 			if (answer === undefined) continue;
 			const before = last[thing];
 			if (sameAnswer(before, answer)) answers[thing] = before!;
