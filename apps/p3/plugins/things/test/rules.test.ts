@@ -266,9 +266,8 @@ describe("what is here, who is here", () => {
 });
 
 describe("the owner", () => {
-	it("gets every tick on what is available, nothing on what is switched off (78, scenario 11)", async () => {
+	it("gets every tick for people on what is available, nothing on what is switched off (78, 99, scenario 11)", async () => {
 		assert.deepEqual(await ticks(c.team, c.sketch, `person:${c.mario}`), [
-			"bash",
 			"draw",
 			"look",
 			"moderate",
@@ -281,7 +280,7 @@ describe("the owner", () => {
 
 	it("the flag handed over changes answers live; the last owner keeps it", async () => {
 		await store.setOwner({ person: c.kim, owner: true }, context);
-		assert.deepEqual((await ticks(c.team, c.sketch, `person:${c.kim}`))?.length, 6);
+		assert.deepEqual((await ticks(c.team, c.sketch, `person:${c.kim}`))?.length, 5);
 		await store.setOwner({ person: c.kim, owner: false }, context);
 		assert.equal(await ticks(c.team, c.sketch, `person:${c.kim}`), undefined);
 		await assert.rejects(

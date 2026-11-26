@@ -227,6 +227,16 @@ function precedence(given: ThingHere, counted: Counted): ReadonlySet<string> | u
 	return union;
 }
 
+/** Rule 5 for an owner (items 78, 99): every tick of the kind meant for people (`people` or `all`), none for agents only. */
+export function ownerAnswer(kind: string, kinds: KindsLookup): Answer {
+	return {
+		ticks: kinds
+			.ticksOf(kind)
+			.filter((tick) => kinds.tickFor(kind, tick) !== "agents")
+			.sort(),
+	};
+}
+
 /** Whether two answers say the same: field by field. */
 export function sameAnswer(a: Answer | undefined, b: Answer | undefined): boolean {
 	if (a === b) return true;
