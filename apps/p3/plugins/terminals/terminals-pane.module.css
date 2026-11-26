@@ -1,0 +1,77 @@
+/* The terminal pane: the tabs of the open terminals with New terminal, the shown terminal's bar, then its screen. */
+
+.pane {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+	min-inline-size: 0;
+	min-block-size: 0;
+	block-size: 100%;
+}
+
+.tabs {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-x-small);
+}
+
+.tab {
+	min-block-size: 2.75rem;
+	padding-inline: var(--semantic-dimension-space-gap-small);
+	border: 0;
+	border-block-end: 2px solid transparent;
+	background: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+	cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+	border-block-end-color: var(--semantic-color-text-primary);
+	color: var(--semantic-color-text-primary);
+}
+
+.bar {
+	display: flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+	min-inline-size: 0;
+}
+
+.folder {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.screen {
+	flex: 1 1 auto;
+	min-block-size: 12rem;
+	margin: 0;
+	padding: var(--semantic-dimension-space-gap-small);
+	overflow: auto;
+	resize: none;
+	border: 0;
+	background: none;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	color: var(--semantic-color-text-code);
+	font: var(--semantic-typography-code-secondary);
+}
+
+.note {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.error {
+	margin: 0;
+	color: var(--semantic-color-text-negative);
+	font: var(--semantic-typography-ui-secondary);
+}

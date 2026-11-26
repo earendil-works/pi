@@ -31,12 +31,16 @@ import codingServer from "../plugins/coding/server.ts";
 import controlServer from "../plugins/control/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import environmentsWorker from "../plugins/environments/worker.ts";
+import filesServer from "../plugins/files/server.ts";
 import peopleServer from "../plugins/people/server.ts";
 import runnerServer from "../plugins/runner/server.ts";
 import runnerWorker from "../plugins/runner/worker.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import sessionsWorker from "../plugins/sessions/worker.ts";
 import signInServer from "../plugins/sign-in/server.ts";
+import terminalsServer from "../plugins/terminals/server.ts";
+import thingsServer from "../plugins/things/server.ts";
+import thingsWorker from "../plugins/things/worker.ts";
 import { SERVER, workerPrincipal } from "../src/app.ts";
 import { admitRoute, serverCoreFacet } from "../src/server.ts";
 import { workerCoreFacet } from "../src/worker.ts";
@@ -54,10 +58,13 @@ const SERVER_PLUGINS: readonly Plugin[] = [
 	{ name: "@earendil-works/p3-coding", facet: codingServer },
 	{ name: "@earendil-works/p3-control", facet: controlServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+	{ name: "@earendil-works/p3-files", facet: filesServer },
 	{ name: "@earendil-works/p3-people", facet: peopleServer },
 	{ name: "@earendil-works/p3-runner", facet: runnerServer },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
+	{ name: "@earendil-works/p3-terminals", facet: terminalsServer },
+	{ name: "@earendil-works/p3-things", facet: thingsServer },
 ];
 
 /** A worker's plugins, by name. */
@@ -65,6 +72,7 @@ const WORKER_PLUGINS: readonly Plugin[] = [
 	{ name: "@earendil-works/p3-environments", facet: environmentsWorker },
 	{ name: "@earendil-works/p3-runner", facet: runnerWorker },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsWorker },
+	{ name: "@earendil-works/p3-things", facet: thingsWorker },
 	{ name: "p3-test-probe", facet: probeWorker },
 ];
 

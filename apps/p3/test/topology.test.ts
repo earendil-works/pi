@@ -2,6 +2,7 @@
 // (every object refuses the principals it does not serve), and the work a common action costs.
 
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
 import { afterEach, describe, it } from "node:test";
 import { isChordError } from "@earendil-works/chord";
 import {
@@ -16,23 +17,24 @@ import {
 	Sessions,
 	SessionsList,
 	SessionWorker,
-	THIS_DEVICE,
+	ThisDevice,
 	until,
 } from "@earendil-works/p3/v1";
 import { PeopleStore, ServerCommands, SessionsStore } from "@earendil-works/p3/v1/server";
+import { MACHINE_KIND } from "../plugins/environments/contract.ts";
+import { Files, FilesKind } from "../plugins/files/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
+import { Terminals, TerminalsKind } from "../plugins/terminals/contract.ts";
+import { OneThing, ThingsStore } from "../plugins/things/contract.server.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import { type Topology, topology } from "./topology.ts";
 import { eventually, within } from "./until.ts";
 
 const PERSON: P3Principal = { kind: "person", id: "p1", name: "Ann" };
 
-/** Where the topology's sessions work. */
-const HERE = { environment: THIS_DEVICE, folder: "/tmp" };
-
-/** A new coding session titled `title`, as the owner makes it. */
+/** A new coding session titled `title`, as the owner makes it (on this device, in a folder of its own). */
 function one(title: string) {
-	return { app: "coding", title, location: HERE };
+	return { app: "coding", title };
 }
 
 let running: Topology | undefined;
@@ -103,6 +105,33 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
+	it("the files and terminals plugins: a person's Files and Terminals go on", async () => {
+		const t = await topology(context);
+		running = t;
+		// A person put into Pi, whom its defaults give Files and Terminals.
+		const [pi, files, terminals, machine, ann] = await t.server.root(async (ctx) => {
+			const things = await ctx.get(ThingsStore, {});
+			const one = async (kind: string) => (await ctx.get(OneThing, { kind })).thing.value;
+			const root = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
+			const by = { kind: "plugin", plugin: "test" } as const;
+			const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
+			await things.putParty({ workspace: root, party: { kind: "person", person }, source: by }, ctx);
+			return [root, await one(FilesKind.name), await one(TerminalsKind.name), await one(MACHINE_KIND), person];
+		}, context);
+		const person = await t.client({ kind: "person", id: ann, name: "Ann" });
+		const browser = await person.get(Files, { workspace: pi, thing: files }, context);
+		const panes = await person.get(Terminals, { workspace: pi, thing: terminals }, context);
+		await browser.entries!({ machine, path: tmpdir() }, context);
+		await t.reload("@earendil-works/p3-files");
+		await until(browser.state, (state) => state.kind === "live", within("Files again", context));
+		await browser.entries!({ machine, path: tmpdir() }, context);
+		await t.reload("@earendil-works/p3-terminals");
+		await until(panes.state, (state) => state.kind === "live", within("Terminals again", context));
+		// This device's terminals are pending (its `openPty` refuses): the list is what goes on, empty.
+		await until(panes.terminals!, (list) => list.length === 0, within("the list", context));
+		assert.deepEqual(t.errors, []);
+	});
+
 	it("the people, apps and environments plugins: a person's objects and the owner's go on", async () => {
 		const { t, owner, sessions, id } = await withSession();
 		const ann = await t.server.root(
@@ -115,6 +144,7 @@ describe("reloads while in use", () => {
 		const catalog = await person.get(AppCatalog, {}, context);
 		const access = await person.get(SessionInfo, { session: id }, context);
 		const environments = await owner.get(Environments, {}, context);
+		const machine = (await owner.get(ThisDevice, {}, context)).machine.value;
 		const coding = (apps: readonly { readonly id: string }[]) => apps.some(({ id: app }) => app === "coding");
 		await until(catalog.apps, coding, within("her catalog", context));
 		for (const plugin of ["people", "apps", "environments", "sessions"])
@@ -128,7 +158,7 @@ describe("reloads while in use", () => {
 		assert.equal(access.access.value, "read");
 		assert.deepEqual(
 			environments.environments.value.map(({ id: environment }) => environment),
-			[THIS_DEVICE],
+			[machine],
 		);
 		assert.deepEqual(t.errors, []);
 	});
