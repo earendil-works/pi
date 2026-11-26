@@ -8,7 +8,7 @@
 // factory's error at its activation, a decision change while its old attempt drains or its successor opens a native).
 
 import { performance } from "node:perf_hooks";
-import { NOOP_TELEMETRY_CONTEXT, NOOP_TELEMETRY_METRICS } from "@earendil-works/pi-telemetry";
+import { InMemoryTelemetryContext, NOOP_TELEMETRY_CONTEXT, NOOP_TELEMETRY_METRICS } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import {
 	awaitWithContext,
@@ -678,6 +678,12 @@ describe("what a decision compares a read with", () => {
 describe("the order of a read", () => {
 	/** A decision granting `grants`, read with an allow of `value` under `under`. */
 	function reader(grants: readonly string[], host = readerHost()) {
+		const read = decisionReader(grants, host);
+		return (value: unknown, under: Context = context) => read({ kind: "allow", value }, under);
+	}
+
+	/** A decision granting `grants`, read with the decision object `decided` under `under`. */
+	function decisionReader(grants: readonly string[], host = readerHost()) {
 		const source = new (class extends Source {
 			next: unknown;
 			get value(): never {
@@ -688,8 +694,8 @@ describe("the order of a read", () => {
 		const caller = { principal: host.principal, incarnation: host.incarnation };
 		const decision = new Decision({ host, label: "doc", dependent: undefined, caller, grants, moved() {} });
 		decision.declare(() => source, context);
-		return (value: unknown, under: Context = context) => {
-			source.next = { kind: "allow", value };
+		return (decided: unknown, under: Context = context) => {
+			source.next = decided;
 			return decision.now(under) as Allowed;
 		};
 	}
@@ -697,6 +703,24 @@ describe("the order of a read", () => {
 	function readerHost() {
 		return new ChordHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
 	}
+
+	// The owner's rule (2026-11-26, 03:12 UTC): values handed to Chord are immutable by convention.
+	it("the same decision object read again is the same verdict and counts no walk (1,000 reads)", async () => {
+		const read = decisionReader(["a", "b"]);
+		const decided = { kind: "allow", value: { level: 1, tags: ["x"], granted: ["b", "a"] } };
+		const first = read(decided);
+		const telemetry = new InMemoryTelemetryContext();
+		const walks = () => telemetry.getMetrics().filter(({ name }) => name === "chord.data.walks").length;
+		await telemetry.startSpan({ name: "reads" }, (span) => {
+			const under = withTelemetry(span, context);
+			let same = 0;
+			for (let index = 0; index < 1_000; index++) if (read(decided, under) === first) same++;
+			expect([same, walks()]).toEqual([1_000, 0]);
+			// An equal value of another object walks once: the counter is the one a read would add to.
+			read({ kind: "allow", value: { level: 1, tags: ["x"], granted: ["a", "b"] } }, under);
+			expect(walks()).toBe(1);
+		});
+	});
 
 	// Found by the review of the pass (first reviewer, 2026-11-26): a reused scratch list kept the size of the widest
 	// value a decision ever read (2,735 B per decision); a decision keeps only what its last read needs.
