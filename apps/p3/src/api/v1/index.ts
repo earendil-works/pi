@@ -38,6 +38,8 @@ export * from "../../../plugins/apps/contract.ts";
 export * from "../../../plugins/environments/contract.ts";
 export * from "../../../plugins/people/contract.ts";
 export * from "../../../plugins/sessions/contract.ts";
+// The things plugin's `defineThing`, for the page's test kinds until slice 5's push 3 swaps it in for the old layer's.
+export { defineThing as defineThingKind } from "../../../plugins/things/kind.ts";
 export * from "../../../plugins/things/workspace.ts";
 export * from "../../../plugins/tools/contract.ts";
 export * from "../../../plugins/transcript/contract.ts";

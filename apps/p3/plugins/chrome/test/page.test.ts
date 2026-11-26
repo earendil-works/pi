@@ -1,14 +1,14 @@
 // The page in a real browser (only when asked: `P3_BROWSER_TESTS=1` with `CHROMIUM_BIN`), on p3's real server with a
-// copy of the built-in plugins the test edits, and the workspaces stub standing in for slice 2's server side: `/`
-// goes to the person's topmost workspace; the navigator shows the person, the workspaces and the open one's four
+// copy of the built-in plugins the test edits and the tests' kinds (a note without a view, a wall that takes the page):
+// `/` goes to the person's topmost workspace; the navigator shows the person, the workspaces and the open one's four
 // groups; a plain workspace opens in its Settings view (on a phone its navigator first), whose who-may writes one grant
 // row per checkbox (given, reset, withheld) and folds the Make ticks into one column; the add-thing picker groups by
 // plugin and previews a kind's default grants, which the person may untick; a thing with a view opens in it, one
-// without in its Settings view; a thing from above is greyed and a hidden one folded; a view that takes the whole
-// page keeps only the corner button; the invite dialog makes a link; `/me` is the person's own page; a reload of the
-// chrome plugin keeps the open page; an apply whose web contracts are newer than the page's base leaves it working,
-// and a component the base lacks is reported once. Screenshots at the phone's and the desktop's size, light and dark,
-// go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
+// without in its Settings view; a thing from above is greyed and a hidden one folded; a view that takes the whole page
+// keeps only the corner button; the invite dialog makes a link; `/me` is the person's own page; a reload of the chrome
+// plugin keeps the open page; an apply whose web contracts are newer than the page's base leaves it working, and a
+// component the base lacks is reported once. Screenshots at the phone's and the desktop's size, light and dark, go to
+// `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory).
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -19,13 +19,14 @@ import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, Me, until } from "@earendil-works/p3/v1";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { eventually, within } from "../../../test/until.ts";
+import { ThingsStore } from "../../things/contract.server.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
 
 /** The checkout's built-in plugins, which the test copies and edits. */
 const BUILT_IN = fileURLToPath(new URL("../../", import.meta.url));
 
-/** The stand-in for slice 2's server side: workspaces, their lists, who may. */
-const STUB = fileURLToPath(new URL("../../../test/plugins/workspaces-stub/", import.meta.url));
+/** The tests' kinds: a note without a view, a wall whose view takes the whole page. */
+const KINDS = fileURLToPath(new URL("../../../test/plugins/page-kinds/", import.meta.url));
 
 /** Where the screenshots go. */
 const SHOTS = process.env.P3_SHOTS ?? "/tmp/p3-base/shots";
@@ -48,11 +49,23 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "p3-page-"));
 		builtIn = join(dataDir, "builtin");
 		await cp(BUILT_IN, builtIn, { recursive: true, filter: (path) => basename(path) !== "test" });
-		t = await testServer({ dataDir, builtIn, plugins: [STUB] }, context);
+		t = await testServer({ dataDir, builtIn, plugins: [KINDS] }, context);
 		const owner = await t.client(context);
 		const me = await until((await owner.get(Me, {}, context)).me, () => true, context);
 		if (me.kind !== "person") assert.fail(me.kind);
 		ownerId = me.id;
+		// Until slice 3's push A the owner is the people plugin's person, whom the things index does not know as the
+		// owner: the test puts them into Pi and gives them every tick of Pi itself, Make of every kind among them.
+		await t.host.root(async (ctx) => {
+			const store = await ctx.get(ThingsStore, {});
+			const pi = (await store.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
+			const party = { kind: "person", person: ownerId } as const;
+			const source = { kind: "person", person: ownerId } as const;
+			await store.putParty({ workspace: pi, party, source }, ctx);
+			const ticks = ["link", "hide", "configure", "managePeople", "manageAccess", "@make:*"];
+			const grants = ticks.map((tick) => ({ workspace: pi, thing: pi, party, tick, gives: true }));
+			await store.setGrants({ source, grants }, ctx);
+		}, context);
 		origin = `http://127.0.0.1:${t.port}`;
 		browser = await Browser.start();
 		await browser.signIn(origin, await t.cookie(context));
@@ -131,7 +144,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press("[data-add-thing]");
 		await browser.settled("[data-add-thing-dialog]");
 		await shots("03-picker-desktop");
-		await press('[data-add-offer="make:workspaces-stub.note"]');
+		await press('[data-add-offer="make:page-kinds.note"]');
 		await browser.wait(
 			`document.querySelector('[data-add-defaults="everyone"]')?.textContent.includes("Everyone here may Read")`,
 		);
@@ -241,7 +254,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("gives a view that takes the whole page the page, with the corner button and its navigator", async () => {
 		await press(`[data-nav-workspace="${pi}"]`);
-		await add("make:workspaces-stub.wall", "Wall");
+		await add("make:page-kinds.wall", "Wall");
 		await browser.wait(`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Wall")`);
 		const wall = await browser.evaluate<string>(
 			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Wall").dataset.navThing`,
@@ -257,12 +270,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-area="main"] [data-settings="${pi}"]')`);
 	});
 
-	it("makes an invite link from the invite dialog", async () => {
+	it("opens the invite dialog, which says what comes with slice 3", async () => {
 		await press("[data-invite-open]");
 		await browser.settled("[data-invite-dialog]");
 		await press('[data-invite-as="guest"]');
 		await press("[data-invite-create]");
-		await browser.wait(`document.querySelector("[data-invite-url]")?.value.includes("/_p3/invite/")`);
+		// Invite links are slice 3's (ERNDL-1144): until then the server says so, and the dialog shows it.
+		await browser.wait(`document.querySelector("[data-invite-failure]")?.textContent.includes("This comes later.")`);
 		await shots("12-invite-desktop");
 		await browser.evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
 		await browser.wait(`document.querySelector("[data-invite-dialog]") === null`);

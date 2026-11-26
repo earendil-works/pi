@@ -39,15 +39,8 @@ export * from "../../../plugins/apps/contract.server.ts";
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
-// The things plugin's store and kinds, for the page's stub until slice 1 re-exports its contracts (aliased: the
-// sessions plugin's old `ThingKinds` still has the name).
-export { ThingsStore } from "../../../plugins/things/contract.server.ts";
-export {
-	type KindInfo,
-	type KindView,
-	ThingKinds as KindRegistry,
-	ThingKindsView,
-} from "../../../plugins/things/kind.ts";
+// The things plugin's `serveThing`, for the page's test kinds until slice 5's push 3 swaps it in for the old layer's.
+export { serveThing as serveThingKind } from "../../../plugins/things/serve.ts";
 export * from "./control.ts";
 
 /** The server's process values, for plugins: what only the base has. */
