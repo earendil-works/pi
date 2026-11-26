@@ -10,7 +10,6 @@ import {
 	arr,
 	bool,
 	type Context,
-	type Ctx,
 	defineColumns,
 	defineJob,
 	defineTable,
@@ -36,7 +35,7 @@ import {
 	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import { AccessIndex, type Reader, type Touched } from "./access.ts";
-import { AccessHandles, type GrantInput, type ThingHook, ThingHooks, ThingsStore } from "./contract.server.ts";
+import { AccessHandles, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
 import {
 	Item,
 	itemKey,
@@ -279,7 +278,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			...q,
 			create: async (args, ctx) => {
 				const thing = await write((tx, touched) => writes.make(tx, touched, args), ctx);
-				await created(thing, args.kind, args.input, hooks.value, ctx).catch(async (error: unknown) => {
+				const hook = hooks.value.get(args.kind)?.value.create;
+				await hook?.(thing, args.input, ctx).catch(async (error: unknown) => {
 					await write((tx, touched) => writes.removeThing(tx, touched, thing, args.kind), ctx);
 					throw error;
 				});
@@ -641,17 +641,6 @@ async function ensurePi(tx: Tx, t: Tables): Promise<null> {
 		pathText: `${workspace}/`,
 	});
 	return null;
-}
-
-/** Runs kind `kind`'s `create` hook for a new thing. */
-async function created(
-	thing: string,
-	kind: string,
-	input: unknown,
-	hooks: ReadonlyMap<string, TableItem<ThingHook>>,
-	ctx: Ctx<P3Principal>,
-): Promise<void> {
-	await hooks.get(kind)?.value.create?.(thing, input, ctx);
 }
 
 /** The party a maker's grant names (item 90): a person, or a session's agent; none for a thing, a provider, a plugin. */
