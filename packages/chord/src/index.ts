@@ -33,6 +33,7 @@ export {
 	loadContent,
 	loadDocument,
 	type OwnedDocumentEntry,
+	purgeDocuments,
 	readDocument,
 	readDocumentEntry,
 	retireRecord,
@@ -41,7 +42,7 @@ export {
 } from "./store/engine.ts";
 export * from "./store/index.ts";
 /** @internal */
-export type { EncodedRow } from "./store/rows.ts";
+export type { EncodedKey, EncodedRow } from "./store/rows.ts";
 /** @internal */
 export type { Order } from "./store/sql.ts";
 /** @internal */

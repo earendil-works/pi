@@ -933,16 +933,27 @@ The examples show both patterns as product code:
 await harness.deleteConversations([conversation.id], context);
 ```
 
-Deletion is for good. It aborts the live work of each conversation, background work included, then one commit removes the conversations and the conversations their tasks own, such as subagents, with their entries, tasks, submissions, and documents. Their queued submissions settle `unanswered` with reason `deleted`, and their views end. Unknown IDs are skipped, so a call repeated after a crash, or after restoring a backup, is harmless; IDs are never reused. It refuses, aborting nothing, the root conversation, a conversation owned by a live task of another conversation, and a conversation with a fork that is not deleted with it: pass the forks in the same call. `usage()` sums the conversations that remain, so its total drops.
+Deletion is for good. It takes the conversations and the conversations their tasks own, such as subagents. One commit closes them: from then on they take no new submission, task, or fork (`ConversationDeleting`), their queued submissions settle `unanswered` with reason `deleted`, and their live tasks, background ones included, are aborted. Once that work has ended, a second commit removes their entries, tasks, submissions, and documents, and ends their views. A crash or close in between leaves them closed; the reopened Harness finishes the deletion once it schedules. Unknown IDs are skipped, so a call repeated after restoring a backup is harmless; IDs are never reused. `usage()` sums the conversations that remain, so its total drops.
+
+It refuses with `DeletionRefused` before it aborts anything; `error.refusal.kind` says why:
+
+| Refusal | When |
+|---|---|
+| `unsupported` | The storage cannot erase a conversation (JSONL) |
+| `root` | The root conversation |
+| `owner` | A live task of another conversation owns it; delete that conversation too, or end the task |
+| `fork` | A fork that is not deleted with it reads its history; pass the forks in the same call |
+| `waiter` | A live task of another conversation waits on one of its tasks |
 
 What is erased depends on the backend:
 
 | Backend | Deletion |
 |---|---|
 | Memory, IndexedDB | The records are removed. |
-| SQLite, Cloudflare Durable Object | The rows are removed. SQLite keeps their bytes in free pages and in the WAL until the host runs `PRAGMA secure_delete = ON` (before deleting) or `VACUUM`, and `PRAGMA wal_checkpoint(TRUNCATE)`. |
-| JSONL | Only marked: reads no longer find the conversation, but `main.jsonl` and the sidecar files keep its records. |
-| Chord store (`StoreStorage`) | Not supported: the commit is refused, which fails the Session. |
+| SQLite | The rows are removed with `secure_delete` on, and the WAL is truncated after the commit, so the bytes leave the database files. |
+| Cloudflare Durable Object | The rows are removed; Durable Objects manage their storage, and refuse the SQLite pragmas. |
+| Chord store (`StoreStorage`) | The rows and documents are removed by writes its outbox carries, so replicas delete them too. Commits stored before keep their writes in the outbox until it is trimmed past the deletion. |
+| JSONL | Not supported (`unsupported`): `main.jsonl` is append-only. |
 
 Files and other effects of the conversation's tools stay, and so does what a provider retained.
 
@@ -1063,7 +1074,8 @@ direct storage calls bypass the queue and may be rolled back with a Pi transacti
 
 ```typescript
 const database = new DurableObjectSqliteDatabase(ctx.storage);
-const piStorage = await SqliteStorage.open(database, { prefix: "pi_" });
+// Durable Objects refuse the pragmas a deletion erases with, and manage their storage themselves.
+const piStorage = await SqliteStorage.open(database, { prefix: "pi_", secureDelete: false });
 await database.exec("CREATE TABLE IF NOT EXISTS host_notes (text TEXT)");
 await database.run("INSERT INTO host_notes (text) VALUES (?)", text);
 ```
@@ -1079,7 +1091,7 @@ await database.transaction(async (transaction) => {
 });
 ```
 
-A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. A `conversation.delete` write applies after the other writes of its batch and removes the conversation with everything scoped to it, keeping its IDs claimed. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
+A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. A backend that sets `deletesConversations` stores `conversation.deleting` (it sets `deleting: true` on the record) and `conversation.delete` (after the other writes of its batch, it removes the conversation with everything scoped to it, keeping its IDs claimed), and indexes the `parentConversationId` and `deleting` conversation filters. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
 
 ```typescript
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";

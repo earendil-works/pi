@@ -3,6 +3,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
 import { SessionFailed } from "../errors.ts";
 import type { CommitResult, Seq, StorageWrite } from "../types.ts";
+import { ALL_KEYS } from "./keys.ts";
 
 /** A part's own failure at publication: memory could not adopt it, or one of the Session's own observers threw. */
 export type PublishFailure = { readonly kind: "adoption" | "listener"; readonly error: unknown };
@@ -77,7 +78,8 @@ export type WriterHost = {
  *
  * Each part registers the keys it writes; until it is published, it is the newest unpublished writer of each, and a
  * job that touches one waits for its gate. A key leaves when its newest writer is published, so the map holds one entry
- * per key with an unpublished writer.
+ * per key with an unpublished writer. A part that writes `ALL_KEYS`, such as a deletion, writes every key: until it is
+ * published, a job that touches any key waits for it too.
  */
 export class Writer {
 	readonly #host: WriterHost;
@@ -88,6 +90,8 @@ export class Writer {
 	readonly #unpublished = new Map<string, Admitted>();
 	/** The newest admitted part that is not yet published, whose gate opens after every earlier one's. */
 	#newest: Admitted | undefined;
+	/** The newest unpublished part that writes `ALL_KEYS`. */
+	#barrier: Admitted | undefined;
 
 	constructor(host: WriterHost) {
 		this.#host = host;
@@ -114,6 +118,7 @@ export class Writer {
 			gate: Promise.withResolvers<void>(),
 		};
 		for (const key of spec.keys) this.#unpublished.set(key, part);
+		if (spec.keys.includes(ALL_KEYS)) this.#barrier = part;
 		this.#newest = part;
 		this.#queue.push(part);
 		this.#pump();
@@ -122,7 +127,11 @@ export class Writer {
 
 	/** The gate of the newest unpublished writer of `key`, or `undefined` when it has none. */
 	gate(key: string): Promise<void> | undefined {
-		return this.#unpublished.get(key)?.gate.promise;
+		const writer = this.#unpublished.get(key);
+		const barrier = this.#barrier;
+		// Parts are published in line order: the later of the two opens last.
+		if (barrier !== undefined && (writer === undefined || writer.index < barrier.index)) return barrier.gate.promise;
+		return writer?.gate.promise;
 	}
 
 	/** Opens once every part admitted so far is published or never will be. */
@@ -335,6 +344,7 @@ export class Writer {
 	/** Drop the keys a part is still the newest writer of: it is published, or never will be. */
 	#unregister(part: Admitted): void {
 		for (const key of part.keys) if (this.#unpublished.get(key) === part) this.#unpublished.delete(key);
+		if (this.#barrier === part) this.#barrier = undefined;
 	}
 
 	/** Open a part's gate: the jobs waiting for it go on. The newest part's opens `drained()` too. */

@@ -4,7 +4,11 @@ import { DurableObjectSqliteDatabase } from "@earendil-works/chord/sqlite/cloudf
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import { describe, expect, it } from "vitest";
 import { openDurableObjectSqliteStorage } from "../src/storage/sqlite/cloudflare.ts";
-import { applySqliteMigrationsForSchema, createSqliteMigrations } from "../src/storage/sqlite/migrations.ts";
+import {
+	applySqliteMigrationsForSchema,
+	CURRENT_SQLITE_SCHEMA_VERSION,
+	createSqliteMigrations,
+} from "../src/storage/sqlite/migrations.ts";
 import { createSqliteSchema } from "../src/storage/sqlite/schema.ts";
 
 const fresh = () => env.SESSIONS.get(env.SESSIONS.newUniqueId());
@@ -35,7 +39,9 @@ describe("Durable Object SQLite schema", () => {
 			await expect(insert(6, "sleeping")).rejects.toThrow();
 
 			await openDurableObjectSqliteStorage(state.storage, { prefix: "legacy_" });
-			expect(await database.get(`SELECT version FROM ${schema.tables.durableSchema}`)).toEqual({ version: 2 });
+			expect(await database.get(`SELECT version FROM ${schema.tables.durableSchema}`)).toEqual({
+				version: CURRENT_SQLITE_SCHEMA_VERSION,
+			});
 			expect(await database.get(`SELECT status FROM ${tasks} WHERE id = 5`)).toEqual({ status: "waiting" });
 			await insert(6, "sleeping");
 			const indexes = await database.all<{ name: string }>(

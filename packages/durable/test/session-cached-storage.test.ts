@@ -20,6 +20,20 @@ function task(id: number, status: "pending" | "running" = "pending"): TaskRecord
 	};
 }
 
+/** A task record that ended. */
+function ended(id: number): TaskRecord<JsonValue, JsonValue, JsonValue> {
+	return {
+		id: idFromNumber<TaskId<JsonValue>>(id),
+		conversationId: idFromNumber<ConversationId>(1),
+		kind: "test.task",
+		version: 1,
+		input: null,
+		background: false,
+		abortRequested: false,
+		state: { status: "terminal", outcome: { status: "completed", result: null } },
+	};
+}
+
 class CountingStorage extends MemoryStorage {
 	taskReads = 0;
 	override task(...args: Parameters<MemoryStorage["task"]>) {
@@ -123,6 +137,24 @@ describe("cached storage", () => {
 		expect(storage.readsInFlight).toBe(0);
 		expect((await storage.task(idFromNumber<TaskId>(2), context))?.state.status).toBe("running");
 		expect((await storage.task(idFromNumber<TaskId>(3), context))?.state.status).toBe("pending");
+		expect(backend.taskReads).toBe(2);
+	});
+
+	it("keeps no read in flight when a deletion publishes, whatever record it reads", async () => {
+		const backend = new CountingStorage();
+		await commitWrites(
+			backend,
+			[
+				{ type: "conversation", value: { id: idFromNumber<ConversationId>(1) } },
+				{ type: "task", value: ended(2) },
+			],
+			context,
+		);
+		const storage = new CachedStorage(backend);
+		const overlapped = storage.task(idFromNumber<TaskId>(2), context);
+		await commit(storage, [{ type: "conversation.delete", id: idFromNumber<ConversationId>(1) }]);
+		expect((await overlapped)?.id).toBe(2);
+		expect(await storage.task(idFromNumber<TaskId>(2), context)).toBeUndefined();
 		expect(backend.taskReads).toBe(2);
 	});
 

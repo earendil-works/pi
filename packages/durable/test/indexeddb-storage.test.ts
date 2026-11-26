@@ -155,6 +155,35 @@ it("persists minted IDs across reopen", async () => {
 	}
 });
 
+it("indexes the forks of a version 1 database from their records when it opens", async () => {
+	const indexedDB = new IDBFactory();
+	// The stores of version 1 this upgrade reads: the metadata and the conversations.
+	const legacy = indexedDB.open("fork-index", 1);
+	legacy.onupgradeneeded = () => {
+		legacy.result.createObjectStore("meta", { keyPath: "key" }).add({ key: "state", nextId: 4, nextSeq: 2 });
+		const conversations = legacy.result.createObjectStore("conversations", { keyPath: "id" });
+		conversations.add({ id: 1, record: { id: 1 } });
+		conversations.add({ id: 3, record: { id: 3, parent: { conversationId: 1, at: 2 } } });
+	};
+	await new Promise((resolve) => {
+		legacy.onsuccess = resolve;
+	});
+	legacy.result.close();
+	const storage = await IndexedDbStorage.open("fork-index", { indexedDB });
+	try {
+		const forks = await storage.scanConversations(
+			{ parentConversationId: ROOT_CONVERSATION_ID },
+			10,
+			undefined,
+			context,
+		);
+		expect(forks.items).toEqual([{ id: 3, parent: { conversationId: 1, at: 2 } }]);
+		expect((await storage.scanConversations({ deleting: true }, 10, undefined, context)).items).toEqual([]);
+	} finally {
+		await storage.close(context);
+	}
+});
+
 it("rolls back table writes when a later document copy fails", async () => {
 	const indexedDB = new IDBFactory();
 	const storage = await IndexedDbStorage.open("atomic-copy", { indexedDB });

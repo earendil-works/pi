@@ -1,4 +1,4 @@
-import type { ConversationId } from "./types.ts";
+import type { ConversationId, TaskId } from "./types.ts";
 
 /**
  * The message of a thrown value, without throwing itself: `String()` throws for values such as `Object.create(null)`,
@@ -79,5 +79,59 @@ export class ConversationIdle extends Error {
 		super(`Conversation ${conversationId} is idle`);
 		this.name = "ConversationIdle";
 		this.conversationId = conversationId;
+	}
+}
+
+/**
+ * The conversation is being deleted (`Harness.deleteConversations()`): it takes no new submission, task, or fork, and
+ * no task elsewhere may start waiting on one of its tasks.
+ */
+export class ConversationDeleting extends Error {
+	readonly conversationId: ConversationId;
+
+	constructor(conversationId: ConversationId) {
+		super(`Conversation ${conversationId} is being deleted`);
+		this.name = "ConversationDeleting";
+		this.conversationId = conversationId;
+	}
+}
+
+/**
+ * Why `Harness.deleteConversations()` refused a conversation: the Storage cannot delete; it is the root conversation;
+ * a live task outside the deleted set owns it; a fork outside the set reads its history; a live task outside the set
+ * waits on one of its tasks.
+ */
+export type DeletionRefusal =
+	| { readonly kind: "unsupported" }
+	| { readonly kind: "root" }
+	| { readonly kind: "owner"; readonly taskId: TaskId }
+	| { readonly kind: "fork"; readonly forkId: ConversationId }
+	| { readonly kind: "waiter"; readonly taskId: TaskId; readonly waiterId: TaskId };
+
+/** `Harness.deleteConversations()` refused, before it aborted or deleted anything. */
+export class DeletionRefused extends Error {
+	readonly conversationId: ConversationId;
+	readonly refusal: DeletionRefusal;
+
+	constructor(conversationId: ConversationId, refusal: DeletionRefusal) {
+		super(`Conversation ${conversationId} cannot be deleted: ${refusalText(refusal)}`);
+		this.name = "DeletionRefused";
+		this.conversationId = conversationId;
+		this.refusal = refusal;
+	}
+}
+
+function refusalText(refusal: DeletionRefusal): string {
+	switch (refusal.kind) {
+		case "unsupported":
+			return "the storage cannot delete conversations";
+		case "root":
+			return "it is the root conversation";
+		case "owner":
+			return `live task ${refusal.taskId} owns it`;
+		case "fork":
+			return `fork ${refusal.forkId} is not deleted with it`;
+		case "waiter":
+			return `live task ${refusal.waiterId} waits on its task ${refusal.taskId}`;
 	}
 }

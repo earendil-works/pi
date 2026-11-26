@@ -11,5 +11,5 @@ export function openDurableObjectSqliteStorage(
 	storage: DurableObjectSqliteStorage,
 	options: SqliteStorageOptions = {},
 ): Promise<SqliteStorage> {
-	return SqliteStorage.open(new DurableObjectSqliteDatabase(storage), options);
+	return SqliteStorage.open(new DurableObjectSqliteDatabase(storage), { ...options, secureDelete: false });
 }

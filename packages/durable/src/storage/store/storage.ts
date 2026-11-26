@@ -91,6 +91,12 @@ function cursorId(cursor: Cursor | undefined): number | undefined {
  * (claims); the app owns the store, and `close` leaves it open.
  */
 export class StoreStorage implements Storage {
+	/**
+	 * A deletion removes the rows and purges the documents with every revision, as writes replicas apply; outbox commits
+	 * before it keep their payloads until trimmed past it, and freed pages and the WAL are the connection's to erase
+	 * (`PRAGMA secure_delete = ON`, a WAL checkpoint: the app's).
+	 */
+	readonly deletesConversations = true;
 	readonly #store: ChordStore;
 	readonly #owner: string;
 	readonly #claimant: Claimant;
@@ -204,6 +210,10 @@ export class StoreStorage implements Storage {
 				conditions.push(["owner_conversation_id", "eq", query.ownerConversationId]);
 			}
 			if (query.ownerTaskId !== undefined) conditions.push(["owner_task_id", "eq", query.ownerTaskId]);
+			if (query.parentConversationId !== undefined) {
+				conditions.push(["parent_conversation_id", "eq", query.parentConversationId]);
+			}
+			if (query.deleting === true) conditions.push(["deleting", "eq", 1]);
 			return this.#scan<ConversationRecord>(this.#queries.conversations, conditions, start, limit, context);
 		});
 	}

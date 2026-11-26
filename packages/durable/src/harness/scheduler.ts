@@ -16,7 +16,7 @@ import {
 	type TelemetryCarrier,
 } from "@earendil-works/pi-telemetry";
 import type { ExecutionEnv } from "../env/index.ts";
-import { errorMessage, ReadOnlySession } from "../errors.ts";
+import { ConversationDeleting, DeletionRefused, errorMessage, ReadOnlySession } from "../errors.ts";
 import { ALL_KEYS, conversationKey, INTENT_KEY, ownedKey, ROOTS_KEY, taskKey } from "../session/keys.ts";
 import type { ObservedCommit, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
@@ -261,6 +261,8 @@ export type TaskSchedulerOptions = {
 	readonly settleOutcome: (tx: Transaction, record: AnyTaskRecord, outcome: SchedulerOutcome) => Promise<void>;
 	/** Withdraw a conversation's queued inputs, for conversation abort and abort cascades. */
 	readonly withdrawInputs: (tx: Transaction, conversationId: ConversationId) => Promise<void>;
+	/** Settle and remove every queued item of a conversation being deleted, writes too. */
+	readonly withdrawAll: (tx: Transaction, conversationId: ConversationId) => Promise<void>;
 	/** Invocation-bound handle of an existing conversation, for task runtimes and tools. */
 	readonly conversation: (
 		id: ConversationId,
@@ -338,6 +340,11 @@ export class TaskScheduler {
 	readonly #keepsAbandoned: TaskSchedulerOptions["keepsAbandoned"];
 	readonly #parkedAtGate: TaskSchedulerOptions["gated"];
 	readonly #withdrawInputs: TaskSchedulerOptions["withdrawInputs"];
+	readonly #withdrawAll: TaskSchedulerOptions["withdrawAll"];
+	/** Conversations being deleted: they take no new work, and no task elsewhere may start waiting on theirs. */
+	readonly #deleting = new Set<ConversationId>();
+	/** Set once the first `resume()` started finishing the deletions open found. */
+	#finishing = false;
 	readonly #conversation: TaskSchedulerOptions["conversation"];
 	readonly #context: Context;
 	readonly #live = new Map<TaskId, AnyTaskRecord>();
@@ -470,6 +477,7 @@ export class TaskScheduler {
 		this.#keepsAbandoned = options.keepsAbandoned;
 		this.#parkedAtGate = options.gated;
 		this.#withdrawInputs = options.withdrawInputs;
+		this.#withdrawAll = options.withdrawAll;
 		this.#conversation = options.conversation;
 		this.#context = options.context;
 		this.#readOnly = options.readOnly === true;
@@ -493,6 +501,11 @@ export class TaskScheduler {
 		await this.#session.commitWith(async (tx) => {
 			await this.#published();
 			// Every table read before the first write.
+			for (const { id } of await scanAll((cursor) =>
+				tx.scanConversations({ deleting: true }, SCAN_PAGE_SIZE, cursor),
+			)) {
+				this.#deleting.add(id);
+			}
 			const scans = [];
 			for (const status of LIVE_STATUSES) {
 				scans.push(await scanAll((cursor) => tx.scanTasks({ status }, SCAN_PAGE_SIZE, cursor)));
@@ -531,6 +544,10 @@ export class TaskScheduler {
 		this.#enabled = true;
 		this.#wakeDue();
 		this.#kick();
+		if (this.#finishing) return;
+		this.#finishing = true;
+		// A deletion a crash or close interrupted: it fails only with the Session's failure or close, which are reported.
+		if (this.#deleting.size > 0) this.deleteConversations([...this.#deleting], this.#context).catch(() => {});
 	}
 
 	/**
@@ -726,6 +743,66 @@ export class TaskScheduler {
 	}
 
 	/**
+	 * `Harness.deleteConversations()` (spec §2.2): one commit marks the conversations deleting, withdraws their queued
+	 * items, and abort-marks their live tasks, background ones included; once those ended, one commit deletes them.
+	 */
+	async deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void> {
+		const set = await this.#session.commitWith(async (tx) => {
+			await this.#published();
+			const records = await tx.deletionSet(ids);
+			const set = new Set(records.map(({ id }) => id));
+			await this.#refuseWaiters(set, context);
+			tx.markDeleting(records);
+			for (const id of set) await this.#withdrawAll(tx, id);
+			for (const live of this.#live.values()) {
+				if (!set.has(live.conversationId)) continue;
+				if (!live.abortRequested || live.abortReason !== undefined) tx.setTask(withAbortMark(live));
+			}
+			return set;
+		}, context);
+		if (set.size === 0) return;
+		for (;;) {
+			// A deleting conversation takes no new task, so this ends.
+			for (const live of [...this.#live.values()]) {
+				if (set.has(live.conversationId)) await this.waitForTask(live.id, context);
+			}
+			const deleted = await this.#session.commitWith(async (tx) => {
+				await this.#published();
+				for (const live of this.#live.values()) if (set.has(live.conversationId)) return false;
+				await tx.deleteConversations([...set]);
+				return true;
+			}, context);
+			if (deleted) return;
+		}
+	}
+
+	/**
+	 * Refuse a deletion of `set` while a live task outside it waits on, or woke from a wait on, one of its tasks: it
+	 * reads their outcomes once it runs.
+	 */
+	async #refuseWaiters(set: ReadonlySet<ConversationId>, context: Context): Promise<void> {
+		for (const waiter of [...this.#live.values()]) {
+			if (set.has(waiter.conversationId)) continue;
+			const state = waiter.state;
+			const named =
+				state.status === "waiting"
+					? state.on
+					: (state.status === "pending" || state.status === "running") && state.wake?.reason === "tasks"
+						? state.wake.ended
+						: [];
+			for (const id of named) {
+				const conversationId =
+					this.#live.get(id)?.conversationId ??
+					this.#settled.get(id)?.conversationId ??
+					(await this.#session.lineStorage.task(id, context))?.conversationId;
+				if (conversationId !== undefined && set.has(conversationId)) {
+					throw new DeletionRefused(conversationId, { kind: "waiter", taskId: id, waiterId: waiter.id });
+				}
+			}
+		}
+	}
+
+	/**
 	 * The ownership memberships a commit's task and conversation changes write (group commit §4.2), at its admission on
 	 * the line: for each task created or made terminal, every node from its parent up to and including the nearest live
 	 * task, or the root conversation, and then the roots too, conservatively, as a pending end may unlist the root a
@@ -828,8 +905,12 @@ export class TaskScheduler {
 			if (change.type === "conversation" && !this.#edges.has(change.value.id)) {
 				this.#setEdge(change.value.id, change.value.owner?.taskId ?? null);
 			}
-			// A deleted conversation had no live work; its kept context holds its entries.
-			if (change.type === "conversation.delete") this.#dropContext(change.id);
+			if (change.type === "conversation.deleting") this.#deleting.add(change.id);
+			if (change.type === "conversation.delete") {
+				this.#deleting.delete(change.id);
+				// It has no live work; its kept context holds its entries.
+				this.#dropContext(change.id);
+			}
 		}
 		for (const change of publication.changes) {
 			if (change.type !== "task") continue;
@@ -2663,6 +2744,10 @@ export class TaskScheduler {
 				continue;
 			}
 			if (member === null) return { kind: "refused", error: new Error(`Task ${id} does not exist`) };
+			// Its records go with the deletion, before the waiter could read the outcome.
+			if (this.#deleting.has(member.conversationId) && !this.#deleting.has(current.conversationId)) {
+				return { kind: "refused", error: new ConversationDeleting(member.conversationId) };
+			}
 			if (policy === "failFast" && member.owner !== current.id) {
 				return {
 					kind: "refused",

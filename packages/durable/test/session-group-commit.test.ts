@@ -1,6 +1,7 @@
 // Group commit on the Session line (docs/group-commit.md): batching, gates, outcome fences, publication, failures per
 // part, upkeep through the writer, backpressure, bounds, and a randomized interleaving against an oracle.
 import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import {
 	type CommitOptions,
 	type CommitResult,
@@ -11,6 +12,7 @@ import {
 	SessionFailed,
 	type StorageWrite,
 	type TaskId,
+	type TaskRecord,
 } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { idFromNumber } from "../src/ids.ts";
@@ -18,6 +20,7 @@ import { CachedStorage } from "../src/session/cached-storage.ts";
 import type { ObservedCommit } from "../src/session/session.ts";
 import { SessionImpl } from "../src/session/session.ts";
 import { Transaction } from "../src/session/transaction.ts";
+import { commitWrites } from "../src/testing/commit-writes.ts";
 import { ControlledStorage, context, flush, refusingAt } from "./session-support.ts";
 import { type Deferred, deferred, eventually, settled } from "./task-support.ts";
 
@@ -304,6 +307,33 @@ describe("group commit: gates", () => {
 		expect(await settled(scanning)).toBe(false);
 		held.release();
 		expect(await scanning).toContain(await creating);
+		await session.close(context);
+	});
+
+	it("makes every read wait for an unpublished conversation deletion, which no single key names", async () => {
+		const { storage, session, ids } = await open(1);
+		const conversation = ids[0]!;
+		const entry = (await session.commit((tx) => tx.appendEntry(conversation, { kind: "note" }), context)).id;
+		const task = idFromNumber<TaskId<JsonValue>>(await storage.mintId());
+		const record: TaskRecord<JsonValue, JsonValue, JsonValue> = {
+			id: task,
+			conversationId: conversation,
+			kind: "test.task",
+			version: 1,
+			input: null,
+			background: false,
+			abortRequested: false,
+			state: { status: "terminal", outcome: { status: "completed", result: null } },
+		};
+		await commitWrites(storage, [{ type: "task", value: record }], context);
+		const held = storage.hold();
+		const deleting = session.commitWith((tx) => tx.deleteConversations([conversation]), context);
+		await held.entered;
+		const reads = [session.commit((tx) => tx.task(task), context), session.commit((tx) => tx.entry(entry), context)];
+		for (const read of reads) expect(await settled(read)).toBe(false);
+		held.release();
+		await deleting;
+		expect(await Promise.all(reads)).toEqual([undefined, undefined]);
 		await session.close(context);
 	});
 

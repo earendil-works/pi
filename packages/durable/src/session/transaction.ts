@@ -21,7 +21,7 @@ import {
 	type ResolvedAddress,
 	resolveAddress,
 } from "../documents.ts";
-import { ConversationBusy, ReadAfterWrite } from "../errors.ts";
+import { ConversationDeleting, DeletionRefused, ReadAfterWrite } from "../errors.ts";
 import type { SettledSubmissionRecord } from "../harness/types.ts";
 import { scanAll } from "../harness/util.ts";
 import { deliverSignal, isSettled, type SignalResult, type SignalToken, SubmissionSettled } from "../signals.ts";
@@ -403,6 +403,8 @@ export class Transaction implements Tx {
 			...(parent === undefined ? {} : { parent }),
 			...(owner === undefined ? {} : { owner }),
 		};
+		if (parent !== undefined) await this.#requireOpenConversation(parent.conversationId);
+		this.#assertOpen();
 		const copies =
 			parent === undefined
 				? []
@@ -427,7 +429,58 @@ export class Transaction implements Tx {
 		return record;
 	}
 
-	/** Internal: delete conversations and the ones their tasks own; reads tables, so before the first table write. */
+	/**
+	 * Internal: the conversations a deletion of `ids` takes, the ones their tasks own included, transitively; unknown IDs
+	 * are skipped. A table read. Throws `DeletionRefused` for the root conversation, one owned by a live task outside the
+	 * set, and one with a fork outside it.
+	 */
+	deletionSet(ids: readonly ConversationId[]): Promise<ConversationRecord[]> {
+		return this.#read("deletionSet", async () => {
+			const storage = this.#host.storage;
+			const context = this.#context;
+			const scan = (query: ConversationQuery) =>
+				scanAll((cursor) => storage.scanConversations(query, INTERNAL_SCAN_PAGE_SIZE, cursor, context));
+			const set = new Map<ConversationId, ConversationRecord>();
+			for (const id of ids) {
+				const record = await storage.conversation(id, context);
+				if (record !== undefined) set.set(id, record);
+			}
+			// Also visits the entries added while it iterates: owned conversations of owned conversations.
+			for (const id of set.keys()) {
+				for (const owned of await scan({ ownerConversationId: id }))
+					if (!set.has(owned.id)) set.set(owned.id, owned);
+			}
+			for (const record of set.values()) {
+				if (record.id === ROOT_CONVERSATION_ID) throw new DeletionRefused(record.id, { kind: "root" });
+				const owner = record.owner;
+				if (owner !== undefined && !set.has(owner.conversationId)) {
+					const task = await this.#committedTask(owner.taskId);
+					if (task !== undefined && task.state.status !== "terminal") {
+						throw new DeletionRefused(record.id, { kind: "owner", taskId: owner.taskId });
+					}
+				}
+				for (const fork of await scan({ parentConversationId: record.id })) {
+					if (!set.has(fork.id)) throw new DeletionRefused(record.id, { kind: "fork", forkId: fork.id });
+				}
+			}
+			return [...set.values()];
+		});
+	}
+
+	/** Internal: mark conversations deleting (`conversation.deleting`); from then on they take no new work. */
+	markDeleting(records: readonly ConversationRecord[]): void {
+		this.#assertOpen();
+		this.#hasTableWrite = true;
+		for (const record of records) {
+			if (record.deleting !== true) this.#writes.push({ type: "conversation.deleting", id: record.id });
+		}
+	}
+
+	/**
+	 * Internal: delete conversations whose tasks are all terminal (`conversation.delete`), after the commit's other
+	 * writes. Settles their queued and placed submissions `unanswered` (reason `deleted`) and retires their current
+	 * documents, so waiters, watches, and the cache follow. Reads tables, so before the first table write.
+	 */
 	deleteConversations(ids: readonly ConversationId[]): Promise<void> {
 		try {
 			this.#assertOpen();
@@ -442,54 +495,18 @@ export class Transaction implements Tx {
 	async #stageDeletion(ids: readonly ConversationId[]): Promise<void> {
 		const storage = this.#host.storage;
 		const context = this.#context;
-		const deleted = new Map<ConversationId, ConversationRecord>();
 		for (const id of ids) {
-			const record = await storage.conversation(id, context);
-			if (record !== undefined) deleted.set(id, record);
-		}
-		// Also visits the entries added while it iterates: owned conversations of owned conversations.
-		for (const id of deleted.keys()) {
-			const owned = await scanAll((cursor) =>
-				storage.scanConversations({ ownerConversationId: id }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
-			);
-			for (const record of owned) if (!deleted.has(record.id)) deleted.set(record.id, record);
-		}
-		if (deleted.has(ROOT_CONVERSATION_ID)) throw new Error("The root conversation cannot be deleted");
-		for (const record of deleted.values()) {
-			const owner = record.owner;
-			if (owner === undefined || deleted.has(owner.conversationId)) continue;
-			const task = await this.#committedTask(owner.taskId);
-			if (task !== undefined && task.state.status !== "terminal") {
-				throw new Error(`Conversation ${record.id} is owned by live task ${owner.taskId}`);
+			for (const status of ["queued", "placed"] as const) {
+				const submissions = await scanAll((cursor) =>
+					storage.scanSubmissions({ conversationId: id, status }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
+				);
+				for (const { id: submissionId } of submissions) {
+					this.#submissionChanges.push({ id: submissionId, change: { status: "unanswered", reason: "deleted" } });
+				}
 			}
-		}
-		// Nothing indexes forks.
-		const all = await scanAll((cursor) => storage.scanConversations({}, INTERNAL_SCAN_PAGE_SIZE, cursor, context));
-		for (const record of all) {
-			const parent = record.parent?.conversationId;
-			if (parent !== undefined && deleted.has(parent) && !deleted.has(record.id)) {
-				throw new Error(`Conversation ${parent} has fork ${record.id}, which is not deleted with it`);
-			}
-		}
-		for (const id of deleted.keys()) {
-			const tasks = await scanAll((cursor) =>
-				storage.scanTasks({ conversationId: id }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
-			);
-			if (tasks.some((task) => task.state.status !== "terminal")) throw new ConversationBusy(id);
-			const submissions = await scanAll((cursor) =>
-				storage.scanSubmissions({ conversationId: id }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
-			);
-			for (const submission of submissions) {
-				if (submission.status !== "queued" && submission.status !== "placed") continue;
-				this.#submissionChanges.push({ id: submission.id, change: { status: "unanswered", reason: "deleted" } });
-			}
+			const scope = { kind: "conversation", conversationId: id } as const;
 			const documents = await scanAll((cursor) =>
-				storage.scanDocuments(
-					{ scope: { kind: "conversation", conversationId: id }, at: "current" },
-					INTERNAL_SCAN_PAGE_SIZE,
-					cursor,
-					context,
-				),
+				storage.scanDocuments({ scope, at: "current" }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
 			);
 			for (const record of documents) {
 				const entry: DocumentEntry = {
@@ -577,7 +594,7 @@ export class Transaction implements Tx {
 			}
 			const conversationId = owner?.conversationId ?? options.conversationId ?? this.#scope.conversationId;
 			if (conversationId === undefined) throw new TypeError("Tx.createTask() requires options.conversationId");
-			await this.#requireConversation(conversationId);
+			await this.#requireOpenConversation(conversationId);
 			this.#assertOpen();
 			const definition = task.definition;
 			const checkpoint = definition.initial(input);
@@ -611,7 +628,7 @@ export class Transaction implements Tx {
 	/** Create a raw submission record with a fresh ID; no admission rules apply. */
 	createSubmission(create: SubmissionCreate): Promise<SubmissionRecord> {
 		return this.#write(async () => {
-			await this.#requireConversation(create.conversationId);
+			await this.#requireOpenConversation(create.conversationId);
 			this.#assertOpen();
 			const id = await this.#host.storage.mintId<SubmissionId>();
 			this.#assertOpen();
@@ -1295,6 +1312,14 @@ export class Transaction implements Tx {
 		if ((await this.#host.storage.conversation(id, this.#context)) === undefined) {
 			throw new Error(`Conversation ${id} does not exist`);
 		}
+	}
+
+	/** As `#requireConversation()`, and refuse one being deleted: new work, such as a task or a fork, needs an open one. */
+	async #requireOpenConversation(id: ConversationId): Promise<void> {
+		if (this.#createdConversationIds.has(id)) return;
+		const record = await this.#host.storage.conversation(id, this.#context);
+		if (record === undefined) throw new Error(`Conversation ${id} does not exist`);
+		if (record.deleting === true) throw new ConversationDeleting(id);
 	}
 
 	/**

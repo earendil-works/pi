@@ -4,11 +4,13 @@
 
 ### Breaking Changes
 
-- `StorageWrite` has a `conversation.delete` write, and `TableCommitChange` (`observeCommits()`) carries it. Migration: a custom Storage removes the conversation with its entries, tasks, submissions, and documents after the other writes of the batch, keeping its IDs claimed (the conformance suite checks it); a commit observer that replicates stored state applies it.
+- `StorageWrite` has `conversation.deleting` and `conversation.delete` writes, `TableCommitChange` (`observeCommits()`) carries them, `ConversationRecord` has `deleting`, and `ConversationQuery` has `parentConversationId` and `deleting` filters. Migration: a custom Storage indexes the new filters; one that supports deletion sets `deletesConversations` and stores the writes (the conformance suite checks it); a commit observer that replicates stored state applies them.
+- SQLite storage migrates to schema version 3 and IndexedDB storage to database version 2, which index forks and deleting conversations. A database opened by this version is refused by an older one.
 
 ### Added
 
-- Added `Harness.deleteConversations(ids, context)`, which aborts a conversation's work, background work included, and removes it for good with the conversations its tasks own. Memory, SQLite, Cloudflare Durable Object, and IndexedDB storage remove the records; JSONL only marks the deletion, and `StoreStorage` refuses it ([#11026](https://github.com/earendil-works/pi/issues/11026))
+- Added `Harness.deleteConversations(ids, context)`, which closes conversations against new work, aborts their work, background work included, and then removes them for good with the conversations their tasks own; a close or crash in between is finished after reopen. It refuses with a typed `DeletionRefused` for the root conversation, a live owner or waiter outside the deletion, a fork left behind, or a storage that cannot erase (JSONL). SQLite erases with `secure_delete` and truncates the WAL; `StoreStorage` purges documents with writes its outbox carries ([#11026](https://github.com/earendil-works/pi/issues/11026))
+- Added `ConversationDeleting`, rejected for new work in a conversation being deleted.
 
 ## [1.6.1] - 2026-11-25
 

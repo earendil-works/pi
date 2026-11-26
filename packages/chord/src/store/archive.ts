@@ -23,7 +23,10 @@ import type { DocumentWrite } from "./engine.ts";
 import type { TableWrite } from "./table-writes.ts";
 import type { StoreWrite } from "./writes.ts";
 
-/** The archive format `export` writes; `import` takes this one only. */
+/**
+ * The archive format `export` writes; `import` takes this one only. Its parts are the state, not the commits that made
+ * it: outbox format 2's `document.purge` left them as they were, so it stays 1 (a purged record is simply absent).
+ */
 export const ARCHIVE_FORMAT = 1;
 
 /**
@@ -176,6 +179,7 @@ const WRITE = union([
 		]),
 	}),
 	obj({ kind: lit("document.retire"), id: safe(1), revision: safe(1) }),
+	obj({ kind: lit("document.purge"), id: safe(1) }),
 ]);
 
 const PART_SCHEMA = { schema: PART };

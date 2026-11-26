@@ -450,6 +450,45 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 			).toEqual([firstId]);
 		}),
 
+		createCase(options, "filters and pages conversations by their fork parent", async (storage) => {
+			const rootId = await createRoot(storage);
+			const entryId = await storage.mintId<EntryId>();
+			const ownerTask = await storage.mintId<TaskId<JsonValue>>();
+			const [first, second, nested, other] = [
+				await storage.mintId<ConversationId>(),
+				await storage.mintId<ConversationId>(),
+				await storage.mintId<ConversationId>(),
+				await storage.mintId<ConversationId>(),
+			];
+			const parent = (conversationId: ConversationId) => ({ conversationId, at: entryId });
+			await commitWrites(
+				storage,
+				[
+					{ type: "entry", value: entry(entryId, rootId) },
+					{ type: "conversation", value: { id: first, parent: parent(rootId) } },
+					{
+						type: "conversation",
+						value: { id: second, parent: parent(rootId), owner: { conversationId: rootId, taskId: ownerTask } },
+					},
+					{ type: "conversation", value: { id: nested, parent: parent(first) } },
+					{ type: "conversation", value: { id: other } },
+				],
+				context,
+			);
+			const ids = async (query: Parameters<Storage["scanConversations"]>[0]) =>
+				(await storage.scanConversations(query, 10, undefined, context)).items.map(({ id }) => id);
+			expect(await ids({ parentConversationId: rootId })).toEqual([first, second]);
+			expect(await ids({ parentConversationId: rootId, order: "descending" })).toEqual([second, first]);
+			expect(await ids({ parentConversationId: first })).toEqual([nested]);
+			expect(await ids({ parentConversationId: other })).toEqual([]);
+			expect(await ids({ parentConversationId: rootId, ownerTaskId: ownerTask })).toEqual([second]);
+			const page = await storage.scanConversations({ parentConversationId: rootId }, 1, undefined, context);
+			expect(page.items.map(({ id }) => id)).toEqual([first]);
+			const next = await storage.scanConversations({ parentConversationId: rootId }, 1, page.next, context);
+			expect(next.items.map(({ id }) => id)).toEqual([second]);
+			expect(next.next).toBeUndefined();
+		}),
+
 		createCase(options, "scans deep fork history newest-first through every ancestor cap", async (storage) => {
 			const rootId = await createRoot(storage);
 			const rootFirst = await storage.mintId<EntryId>();
@@ -2137,8 +2176,10 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 
 		createCase(
 			options,
-			"deletes a conversation with everything in it, after the other writes of its batch",
+			"marks a conversation deleting, then deletes it with everything in it, after the other writes of its batch",
 			async (storage) => {
+				// The Harness deletes nothing on a Storage that does not say it can.
+				if (storage.deletesConversations !== true) return;
 				const rootId = await createRoot(storage);
 				const doomed = await storage.mintId<ConversationId>();
 				const kept = await storage.mintId<ConversationId>();
@@ -2199,6 +2240,11 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 					],
 					context,
 				);
+				await commitWrites(storage, [{ type: "conversation.deleting", id: doomed }], context);
+				expect(await storage.conversation(doomed, context)).toEqual({ id: doomed, deleting: true });
+				expect(
+					(await storage.scanConversations({ deleting: true }, 10, undefined, context)).items.map(({ id }) => id),
+				).toEqual([doomed]);
 				// What the Session writes before a deletion: the task's end, the submission's settlement, the retirements.
 				await commitWrites(
 					storage,
@@ -2235,6 +2281,7 @@ export function createStorageConformance(options: StorageConformanceOptions): re
 				);
 
 				expect(await storage.conversation(doomed, context)).toBeUndefined();
+				expect((await storage.scanConversations({ deleting: true }, 10, undefined, context)).items).toEqual([]);
 				expect((await storage.scanConversations({}, 10, undefined, context)).items.map(({ id }) => id)).toEqual([
 					rootId,
 					kept,

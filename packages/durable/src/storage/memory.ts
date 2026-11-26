@@ -77,6 +77,8 @@ type State = {
 	conversationIds: ConversationId[];
 	conversationIdsByOwnerConversation: Map<ConversationId, ConversationId[]>;
 	conversationIdsByOwnerTask: Map<TaskId, ConversationId[]>;
+	conversationIdsByParent: Map<ConversationId, ConversationId[]>;
+	deletingConversationIds: ConversationId[];
 	entries: Map<EntryId, EntryRecord>;
 	entryIds: Map<ConversationId, EntryId[]>;
 	headEntryIds: Map<ConversationId, EntryId[]>;
@@ -244,12 +246,15 @@ export interface PreparedMemoryCommit {
  * of serialization-backed stores. This is backend conformance, not validation.
  */
 export class MemoryStorage implements Storage {
+	readonly deletesConversations = true;
 	private readonly state: State = {
 		recordTypes: new Map(),
 		conversations: new Map(),
 		conversationIds: [],
 		conversationIdsByOwnerConversation: new Map(),
 		conversationIdsByOwnerTask: new Map(),
+		conversationIdsByParent: new Map(),
+		deletingConversationIds: [],
 		entries: new Map(),
 		entryIds: new Map(),
 		headEntryIds: new Map(),
@@ -381,7 +386,18 @@ export class MemoryStorage implements Storage {
 						insertMapId(this.state.conversationIdsByOwnerConversation, owner.conversationId, write.value.id);
 						insertMapId(this.state.conversationIdsByOwnerTask, owner.taskId, write.value.id);
 					}
+					const parent = write.value.parent;
+					if (parent !== undefined) {
+						insertMapId(this.state.conversationIdsByParent, parent.conversationId, write.value.id);
+					}
 					this.nextId = Math.max(this.nextId, write.value.id + 1);
+					break;
+				}
+				case "conversation.deleting": {
+					const record = this.state.conversations.get(write.id);
+					if (record === undefined || record.deleting === true) break;
+					this.state.conversations.set(write.id, { ...record, deleting: true });
+					insertSorted(this.state.deletingConversationIds, write.id);
 					break;
 				}
 				case "entry": {
@@ -476,6 +492,10 @@ export class MemoryStorage implements Storage {
 			removeMapId(state.conversationIdsByOwnerConversation, owner.conversationId, id);
 			removeMapId(state.conversationIdsByOwnerTask, owner.taskId, id);
 		}
+		if (conversation.parent !== undefined) {
+			removeMapId(state.conversationIdsByParent, conversation.parent.conversationId, id);
+		}
+		removeSorted(state.deletingConversationIds, id);
 		for (const entryId of state.entryIds.get(id) ?? []) {
 			state.entries.delete(entryId);
 			state.entryCommitSeqs.delete(entryId);
@@ -534,20 +554,29 @@ export class MemoryStorage implements Storage {
 		_context: Context,
 	): Promise<Page<ConversationRecord, Cursor>> {
 		this.assertOpen();
+		const state = this.state;
 		const ids =
 			query.ownerTaskId !== undefined
-				? (this.state.conversationIdsByOwnerTask.get(query.ownerTaskId) ?? [])
+				? (state.conversationIdsByOwnerTask.get(query.ownerTaskId) ?? [])
 				: query.ownerConversationId !== undefined
-					? (this.state.conversationIdsByOwnerConversation.get(query.ownerConversationId) ?? [])
-					: this.state.conversationIds;
+					? (state.conversationIdsByOwnerConversation.get(query.ownerConversationId) ?? [])
+					: query.parentConversationId !== undefined
+						? (state.conversationIdsByParent.get(query.parentConversationId) ?? [])
+						: query.deleting === true
+							? state.deletingConversationIds
+							: state.conversationIds;
 		const start = scanStart(query.order, cursor, "ascending");
 		const values: ConversationRecord[] = [];
 		for (const index of scanIndexes(ids, start)) {
 			if (values.length > limit) break;
-			const value = this.state.conversations.get(ids[index]!)!;
+			const value = state.conversations.get(ids[index]!)!;
 			if (query.ownerConversationId !== undefined && value.owner?.conversationId !== query.ownerConversationId) {
 				continue;
 			}
+			if (query.parentConversationId !== undefined && value.parent?.conversationId !== query.parentConversationId) {
+				continue;
+			}
+			if (query.deleting === true && value.deleting !== true) continue;
 			values.push(value);
 		}
 		return page(values, limit, start.order);
@@ -827,6 +856,7 @@ export class MemoryStorage implements Storage {
 			if (
 				write.type === "document.change" ||
 				write.type === "document.retire" ||
+				write.type === "conversation.deleting" ||
 				write.type === "conversation.delete"
 			)
 				continue;

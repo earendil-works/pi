@@ -18,7 +18,7 @@ import {
 } from "@earendil-works/pi-telemetry";
 import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
-import { ConversationBusy } from "../errors.ts";
+import { DeletionRefused } from "../errors.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import type { SignalResult, SignalToken } from "../signals.ts";
@@ -47,7 +47,7 @@ import { ROOT_CONVERSATION_ID } from "../types.ts";
 import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts";
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
-import { InboxDoc, withdrawAbortedInputs } from "./inbox.ts";
+import { InboxDoc, withdrawAbortedInputs, withdrawDeleted } from "./inbox.ts";
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
@@ -83,8 +83,6 @@ import { conversationEntries, scanAll } from "./util.ts";
 import { type ConversationView, ConversationViews, type ConversationWindow } from "./view.ts";
 
 const SCAN_PAGE_SIZE = 256;
-
-const DELETE_ATTEMPTS = 3;
 
 type CreateTarget =
 	| { readonly kind: "root" }
@@ -221,6 +219,8 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	readonly #tasks: TaskScheduler;
 	readonly #submissions: Submissions;
 	readonly #taskGraph: TaskGraphView;
+	/** Whether the Storage deletes conversations (`Storage.deletesConversations`). */
+	readonly #deletes: boolean;
 
 	constructor(rawStorage: Storage, options: HarnessOptions<Tool>, context: Context) {
 		const report = safeReport(options.onReport, options.telemetry ?? NOOP_TELEMETRY_CONTEXT);
@@ -237,6 +237,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		);
 		// Every component reads and writes through the Session's failure guard: `rawStorage` serves only `super()`.
 		const storage = this.storage;
+		this.#deletes = rawStorage.deletesConversations === true;
 		this.#options = options;
 		this.#report = report;
 		this.#hostSettings = hostSettings;
@@ -260,6 +261,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			gated: gatedCall,
 			settleOutcome: settleSchedulerOutcome,
 			withdrawInputs: withdrawAbortedInputs,
+			withdrawAll: withdrawDeleted,
 			conversation: async (id, binding, callContext) => {
 				const record = await this.readOnLine((line) => line.conversation(id, callContext));
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);
@@ -433,20 +435,10 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	async deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void> {
 		this.assertUsable();
-		// The commit first, so a refusal aborts nothing; work can start again between an abort and the commit.
-		for (let attempt = 1; ; attempt++) {
-			try {
-				await this.commitWith((tx) => tx.deleteConversations(ids), context);
-				return;
-			} catch (error) {
-				if (!(error instanceof ConversationBusy) || attempt === DELETE_ATTEMPTS) throw error;
-			}
-			this.#tasks.resume();
-			for (const id of ids) {
-				const record = await this.readOnLine((storage) => storage.conversation(id, context));
-				if (record !== undefined) await this.#tasks.abortConversation(id, true, context);
-			}
-		}
+		if (ids.length === 0) return;
+		if (!this.#deletes) throw new DeletionRefused(ids[0]!, { kind: "unsupported" });
+		this.#tasks.resume();
+		return this.#tasks.deleteConversations(ids, context);
 	}
 
 	override report(error: unknown, info: ReportInfo = { kind: "listener_error" }, context?: Context): void {
