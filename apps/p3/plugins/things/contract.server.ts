@@ -35,14 +35,8 @@ export const ThingRow = obj({
 	madeAt: num(),
 });
 
-/** A workspace: its id, the workspace above (`""`: none), its two defaults, its path (the root first, itself last). */
-export const WorkspaceRow = obj({
-	workspace: str(),
-	parent: str(),
-	showsThings: bool(),
-	showsPeople: bool(),
-	path: arr(str()),
-});
+/** A workspace: its id, the workspace above (`""`: none), and its two defaults. */
+export const WorkspaceRow = obj({ workspace: str(), parent: str(), showsThings: bool(), showsPeople: bool() });
 
 /** A thing linked into a workspace, with its kind. */
 export const LinkRow = obj({ workspace: str(), thing: str(), of: str() });
@@ -55,13 +49,13 @@ export const SwitchRow = obj({ workspace: str(), item: Item, shown: bool() });
 
 /**
  * One source's grant on a thing for a party, written in a workspace: whether it gives (perhaps no tick), the ticks it
- * gives, the ticks it takes from what comes from above, the thing's kind and the kind's version they were written at.
+ * gives, the ticks it takes from what comes from above, the thing's kind and the kind's ticks version they were written at.
  */
 export const GrantRow = obj({
 	workspace: str(),
 	thing: str(),
 	kind: str(),
-	version: num(),
+	ticksVersion: num(),
 	party: Party,
 	source: Source,
 	gives: bool(),
@@ -85,12 +79,6 @@ export type GrantInput = Static<typeof GrantInput>;
 /** A person: their id, name, whether they have the owner flag, and who made them. */
 export const PersonRow = obj({ person: str(), name: str(), owner: bool(), madeBy: Source });
 
-/** A group: its id, name, who changes its members, and whether it is outside (its members never count as everyone). */
-export const GroupRow = obj({ group: str(), name: str(), managedBy: ManagedBy, outside: bool() });
-
-/** A party with the group's own tick (it changes the members). */
-export const GroupManagerRow = obj({ group: str(), party: Party });
-
 /** A person in a group, as one source put them there, with whether the group is outside. */
 export const GroupMemberRow = obj({ group: str(), person: str(), source: Source, outside: bool() });
 
@@ -99,48 +87,20 @@ export const ThingsStore = local("things.store", {
 	version: 1,
 	params: {},
 	members: {
-		things: queries(ThingRow, {
-			one: obj({ thing: str() }),
-			ofIds: obj({ things: arr(str()) }),
-			madeBy: obj({ sourceKey: str() }),
-			ofKind: obj({ kind: str() }),
-		}),
-		workspaces: queries(WorkspaceRow, {
-			one: obj({ workspace: str() }),
-			children: obj({ parent: str() }),
-			under: obj({ pathPrefix: str() }),
-		}),
-		links: queries(LinkRow, { here: obj({ workspace: str() }), where: obj({ thing: str() }) }),
-		workspaceMembers: queries(WorkspaceMemberRow, {
-			here: obj({ workspace: str() }),
-			where: obj({ partyKey: str() }),
-			ofParties: obj({ workspaces: arr(str()), partyKeys: arr(str()) }),
-		}),
-		switches: queries(SwitchRow, {
-			here: obj({ workspace: str() }),
-			ofItems: obj({ workspaces: arr(str()), itemKeys: arr(str()) }),
-		}),
-		grants: queries(GrantRow, {
-			here: obj({ workspace: str() }),
-			of: obj({ workspace: str(), thing: str() }),
-			ofParty: obj({ partyKey: str() }),
-			ofThing: obj({ thing: str() }),
-		}),
-		persons: queries(PersonRow, {
-			one: obj({ person: str() }),
-			ofIds: obj({ persons: arr(str()) }),
-			owners: obj({}),
-		}),
-		groups: queries(GroupRow, { one: obj({ group: str() }), ofIds: obj({ groups: arr(str()) }) }),
-		groupManagers: queries(GroupManagerRow, { of: obj({ group: str() }) }),
-		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }), ofGroup: obj({ group: str() }) }),
+		things: queries(ThingRow, { one: obj({ thing: str() }) }),
+		workspaces: queries(WorkspaceRow, { one: obj({ workspace: str() }), children: obj({ parent: str() }) }),
+		links: queries(LinkRow, { here: obj({ workspace: str() }) }),
+		workspaceMembers: queries(WorkspaceMemberRow, { here: obj({ workspace: str() }) }),
+		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
+		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
+		persons: queries(PersonRow, { one: obj({ person: str() }) }),
+		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
 		/**
-		 * Makes a thing of `kind` in `workspace`, in one commit: the thing, its link, the kind's default grants, and every
-		 * tick for its maker (`by`, a person or a session's agent; item 90); then the kind's `create` hook. Answers its id.
+		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
+		 * commit: the thing, its link, the kind's default grants, and every tick for its maker (`by`, a person or a
+		 * session's agent; item 90). Answers its id.
 		 */
 		create: method(obj({ kind: str(), name: str(), workspace: str(), by: Source, input: opt(unknown()) }), str()),
-		/** Plugin `plugin`'s one thing of `kind`, made in `workspace` by the first call; answers its id. */
-		ensure: method(obj({ kind: str(), name: str(), workspace: str(), plugin: str() }), str()),
 		/** Links a thing into a workspace, with its kind's default grants there. */
 		link: method(obj({ workspace: str(), thing: str(), by: Source })),
 		/** Unlinks a thing and what the workspace wrote for it (R15); with its last link the thing goes. */
@@ -164,7 +124,6 @@ export const ThingsStore = local("things.store", {
 		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool() }), str()),
 		addToGroup: method(obj({ group: str(), person: str(), source: Source })),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
-		setGroupManagers: method(obj({ group: str(), parties: arr(Party) })),
 		/** Removes what `source` wrote (grants, group members, workspace members) and the groups it manages, with all naming them. */
 		deleteEverythingFrom: method(obj({ source: Source })),
 	},
@@ -207,9 +166,12 @@ export const AccessHandles = defineRegistry<AccessHandle, AccessHandle | undefin
 /** A kind's hooks on the server: what is in a new thing (`create`), and clearing it when it goes (`delete`). */
 export type ThingHook = {
 	readonly kind: string;
-	/** Prepares what is in a new thing from `input`; a throw deletes the thing again. */
+	/** Prepares what is in a new thing from `input`, before the commit that makes it (item 34): a throw makes nothing. */
 	readonly create?: (thing: string, input: unknown, ctx: Ctx<P3Principal>) => Promise<void>;
-	/** Clears what is in a deleted thing; retried at the next start while it fails. */
+	/**
+	 * Clears what is in a deleted thing, or in one whose commit failed after `create`; for a deleted thing tried again,
+	 * with backoff and at every start, until it succeeds.
+	 */
 	readonly delete?: (thing: string, ctx: Ctx<P3Principal>) => Promise<void>;
 };
 

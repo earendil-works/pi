@@ -1,6 +1,6 @@
 // How the access index reads the things store: one workspace's entries (5 reads) and one person's (2), through the
-// store's named queries, each set read whole; and how a grant's ticks read at its kind's version now (item 91, open
-// item 27): `readerOf`, with the kinds as the index looks them up (`lookupOf`).
+// store's named queries, each set read whole; and how a grant's ticks read at its kind's ticks version now (item 105):
+// `readerOf`, with the kinds as the index looks them up (`lookupOf`).
 
 import { type Context, type NamedQuery, type Reference, reportError, type TableItem } from "@earendil-works/p3/v1";
 import type { Reader } from "./access.ts";
@@ -90,35 +90,42 @@ type GrantItem = Awaited<ReturnType<Read["grants"]["here"]["page"]>>["items"][nu
 
 /** A grant as the rules read it (see `ticksNow`); none when its kind cannot read it, reported once. */
 function grantEntry(grant: GrantItem, kinds: Kinds, reported: Set<string>, context: Context): GrantEntry[] {
-	const { thing, party, gives, kind, version } = grant;
+	const { thing, party, gives, kind, ticksVersion } = grant;
 	const now = ticksNow(grant, kinds.info(kind));
-	if (now !== undefined) return [{ thing, party: partyKey(party), audience: audienceOf(party.kind), gives, ...now }];
-	const key = `${grant.workspace}\n${thing}\n${partyKey(party)}\n${sourceKey(grant.source)}\n${version}`;
+	if (now.kind === "read") {
+		return [{ thing, party: partyKey(party), audience: audienceOf(party.kind), gives, ...now.ticks }];
+	}
+	const key = `${grant.workspace}\n${thing}\n${partyKey(party)}\n${sourceKey(grant.source)}\n${ticksVersion}`;
 	if (!reported.has(key)) {
 		reported.add(key);
-		reportError(
-			`things: a grant on ${thing} in ${grant.workspace}`,
-			`written at ${kind} version ${version}, newer than the kind's ${kinds.info(kind)?.version}: it counts for nothing`,
-			context,
-		);
+		reportError(`things: a grant on ${thing} in ${grant.workspace} counts for nothing`, now.why, context);
 	}
 	return [];
 }
 
+/** A grant's ticks as they read now, or why they cannot be read. */
+type TicksNow =
+	| { readonly kind: "read"; readonly ticks: { readonly ticks: string[]; readonly takenAway: string[] } }
+	| { readonly kind: "refused"; readonly why: unknown };
+
 /**
- * A grant's ticks at its kind's version now (item 91): as written at the same version, and for a kind no plugin
- * registers (its ticks count for nothing, R3); migrated by the kind's `migrateTicks` from an older version; without
- * one, read as written (open item 27, recommended: unknown names are ignored by the rules). `undefined` for a version
- * newer than the kind's (the plugin went back): it counts for nothing.
+ * A grant's ticks at its kind's ticks version now (item 105): as written at the same one, and for a kind no plugin
+ * registers (its ticks count for nothing, R3); from an older one through the kind's `migrateTicks`. Refused: an older
+ * one without `migrateTicks`, one it throws for (plugin code: a refused grant, never a failed read; open item 33), and
+ * a newer one (the plugin went back).
  */
-function ticksNow(
-	{ ticks, takenAway, version }: GrantItem,
-	info: KindInfo | undefined,
-): { ticks: string[]; takenAway: string[] } | undefined {
-	if (info === undefined || info.version === version) return { ticks, takenAway };
-	if (version > info.version) return undefined;
+function ticksNow({ ticks, takenAway, ticksVersion, kind }: GrantItem, info: KindInfo | undefined): TicksNow {
+	if (info === undefined || info.ticksVersion === ticksVersion) return { kind: "read", ticks: { ticks, takenAway } };
+	const at = `written at ${kind}'s ticks version ${ticksVersion}, the kind's is ${info.ticksVersion}`;
 	const migrate = info.migrateTicks;
-	return migrate === undefined
-		? { ticks, takenAway }
-		: { ticks: migrate(ticks, version), takenAway: migrate(takenAway, version) };
+	if (ticksVersion > info.ticksVersion) return { kind: "refused", why: `${at}: newer (the plugin went back)` };
+	if (migrate === undefined) return { kind: "refused", why: `${at}, and it has no migrateTicks` };
+	try {
+		return {
+			kind: "read",
+			ticks: { ticks: migrate(ticks, ticksVersion), takenAway: migrate(takenAway, ticksVersion) },
+		};
+	} catch (error) {
+		return { kind: "refused", why: error };
+	}
 }

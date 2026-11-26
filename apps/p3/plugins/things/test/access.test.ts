@@ -7,7 +7,7 @@
 // forgetting, a watcher stopped in the middle of a change.
 
 import assert from "node:assert/strict";
-import { describe, it, type TestContext } from "node:test";
+import { describe, it, mock, type TestContext } from "node:test";
 import {
 	BACKGROUND_CONTEXT as context,
 	type FollowObserver,
@@ -18,6 +18,7 @@ import { AccessIndex, type Answers, type Reader } from "../access.ts";
 import { Gives, ThingsStore } from "../contract.server.ts";
 import type { Party, Source } from "../contract.ts";
 import { lookupOf, readerOf } from "../reader.ts";
+import { ABOVE_THE_ROOT, accessHere } from "../rules.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
 import { answersFrom, type Caller, type Everything, type KindTicks, readEverything } from "./reference.ts";
 import { type World, world } from "./world.ts";
@@ -509,5 +510,152 @@ describe("the index's own mechanics", () => {
 		assert.deepEqual(ended, ["failed"]);
 		assert.equal(index.open, false);
 		assert.equal(await index.attach("pi", { kind: "agent", session: "s" }, observer([]), context), undefined);
+	});
+});
+
+describe("round 1's reproductions (Astra)", () => {
+	const who = { kind: "person", person: "p" } as const;
+	const none: FollowObserver<unknown> = { advance() {}, end() {} };
+	const kinds = { tickFor: () => "all" as const, ticksOf: () => ["a"] };
+	const person = async () => ({ owner: true, groups: [] });
+	const rows = (...ids: string[]) => ({
+		parent: "",
+		showsThings: true,
+		showsPeople: true,
+		links: new Map(ids.map((id) => [id, "board"])),
+		members: new Set<string>(),
+		switches: new Map<string, boolean>(),
+		hides: new Set<string>(),
+		grants: [],
+	});
+	const touched = (id: string) => ({ workspaces: new Set([id]), persons: new Set<string>() });
+
+	it("Astra 6: close fences an attach that is loading", async () => {
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const workspace = async () => {
+			started.resolve();
+			await release.promise;
+			return rows();
+		};
+		const index = new AccessIndex({ person, workspace }, () => kinds, context);
+		const pending = index.attach("w", who, none, context);
+		await started.promise;
+		index.close();
+		release.resolve();
+		assert.equal(await pending, undefined);
+		assert.equal(index.loaded().views, 0);
+	});
+
+	it("Astra 2: a failed re-read serves nothing stale: its watchers end, the next attach loads what is on disk", async () => {
+		let fail = false;
+		let entries = rows();
+		const workspace = async () => {
+			if (fail) throw new Error("read failed");
+			return entries;
+		};
+		const ended: string[] = [];
+		const index = new AccessIndex({ person, workspace }, () => kinds, context);
+		await index.attach("w", who, { advance() {}, end: (end) => void ended.push(end.kind) }, context);
+		entries = rows("new-board");
+		fail = true;
+		const reported = mock.method(console, "error", () => {});
+		await index.changed(touched("w"));
+		reported.mock.restore();
+		assert.deepEqual(ended, ["failed"]);
+		assert.deepEqual(index.loaded(), { workspaces: 0, persons: 0, views: 0 });
+		fail = false;
+		const again = await index.attach("w", who, none, context);
+		assert.ok(again?.value["new-board"]);
+		assert.equal(index.open, true);
+	});
+
+	it("Astra 7: unwatched persons count against the budget", async () => {
+		const index = new AccessIndex({ person, workspace: async () => rows() }, () => kinds, context, 2);
+		for (let i = 0; i < 256; i++) {
+			(await index.attach("w", { kind: "person", person: String(i) }, none, context))?.detach();
+		}
+		const size = index.loaded();
+		assert.equal(size.views, 0);
+		assert.ok(size.persons <= 3, `${size.persons} persons kept, none watched`);
+	});
+
+	it("Astra 11: a watcher detached by another's advance is not told; one that throws keeps no other from being told", async () => {
+		let entries = rows();
+		const index = new AccessIndex({ person, workspace: async () => entries }, () => kinds, context);
+		let detachSecond = () => {};
+		let second = 0;
+		let third = 0;
+		const bad: FollowObserver<unknown> = {
+			advance: () => {
+				detachSecond();
+				throw new Error("observer failed");
+			},
+			end() {},
+		};
+		await index.attach("w", who, bad, context);
+		const attached = await index.attach("w", who, { advance: () => void second++, end() {} }, context);
+		await index.attach("w", who, { advance: () => void third++, end() {} }, context);
+		detachSecond = attached!.detach;
+		entries = rows("new-board");
+		const reported = mock.method(console, "error", () => {});
+		await index.changed(touched("w"));
+		reported.mock.restore();
+		assert.deepEqual([second, third], [0, 1]);
+		assert.equal(reported.mock.callCount(), 1);
+	});
+
+	it("Astra 8: a write with no access change walks no loaded workspace", async () => {
+		const index = new AccessIndex({ person, workspace: async () => rows() }, () => kinds, context);
+		for (let i = 0; i < 256; i++) (await index.attach(String(i), who, none, context))?.detach();
+		let probes = 0;
+		class Counted extends Set<string> {
+			override has(value: string) {
+				probes++;
+				return super.has(value);
+			}
+		}
+		await index.changed({ workspaces: new Counted(), persons: new Set() });
+		assert.equal(probes, 0);
+	});
+
+	it("Astra 9: the grants of a wide workspace are classified in linear time", () => {
+		const n = 128;
+		let visits = 0;
+		const ids = Array.from({ length: n }, (_, i) => String(i));
+		const grants = ids.map((id) => ({
+			get thing() {
+				visits++;
+				return id;
+			},
+			party: "everyone",
+			audience: "people" as const,
+			gives: true,
+			ticks: ["a"],
+			takenAway: [],
+		}));
+		accessHere(ABOVE_THE_ROOT, { ...rows(...ids), grants }, kinds);
+		assert.ok(visits <= 2 * n, `${visits} reads of a grant's thing for ${n} links and ${n} grants`);
+	});
+
+	it("an answer handed out never changes; an unchanged thing's answer keeps its object", async () => {
+		let entries = rows("kept");
+		let next: Answers | undefined;
+		const index = new AccessIndex({ person, workspace: async () => entries }, () => kinds, context);
+		const observer: FollowObserver<unknown> = {
+			advance: (call) => {
+				if (call.kind === "value") next = call.value as Answers;
+			},
+			end() {},
+		};
+		const attached = (await index.attach("w", who, observer, context))!;
+		const old = attached.value;
+		const copy = structuredClone(old);
+		entries = rows("kept", "added");
+		await index.changed(touched("w"));
+		assert.deepEqual(old, copy);
+		assert.notEqual(next, old);
+		assert.equal(next?.kept, old.kept);
+		attached.detach();
 	});
 });

@@ -295,7 +295,23 @@ describe("a canvas's motion", () => {
 		const [board, other] = [await canvasIn(s1), await canvasIn(s1)];
 		await things.link({ workspace: pi, thing: board, by: BY }, context);
 		await things.putParty({ workspace: pi, party: { kind: "person", person: ann.id }, source: BY }, context);
-		await grant(s1, board, { kind: "person", person: ben.id }, []);
+		// Ben keeps a viewer: a take-away naming him removes everyone's Draw from him (item 106).
+		await things.setGrants(
+			{
+				source: BY,
+				grants: [
+					{
+						workspace: s1,
+						thing: board,
+						party: { kind: "person", person: ben.id },
+						gives: false,
+						ticks: [],
+						takenAway: ["draw"],
+					},
+				],
+			},
+			context,
+		);
 		const seen: Motion[] = [];
 		const elsewhere: Motion[] = [];
 		await holding(ann, s1, other, async (away, outer) => {
