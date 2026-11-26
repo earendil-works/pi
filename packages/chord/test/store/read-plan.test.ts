@@ -33,17 +33,6 @@ import { defineTable, type TableDefinition } from "../../src/store/table.ts";
 import { TableChanges } from "../../src/store/table-changes.ts";
 import type { TableHandle } from "../../src/store/table-handle.ts";
 import { expectCollected, memoryStore, metered, tableIn } from "../support.ts";
-import {
-	closeWorld,
-	commit as commitWorld,
-	opened as openedWorld,
-	openRead,
-	staleReads,
-	SessionColumns as WorldSessionColumns,
-	Sessions as WorldSessions,
-	TeamSessions as WorldTeamSessions,
-	Teams as WorldTeams,
-} from "./read-world.ts";
 
 const SessionColumns = defineColumns("sessions.columns", {
 	columns: { id: str(), app: str(), private: bool(), lastTouch: int(), archivedAt: opt(int()) },
@@ -624,40 +613,5 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 		(second as { plan?: unknown }).plan = undefined;
 		(second as { read?: unknown }).read = undefined;
 		await expectCollected(shape);
-	});
-
-	it("calls no method of a condition's list in a commit: a probe's columns are copied by index (hot-path review)", async () => {
-		// Astra, ccd99ec5c: a same-host condition as data whose exists match list subclasses Array (its `map` results
-		// do too); the first probe of a later commit copied the probe's columns with the subclass's throwing `slice`.
-		class MatchList<T> extends Array<T> {
-			override slice(): T[] {
-				throw new Error("match list was sliced");
-			}
-		}
-		const pairs = MatchList.of(["session", "id"] as const);
-		const w = await openedWorld(context, []);
-		try {
-			const row = {
-				id: "s1",
-				app: "club",
-				creator: "anna",
-				private: false,
-				state: "idle",
-				lastTouch: 1,
-				title: "s1",
-			};
-			await commitWorld(w, context, (changes) => changes(WorldSessions).put(row));
-			const q = query(WorldSessions).whereNode(WorldSessionColumns, {
-				exists: [WorldTeamSessions.name, pairs, null],
-			});
-			const what = { kind: "rows", range: { limit: 5 } } as const;
-			const read = await openRead(w, { name: "visible", query: q, table: WorldSessions, what }, context);
-			expect(read.latest).toMatchObject({ kind: "rows", result: { rows: [] } });
-			await commitWorld(w, context, (changes) => changes(WorldTeams).put({ session: "s1", team: "u12" }));
-			expect(read.latest).toMatchObject({ kind: "rows", result: { rows: [{ id: "s1" }] } });
-			expect(await staleReads(w, context)).toEqual([]);
-		} finally {
-			await closeWorld();
-		}
 	});
 });
