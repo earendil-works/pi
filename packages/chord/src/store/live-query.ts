@@ -52,7 +52,7 @@ export function checkLiveQuery(table: TableDefinition, q: Query, limit: unknown,
 export class LiveQuery extends FramedSource {
 	readonly #site: ReadSite;
 	readonly #shape: LiveShape;
-	readonly #rows = new DecodedRows();
+	readonly #rows = new DecodedRows("values");
 	/** The read its value is of, and the one that replaces it once its first run is adopted. */
 	#current: Reading | undefined;
 	#next: Reading | undefined;
@@ -182,8 +182,25 @@ class Decoded {
 	}
 }
 
+/**
+ * A row as a run decoded it, with the stored row it came from: what decoded rows keep where the stored row is kept by
+ * someone else anyway (a list's pages keep theirs), so it costs nothing more than the entry.
+ */
+class KeptRow {
+	readonly stored: StoredRead;
+	readonly row: JsonValue;
+
+	constructor(stored: StoredRead, row: JsonValue) {
+		this.stored = stored;
+		this.row = row;
+	}
+}
+
+/** An entry of decoded rows: the stored row's values, or the stored row (`DecodedRows`' `keeps`). */
+type Entry = Decoded | KeptRow;
+
 /** No rows decoded yet: the shared empty map. */
-const NO_ROWS: TupleMap<Decoded> = new Map();
+const NO_ROWS: TupleMap<Entry> = new Map();
 
 const NO_COLUMNS: readonly string[] = [];
 
@@ -194,10 +211,20 @@ const NO_COLUMNS: readonly string[] = [];
  * removal, not a comparison of every row with every other).
  */
 export class DecodedRows {
-	/** By key, as tuples of the key's values; the one row itself after a run of one row (a map of one costs 184 B). */
-	#byKey: TupleMap<Decoded> | Decoded = NO_ROWS;
+	/**
+	 * What it keeps of a stored row to compare the next run's with: its values (a live query: nobody else keeps the
+	 * row, a dictionary-mode object of node:sqlite's), or the row itself (a list: its pages keep their rows).
+	 */
+	readonly #keeps: "values" | "rows";
+	/** By key, as tuples of the key's values; the one entry itself after a run of one row (a map of one costs 184 B). */
+	#byKey: TupleMap<Entry> | Entry = NO_ROWS;
 	/** The columns of the row decoded last: rows of one statement share them, so their entries share the list. */
 	#columns: readonly string[] = NO_COLUMNS;
+
+	/** `keeps` the values of a stored row (a live query's), or the row itself (a list's, by default). */
+	constructor(keeps: "values" | "rows" = "rows") {
+		this.#keeps = keeps;
+	}
 
 	/** The rows of `stored` as `target` decodes them, unchanged ones reused; a row the code cannot read throws. */
 	decode(stored: readonly StoredRead[], target: LiveTarget, context: Context): JsonValue[] {
@@ -207,7 +234,7 @@ export class DecodedRows {
 			this.#byKey = one;
 			return [one.row];
 		}
-		const byKey: TupleMap<Decoded> = new Map();
+		const byKey: TupleMap<Entry> = new Map();
 		// `map`: a list of exactly its rows (the value keeps it; one pushed to reserves room for 16 more).
 		const rows = stored.map((each) => {
 			const decoded = this.#reused(key, each, target, context);
@@ -223,12 +250,20 @@ export class DecodedRows {
 		this.#byKey = NO_ROWS;
 	}
 
-	/** The last value's entry of `stored`'s key when its stored columns are all the same (kept as it is), else a new one. */
-	#reused(key: readonly string[], stored: StoredRead, target: LiveTarget, context: Context): Decoded {
+	/**
+	 * The entry of `stored`: the last value's row of its key when its stored columns are all the same, else decoded.
+	 * Kept values stay the entry as it is; a kept row is replaced by the new one, which the next run is compared with.
+	 */
+	#reused(key: readonly string[], stored: StoredRead, target: LiveTarget, context: Context): Entry {
 		const before = this.#byKey;
-		const decoded =
-			before instanceof Decoded ? (holdsKey(before, key, stored) ? before : undefined) : getRow(before, key, stored);
-		return decoded !== undefined && sameStored(decoded, stored) ? decoded : this.#decoded(stored, target, context);
+		const entry =
+			before instanceof Map ? getRow(before, key, stored) : holdsKey(before, key, stored) ? before : undefined;
+		if (entry instanceof KeptRow) {
+			return new KeptRow(stored, sameRow(entry.stored, stored) ? entry.row : target.decode(stored, context));
+		}
+		if (entry !== undefined && sameStored(entry, stored)) return entry;
+		if (this.#keeps === "rows") return new KeptRow(stored, target.decode(stored, context));
+		return this.#decoded(stored, target, context);
 	}
 
 	#decoded(stored: StoredRead, target: LiveTarget, context: Context): Decoded {
@@ -263,12 +298,16 @@ export class DecodedRows {
 	}
 }
 
-/** Whether `decoded` came from a row of `stored`'s key: its values in the key columns are `stored`'s (as a map keys). */
-function holdsKey(decoded: Decoded, key: readonly string[], stored: StoredRead): boolean {
+/** Whether `entry` came from a row of `stored`'s key: its values in the key columns are `stored`'s (as a map keys). */
+function holdsKey(entry: Entry, key: readonly string[], stored: StoredRead): boolean {
 	for (let index = 0; index < key.length; index++) {
-		const at = decoded.columns.indexOf(key[index]!);
-		if (at < 0) return false;
-		const a = decoded.values[at];
+		let a: unknown;
+		if (entry instanceof KeptRow) a = entry.stored[key[index]!];
+		else {
+			const at = entry.columns.indexOf(key[index]!);
+			if (at < 0) return false;
+			a = entry.values[at];
+		}
 		const b = stored[key[index]!];
 		// SameValueZero, as a map's keys: `NaN` is `NaN`.
 		// biome-ignore lint/suspicious/noSelfCompare: NaN is the one value unequal to itself.
@@ -284,5 +323,11 @@ function holdsKey(decoded: Decoded, key: readonly string[], stored: StoredRead):
 function sameStored(decoded: Decoded, stored: StoredRead): boolean {
 	const { columns, values } = decoded;
 	for (let at = 0; at < columns.length; at++) if (stored[columns[at]!] !== values[at]) return false;
+	return true;
+}
+
+/** Whether two stored rows of one statement have the same value in every column (SQLite values compare by `===`). */
+function sameRow(a: StoredRead, b: StoredRead): boolean {
+	for (const column in a) if (a[column] !== b[column]) return false;
 	return true;
 }
