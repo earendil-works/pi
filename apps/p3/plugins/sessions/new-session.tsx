@@ -3,9 +3,11 @@
 // the session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`.
 
 import { Dropdown, Field, Input } from "@earendil-works/elanor-react";
-import { Environments, type JsonValue, THIS_DEVICE } from "@earendil-works/p3/v1";
+import { Environments, THIS_DEVICE } from "@earendil-works/p3/v1";
 import { CodeIcon, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
 import { useEffect, useState } from "react";
+// Other plugins' web contracts by path, never through `/v1/web` (see `web.tsx`).
+import type { ThingCreateProps } from "../things/contract.web.tsx";
 import { messages } from "./messages.ts";
 import styles from "./new-session.module.css";
 
@@ -16,7 +18,7 @@ export const SessionIcon = CodeIcon;
  * The create step: a machine (this device first) and a folder; `onReady` gets `{}` while the folder is empty (the
  * session's own folder) and `{ location }` once one is given.
  */
-export function SessionCreate(props: { readonly workspace: string; readonly onReady: (input: JsonValue) => void }) {
+export function SessionCreate(props: ThingCreateProps) {
 	const { t } = useMessages(messages);
 	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
 	const [folder, setFolder] = useState("");
