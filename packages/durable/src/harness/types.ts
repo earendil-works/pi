@@ -843,6 +843,17 @@ export type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
 	 */
 	readonly onWake?: (wake: Wake) => void;
 	/**
+	 * Dispatches scheduler passes. Keep `run` synchronously, then invoke it in the execution context that should start
+	 * the tasks. Retry failed dispatches with the same `run`: `resume()` coalesces into the outstanding pass.
+	 * Each call to the same `run` returns the same promise, which tracks reservation and launch of runnable tasks.
+	 * After awaiting it, the host can check `wake()` and wait for any running tasks separately.
+	 *
+	 * Defaults to `queueMicrotask`. Calling `run` starts the pass in a microtask. The Harness reports `host_error`
+	 * (`callback: "schedule"`) for a throw or returned rejection. After a synchronous throw it calls `run` itself.
+	 * After a returned rejection the host still owns delivery.
+	 */
+	readonly schedule?: ((run: () => Promise<void>) => void) | undefined;
+	/**
 	 * Receives failures that do not fail the calling operation, such as a throwing hook or listener, a task that faulted,
 	 * and the error that fails the Session, once: one `Report`, the `error` and what happened (`kind` and the fields of
 	 * its `ReportInfo`). A host can tell a failed Session (`storage_failed`, often a platform reset) from a faulted task

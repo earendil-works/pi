@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -709,5 +710,241 @@ describe("registry changes before resume", () => {
 		await first.harness.waitForTask(missing, context);
 		expect(log).toEqual(["v2"]);
 		await first.harness.close(context);
+	});
+});
+
+describe("HarnessOptions.schedule", () => {
+	it("lets the host join a pass that waits for publication while the task phase continues separately", async () => {
+		const invocation = new AsyncLocalStorage<string>();
+		const mutationEntered = deferred();
+		const publish = deferred();
+		const phaseStarted = deferred<string | undefined>();
+		const finishPhase = deferred();
+		const pending: Array<() => Promise<void>> = [];
+		const Work = oneStep("test.scheduled-work", async () => {
+			phaseStarted.resolve(invocation.getStore());
+			await finishPhase.promise;
+		});
+		const registry = createRegistry();
+		addTask(registry, Work);
+		const harness = await Harness.open(
+			new MemoryStorage(),
+			{
+				models: createModels(),
+				registry,
+				schedule: (run) => {
+					pending.push(run);
+				},
+			},
+			context,
+		);
+		const root = await harness.root(context);
+		await flush();
+		const committing = invocation.run("admission", () =>
+			root.commit(async (tx) => {
+				mutationEntered.resolve();
+				await publish.promise;
+				return tx.createTask(Work, null, { ownership: { kind: "conversation" } });
+			}, context),
+		);
+		try {
+			await mutationEntered.promise;
+			invocation.run("admission", () => harness.resume());
+			expect(pending).toHaveLength(1);
+			const run = pending.shift()!;
+			const drained = invocation.run("alarm", run);
+			expect(drained).toBeInstanceOf(Promise);
+			expect(run()).toBe(drained);
+			// Before publication, the host would see no work if it inspected the wake without joining the pass.
+			expect(await settled(drained)).toBe(false);
+			expect(harness.wake().active).toBe(false);
+			expect(pending).toHaveLength(0);
+
+			publish.resolve();
+			const id = await committing;
+			await drained;
+			expect(harness.wake().active).toBe(true);
+			await expect(phaseStarted.promise).resolves.toBe("alarm");
+			finishPhase.resolve();
+			await harness.waitForTask(id, context);
+		} finally {
+			publish.resolve();
+			finishPhase.resolve();
+			await harness.close(context);
+		}
+	});
+
+	it("reports a throwing schedule callback and falls back to microtask scheduling", async () => {
+		const reports: unknown[] = [];
+		const runs: string[] = [];
+		const Work = oneStep("test.schedule-throw", async () => {
+			runs.push("ran");
+		});
+		const registry = createRegistry();
+		addTask(registry, Work);
+		const harness = await Harness.open(
+			new MemoryStorage(),
+			{
+				models: createModels(),
+				registry,
+				schedule: () => {
+					throw new Error("schedule boom");
+				},
+				onReport: (report) => reports.push(report),
+			},
+			context,
+		);
+		const root = await harness.root(context);
+		const id = await start(root, Work);
+		await harness.waitForTask(id, context);
+		expect(runs).toEqual(["ran"]);
+		expect(reports).toEqual(
+			expect.arrayContaining([expect.objectContaining({ kind: "host_error", callback: "schedule" })]),
+		);
+		await harness.close(context);
+	});
+
+	it("reports a rejected dispatch and leaves the retained pass for the host to deliver", async () => {
+		const dispatchError = new Error("alarm dispatch failed");
+		const pending: Array<() => Promise<void>> = [];
+		const reports: unknown[] = [];
+		let runs = 0;
+		const Work = oneStep("test.schedule-rejection", async () => {
+			runs++;
+		});
+		const registry = createRegistry();
+		addTask(registry, Work);
+		const harness = await Harness.open(
+			new MemoryStorage(),
+			{
+				models: createModels(),
+				registry,
+				schedule: async (run) => {
+					pending.push(run);
+					throw dispatchError;
+				},
+				onReport: (report) => reports.push(report),
+			},
+			context,
+		);
+		try {
+			const id = await start(await harness.root(context), Work);
+			harness.resume();
+			await flush();
+			expect(reports).toEqual([{ kind: "host_error", callback: "schedule", error: dispatchError }]);
+			expect((await harness.getTask(id, context))?.state.status).toBe("pending");
+			expect(runs).toBe(0);
+			harness.resume();
+			expect(pending).toHaveLength(1);
+
+			await pending.shift()!();
+			await harness.waitForTask(id, context);
+			expect(runs).toBe(1);
+		} finally {
+			await harness.close(context);
+		}
+	});
+
+	it("commits conversation.submit() durably without calling the provider before schedule runs", async () => {
+		const pending: Array<() => Promise<void>> = [];
+		let modelCalls = 0;
+		const setup = chatSetup();
+		setup.faux.setResponses([
+			() => {
+				modelCalls++;
+				return fauxAssistantMessage("hello back");
+			},
+		]);
+		const model = setup.faux.getModel();
+		const harness = await Harness.open(
+			new MemoryStorage(),
+			{
+				models: setup.models,
+				registry: setup.registry,
+				schedule: (run) => {
+					pending.push(run);
+				},
+			},
+			context,
+		);
+		const root = await harness.root(context, {
+			agent: { model: { provider: model.provider, modelId: model.id } },
+		});
+		const submission = await root.submit({ type: "input", content: "hi" }, context);
+		await flush();
+		await flush();
+		expect(modelCalls).toBe(0);
+		expect(pending.length).toBeGreaterThan(0);
+		expect(harness.wake().active).toBe(true);
+
+		// Drain scheduled passes as a host alarm would until the submission settles.
+		const settledPromise = submission.wait(context);
+		while (pending.length > 0) {
+			await pending.shift()!();
+			await flush();
+			await flush();
+		}
+		const result = await settledPromise;
+		expect(result.status).toBe("done");
+		expect(modelCalls).toBe(1);
+		await harness.close(context);
+	});
+
+	it("defers re-entrant synchronous invocation inside schedule() to a microtask", async () => {
+		const runs: string[] = [];
+		const Work = oneStep("test.sync-schedule", async () => {
+			runs.push("ran");
+		});
+		const registry = createRegistry();
+		addTask(registry, Work);
+		const harness = await Harness.open(
+			new MemoryStorage(),
+			{
+				models: createModels(),
+				registry,
+				schedule: (run) => {
+					void run();
+				},
+			},
+			context,
+		);
+		const root = await harness.root(context);
+		const id = await start(root, Work);
+		await harness.waitForTask(id, context);
+		expect(runs).toEqual(["ran"]);
+		await harness.close(context);
+	});
+
+	it("closes cleanly when a scheduled callback is never invoked or invoked after close", async () => {
+		const pending: Array<() => Promise<void>> = [];
+		const runs: string[] = [];
+		const Work = oneStep("test.close-while-deferred", async () => {
+			runs.push("ran");
+		});
+		const registry = createRegistry();
+		addTask(registry, Work);
+		const harness = await Harness.open(
+			new MemoryStorage(),
+			{
+				models: createModels(),
+				registry,
+				schedule: (run) => {
+					pending.push(run);
+				},
+			},
+			context,
+		);
+		const root = await harness.root(context);
+		await start(root, Work);
+		harness.resume();
+		await flush();
+		expect(pending.length).toBeGreaterThan(0);
+		expect(runs).toEqual([]);
+
+		// Closing must not hang while the deferred callback is uninvoked.
+		await harness.close(context);
+		// Invoking the stale callback after close is a safe no-op.
+		for (const run of pending) await run();
+		expect(runs).toEqual([]);
 	});
 });

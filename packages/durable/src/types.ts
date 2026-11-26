@@ -149,7 +149,16 @@ export type ReportTask = {
  * A host callback, by its `HarnessOptions` name; `env` is the environment builder, `models` a provider call, and
  * `telemetry` a telemetry adapter call made while a commit is published, which must not fail it.
  */
-export type HostCallback = "now" | "settings" | "registry" | "env" | "models" | "setTimer" | "onWake" | "telemetry";
+export type HostCallback =
+	| "now"
+	| "settings"
+	| "registry"
+	| "env"
+	| "models"
+	| "setTimer"
+	| "onWake"
+	| "schedule"
+	| "telemetry";
 
 /**
  * What a report to `HarnessOptions.onReport` is about, by `kind` (`Report` adds the error). `extension`, where present,

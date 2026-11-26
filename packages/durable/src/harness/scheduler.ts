@@ -18,7 +18,7 @@ import {
 import type { ExecutionEnv } from "../env/index.ts";
 import { errorMessage, ReadOnlySession } from "../errors.ts";
 import { ALL_KEYS, conversationKey, INTENT_KEY, ownedKey, ROOTS_KEY, taskKey } from "../session/keys.ts";
-import type { ObservedCommit, SessionImpl } from "../session/session.ts";
+import { contained, type ObservedCommit, type SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import { checkSleep, readSignal, type SignalToken, sleepDue, sleepWake } from "../signals.ts";
 import type { Timers } from "../timers.ts";
@@ -237,6 +237,7 @@ export type TaskSchedulerOptions = {
 	readonly now: () => number;
 	/** `HarnessOptions.onWake`: replaces the timer for sleeping tasks. */
 	readonly onWake: ((wake: Wake) => void) | undefined;
+	readonly schedule: HarnessOptions["schedule"];
 	/** The host's timers (`HarnessOptions.setTimer`). */
 	readonly timers: Timers;
 	/** While closing, on the line after admitted commits settle, write what the callback returns straight to Storage. */
@@ -330,6 +331,7 @@ export class TaskScheduler {
 	readonly #env: TaskSchedulerOptions["env"];
 	readonly #now: () => number;
 	readonly #onWake: ((wake: Wake) => void) | undefined;
+	readonly #schedule: TaskSchedulerOptions["schedule"];
 	readonly #timers: Timers;
 	readonly #writeAtClose: (writes: () => readonly StorageWrite[]) => Promise<void>;
 	readonly #report: (error: unknown, info: ReportInfo, context?: Context) => void;
@@ -462,6 +464,7 @@ export class TaskScheduler {
 		this.#env = options.env;
 		this.#now = options.now;
 		this.#onWake = options.onWake;
+		this.#schedule = options.schedule;
 		this.#timers = options.timers;
 		this.#writeAtClose = options.writeAtClose;
 		this.#report = options.report;
@@ -1950,8 +1953,26 @@ export class TaskScheduler {
 		this.#dirty = true;
 		if (this.#draining || !this.#enabled || this.#closing) return;
 		this.#draining = true;
-		// Never commit synchronously from a commit or registry listener.
-		queueMicrotask(() => void this.#drain());
+		if (this.#schedule === undefined) {
+			queueMicrotask(() => void this.#drain());
+			return;
+		}
+		let drained: Promise<void> | undefined;
+		// Keep the caller's context and never commit synchronously from a commit or registry listener.
+		const run = () => {
+			drained ??= Promise.resolve().then(() => this.#drain());
+			return drained;
+		};
+		try {
+			const registration = this.#schedule(run);
+			contained(
+				() => registration,
+				(error) => this.#report(error, SCHEDULE),
+			);
+		} catch (error) {
+			this.#report(error, SCHEDULE);
+			void run();
+		}
 	}
 
 	async #drain(): Promise<void> {
@@ -3164,6 +3185,7 @@ export function closeSignal(runtime: object): AbortSignal {
 const REGISTRY: ReportInfo = { kind: "host_error", callback: "registry" };
 const SETTINGS: ReportInfo = { kind: "host_error", callback: "settings" };
 const ON_WAKE: ReportInfo = { kind: "host_error", callback: "onWake" };
+const SCHEDULE: ReportInfo = { kind: "host_error", callback: "schedule" };
 const TELEMETRY: ReportInfo = { kind: "host_error", callback: "telemetry" };
 
 /** The extension that installed `task` in `snapshot`, the last one that lists it; none for a built-in task. */

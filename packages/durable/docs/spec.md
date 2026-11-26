@@ -455,6 +455,11 @@ type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
    */
   readonly onWake?: (wake: Wake) => void;
   /**
+   * Dispatches scheduler passes instead of `queueMicrotask` (section 5.6). Each call to the same `run` returns
+   * the same promise, which tracks reservation and launch of runnable tasks.
+   */
+  readonly schedule?: ((run: () => Promise<void>) => void) | undefined;
+  /**
    * Failures that do not fail the calling operation, and the Session's failure, once; `report.kind` says where each
    * came from (section 10.1).
    */
@@ -680,7 +685,7 @@ type Wake = { readonly active: boolean; readonly at?: number };
 
 /** What a report is about (section 10.1). */
 type ReportTask = { readonly id: TaskId; readonly kind: string; readonly conversationId: ConversationId };
-type HostCallback = "now" | "settings" | "registry" | "env" | "models" | "setTimer" | "onWake" | "telemetry";
+type HostCallback = "now" | "settings" | "registry" | "env" | "models" | "setTimer" | "onWake" | "schedule" | "telemetry";
 type ReportInfo =
   | { readonly kind: "storage_failed" }
   | {
@@ -2946,6 +2951,25 @@ resets the object, which arms again when it next starts. Opening can fail too,
 for example in reconciliation: a host arms a fallback wakeup before
 `Harness.open`, unless an earlier one is set, so an object whose start throws is
 started again.
+
+With `HarnessOptions.schedule`, the scheduler hands each pass (`run`) to the host
+instead of `queueMicrotask`. The host calls `run()` in the invocation that should
+start the tasks, for example a Durable Object alarm. The pass may wait for a
+commit to publish runnable tasks, then reserve and launch them. Await `run()`
+before checking `wake()`. Task phases can outlive the pass, so the host keeps its
+invocation open for those phases as needed. An already running phase stays in
+its original invocation.
+
+Repeated calls to the same `run` return the same promise. The pass starts in a
+microtask so it runs outside any commit or registry listener that called
+`schedule`. The host keeps `run` synchronously before attempting any asynchronous
+dispatch. If dispatch fails, it retries delivery of that `run` in the intended
+invocation. Calls to `resume()` coalesce into the outstanding pass.
+
+The Harness reports a throw or a returned rejection as `host_error` (callback
+`"schedule"`). After a synchronous throw, the Harness calls `run` itself. After
+a returned rejection, delivery still belongs to the host. The Harness can close
+while a scheduled callback is pending. Calling it after close does no work.
 
 ### 5.7 Signals
 
@@ -6968,9 +6992,9 @@ views keep it.
   outside a task the conversation whose agent was resolved;
 - `host_error`: a host callback, by its `HarnessOptions` name: `now`,
   `settings`, `registry`, `env`, `models` for provider calls such as cancelling
-  a deferred response, `setTimer`, `onWake`, or `telemetry` for a telemetry
-  adapter that threw while a commit was published; with the task that called it,
-  if one did;
+  a deferred response, `setTimer`, `onWake`, `schedule`, or `telemetry` for a
+  telemetry adapter that threw while a commit was published; with the task that
+  called it, if one did;
 - `listener_error`: a commit, close, watch, view, or document listener.
 
 Every task report carries `task` (its ID, kind, and conversation). `extension`
