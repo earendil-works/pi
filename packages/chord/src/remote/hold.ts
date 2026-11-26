@@ -321,12 +321,18 @@ export class Hold implements Holder, UnboundRequest {
 		const { object } = served;
 		// Its params as the text they parsed from (strict UTF-8): the same bytes on the wire when it is relayed or placed
 		// again, and owned, no view of the message they came in (which the link's buffers may hold). A copy of the bytes
-		// kept 232 B per hold for a few bytes of JSON. Its type and, at the served version, its fingerprint are the
-		// served contract's strings (equal, as serving checked), not the ones decoded for it (64 B per hold).
+		// kept 232 B per hold for a few bytes of JSON. Its type name and fingerprint are its object's contract's strings
+		// where they are equal (the same text: only who owns the memory changes, 64 B per hold), else its own: an object
+		// may still have its old contract while a reload publishes a new one (serving checked the new one).
 		const { contract } = object.served;
-		const { version, address, trace } = request;
-		const fingerprint = version === contract.version ? contract.fingerprint : request.fingerprint;
-		const names = { type: contract.name, version, fingerprint, address, trace };
+		const { type, version, fingerprint, address, trace } = request;
+		const names = {
+			type: type === contract.name ? contract.name : type,
+			version,
+			fingerprint: fingerprint === contract.fingerprint ? contract.fingerprint : fingerprint,
+			address,
+			trace,
+		};
 		this.#request = holdRequest(names, text, request.chain, request.limit);
 		this.#object = object;
 		object.hold(this);
