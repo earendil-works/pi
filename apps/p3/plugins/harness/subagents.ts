@@ -86,17 +86,21 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 			// While the subagent is busy, a steer reaches it at its next step and a follow-up after its current answer.
 			const request = { type: "input", content: message, whenBusy: followUp ? "followUp" : "steer" } as const;
 			const submission = await subagent.submit({ ...request, requestId: `subagent:${reporter.id}` }, context);
-			const settled = await submission.wait(context);
+			const settled = await settle(subagent, submission, context);
 			// One commit decides the report and records the answer as delivered, so a restart does not decide again.
 			await runtime.commit(async (tx) => {
 				const next = (report?: string) => ({ status: "running", checkpoint: { phase: "report", report } }) as const;
+				if (settled === "stranded")
+					return next(`[subagent ${name} failed: its run failed before it took the message]`);
 				// `aborted`: archived, or withdrawn while queued: nothing to report.
 				if (settled.status === "unanswered")
 					return next(settled.reason === "aborted" ? undefined : `[subagent ${name} failed: ${settled.reason}]`);
 				if (settled.type !== "input") return next();
-				const agent = (await tx.doc(Subagents, runtime.conversationId)).agents[name];
-				// Archived meanwhile: its answer goes nowhere.
-				if (agent === undefined || agent.reported.includes(settled.answer)) return next();
+				const agents = (await tx.doc(Subagents, runtime.conversationId)).agents;
+				const agent = Object.hasOwn(agents, name) ? agents[name] : undefined;
+				// Archived meanwhile, or the name given to a new subagent since (Astra, round 1): its answer goes nowhere.
+				if (agent === undefined || agent.conversationId !== conversationId) return next();
+				if (agent.reported.includes(settled.answer)) return next();
 				agent.reported.push(settled.answer);
 				const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0];
 				return next(`[subagent ${name} answered] ${textOf(answer)}`);
@@ -116,6 +120,29 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
 	abort: (_reporter, runtime, context) =>
 		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
 });
+
+/** A subagent's conversation, as a task reaches it (Durable's `ConversationHandle`). */
+type Child = NonNullable<Awaited<ReturnType<TaskRuntime<ReporterInput, ReporterState, null, object>["conversation"]>>>;
+
+/** A message submitted to a subagent (Durable's `Submission`). */
+type Sent = Awaited<ReturnType<Child["submit"]>>;
+
+/** How a submitted message settled (Durable's `SettledSubmissionRecord`). */
+type Settled = Awaited<ReturnType<Sent["wait"]>>;
+
+/**
+ * How a message to a subagent settles: answered or unanswered, or `stranded` when the subagent's run failed while the
+ * message waited behind it (Durable keeps such an input queued until the next one, which a subagent may never get):
+ * then it is withdrawn, so neither the reporter nor the message waits forever (Astra, round 1).
+ */
+async function settle(subagent: Child, submission: Sent, context: Context): Promise<Settled | "stranded"> {
+	const settled = submission.wait(context);
+	const idle = subagent.waitForIdle(context).then(() => "idle" as const);
+	if ((await Promise.race([settled, idle])) !== "idle") return settled;
+	// Idle with the message still queued: no run will take it.
+	if ((await submission.status(context)).status !== "queued") return settled;
+	return (await submission.abort(context)) === "aborted" ? "stranded" : settled;
+}
 
 /** Ends a reporter: completed. */
 function finish(runtime: TaskRuntime<ReporterInput, ReporterState, null, object>, context: Context): Promise<void> {
@@ -180,7 +207,8 @@ const sendTool = defineTool({
 	replay: "unsafe",
 	execute: async ({ name, message, followUp }, api, context) => {
 		const said = await api.commit(async (tx) => {
-			const agent = (await tx.doc(Subagents, api.conversationId)).agents[name];
+			const agents = (await tx.doc(Subagents, api.conversationId)).agents;
+			const agent = Object.hasOwn(agents, name) ? agents[name] : undefined;
 			if (agent === undefined) return `No subagent named ${name} (see subagent_list).`;
 			const input = { name, conversationId: agent.conversationId, message, followUp: followUp === true };
 			await tx.createTask(Reporter, input, BACKGROUND);

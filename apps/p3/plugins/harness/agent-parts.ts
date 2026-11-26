@@ -48,6 +48,8 @@ export class AgentParts {
 	#models: Models = createModels();
 	/** What each kind gives, by kind name, in the order of `HeldThings`. */
 	#given: ReadonlyMap<string, Given> = new Map();
+	/** What the last apply was given; the same maps again change nothing. */
+	#applied: { readonly held: Held; readonly parts: Parts } | undefined;
 	/** What was reported already (`<kind>:<why>`), so a kind that stays broken is reported once. */
 	readonly #reported = new Set<string>();
 
@@ -76,6 +78,9 @@ export class AgentParts {
 	 * applies first is never run against an older registry.
 	 */
 	apply(held: Held, parts: Parts): void {
+		// Every submit applies: with nothing new since the last apply, nothing is walked (Astra, round 1).
+		if (held === this.#applied?.held && parts === this.#applied.parts) return;
+		this.#applied = { held, parts };
 		const before = this.#given;
 		const next = new Map<string, Given>();
 		for (const [kind, things] of held) {

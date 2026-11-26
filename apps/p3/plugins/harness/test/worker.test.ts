@@ -379,4 +379,44 @@ describe("the harness plugin on a worker", () => {
 		await ask("after");
 		assert.deepEqual(requests().at(-1)?.tools, ["bash", "edit", "read", "write"]);
 	});
+
+	it("ends a queued message whose subagent's run then failed, and reports it (Astra, round 1)", async () => {
+		const tool = (when: string, name: string, args: object): Step => ({
+			when,
+			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
+		});
+		const script = [
+			tool("@spawn", "subagent_spawn", { name: "reader", message: "child-start" }),
+			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo not-scripted"),
+			says("Started reader.", "ok"),
+			tool("@queue", "subagent_send", { name: "reader", message: "later", followUp: true }),
+			says("Sent to reader.", "ok"),
+			says("[subagent reader failed:", "noted"),
+		];
+		await start([login("l", "faux", script), coding(), subagents()]);
+		const open = await harness();
+		try {
+			await open.submit(undefined, { text: "@spawn", requestId: "spawn" }, context);
+			await eventually(() => existsSync(join(folder, "started")), Boolean);
+			await open.submit(undefined, { text: "@queue", requestId: "q" }, context);
+			await eventually(
+				() => open.durable.inspect(context),
+				(found) =>
+					found.submissions.some((s) => s.status === "queued" && s.requestId?.startsWith("subagent:") === true),
+			);
+			await writeFile(join(folder, "gate"), "");
+			await eventually(
+				() => requests(),
+				(seen) => seen.some((request) => request.last.startsWith("[subagent reader failed:")),
+				5000,
+			);
+			await eventually(
+				() => open.durable.inspect(context),
+				(found) => found.tasks.length === 0 && found.submissions.length === 0,
+				5000,
+			);
+		} finally {
+			await writeFile(join(folder, "gate"), "");
+		}
+	});
 });
