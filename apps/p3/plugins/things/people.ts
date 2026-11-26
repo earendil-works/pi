@@ -109,7 +109,7 @@ export const GroupManagers = defineTable("things.group-managers", {
 
 /**
  * An invite link (R39), kept hashed: whose secret it is, into which workspace as what, until when, how often, into
- * which group too, and who made it (the persons it makes are theirs). By expiry: the ones gone are swept.
+ * which group too, and who made it (the persons it makes are theirs). By expiry: swept at each new link.
  */
 export const Invites = defineTable("things.invites", {
 	version: 1,

@@ -12,6 +12,7 @@ import { serveGroup } from "./group.ts";
 import { kindView, ThingKinds, ThingKindsView } from "./kind.ts";
 import { serveLists } from "./lists.ts";
 import { serveOne } from "./one.ts";
+import { serveOwnerBridge } from "./owner-bridge.ts";
 import { serveStore } from "./store.ts";
 import { serveWorkspace } from "./workspace-object.ts";
 import { serveWorkspaceKind, THINGS_PLUGIN } from "./workspaces.ts";
@@ -43,4 +44,5 @@ export default defineFacet((host) => {
 	serveWorkspace(host);
 	serveLists(host);
 	serveGroup(host);
+	serveOwnerBridge(host);
 });

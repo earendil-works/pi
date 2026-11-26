@@ -106,11 +106,35 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 					await store.configure({ thing: configured, name, view, settings }, ctx);
 					return null;
 				},
-				// Manage people's picker, invite links and groups are slice 3's (ERNDL-1144).
-				picker: async () => notYet(),
-				inviteLink: async () => notYet(),
-				makeGroup: async () => notYet(),
+				// Manage people (ERNDL-1144): the picker, invite links, groups; a person names only whom it offers them.
+				picker: async ({ query }, ctx) =>
+					principal.kind === "person" ? store.picker({ workspace, person: principal.id, query }, ctx) : [],
+				inviteLink: async (args, ctx) => {
+					const secret = await store.createInvite({ ...args, workspace, by }, ctx);
+					// Its page is the base's invite route (the people plugin's until ERNDL-1144 push B moves it here).
+					return { url: `/_p3/invite#${secret}` };
+				},
+				makeGroup: async ({ name }, ctx) => {
+					const managers = principal.kind === "person" ? [{ kind: "person", person: principal.id } as const] : [];
+					const group = await store.makeGroup(
+						{ name, managedBy: { kind: "people" }, outside: false, managers },
+						ctx,
+					);
+					await store.putParty({ workspace, party: { kind: "group", group }, source: by }, ctx);
+					return group;
+				},
 				putParty: async ({ party }, ctx) => {
+					// A person or group a person puts in must be one the picker offers them.
+					const named = party.kind === "person" || party.kind === "group";
+					if (
+						named &&
+						principal.kind === "person" &&
+						!(await store.offers({ workspace, person: principal.id, party }, ctx))
+					) {
+						throw invalid("args", "things: this party is not present where you are", {
+							message: messages.message("notOffered"),
+						});
+					}
 					await store.putParty({ workspace, party, source: by }, ctx);
 					return null;
 				},
@@ -227,11 +251,6 @@ function notLinkedHere(thing: string, workspace: string) {
 	return invalid("args", `things: ${thing} is not linked in ${workspace}`, {
 		message: messages.message("notLinkedHere"),
 	});
-}
-
-/** What slice 3 brings (the picker, invite links, groups): refused meanwhile. */
-function notYet(): never {
-	throw invalid("args", "things: this is slice 3's (ERNDL-1144)", { message: messages.message("notYet") });
 }
 
 /** The denial of a caller not present in the workspace: one value, so an unchanged denial is the same decision. */
