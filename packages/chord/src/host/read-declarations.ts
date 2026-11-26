@@ -8,7 +8,7 @@ import { snapshotArguments } from "../contracts/internal.ts";
 import { ChordError } from "../data/index.ts";
 import { asChordError, waitingFor } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
-import type { Dependent } from "../state/internal.ts";
+import type { Dependent, FramedOwner } from "../state/internal.ts";
 import { LiveQuery, type LiveShape } from "../store/live-query.ts";
 import type { ReadSite } from "../store/open-query.ts";
 import { type Blocked, type Parking, waitingOn } from "./dependencies.ts";
@@ -172,7 +172,7 @@ export function liveReader(
 	shape: LiveShape,
 ): { readonly reader: Reader; readonly source: LiveQuery } {
 	const given = givenQuery(at, declaration, query, args);
-	const source = new LiveQuery(at.site, ownerOf(at, given), shape);
+	const source = new LiveQuery(at.site, new ReaderOwner(at, given), shape);
 	return { reader: new Reader(given, source, at.wake), source };
 }
 
@@ -185,7 +185,7 @@ export function listReader(
 	memory: ListMemory,
 ): { readonly reader: Reader; readonly list: List } {
 	const given = givenQuery(at, `list "${name}"`, source[0], source[1]);
-	const list = new List(at.site, ownerOf(at, given), first, memory);
+	const list = new List(at.site, new ReaderOwner(at, given), first, memory);
 	return { reader: new Reader(given, list, at.wake), list };
 }
 
@@ -201,7 +201,22 @@ function givenQuery(at: ReaderSite, declaration: string, query: unknown, args: u
 	return new GivenQuery(query, given, at.site.batch);
 }
 
-/** Who a reader's source belongs to: its object, reporting failures under the query's name. */
-function ownerOf(at: ReaderSite, given: GivenQuery): { readonly label: string; report(error: unknown): void } {
-	return { label: at.label, report: (error) => at.report(given.handle.label, error) };
+/**
+ * Who a reader's source belongs to: its object, reporting failures under the query's name. A class: an object with a
+ * closure and its context cost 144 B per reader, this 40 B (the hold-memory bench's live query).
+ */
+class ReaderOwner implements FramedOwner {
+	readonly label: string;
+	readonly #at: ReaderSite;
+	readonly #given: GivenQuery;
+
+	constructor(at: ReaderSite, given: GivenQuery) {
+		this.label = at.label;
+		this.#at = at;
+		this.#given = given;
+	}
+
+	report(error: unknown): void {
+		this.#at.report(this.#given.handle.label, error);
+	}
 }
