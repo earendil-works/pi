@@ -77,21 +77,12 @@ const DEFLATED = 1;
 export const binaryCodec: Codec = {
 	name: "binary",
 	encode(message) {
-		const writer = new Writer();
-		// Encoded on any kind: the message schema, after decoding, refuses an origin on a kind that has none.
-		const origin = (message as { readonly origin?: number }).origin;
-		const trace = message.kind === "hold" || message.kind === "call" ? message.trace : undefined;
-		const old =
-			(message.kind === "call" && message.old === true) || (message.kind === "ack" && message.events !== undefined)
-				? OLD
-				: 0;
-		writer.byte(
-			KIND_BYTES.get(message.kind)! | (origin === undefined ? 0 : ORIGIN) | (trace === undefined ? 0 : TRACE) | old,
-		);
-		if (origin !== undefined) writer.varint(origin);
-		if (trace !== undefined) writer.json(trace);
-		encodeFields(message, writer);
-		return writer.finish();
+		try {
+			encodeMessage(message, WRITER);
+			return WRITER.finish();
+		} finally {
+			WRITER.reset();
+		}
 	},
 	decode(bytes) {
 		const reader = new Reader(bytes);
@@ -111,11 +102,28 @@ export const binaryCodec: Codec = {
 	},
 };
 
+/** Writes `message` with `writer`: its kind byte with its flags, its origin and trace, then its fields. */
+function encodeMessage(message: Message, writer: Writer): void {
+	// Encoded on any kind: the message schema, after decoding, refuses an origin on a kind that has none.
+	const origin = (message as { readonly origin?: number }).origin;
+	const trace = message.kind === "hold" || message.kind === "call" ? message.trace : undefined;
+	const old =
+		(message.kind === "call" && message.old === true) || (message.kind === "ack" && message.events !== undefined)
+			? OLD
+			: 0;
+	writer.byte(
+		KIND_BYTES.get(message.kind)! | (origin === undefined ? 0 : ORIGIN) | (trace === undefined ? 0 : TRACE) | old,
+	);
+	if (origin !== undefined) writer.varint(origin);
+	if (trace !== undefined) writer.json(trace);
+	encodeFields(message, writer);
+}
+
 function encodeFields(message: Message, writer: Writer): void {
 	switch (message.kind) {
 		case "hello":
 			writer.varint(message.protocol);
-			writer.raw(hex(message.incarnation.replaceAll("-", ""), 16));
+			writer.uuid(message.incarnation);
 			// 0 when absent: no window (a window is at least 1).
 			writer.varint(message.calls ?? 0);
 			return;
@@ -123,7 +131,7 @@ function encodeFields(message: Message, writer: Writer): void {
 			writer.varint(message.hold);
 			writer.string(message.type);
 			writer.varint(message.version);
-			writer.raw(hex(message.fingerprint, 8));
+			writer.hex(message.fingerprint, 8);
 			writer.part(message.params);
 			const { address, principal, incarnation, chain, limit } = message;
 			writer.string(address.kind);
@@ -135,10 +143,10 @@ function encodeFields(message: Message, writer: Writer): void {
 					(limit === undefined ? 0 : LIMIT),
 			);
 			if (principal !== undefined) writer.json(principal);
-			if (incarnation !== undefined) writer.raw(hex(incarnation.replaceAll("-", ""), 16));
+			if (incarnation !== undefined) writer.uuid(incarnation);
 			if (chain !== undefined) {
 				writer.varint(chain.length);
-				for (const instance of chain) writer.raw(hex(instance.replaceAll("-", ""), 16));
+				for (const instance of chain) writer.uuid(instance);
 			}
 			if (limit !== undefined) writer.varint(limit);
 			return;
@@ -233,23 +241,22 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 	// The message schema establishes the types of what is read here (JSON fields are checked by it).
 	switch (kind) {
 		case "hello": {
-			const [protocol, incarnation, calls] = [reader.varint(), uuid(reader.raw(16)), reader.varint()];
+			const protocol = reader.varint();
+			const incarnation = reader.uuid();
+			const calls = reader.varint();
 			return { kind, protocol, incarnation, ...(calls === 0 ? {} : { calls }) };
 		}
 		case "hold": {
 			const hold = reader.varint();
 			const type = reader.string();
 			const version = reader.varint();
-			const fingerprint = hexText(reader.raw(8));
+			const fingerprint = reader.fingerprint();
 			const params = reader.part();
 			const address = { kind: reader.string(), params: reader.json() };
 			const flags = reader.byte();
 			if (flags > (PRINCIPAL | INCARNATION | CHAIN | LIMIT)) throw new Error("binary: unknown hold flags");
-			const principal = flags & PRINCIPAL ? { principal: reader.json() as { kind: string } } : {};
-			const incarnation = flags & INCARNATION ? { incarnation: uuid(reader.raw(16)) } : {};
-			const chain = flags & CHAIN ? { chain: reader.list(() => uuid(reader.raw(16))) } : {};
-			const limit = flags & LIMIT ? { limit: reader.varint() } : {};
-			return {
+			// The optional fields set in place, in their order: no object per absent field to spread.
+			const message: Writable<Extract<Message, { kind: "hold" }>> = {
 				kind,
 				hold,
 				type,
@@ -257,11 +264,12 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 				fingerprint,
 				params,
 				address,
-				...principal,
-				...incarnation,
-				...chain,
-				...limit,
 			};
+			if (flags & PRINCIPAL) message.principal = reader.json() as { kind: string };
+			if (flags & INCARNATION) message.incarnation = reader.uuid();
+			if (flags & CHAIN) message.chain = reader.list(readUuid);
+			if (flags & LIMIT) message.limit = reader.varint();
+			return message;
 		}
 		case "release":
 		case "loading":
@@ -269,30 +277,23 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 		case "retry":
 			return { kind, hold: reader.varint(), hops: reader.varint() };
 		case "call": {
-			const [call, hold, method] = [reader.varint(), reader.varint(), reader.varint()];
-			return { kind, call, hold, method, ...reader.payload("args") };
+			const message: Writable<Extract<Message, { kind: "call" }>> = {
+				kind,
+				call: reader.varint(),
+				hold: reader.varint(),
+				method: reader.varint(),
+			};
+			reader.payload(message, "args");
+			return message;
 		}
 		case "abort":
 			return { kind, call: reader.varint() };
 		case "bound": {
-			const holds = reader.list((): BoundEntry => {
-				const hold = reader.varint();
-				const granted = reader.list(() => reader.varint());
-				const members = reader.list(() => ({ member: reader.varint(), value: reader.part() }));
-				return { hold, granted, members, failed: reader.failed() };
-			});
+			const holds = reader.list(readBoundEntry);
 			return { kind, holds };
 		}
 		case "state": {
-			const holds = reader.list((): StateEntry => {
-				const hold = reader.varint();
-				const members = reader.list(() => ({ member: reader.varint(), ops: reader.part() }));
-				// The failure count times two, plus one when retirements follow.
-				const flags = reader.varint();
-				const failed = reader.failedEntries(Math.floor(flags / 2));
-				const retired = flags % 2 === 0 ? NO_RETIRED : reader.list(() => reader.varint());
-				return { hold, members, failed, retired };
-			});
+			const holds = reader.list(readStateEntry);
 			return { kind, holds };
 		}
 		case "failed": {
@@ -302,15 +303,15 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 			// The schema check after decoding establishes the wire error.
 			const error = reader.json() as Extract<Message, { kind: "error" }>["error"];
 			const retryIn = reader.varint();
-			return {
-				kind,
-				hold,
-				cause: { kind: cause, error },
-				...(retryIn === 0 ? {} : { retryIn: retryIn - 1 }),
-			};
+			const message: Writable<Extract<Message, { kind: "failed" }>> = { kind, hold, cause: { kind: cause, error } };
+			if (retryIn !== 0) message.retryIn = retryIn - 1;
+			return message;
 		}
-		case "result":
-			return { kind, call: reader.varint(), ...reader.payload("value") };
+		case "result": {
+			const message: Writable<Extract<Message, { kind: "result" }>> = { kind, call: reader.varint() };
+			reader.payload(message, "value");
+			return message;
+		}
 		case "error":
 			return { kind, call: reader.varint(), error: reader.json() as Extract<Message, { kind: "error" }>["error"] };
 		case "gone":
@@ -318,10 +319,12 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 		case "revoke":
 			return { kind, revocation: reader.json() };
 		case "event": {
-			const events = reader.list(() => {
-				const [hold, member, at] = [reader.varint(), reader.varint(), reader.varint()];
-				return { hold, member, at, value: reader.part() };
-			});
+			const events = reader.list((reader) => ({
+				hold: reader.varint(),
+				member: reader.varint(),
+				at: reader.varint(),
+				value: reader.part(),
+			}));
 			return { kind, events };
 		}
 		case "ack":
@@ -334,11 +337,56 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 	}
 }
 
-/** Up to this many UTF-16 units a string takes at most 126 bytes, so its length is one varint byte. */
-const SHORT = 42;
+/** A message's fields, set while it is decoded. */
+type Writable<T> = { -readonly [K in keyof T]: T[K] };
 
-/** From this many UTF-16 units a string is encoded in place (below it, encoding on its own and copying is cheaper). */
+/**
+ * The readers of a list's elements: module functions taking the reader, so a list costs no closure per decode (lists
+ * are read for every `bound`, `state` and `event`).
+ */
+function readVarint(reader: Reader): number {
+	return reader.varint();
+}
+
+function readUuid(reader: Reader): string {
+	return reader.uuid();
+}
+
+function readBoundEntry(reader: Reader): BoundEntry {
+	const hold = reader.varint();
+	const granted = reader.list(readVarint);
+	const members = reader.list(readBoundMember);
+	return { hold, granted, members, failed: reader.failed() };
+}
+
+function readBoundMember(reader: Reader): BoundEntry["members"][number] {
+	return { member: reader.varint(), value: reader.part() };
+}
+
+function readStateEntry(reader: Reader): StateEntry {
+	const hold = reader.varint();
+	const members = reader.list(readStateMember);
+	// The failure count times two, plus one when retirements follow.
+	const flags = reader.varint();
+	const failed = reader.failedEntries(Math.floor(flags / 2));
+	const retired = flags % 2 === 0 ? NO_RETIRED : reader.list(readVarint);
+	return { hold, members, failed, retired };
+}
+
+function readStateMember(reader: Reader): StateEntry["members"][number] {
+	return { member: reader.varint(), ops: reader.part() };
+}
+
+function readFailedMember(reader: Reader): FailedMember {
+	// The message schema checks each error's shape.
+	return { member: reader.varint(), error: reader.json() as FailedMember["error"] };
+}
+
+/** From this many UTF-16 units a string is encoded in chunks behind a fixed prefix. */
 const LONG = 4096;
+
+/** Up to this many UTF-16 units an ASCII text is written unit by unit: beyond (measured), `encodeInto` is faster. */
+const ASCII_UNITS = 32;
 
 /** The fixed length prefix of a long string: five varint bytes, up to 32 GiB (16 GiB for a part). */
 const LENGTH_SLOT = 5;
@@ -346,10 +394,17 @@ const LENGTH_SLOT = 5;
 /** The room left after a large chunk for the fields that follow it. */
 const SPARE = 4096;
 
-/** Writes a message into one growing buffer, right-sized at the end. */
+const DASH = 0x2d;
+
+/** The buffer a writer starts with and keeps across messages: most messages fit (a hold, a `bound`, a state change). */
+const BASE = 4096;
+
+/** The largest buffer a writer keeps once it grew; each message of up to this size is copied out of it. */
+const KEPT = 16 * 1024;
+
+/** Writes messages, one at a time, into one growing buffer; each right-sized at its end. */
 class Writer {
-	/** Large enough for most small messages (a state change, a call), small enough to zero cheaply. */
-	#buffer = new Uint8Array(256);
+	#buffer = new Uint8Array(BASE);
 	#length = 0;
 
 	byte(byte: number): void {
@@ -372,6 +427,43 @@ class Writer {
 		this.#reserve(bytes.byteLength);
 		this.#buffer.set(bytes, this.#length);
 		this.#length += bytes.byteLength;
+	}
+
+	/**
+	 * `text`, lowercase hex of `length` bytes (a fingerprint), as those bytes. Throws on anything else. Read digit by
+	 * digit into the buffer: a pattern test and an array per call cost more than the message's other fields.
+	 */
+	hex(text: string, length: number): void {
+		if (text.length !== length * 2) throw notHex(length);
+		this.#reserve(length);
+		for (let index = 0; index < length; index++) {
+			const high = digit(text.charCodeAt(index * 2));
+			const low = digit(text.charCodeAt(index * 2 + 1));
+			if (high < 0 || low < 0) throw notHex(length);
+			this.#buffer[this.#length + index] = high * 16 + low;
+		}
+		this.#length += length;
+	}
+
+	/**
+	 * A UUID (an incarnation) as its 16 bytes: its lowercase hex digits with every dash left out wherever it is, 32 of
+	 * them. Throws on anything else.
+	 */
+	uuid(text: string): void {
+		this.#reserve(16);
+		let digits = 0;
+		let high = 0;
+		for (let index = 0; index < text.length; index++) {
+			const unit = text.charCodeAt(index);
+			if (unit === DASH) continue;
+			const value = digit(unit);
+			if (value < 0 || digits === 32) throw notHex(16);
+			if (digits % 2 === 0) high = value;
+			else this.#buffer[this.#length + (digits >> 1)] = high * 16 + value;
+			digits++;
+		}
+		if (digits !== 32) throw notHex(16);
+		this.#length += 16;
 	}
 
 	/** A length-prefixed UTF-8 string (`#text`). */
@@ -398,24 +490,21 @@ class Writer {
 	}
 
 	/**
-	 * Text behind its UTF-8 length times `scale` (2 for a part's prefix), encoded straight into the buffer where the
-	 * prefix is known in advance: a short text (its prefix fits one byte: at most 126 bytes, 42 UTF-16 units, divided
-	 * by `scale`) and a long one (a snapshot's JSON, behind a fixed five-byte prefix, a padded varint, which readers
-	 * accept). Others are encoded on their own and copied in. No text is encoded twice, and the largest value of a
-	 * message is never copied.
+	 * Text behind its UTF-8 length times `scale` (2 for a part's prefix), encoded straight into the buffer: a short
+	 * ASCII text unit by unit (`#ascii`); one below `LONG` units behind room for the longest prefix it may need, moved
+	 * back over the room it did not (`#medium`); a long one (a snapshot's JSON) behind a fixed five-byte prefix, a padded
+	 * varint, which readers accept. No text is encoded twice or on its own, and the largest value of a message is never
+	 * copied.
 	 */
 	#text(text: string, scale: 1 | 2): void {
-		if (text.length <= SHORT / scale) {
-			this.#reserve(1 + text.length * 3);
-			const { written } = UTF8.encodeInto(text, this.#buffer.subarray(this.#length + 1));
-			this.#buffer[this.#length] = written * scale;
-			this.#length += 1 + written;
-			return;
+		if (text.length <= ASCII_UNITS) {
+			const start = this.#length;
+			this.varint(text.length * scale);
+			if (this.#ascii(text)) return;
+			this.#length = start;
 		}
 		if (text.length < LONG) {
-			const bytes = UTF8.encode(text);
-			this.varint(bytes.byteLength * scale);
-			this.raw(bytes);
+			this.#medium(text, scale);
 			return;
 		}
 		const slot = this.#length;
@@ -435,6 +524,56 @@ class Writer {
 			this.#buffer[slot + index] = (length % 0x80) | (index < LENGTH_SLOT - 1 ? 0x80 : 0);
 			length = Math.floor(length / 0x80);
 		}
+	}
+
+	/**
+	 * Text below `LONG` units: encoded with `encodeInto` behind room for the prefix of its most bytes (three per unit),
+	 * then moved back to its actual prefix's end (minimal, as the length of an encoded copy gave it): one encode and no
+	 * copy of its own (an encoded copy took 0.3 µs for any text; this 0.07 µs up to 1 KiB).
+	 */
+	#medium(text: string, scale: 1 | 2): void {
+		const room = varintBytes(text.length * 3 * scale);
+		const start = this.#length;
+		// Room for one byte per unit first (ASCII, most JSON): a text that is not gets more room for its rest.
+		this.#reserve(room + text.length);
+		this.#length += room;
+		let read = 0;
+		while (read < text.length) {
+			const rest = read === 0 ? text : text.slice(read);
+			const done = UTF8.encodeInto(rest, this.#buffer.subarray(this.#length));
+			read += done.read;
+			this.#length += done.written;
+			if (read < text.length) this.#reserve((text.length - read) * 3);
+		}
+		const buffer = this.#buffer;
+		const written = this.#length - start - room;
+		let length = written * scale;
+		const prefix = varintBytes(length);
+		if (prefix < room) buffer.copyWithin(start + prefix, start + room, start + room + written);
+		for (let index = start; index < start + prefix; index++) {
+			buffer[index] = index < start + prefix - 1 ? (length % 0x80) | 0x80 : length;
+			length = Math.floor(length / 0x80);
+		}
+		this.#length = start + prefix + written;
+	}
+
+	/**
+	 * `text`'s units as bytes when all are ASCII; otherwise nothing written (whatever it wrote is past the length) and
+	 * `false`. No view of the buffer per string, as `encodeInto` needs; unit by unit is faster only for short text (2 ns
+	 * a unit against 65 ns an `encodeInto`), so only up to `ASCII_UNITS`.
+	 */
+	#ascii(text: string): boolean {
+		const units = text.length;
+		this.#reserve(units);
+		const buffer = this.#buffer;
+		const at = this.#length;
+		for (let index = 0; index < units; index++) {
+			const unit = text.charCodeAt(index);
+			if (unit >= 0x80) return false;
+			buffer[at + index] = unit;
+		}
+		this.#length = at + units;
+		return true;
 	}
 
 	/** A payload: its flags, then its part and, when marked, its segments (count, lengths, raw bytes). */
@@ -476,14 +615,24 @@ class Writer {
 	}
 
 	/**
-	 * The message: a view of the buffer, or a right-sized copy when the spare room is meaningful (at least 64 bytes and
-	 * more than an eighth of the message), so a kept message keeps at most that much beyond itself. A large message
-	 * ends within its 4 KiB of room and is not copied.
+	 * The message: a right-sized copy, or for a message that grew the buffer past `KEPT` and fills it but for a little
+	 * (less than 64 bytes or an eighth of the message) a view of it, handed off: a large message ends within its 4 KiB
+	 * of room and is not copied, and the writer takes a new buffer (`reset`).
 	 */
 	finish(): Uint8Array {
-		const message = this.#buffer.subarray(0, this.#length);
-		const spare = this.#buffer.byteLength - this.#length;
-		return spare >= 64 && spare * 8 > this.#length ? message.slice() : message;
+		const buffer = this.#buffer;
+		const spare = buffer.byteLength - this.#length;
+		if (buffer.byteLength <= KEPT || (spare >= 64 && spare * 8 > this.#length)) return buffer.slice(0, this.#length);
+		return buffer.subarray(0, this.#length);
+	}
+
+	/**
+	 * Ready for the next message: empty; a buffer grown past `KEPT` is not kept past its message (a base one again),
+	 * one up to it is: a stream of 5 KiB messages grows it once, not once per message.
+	 */
+	reset(): void {
+		this.#length = 0;
+		if (this.#buffer.byteLength > KEPT) this.#buffer = new Uint8Array(BASE);
 	}
 
 	/** Grows the buffer to fit `bytes` more: doubled, or for a large chunk to its end plus room for the small fields after it. */
@@ -494,6 +643,21 @@ class Writer {
 		this.#buffer = grown;
 	}
 }
+
+/** How many bytes the varint of `value` takes. */
+function varintBytes(value: number): number {
+	let bytes = 1;
+	for (let rest = value; rest >= 0x80; rest = Math.floor(rest / 0x80)) bytes++;
+	return bytes;
+}
+
+/**
+ * The writer of every encode, with its buffer (an encode runs no code that encodes): encoding into one buffer kept
+ * across messages costs a message one right-sized copy, where a fresh zeroed buffer per message and its copy cost 2.5
+ * KiB per held object (`hot-paths.ts`, case 1) and made an encode 3.5 times as slow. It keeps no message: `finish`
+ * copies or hands its buffer off, and `reset` drops one grown past `KEPT` (16 KiB).
+ */
+const WRITER = new Writer();
 
 /** Reads a message's bytes; every read is bounds-checked, segments are views of the message. */
 class Reader {
@@ -526,14 +690,32 @@ class Reader {
 	}
 
 	raw(length: number): Uint8Array {
-		if (length > this.#bytes.byteLength - this.#offset) throw new Error("binary: the message ends early");
-		const bytes = this.#bytes.subarray(this.#offset, this.#offset + length);
-		this.#offset += length;
-		return bytes;
+		const at = this.#skip(length);
+		return this.#bytes.subarray(at, at + length);
 	}
 
 	string(): string {
 		return readUtf8(this.raw(this.varint()));
+	}
+
+	/** 8 bytes (a fingerprint) as lowercase hex, read in place (no view per field). */
+	fingerprint(): string {
+		const at = this.#skip(8);
+		return hexText(this.#bytes, at);
+	}
+
+	/** 16 bytes as a UUID's text, read in place. */
+	uuid(): string {
+		const at = this.#skip(16);
+		return uuid(this.#bytes, at);
+	}
+
+	/** The offset of the next `length` bytes, which it passes. */
+	#skip(length: number): number {
+		if (length > this.#bytes.byteLength - this.#offset) throw new Error("binary: the message ends early");
+		const at = this.#offset;
+		this.#offset += length;
+		return at;
 	}
 
 	json(): unknown {
@@ -548,22 +730,37 @@ class Reader {
 	}
 
 	/** A list: its count (each element takes at least a byte, so it cannot pass the message's end), then its elements. */
-	list<T>(read: () => T): T[] {
-		const count = this.varint();
-		if (count > this.#bytes.byteLength - this.#offset) throw new Error("binary: a count does not fit");
-		return Array.from({ length: count }, read);
+	list<T>(read: (reader: Reader) => T): T[] {
+		return this.#elements(this.varint(), read);
 	}
 
-	/** A payload part under `key`, absent when not present, with its segments when marked as carrying them. */
-	payload<K extends string>(key: K): { [P in K]?: Part } & { segments?: Uint8Array[] } {
+	/**
+	 * `count` elements, pushed: a packed list as `Array.from` made it (a list made at its length has holes to its
+	 * readers' code), without its array-like and its calls.
+	 */
+	#elements<T>(count: number, read: (reader: Reader) => T): T[] {
+		if (count > this.#bytes.byteLength - this.#offset) throw new Error("binary: a count does not fit");
+		// Most lists hold none or one: as literals they have no slack (a first `push` reserves 17 slots).
+		if (count === 0) return [];
+		if (count === 1) return [read(this)];
+		const list: T[] = [];
+		for (let index = 0; index < count; index++) list.push(read(this));
+		return list;
+	}
+
+	/**
+	 * A payload part set on `message` under `key`, left absent when not present, with its segments when marked as
+	 * carrying them.
+	 */
+	payload<K extends string>(message: { [P in K]?: Part } & { segments?: readonly Uint8Array[] }, key: K): void {
 		const flags = this.varint();
-		if (flags === 0) return {};
+		if (flags === 0) return;
 		if (flags !== PRESENT && flags !== (PRESENT | SEGMENTS)) throw new Error("binary: unknown payload flags");
-		const part = this.part();
-		if (flags === PRESENT) return { [key]: part } as { [P in K]?: Part };
-		const lengths = this.list(() => this.varint());
-		const segments = lengths.map((length) => this.raw(length));
-		return { [key]: part, segments } as { [P in K]?: Part } & { segments: Uint8Array[] };
+		// A key of the message's own payload field.
+		(message as Record<K, Part>)[key] = this.part();
+		if (flags === PRESENT) return;
+		const lengths = this.list(readVarint);
+		message.segments = lengths.map((length) => this.raw(length));
 	}
 
 	failed(): FailedMember[] {
@@ -572,12 +769,7 @@ class Reader {
 
 	/** `count` failed members, as `Writer.failed` writes them after their count. */
 	failedEntries(count: number): FailedMember[] {
-		if (count > this.#bytes.byteLength - this.#offset) throw new Error("binary: a count does not fit");
-		// The message schema checks each error's shape.
-		return Array.from({ length: count }, () => ({
-			member: this.varint(),
-			error: this.json() as Extract<Message, { kind: "error" }>["error"],
-		}));
+		return this.#elements(count, readFailedMember);
 	}
 
 	/** The message is consumed exactly. */
@@ -586,24 +778,48 @@ class Reader {
 	}
 }
 
-/** Lowercase hex of 8 and 16 bytes: a fingerprint, an incarnation without its dashes. */
-const HEX = new Map([
-	[8, /^[0-9a-f]{16}$/],
-	[16, /^[0-9a-f]{32}$/],
-]);
-
-/** `length` bytes from lowercase hex (an incarnation without dashes, a fingerprint). */
-function hex(text: string, length: number): Uint8Array {
-	if (!HEX.get(length)!.test(text)) throw new Error(`binary: not ${length} bytes of hex`);
-	return Uint8Array.from({ length }, (_, index) => Number.parseInt(text.slice(index * 2, index * 2 + 2), 16));
+/** A lowercase hex digit's value; -1 for any other unit. */
+function digit(unit: number): number {
+	if (unit >= 0x30 && unit <= 0x39) return unit - 0x30;
+	if (unit >= 0x61 && unit <= 0x66) return unit - 0x57;
+	return -1;
 }
 
-function hexText(bytes: Uint8Array): string {
-	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+function notHex(length: number): Error {
+	return new Error(`binary: not ${length} bytes of hex`);
 }
 
-/** 16 bytes as a UUID's text. */
-function uuid(bytes: Uint8Array): string {
-	const text = hexText(bytes);
-	return `${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`;
+/** The ASCII of the lowercase hex digits. */
+const DIGITS = UTF8.encode("0123456789abcdef");
+
+/**
+ * Where decoded hex is spelled out before it is read as one string (a flat one: no array, join or concatenation per
+ * fingerprint or incarnation); one decode at a time uses them.
+ */
+const FINGERPRINT_TEXT = new Uint8Array(16);
+
+const UUID_TEXT = UTF8.encode("00000000-0000-0000-0000-000000000000");
+
+/** The 8 bytes of `bytes` from `at` (a fingerprint) as lowercase hex. */
+function hexText(bytes: Uint8Array, at: number): string {
+	for (let index = 0; index < 8; index++) {
+		const byte = bytes[at + index]!;
+		FINGERPRINT_TEXT[index * 2] = DIGITS[byte >> 4]!;
+		FINGERPRINT_TEXT[index * 2 + 1] = DIGITS[byte & 15]!;
+	}
+	return readUtf8(FINGERPRINT_TEXT);
+}
+
+/** Where each of a UUID's 16 bytes is spelled in its text: two digits, after its dashes. */
+const UUID_AT = [0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34];
+
+/** The 16 bytes of `bytes` from `at` as a UUID's text. */
+function uuid(bytes: Uint8Array, at: number): string {
+	for (let index = 0; index < 16; index++) {
+		const byte = bytes[at + index]!;
+		const to = UUID_AT[index]!;
+		UUID_TEXT[to] = DIGITS[byte >> 4]!;
+		UUID_TEXT[to + 1] = DIGITS[byte & 15]!;
+	}
+	return readUtf8(UUID_TEXT);
 }

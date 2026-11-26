@@ -2,6 +2,7 @@ import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
 import { grantable, hostKind, int, local, method, obj, remote, str } from "../../src/contracts/index.ts";
+import { currentVersion } from "../../src/contracts/internal.ts";
 import { ChordError, PluginError } from "../../src/data/index.ts";
 import { defineState } from "../../src/documents/index.ts";
 import {
@@ -35,6 +36,7 @@ import {
 	linked,
 	MATCH_PLAYER,
 	Match,
+	NOTES_EDITOR,
 	Notes,
 	PlacedNotes,
 	partValue,
@@ -180,6 +182,254 @@ forEachCodec(() => {
 			await transported();
 			expect(peer.closed).toBe(true);
 			expect(errors.map(({ kind }) => kind)).toEqual(["protocol_error"]);
+		});
+	});
+
+	describe("a wide state frame (review of aeceda143)", () => {
+		it("costs about as much per member at 16,384 members as at 256: no scan per member", async () => {
+			const costs: number[] = [];
+			for (const count of [256, 16_384]) {
+				const names = Array.from({ length: count }, (_, index) => `v${index.toString().padStart(5, "0")}`);
+				const Wide = remote(`app.wide${count}`, {
+					version: 1,
+					params: {},
+					hostAddress: () => Server(),
+					state: Object.fromEntries(names.map((name) => [name, int()])) as Record<string, ReturnType<typeof int>>,
+				});
+				const { client, peer } = await rawProvider();
+				try {
+					const ref = client.hold(Wide, {}, context) as unknown as Record<string, { readonly value: unknown }>;
+					const { hold } = await peer.next("hold");
+					const values = names.map((_, member) => ({ member, value: jsonPart(1) }));
+					peer.send({ kind: "bound", holds: [{ hold, granted: [], members: values, failed: [] }] });
+					await transported();
+					const frames = [2, 3].map((n) => ({
+						kind: "state" as const,
+						holds: [
+							{
+								hold,
+								members: names.map((_, member) => ({ member, ops: jsonPart([["r", n]]) })),
+								retired: [],
+								failed: [],
+							},
+						],
+					}));
+					const samples: number[] = [];
+					for (let run = 0; run < 14; run++) {
+						const started = performance.now();
+						peer.send(frames[run % 2]!);
+						await transported();
+						if (run >= 5) samples.push(((performance.now() - started) * 1000) / count);
+						expect(ref[names[0]!]!.value).toBe((run % 2) + 2);
+					}
+					costs.push(samples.sort((a, b) => a - b)[4]!);
+				} finally {
+					await client.close(context);
+				}
+			}
+			// A scan per member made it 10 times as much per member (18.6 against 1.9 µs).
+			expect(costs[1]! / costs[0]!).toBeLessThan(3.25);
+		}, 60_000);
+	});
+
+	describe("granted sets", () => {
+		it("are shared by the remote objects of a version granted the same, and found again while one has it", async () => {
+			const { client, peer } = await rawProvider();
+			const a = client.hold(Notes, { session: "S1" }, context);
+			await bindNext(peer);
+			const b = client.hold(Notes, { session: "S2" }, context);
+			await bindNext(peer);
+			await transported();
+			expect(grantOf(a)).toEqual([...NOTES_EDITOR].sort());
+			expect(b.granted).toBe(a.granted);
+			// Another grant has its own set; the first one's is found again while `b` keeps it.
+			const c = client.hold(Notes, { session: "S3" }, context);
+			const { hold } = await peer.next("hold");
+			const members = [
+				{ member: wireNames(Notes, [NOTES_EDITOR[0]!]).state.notes!, value: jsonPart([]) },
+				{ member: wireNames(Notes, [NOTES_EDITOR[0]!]).state.count!, value: jsonPart(0) },
+			];
+			peer.send({
+				kind: "bound",
+				holds: [{ hold, granted: wireNames(Notes, [NOTES_EDITOR[0]!]).granted, members, failed: [] }],
+			});
+			await transported();
+			expect(grantOf(c)).toEqual([NOTES_EDITOR[0]]);
+			expect(c.granted).not.toBe(a.granted);
+			a.release();
+			const d = client.hold(Notes, { session: "S4" }, context);
+			await bindNext(peer);
+			await transported();
+			expect(d.granted).toBe(b.granted);
+		});
+
+		it("are kept by no version: a set goes once no binding has it", async () => {
+			// A type of its own: another test's live reference granted the same would keep a set of `Notes`.
+			const Granted = remote("app.granted-set", {
+				version: 1,
+				params: { id: str() },
+				hostAddress: () => Server(),
+				state: { n: int() },
+				methods: { go: grantable(method()) },
+			});
+			const { client, peer } = await rawProvider();
+			const set = await (async () => {
+				const ref = client.hold(Granted, { id: "a" }, context);
+				const { hold } = await peer.next("hold");
+				const names = wireNames(Granted, ["go"]);
+				const members = [{ member: names.state.n!, value: jsonPart(1) }];
+				peer.send({ kind: "bound", holds: [{ hold, granted: names.granted, members, failed: [] }] });
+				await transported();
+				expect(grantOf(ref)).toEqual(["go"]);
+				const set = new WeakRef(ref.granted);
+				ref.release();
+				await transported();
+				return set;
+			})();
+			await expectCollected(set);
+		});
+
+		it("keep no table of a version gone meanwhile when an app keeps a set (review of d806bd7a4)", async () => {
+			// Watches the insertions into the version's table only: it keeps neither the table nor its slots.
+			const tables: WeakRef<object>[] = [];
+			const set = Map.prototype.set;
+			Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+				const held = value instanceof WeakRef ? value.deref() : undefined;
+				if (typeof key === "number" && held instanceof Set && held.has("home")) tables.push(new WeakRef(this));
+				return set.call(this, key, value);
+			};
+			let kept: { readonly version: WeakRef<object>; readonly granted: ReadonlySet<string> };
+			try {
+				kept = await (async () => {
+					const Homed = remote("app.released-version", {
+						version: 1,
+						params: {},
+						hostAddress: () => Server(),
+						state: { n: int() },
+						flags: { home: "Home" },
+					});
+					const version = new WeakRef(currentVersion(Homed));
+					const { client, peer } = await rawProvider();
+					const ref = client.hold(Homed, {}, context);
+					const { hold } = await peer.next("hold");
+					peer.send({
+						kind: "bound",
+						holds: [{ hold, granted: [0], members: [{ member: 0, value: "1" }], failed: [] }],
+					});
+					await waitLive(ref);
+					const granted = ref.granted;
+					ref.release();
+					await transported();
+					await client.close(context);
+					return { version, granted };
+				})();
+			} finally {
+				Map.prototype.set = set;
+			}
+			expect(tables).toHaveLength(1);
+			await expectCollected(kept.version);
+			await expectCollected(...tables);
+			expect([...kept.granted]).toEqual(["home"]);
+		});
+
+		it("keep no slot or registration of a version gone meanwhile, while an app keeps every set (review of 46aeaa1e0)", async () => {
+			const tables: WeakRef<object>[] = [];
+			const slots: WeakRef<object>[] = [];
+			const set = Map.prototype.set;
+			// Watches the insertions into the version's table only: it keeps neither the table nor its slots.
+			Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+				const held = value instanceof WeakRef ? value.deref() : undefined;
+				if (
+					typeof key === "number" &&
+					held instanceof Set &&
+					[...held].some((name) => `${name}`.startsWith("kept"))
+				) {
+					tables.push(new WeakRef(this));
+					slots.push(new WeakRef(value as object));
+				}
+				return set.call(this, key, value);
+			};
+			let kept: { readonly version: WeakRef<object>; readonly sets: ReadonlySet<string>[] };
+			try {
+				kept = await (async () => {
+					const Kept = remote("app.kept-sets", {
+						version: 1,
+						params: {},
+						hostAddress: () => Server(),
+						state: { n: int() },
+						flags: { kept0: "0", kept1: "1", kept2: "2", kept3: "3", kept4: "4" },
+					});
+					const { client, peer } = await rawProvider();
+					const ref = client.hold(Kept, {}, context);
+					const { hold } = await peer.next("hold");
+					const sets: ReadonlySet<string>[] = [];
+					for (let mask = 1; mask < 32; mask++) {
+						const granted = [0, 1, 2, 3, 4].filter((index) => (mask & (1 << index)) !== 0);
+						peer.send({
+							kind: "bound",
+							holds: [{ hold, granted, members: [{ member: 0, value: "1" }], failed: [] }],
+						});
+						await transported();
+						await waitLive(ref);
+						sets.push(ref.granted);
+					}
+					ref.release();
+					await transported();
+					await client.close(context);
+					return { version: new WeakRef(currentVersion(Kept)), sets };
+				})();
+			} finally {
+				Map.prototype.set = set;
+			}
+			expect(slots).toHaveLength(31);
+			await expectCollected(kept.version);
+			await expectCollected(...tables);
+			await expectCollected(...slots);
+			expect(kept.sets.at(-1)!.size).toBe(5);
+		});
+
+		it("leave no slot of a collected set while the version lives (review of 9b548ea93)", async () => {
+			const Flagged = remote("app.granted-slots", {
+				version: 1,
+				params: { id: str() },
+				hostAddress: () => Server(),
+				state: { n: int() },
+				flags: { f0: "0", f1: "1", f2: "2", f3: "3", f4: "4" },
+			});
+			const { client, peer } = await rawProvider();
+			// Watches the cache's insertions only: it keeps neither the map, the slot nor its set.
+			const slots: WeakRef<WeakRef<ReadonlySet<string>>>[] = [];
+			const set = Map.prototype.set;
+			Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+				const held = value instanceof WeakRef ? value.deref() : undefined;
+				if (typeof key === "number" && held instanceof Set && [...held][0]?.startsWith("f")) {
+					slots.push(new WeakRef(value as WeakRef<ReadonlySet<string>>));
+				}
+				return set.call(this, key, value);
+			};
+			const sets: WeakRef<ReadonlySet<string>>[] = [];
+			try {
+				await (async () => {
+					const ref = client.hold(Flagged, { id: "a" }, context);
+					const { hold } = await peer.next("hold");
+					for (let mask = 1; mask <= 31; mask++) {
+						const granted = [0, 1, 2, 3, 4].filter((index) => (mask & (1 << index)) !== 0);
+						const members = [{ member: 0, value: "1" }];
+						peer.send({ kind: "bound", holds: [{ hold, granted, members, failed: [] }] });
+						await transported();
+						expect([...ref.granted]).toEqual(granted.map((index) => `f${index}`));
+						sets.push(new WeakRef(ref.granted));
+					}
+					ref.release();
+					await transported();
+				})();
+			} finally {
+				Map.prototype.set = set;
+			}
+			expect(slots).toHaveLength(31);
+			await expectCollected(...sets);
+			await expectCollected(...slots);
+			expect(Flagged.version).toBe(1);
 		});
 	});
 

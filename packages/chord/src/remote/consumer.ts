@@ -25,6 +25,7 @@ import {
 	type StateEntry,
 	type WireEvent,
 } from "../link/internal.ts";
+import { appended, NO_ITEMS } from "../lists.ts";
 import { carrierOf } from "../telemetry.ts";
 import { CallWindow, type QueuedCall } from "./calls.ts";
 import { actingFor } from "./hold.ts";
@@ -40,11 +41,26 @@ const statePart = (member: StateEntry["members"][number]): Part => member.ops;
 /** A reply to a call. */
 type Reply = Extract<Message, { readonly kind: "result" | "error" }>;
 
+/** A `call` message. */
+type CallMessage = Extract<Message, { readonly kind: "call" }>;
+
+/** What a call needs of its consumer side: one per side, shared by its calls. */
+type CallSide = {
+	/** Sends a call that got its slot, with the next id. */
+	readonly send: (call: OutgoingCall) => void;
+	/** Cancels a call its caller aborted (`ConsumerSide.#cancel`). */
+	readonly cancel: (call: OutgoingCall) => void;
+};
+
+/** An abort listener's options: made once. */
+const ONCE = { once: true } as const;
+
 /**
  * A call through this side: waiting for a slot of the call window (no id yet), then in flight under its id until its
- * reply, its abort, its hold's release or `gone`, or the link's close.
+ * reply, its abort, its hold's release or `gone`, or the link's close. It is its caller's abort listener itself
+ * (`handleEvent`): a call made five closures before (its listener, its settling and sending), 0.25 KiB each.
  */
-type OutgoingCall = {
+class OutgoingCall {
 	readonly hold: number;
 	/**
 	 * The reference that made it (its binding; never on the wire): releasing one of several references sharing the hold
@@ -59,11 +75,55 @@ type OutgoingCall = {
 	readonly trace: TelemetryCarrier | undefined;
 	/** Whether the caller is old work of a reload here (`call.old`: the provider routes it to open old attempts). */
 	readonly old: boolean;
-	readonly resolve: (value: unknown) => void;
-	readonly reject: (error: unknown) => void;
-	id: number | undefined;
-	send(): void;
-};
+	id: number | undefined = undefined;
+	readonly #side: CallSide;
+	/** The caller's signal, listened to until the call settles. */
+	readonly #signal: AbortSignal | undefined;
+	readonly #resolve: (value: unknown) => void;
+	readonly #reject: (error: unknown) => void;
+
+	constructor(
+		fields: Pick<OutgoingCall, "hold" | "owner" | "method" | "args" | "segments" | "trace" | "old">,
+		side: CallSide,
+		signal: AbortSignal | undefined,
+		settle: Pick<PromiseWithResolvers<unknown>, "resolve" | "reject">,
+	) {
+		this.hold = fields.hold;
+		this.owner = fields.owner;
+		this.method = fields.method;
+		this.args = fields.args;
+		this.segments = fields.segments;
+		this.trace = fields.trace;
+		this.old = fields.old;
+		this.#side = side;
+		this.#signal = signal;
+		this.#resolve = settle.resolve;
+		this.#reject = settle.reject;
+	}
+
+	/** Settles the caller with `value`; its abort no longer concerns the call. */
+	resolve(value: unknown): void {
+		this.#signal?.removeEventListener("abort", this);
+		this.#resolve(value);
+	}
+
+	/** Settles the caller with `error`; its abort no longer concerns the call. */
+	reject(error: unknown): void {
+		this.#signal?.removeEventListener("abort", this);
+		this.#reject(error);
+	}
+
+	/** It got its slot: its side sends it. */
+	send(): void {
+		this.#side.send(this);
+	}
+
+	/** Its caller aborted (it listens `once`): cancelled, the caller rejected with the signal's reason. */
+	handleEvent(): void {
+		this.#side.cancel(this);
+		this.#reject(this.#signal!.reason);
+	}
+}
 
 /**
  * The consumer side of one link. Ids are its own counters, from 0; a reply naming an id this side gave up is ignored
@@ -83,8 +143,16 @@ export class ConsumerSide {
 	#greeted: { readonly calls: number | undefined } | undefined;
 	/** The `event` messages consumed since the last event `ack` (one goes in a microtask after the first). */
 	#consumed = 0;
+	/** Acknowledges the `event` messages consumed since the last event `ack`: one function, no closure per turn. */
+	readonly #ackEvents = (): void => {
+		const events = this.#consumed;
+		this.#consumed = 0;
+		this.#link.send({ kind: "ack", events });
+	};
 	#nextHold = 0;
 	#nextCall = 0;
+	/** What its calls need of it. */
+	readonly #side: CallSide = { send: (call) => this.#send(call), cancel: (call) => this.#cancel(call) };
 
 	constructor(link: HostLink) {
 		this.#link = link;
@@ -131,13 +199,8 @@ export class ConsumerSide {
 		const link = this.#link;
 		const part =
 			payload === undefined ? undefined : link.role === "parent" ? payload.json : link.part(payload.json, context);
-		const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-		const cancel = (): void => {
-			this.#cancel(call);
-			reject(signal!.reason);
-		};
-		const done = (): void => signal?.removeEventListener("abort", cancel);
-		const call: OutgoingCall = {
+		const settle = Promise.withResolvers<unknown>();
+		const fields = {
 			hold,
 			owner,
 			method,
@@ -145,20 +208,11 @@ export class ConsumerSide {
 			segments: payload?.segments,
 			trace: carrierOf(context.telemetry),
 			old: link.host.oldWork.of(context),
-			resolve: (value) => {
-				done();
-				resolve(value);
-			},
-			reject: (error) => {
-				done();
-				reject(error);
-			},
-			id: undefined,
-			send: () => this.#send(call),
 		};
-		signal?.addEventListener("abort", cancel, { once: true });
+		const call = new OutgoingCall(fields, this.#side, signal, settle);
+		signal?.addEventListener("abort", call, ONCE);
 		this.#window.submit(call);
-		return promise;
+		return settle.promise;
 	}
 
 	/** Hold `hold` was released: the provider is told, its calls fail with `error`. */
@@ -288,16 +342,13 @@ export class ConsumerSide {
 		call.id = id;
 		this.#calls.set(id, call);
 		const { hold, method, args, segments, trace } = call;
-		this.#link.send({
-			kind: "call",
-			call: id,
-			hold,
-			method,
-			...(args === undefined ? {} : { args }),
-			...(segments === undefined ? {} : { segments }),
-			trace,
-			...(call.old ? { old: true as const } : {}),
-		});
+		// Set in place in the order the spreads gave (`trace` always, maybe `undefined`): no object per absent field.
+		const message: { -readonly [K in keyof CallMessage]: CallMessage[K] } = { kind: "call", call: id, hold, method };
+		if (args !== undefined) message.args = args;
+		if (segments !== undefined) message.segments = segments;
+		message.trace = trace;
+		if (call.old) message.old = true;
+		this.#link.send(message);
 	}
 
 	/**
@@ -362,11 +413,7 @@ export class ConsumerSide {
 	#events(events: readonly WireEvent[]): void {
 		for (const { hold, member, at, value } of events) this.#entries.get(hold)?.event(member, at, value, this.#link);
 		if (this.#consumed++ > 0) return;
-		queueMicrotask(() => {
-			const events = this.#consumed;
-			this.#consumed = 0;
-			this.#link.send({ kind: "ack", events });
-		});
+		queueMicrotask(this.#ackEvents);
 	}
 
 	/**
@@ -375,21 +422,22 @@ export class ConsumerSide {
 	 * the link's limits fails only its hold (`too_large/part`); the others apply.
 	 */
 	#bound(holds: readonly BoundEntry[]): void {
-		const adoptions: (() => void)[] = [];
-		const bound: RemoteObject[] = [];
+		// Built by `appended` (most messages bind one hold: a list grown by push reserves 17 slots).
+		let adoptions: readonly (() => void)[] = NO_ITEMS;
+		let bound: readonly RemoteObject[] = NO_ITEMS;
 		let oversized: [RemoteObject, ChordError][] | undefined;
 		for (const entry of holds) {
 			const holder = this.#entries.get(entry.hold);
 			if (holder === undefined) continue;
 			try {
-				adoptions.push(holder.prepareBound(entry, this.#link));
+				adoptions = appended(adoptions, holder.prepareBound(entry, this.#link));
 			} catch (error) {
 				if (!isChordError(error, "too_large")) throw error;
 				oversized ??= [];
 				oversized.push([holder, error]);
 				continue;
 			}
-			bound.push(holder);
+			bound = appended(bound, holder);
 		}
 		this.#adopt(adoptions);
 		// Acknowledged before the references go live: the calls they send then (their parked ones) follow the `ack`, so
@@ -402,13 +450,13 @@ export class ConsumerSide {
 
 	/** One `state` message, as `#bound` does it. */
 	#state(holds: readonly StateEntry[]): void {
-		const adoptions: (() => void)[] = [];
+		let adoptions: readonly (() => void)[] = NO_ITEMS;
 		let oversized: [RemoteObject, ChordError][] | undefined;
 		for (const entry of holds) {
 			const holder = this.#entries.get(entry.hold);
 			if (holder === undefined) continue;
 			try {
-				adoptions.push(holder.prepare(entry, this.#link));
+				adoptions = appended(adoptions, holder.prepare(entry, this.#link));
 			} catch (error) {
 				if (!isChordError(error, "too_large")) throw error;
 				oversized ??= [];
@@ -436,8 +484,12 @@ export class ConsumerSide {
 	#loading(hold: number): void {
 		const holder = this.#entries.get(hold);
 		if (holder === undefined) return;
-		const error = stackless({ code: "unavailable", message: `hold ${hold}: rebinding` });
-		for (const call of this.#window.removeHold(hold)) call.reject(error);
+		const waiting = this.#window.removeHold(hold);
+		// Made only for a call that waits (most rebindings have none: 0.3 KiB each).
+		if (waiting.length > 0) {
+			const error = stackless({ code: "unavailable", message: `hold ${hold}: rebinding` });
+			for (const call of waiting) call.reject(error);
+		}
 		holder.loading();
 	}
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
+import type { Message as PublicMessage } from "../../src/index.ts";
 import {
 	binaryCodec,
 	checkMessage,
@@ -569,6 +570,113 @@ describe("the binary codec", () => {
 		expect(medium.buffer.byteLength).toBe(medium.byteLength);
 	});
 
+	it("returns messages that share no buffer: a later encode leaves an earlier message as it was", () => {
+		const first = binaryCodec.encode({ kind: "result", call: 0, value: '"a"' });
+		const copy = [...first];
+		binaryCodec.encode({ kind: "result", call: 1, value: '"bbbbbbbb"' });
+		expect([...first]).toEqual(copy);
+		expect(first.buffer.byteLength).toBe(first.byteLength);
+		// A message that grew the kept buffer (5 KiB) is copied out of it too.
+		const grown = binaryCodec.encode({ kind: "result", call: 0, value: jsonPart("a".repeat(5_000)) });
+		const grownCopy = [...grown];
+		binaryCodec.encode({ kind: "result", call: 1, value: jsonPart("b".repeat(5_000)) });
+		expect([...grown]).toEqual(grownCopy);
+		expect(grown.buffer.byteLength).toBe(grown.byteLength);
+	});
+
+	it("writes a fingerprint and an incarnation only as lowercase hex of their length, dashes left out wherever they are", () => {
+		const hold = (fingerprint: string, incarnation?: string): Message => ({
+			kind: "hold",
+			hold: 0,
+			type: "t",
+			version: 1,
+			fingerprint,
+			params: "{}",
+			address: server,
+			...(incarnation === undefined ? {} : { incarnation }),
+		});
+		for (const bad of ["0123456789ABCDEF", "0123456789abcde", "0123456789abcdef0", "0123456789abcdeg", ""]) {
+			expect(() => binaryCodec.encode(hold(bad))).toThrow(/^binary: not 8 bytes of hex$/);
+		}
+		const dashed = "0192f5e2-7c3a-7def-8abc-0123456789ab";
+		const decoded = binaryCodec.decode(binaryCodec.encode(hold("0123456789abcdef", dashed.replace("-", "--"))));
+		expect((decoded as Extract<Message, { kind: "hold" }>).incarnation).toBe(dashed);
+		for (const bad of [dashed.slice(1), `${dashed}0`, dashed.toUpperCase(), dashed.replace("0", "x")]) {
+			expect(() => binaryCodec.encode(hold("0123456789abcdef", bad))).toThrow(/^binary: not 16 bytes of hex$/);
+		}
+	});
+
+	it("decodes optional fields in their order and leaves absent ones unset (no key of `undefined`)", () => {
+		const incarnation = "0192f5e2-7c3a-7def-8abc-0123456789ab";
+		const keys = (message: Message) => Object.keys(binaryCodec.decode(binaryCodec.encode(message)));
+		const hold = {
+			kind: "hold",
+			hold: 0,
+			type: "t",
+			version: 1,
+			fingerprint: "0123456789abcdef",
+			params: "{}",
+			address: server,
+		} as const;
+		expect(keys(hold)).toEqual(["kind", "hold", "type", "version", "fingerprint", "params", "address"]);
+		expect(
+			keys({ ...hold, principal: { kind: "p" }, incarnation, chain: [incarnation], limit: 3, trace: { a: "b" } }),
+		).toEqual([
+			"kind",
+			"hold",
+			"type",
+			"version",
+			"fingerprint",
+			"params",
+			"address",
+			"principal",
+			"incarnation",
+			"chain",
+			"limit",
+			"trace",
+		]);
+		expect(keys({ kind: "call", call: 0, hold: 0, method: 0 })).toEqual(["kind", "call", "hold", "method"]);
+		const segments = [new Uint8Array([1])];
+		expect(keys({ kind: "call", call: 0, hold: 0, method: 0, args: "[]", segments, old: true })).toEqual([
+			"kind",
+			"call",
+			"hold",
+			"method",
+			"args",
+			"segments",
+			"old",
+		]);
+		expect(keys({ kind: "result", call: 0 })).toEqual(["kind", "call"]);
+		expect(keys({ kind: "result", call: 0, value: "1", origin: 2 })).toEqual(["kind", "call", "value", "origin"]);
+		const cause = { kind: "broken", error: { kind: "chord", error: { code: "released", message: "" } } } as const;
+		expect(keys({ kind: "failed", hold: 0, cause })).toEqual(["kind", "hold", "cause"]);
+		expect(keys({ kind: "failed", hold: 0, cause, retryIn: 0 })).toEqual(["kind", "hold", "cause", "retryIn"]);
+	});
+
+	it("leaves a decoded message's lists its own: the public type keeps a state entry's failed list mutable", () => {
+		const error = { kind: "chord", error: { code: "unavailable", message: "m" } } as const;
+		const state: Message = {
+			kind: "state",
+			holds: [
+				{
+					hold: 0,
+					members: [],
+					failed: [
+						{ member: 2, error },
+						{ member: 1, error },
+					],
+					retired: [],
+				},
+			],
+		};
+		const decoded: PublicMessage = binaryCodec.decode(binaryCodec.encode(state));
+		// A tool's own sort of what it decoded compiles (a type test) and changes nothing of the codec's.
+		if (decoded.kind === "state") for (const entry of decoded.holds) entry.failed.sort((a, b) => a.member - b.member);
+		expect((decoded as Extract<Message, { kind: "state" }>).holds[0]!.failed.map(({ member }) => member)).toEqual([
+			1, 2,
+		]);
+	});
+
 	it("refuses invalid UTF-8 in strings", () => {
 		expect(() => binaryCodec.decode(new Uint8Array([1, 0, 1, 0xff]))).toThrow();
 	});
@@ -757,6 +865,54 @@ describe("the binary codec's strings", () => {
 			const message: Message = { kind: "bound", holds: [{ hold: 1, granted: [], members, failed: [] }] };
 			expect(plain(binaryCodec.decode(binaryCodec.encode(message)))).toEqual(message);
 		}
+	});
+});
+
+describe("the binary codec's medium strings", () => {
+	/** A result message as bytes, built by hand: kind, call, payload flags, the part's doubled length, its UTF-8. */
+	const expected = (text: string): number[] => {
+		const bytes = new TextEncoder().encode(text);
+		const prefix: number[] = [];
+		for (let rest = bytes.byteLength * 2; ; rest = Math.floor(rest / 0x80)) {
+			if (rest < 0x80) {
+				prefix.push(rest);
+				break;
+			}
+			prefix.push((rest % 0x80) | 0x80);
+		}
+		return [8, 0, 1, ...prefix, ...bytes];
+	};
+
+	it("are written behind their minimal length, at every length around a prefix's growth and the ASCII bound", () => {
+		const lengths = [...Array.from({ length: 140 }, (_, index) => index), 4_094, 4_095];
+		const texts = [
+			...lengths.map((length) => "x".repeat(length)),
+			// Below `LONG` (4,096 units) with the "é": from there a fixed five-byte prefix.
+			...lengths.filter((length) => length < 4_095).map((length) => `${"x".repeat(length)}é`),
+			...[2_729, 2_730, 2_731, 2_732, 4_095].map((length) => "€".repeat(length)),
+			"\ud800 a lone surrogate",
+		];
+		for (const text of texts) {
+			expect([...binaryCodec.encode({ kind: "result", call: 0, value: text })]).toEqual(expected(text));
+		}
+	});
+
+	it("cost no more than a long one's per byte: 4,095 ASCII bytes take less than twice as long as 4,096", () => {
+		const encode = (bytes: number) => {
+			const message: Message = { kind: "result", call: 0, value: "a".repeat(bytes) };
+			const start = performance.now();
+			for (let index = 0; index < 2_000; index++) binaryCodec.encode(message);
+			return performance.now() - start;
+		};
+		const medium: number[] = [];
+		const long: number[] = [];
+		for (let round = 0; round < 11; round++) {
+			medium.push(encode(4_095));
+			long.push(encode(4_096));
+		}
+		const median = (list: number[]) => list.sort((a, b) => a - b)[5]!;
+		// Unit by unit (a loop over the text) this was 3 times as long; with an encoded copy 1.3 times.
+		expect(median(medium) / median(long)).toBeLessThan(2);
 	});
 });
 

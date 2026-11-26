@@ -17,6 +17,7 @@ import {
 	type MethodData,
 	memberOrder,
 	NO_GRANTS,
+	type VersionData,
 } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, isChordError } from "../data/index.ts";
 import { asChordError, invalid, stackless } from "../data/internal.ts";
@@ -51,6 +52,7 @@ import {
 } from "../link/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
 import { capped, carrierOf, chordSpans, ended, OpenSpan, parentOf, spanFailed, untraced } from "../telemetry.ts";
+import { Bindings } from "./bindings.ts";
 import type { ConsumerSide } from "./consumer.ts";
 import type { HoldRequest } from "./hold.ts";
 import type { HostLink } from "./host-link.ts";
@@ -83,6 +85,60 @@ function eventNodes(members: readonly string[]): (member: string) => EventNode |
 
 const NO_EVENT_NODES = (): undefined => undefined;
 
+/** Up to this many members a state entry scans for a member listed twice; more keep a set (the measured crossover). */
+const SCANNED = 32;
+
+/** The replica of state member `index` of binding `bound`; throws on one outside it (a protocol error of hold `id`). */
+function replicaAt(bound: Bound, id: number, index: number): Replica {
+	const name = bound.names.state[index];
+	const found = name === undefined ? undefined : bound.replicas.get(name);
+	if (found === undefined) throw new Error(`hold ${id}: no state member ${index}`);
+	return found;
+}
+
+/**
+ * The set `names` of `version`'s grants, `bits` the bit set of their indexes: one per version and grant while a
+ * binding has it, shared by every remote object of the version granted the same, so the members granted it are found
+ * by the set's identity (`grantedMembers`), not rebuilt per binding; its references' `granted` is that one set,
+ * read-only by convention (as the provider's sets are shared per decision). Kept weakly: gone once no binding has it,
+ * its slot with it, every slot and registration with the version (`GrantedSets`).
+ */
+function grantedSet(version: VersionData, bits: number, names: readonly string[]): ReadonlySet<string> {
+	let sets = grantedSets.get(version);
+	if (sets === undefined) {
+		const slots = new Map<number, WeakRef<ReadonlySet<string>>>();
+		// Drops the slot of a collected set, unless it holds another set of the same grants made since.
+		const collected = new FinalizationRegistry<{ readonly bits: number; readonly ref: WeakRef<ReadonlySet<string>> }>(
+			({ bits, ref }) => {
+				if (slots.get(bits) === ref) slots.delete(bits);
+			},
+		);
+		sets = { slots, collected };
+		grantedSets.set(version, sets);
+	}
+	let set = sets.slots.get(bits)?.deref();
+	if (set === undefined) {
+		set = new Set(names);
+		const ref = new WeakRef(set);
+		sets.slots.set(bits, ref);
+		sets.collected.register(set, { bits, ref });
+	}
+	return set;
+}
+
+/**
+ * A version's granted sets by their indexes' bits, each while a binding has it, and the registry that drops a
+ * collected one's slot: owned by the version's entry alone, so a set an app keeps keeps neither the slots nor their
+ * registrations once the version is gone.
+ */
+type GrantedSets = {
+	readonly slots: Map<number, WeakRef<ReadonlySet<string>>>;
+	readonly collected: FinalizationRegistry<{ readonly bits: number; readonly ref: WeakRef<ReadonlySet<string>> }>;
+};
+
+/** The granted sets of each version (`grantedSet`): gone with the version. */
+const grantedSets = new WeakMap<VersionData, GrantedSets>();
+
 /**
  * The object of the remote references with one sharing key, owned by its host across the links of its path (one held
  * by a `self.get` reference or a private retry is its reference's alone). It is `loading` until a link's hold of it is
@@ -90,13 +146,12 @@ const NO_EVENT_NODES = (): undefined => undefined;
  * id, each member with its own Delta decoder. It tells every binding of each change; the hold ends with the last.
  */
 export class RemoteObject implements Target {
-	readonly kind = "remote";
 	/** The object in errors: its type, and its params key when it has params. */
 	readonly label: string;
 	readonly contract: Contract;
 	readonly #host: AnyHost;
-	/** What its holds ask for: the params as a part (checked by L1 when the reference was made), the address. */
-	readonly request: HoldRequest;
+	/** The address its holds name (its host's, as its type's `hostAddress` computed it). */
+	readonly #address: WireAddress;
 	/** Whom its reference acts for: named on route links (`actingFor`). */
 	readonly caller: Caller;
 	/** Its params as L1 checked them, for placing it anew (a private retry after a part past the limits). */
@@ -108,10 +163,14 @@ export class RemoteObject implements Target {
 	#state: RefState = LOADING;
 	/** The last binding, kept while loading or failed: members keep their last values and watches. */
 	#bound: Bound | undefined;
-	/** The hold on the path's link while one is open: that link's consumer side and this hold's id on it. */
-	#hold: { readonly side: ConsumerSide; readonly id: number } | undefined;
+	/**
+	 * The hold on the path's link while one is open: that link's consumer side and this hold's id on it (two fields, no
+	 * record per hold: 40 B per object).
+	 */
+	#side: ConsumerSide | undefined;
+	#holdId = 0;
 	/** Its references' bindings, in the order they joined; the hold ends with the last. */
-	readonly #bindings = new Set<Binding>();
+	readonly #bindings = new Bindings<Binding>();
 	/** Takes its entry out of its path's sharing table, once; none for a private object or once taken out. */
 	#unindex: (() => void) | undefined;
 	#lastFailure: ChordError | undefined;
@@ -139,8 +198,9 @@ export class RemoteObject implements Target {
 	) {
 		this.#host = host;
 		this.contract = contract;
-		this.label = params.key === "" ? contract.name : `${contract.name}(${params.key})`;
-		const { name: type, version, fingerprint } = contract;
+		// One join: a flat string (a template keeps the tree of its concatenations, 96 B per object).
+		this.label = params.key === "" ? contract.name : [contract.name, "(", params.key, ")"].join("");
+		const { name: type } = contract;
 		// Its hold is shared work (decision "Shared work"): a root on the host's adapter whatever its first getter's
 		// context, linked to that getter's span when traced; its first hold carries the span's carrier (`#holdTrace`).
 		if (!untraced(host.telemetry)) {
@@ -153,7 +213,7 @@ export class RemoteObject implements Target {
 			if (!untraced(trigger)) this.#holding.span.addLink({ context: trigger });
 			this.#firstHold = carrierOf(this.#holding.span);
 		}
-		this.request = { type, version, fingerprint, params: jsonPart(params.params), address };
+		this.#address = address;
 		this.caller = caller;
 		this.#params = params;
 		this.#path = path;
@@ -161,8 +221,22 @@ export class RemoteObject implements Target {
 		this.#unindex = unindex;
 	}
 
+	/** A getter on the class, not a field of each object (8 B per object). */
+	get kind(): "remote" {
+		return "remote";
+	}
+
 	get state(): RefState {
 		return this.#state;
+	}
+
+	/**
+	 * What its holds ask for: the params as a part (checked by L1 when the reference was made), the address. Made for
+	 * each hold (a first one, a re-hold): kept, it cost 96 B per object for one message per link.
+	 */
+	get request(): HoldRequest {
+		const { name: type, version, fingerprint } = this.contract;
+		return { type, version, fingerprint, params: jsonPart(this.#params.params), address: this.#address };
 	}
 
 	/** Over a link the provider decides what each version sees: its state as it is. */
@@ -239,13 +313,13 @@ export class RemoteObject implements Target {
 	unhold(binding: Binding): void {
 		if (!this.#bindings.delete(binding)) return;
 		if (this.#bindings.size > 0) {
-			this.#hold?.side.cancelCalls(this.#hold.id, binding, this.label);
+			this.#side?.cancelCalls(this.#holdId, binding, this.label);
 			return;
 		}
 		const error = stackless({ code: "released", message: `${this.label}: released` });
 		// Out of the table before anything else runs: a reference made from here on holds anew.
 		this.#unpublish();
-		this.#hold?.side.release(this.#hold.id, error);
+		this.#side?.release(this.#holdId, error);
 		this.#end(error);
 	}
 
@@ -262,7 +336,9 @@ export class RemoteObject implements Target {
 	 */
 	attach(link: HostLink): void {
 		const chain = this.#dependent?.activationChain();
-		this.#hold = { side: link.consumer, id: link.consumer.attach(this, chain, this.#holdTrace()) };
+		const id = link.consumer.attach(this, chain, this.#holdTrace());
+		this.#side = link.consumer;
+		this.#holdId = id;
 	}
 
 	/**
@@ -281,7 +357,7 @@ export class RemoteObject implements Target {
 			"chord.host": this.#host.spanHost,
 			type: this.contract.name,
 			object: capped(this.label),
-			"address.kind": this.request.address.kind,
+			"address.kind": this.#address.kind,
 		};
 		this.#holding = new OpenSpan(adapter, "chord.hold", attributes);
 		this.#holding.span.addLink({ context: parentOf(this.#firstHold, adapter) });
@@ -305,10 +381,10 @@ export class RemoteObject implements Target {
 	 * It stays on its path: an allow holds it again.
 	 */
 	withheld(cause: FailureCause): void {
-		const hold = this.#hold;
-		this.#hold = undefined;
+		const side = this.#side;
+		this.#side = undefined;
 		const { error } = cause;
-		hold?.side.release(hold.id, cause.kind === "denied" ? revoked(this.label, error) : error);
+		side?.release(this.#holdId, cause.kind === "denied" ? revoked(this.label, error) : error);
 		this.#lastFailure = error;
 		this.#held("failed", error);
 		if (cause.kind === "denied") this.#bound = undefined;
@@ -322,7 +398,7 @@ export class RemoteObject implements Target {
 
 	/** The link dropped: loading until a new link's hold is bound (`#startOver`). */
 	dropped(_error: ChordError): void {
-		this.#hold = undefined;
+		this.#side = undefined;
 		this.#startOver();
 	}
 
@@ -332,24 +408,25 @@ export class RemoteObject implements Target {
 	 */
 	async call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown> {
 		const bound = this.#bound!;
-		const hold = this.#hold!;
+		const side = this.#side!;
+		const id = this.#holdId;
 		const data = bound.methods.get(method);
 		if (data === undefined) throw lacking(this.label, this.contract, method, "method");
 		const index = bound.names.methods.indexOf(method);
 		// Arguments are checked by the provider.
 		const parent = context.telemetry;
-		if (untraced(parent)) return hold.side.call(hold.id, index, data, args, binding, context);
+		if (untraced(parent)) return side.call(id, index, data, args, binding, context);
 		const attributes = {
 			"chord.host": this.#host.spanHost,
 			type: this.contract.name,
 			member: method,
 			object: capped(this.label),
-			"address.kind": this.request.address.kind,
+			"address.kind": this.#address.kind,
 			...this.#host.principalAttributes(this.caller.principal, context),
 		};
 		return chordSpans(parent)("chord.call", attributes, async (span) => {
 			try {
-				const result = await hold.side.call(hold.id, index, data, args, binding, withTelemetry(span, context));
+				const result = await side.call(id, index, data, args, binding, withTelemetry(span, context));
 				span.setAttributes({ outcome: "ok" });
 				return result;
 			} catch (error) {
@@ -444,7 +521,7 @@ export class RemoteObject implements Target {
 			this.#retryAlone(binding);
 			return;
 		}
-		if (walk.hops > 0) this.#hold?.side.retry(this.#hold.id, walk.hops);
+		if (walk.hops > 0) this.#side?.retry(this.#holdId, walk.hops);
 	}
 
 	/**
@@ -459,7 +536,7 @@ export class RemoteObject implements Target {
 			this.#host,
 			this.contract,
 			this.#params,
-			this.request.address,
+			this.#address,
 			this.caller,
 			unplaced,
 			this.#dependent,
@@ -497,11 +574,11 @@ export class RemoteObject implements Target {
 	 * final: no link holds it again (a reconnect included); each binding's `retry` moves it alone (`#retryAlone`).
 	 */
 	tooLarge(error: ChordError): void {
-		const hold = this.#hold;
-		if (hold === undefined) return;
-		this.#hold = undefined;
+		const side = this.#side;
+		if (side === undefined) return;
+		this.#side = undefined;
 		this.#unpublish();
-		hold.side.release(hold.id, error);
+		side.release(this.#holdId, error);
 		this.#path.detach(this);
 		this.#path = this.#host.unplaced;
 		this.#path.attach(this);
@@ -528,39 +605,62 @@ export class RemoteObject implements Target {
 		const granted = this.#grantedFrom(entry);
 		const data = grantedMembers(currentVersion(this.contract), granted);
 		const names = memberOrder(data);
-		const members = new Map<string, MemberSnapshot>();
+		// The snapshot by member index, applied in the entry's order (values, then failures); a list and no map of
+		// names, which cost 0.5 KiB per binding with its iteration.
+		const snapshots: (MemberSnapshot | undefined)[] = new Array(names.state.length);
+		// Exactly one per member once complete (a list grown by push reserves 17 slots).
+		const order: number[] = new Array(names.state.length);
+		let added = 0;
 		const add = (index: number, state: MemberSnapshot): void => {
-			const member = names.state[index];
-			if (member === undefined || members.has(member))
+			if (names.state[index] === undefined || snapshots[index] !== undefined) {
 				throw new Error(`hold ${entry.hold}: member ${index} in bound`);
-			members.set(member, state);
+			}
+			snapshots[index] = state;
+			order[added++] = index;
 		};
 		// Fresh JSON from the link: state is JSON and never validated (§30).
 		for (const { member, value } of entry.members) {
 			add(member, { kind: "value", value: parsePart(link.openPart(value, link.limits, link.context)) as JsonValue });
 		}
 		for (const { member, error } of entry.failed) add(member, { kind: "failed", error: errorFromWire(error) });
-		if (members.size !== names.state.length) throw new Error(`hold ${entry.hold}: the snapshot misses a member`);
-		return () => {
-			const previous = this.#bound?.replicas;
-			const replicas = new Map<string, Replica>();
-			// First: a derive recomputing in this batch reads the new binding through its reference.
-			this.#bound = { granted, methods: data.methods, names, replicas, eventNode: eventNodes(names.events) };
-			for (const [member, state] of members) {
-				const replica = previous?.get(member);
-				if (replica === undefined) {
-					replicas.set(member, new Replica(this.#host.batch, state));
-				} else {
-					replica.reset(state);
-					replicas.set(member, replica);
-				}
-			}
-			for (const [member, replica] of previous ?? []) {
-				if (members.has(member)) continue;
-				replica.vanish(lacking(this.label, this.contract, member, "state member"));
+		if (added !== names.state.length) throw new Error(`hold ${entry.hold}: the snapshot misses a member`);
+		return () => this.#adoptBound(granted, data.methods, names, snapshots, order);
+	}
+
+	/**
+	 * Applies a prepared `bound` entry inside the batch of its message: a member it had gets the snapshot (`reset`), a
+	 * new one its first value, in the entry's `order`; a member no longer granted fails (its replica stays).
+	 */
+	#adoptBound(
+		granted: ReadonlySet<string>,
+		methods: ReadonlyMap<string, MethodData>,
+		names: MemberNames,
+		snapshots: readonly (MemberSnapshot | undefined)[],
+		order: readonly number[],
+	): void {
+		const previous = this.#bound?.replicas;
+		const replicas = new Map<string, Replica>();
+		// First: a derive recomputing in this batch reads the new binding through its reference.
+		this.#bound = { granted, methods, names, replicas, eventNode: eventNodes(names.events) };
+		for (const index of order) {
+			const member = names.state[index]!;
+			// Prepared: every index of the order has its snapshot.
+			const state = snapshots[index]!;
+			const replica = previous?.get(member);
+			if (replica === undefined) {
+				replicas.set(member, new Replica(this.#host.batch, state));
+			} else {
+				replica.reset(state);
 				replicas.set(member, replica);
 			}
-		};
+		}
+		if (previous === undefined) return;
+		// The replicas set above are the snapshot's members: the others are no longer granted.
+		previous.forEach((replica, member) => {
+			if (replicas.has(member)) return;
+			replica.vanish(lacking(this.label, this.contract, member, "state member"));
+			replicas.set(member, replica);
+		});
 	}
 
 	/**
@@ -568,16 +668,26 @@ export class RemoteObject implements Target {
 	 * last binding's set when equal, so a re-hold granted the same changes nothing a UI compares (`useLive`).
 	 */
 	#grantedFrom(entry: BoundEntry): ReadonlySet<string> {
-		if (entry.granted.length === 0) return NO_GRANTS;
-		const { grants } = currentVersion(this.contract);
-		const names = entry.granted.map((index) => {
-			const name = grants[index];
-			if (name === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
-			return name;
-		});
+		const indexes = entry.granted;
+		if (indexes.length === 0) return NO_GRANTS;
+		const version = currentVersion(this.contract);
+		const { grants } = version;
+		// The bit set of its indexes while they ascend, as providers send them, into at most 30 grants (a small
+		// integer): other input gets a set of its own in its order.
+		let bits = 0;
+		let shared = grants.length <= 30;
+		for (let at = 0; at < indexes.length; at++) {
+			const index = indexes[at]!;
+			if (grants[index] === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
+			if (at > 0 && index <= indexes[at - 1]!) shared = false;
+			else bits |= 1 << index;
+		}
 		const last = this.#bound?.granted;
-		if (last !== undefined && last.size === names.length && names.every((name) => last.has(name))) return last;
-		return new Set(names);
+		if (last !== undefined && last.size === indexes.length && indexes.every((index) => last.has(grants[index]!))) {
+			return last;
+		}
+		const names = indexes.map((index) => grants[index]!);
+		return shared ? grantedSet(version, bits, names) : new Set(names);
 	}
 
 	/** After a `bound` message's batch: the reference goes live (its parked calls are sent, a parked dependent goes on). */
@@ -619,35 +729,41 @@ export class RemoteObject implements Target {
 	prepare({ hold: id, members, failed, retired }: StateEntry, link: HostLink): () => void {
 		const bound = this.#bound;
 		if (this.#state.kind !== "live" || bound === undefined) throw new Error(`hold ${id}: state before bound`);
-		const replica = (index: number): Replica => {
-			const name = bound.names.state[index];
-			const found = name === undefined ? undefined : bound.replicas.get(name);
-			if (found === undefined) throw new Error(`hold ${id}: no state member ${index}`);
-			return found;
-		};
 		// Made by the first retirement (rare): no allocation per message otherwise.
 		let retirements: Set<Replica> | undefined;
 		for (const member of retired) {
-			const target = replica(member);
+			const target = replicaAt(bound, id, member);
 			retirements ??= new Set();
 			if (retirements.has(target)) throw new Error(`hold ${id}: member ${member} retired twice in one state`);
 			retirements.add(target);
 		}
-		const changed = new Set<Replica>();
-		const updates = members.map(({ member, ops }) => {
-			const target = replica(member);
-			if (changed.has(target)) throw new Error(`hold ${id}: member ${member} twice in one state`);
-			changed.add(target);
-			return { target, ...target.decode(parsePart(link.openPart(ops, link.limits, link.context))) };
+		// A frame of a few members (the usual one) scans the earlier ones for a member listed twice; a wider one keeps a
+		// set of the changed replicas, so a frame of n members costs O(n), not O(n²).
+		const changed = members.length > SCANNED ? new Set<Replica>() : undefined;
+		const updates = members.map(({ member, ops }, at) => {
+			const target = replicaAt(bound, id, member);
+			let twice = changed?.has(target) === true;
+			for (let earlier = 0; changed === undefined && earlier < at; earlier++)
+				twice ||= members[earlier]!.member === member;
+			if (twice) throw new Error(`hold ${id}: member ${member} twice in one state`);
+			changed?.add(target);
+			const { value, ops: decoded } = target.decode(parsePart(link.openPart(ops, link.limits, link.context)));
+			return { target, value, ops: decoded };
 		});
-		const failures = failed.map(({ member, error }) => ({ target: replica(member), error: errorFromWire(error) }));
+		const failures = failed.map(({ member, error }) => ({
+			target: replicaAt(bound, id, member),
+			error: errorFromWire(error),
+		}));
 		return () => {
 			for (const { target, value, ops } of updates) target.adopt(value, ops, retirements?.has(target) === true);
 			for (const { target, error } of failures) target.fail(error);
 			// A retirement without ops (a derive whose value stayed, rule 21): the flag alone, after the failures (a
 			// failed member keeps it for its next value).
 			if (retirements !== undefined) {
-				for (const target of retirements) if (!changed.has(target)) target.retireAlone();
+				for (const target of retirements) {
+					const updated = changed?.has(target) ?? updates.some((update) => update.target === target);
+					if (!updated) target.retireAlone();
+				}
 			}
 		};
 	}
@@ -693,10 +809,10 @@ export class RemoteObject implements Target {
 	 * with `error` as `lost` does; no later link holds it.
 	 */
 	revoke(error: ChordError): void {
-		const hold = this.#hold;
-		this.#hold = undefined;
+		const side = this.#side;
+		this.#side = undefined;
 		this.#unpublish();
-		hold?.side.release(hold.id, error);
+		side?.release(this.#holdId, error);
 		this.lost(error);
 	}
 
@@ -705,9 +821,9 @@ export class RemoteObject implements Target {
 	 * object ends first, so each ends exactly once whatever ending one does.
 	 */
 	lost(error: ChordError): void {
-		const bindings = [...this.#bindings];
+		const bindings = this.#bindings.list();
 		this.#unpublish();
-		this.#hold?.side.forget(this.#hold.id, error);
+		this.#side?.forget(this.#holdId, error);
 		this.#end(error);
 		for (const binding of bindings) binding.end(error);
 	}
@@ -720,7 +836,7 @@ export class RemoteObject implements Target {
 		this.#state = { kind: "ended", error };
 		this.#bindings.clear();
 		this.#dependent = undefined;
-		this.#hold = undefined;
+		this.#side = undefined;
 		this.#bound = undefined;
 		this.#path.detach(this);
 		for (const replica of bound?.replicas.values() ?? []) replica.end(error);
@@ -755,8 +871,10 @@ export class RemoteObject implements Target {
 		if (state.kind === "failed" && state.cause.kind === "broken") this.#unpublish();
 		this.#state = state;
 		if (this.#bindings.size === 0) return;
-		const bindings = [...this.#bindings];
-		if (bindings.some((binding) => binding.following)) {
+		const bindings = this.#bindings.list();
+		let following = false;
+		for (const binding of bindings) following ||= binding.following;
+		if (following) {
 			this.#host.batch.within(() => {
 				for (const binding of bindings) binding.retarget();
 			}, BACKGROUND_CONTEXT);

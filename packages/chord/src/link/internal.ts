@@ -35,4 +35,4 @@ export {
 	type PartLimits,
 } from "./part.ts";
 export { describeMessage, textCodec } from "./text.ts";
-export { jsonPart, parsePart, parsePayload, payloadPart } from "./values.ts";
+export { jsonPart, parsePart, parsePayload, payloadPart, readUtf8 } from "./values.ts";

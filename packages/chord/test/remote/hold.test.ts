@@ -9,6 +9,7 @@ import {
 	keyed,
 	local,
 	method,
+	num,
 	obj,
 	remote,
 	str,
@@ -32,6 +33,7 @@ import { ChordObject } from "../../src/host/object.ts";
 import { defineJob } from "../../src/jobs/index.ts";
 import { type Link, memoryLinkPair } from "../../src/link/index.ts";
 import { binaryCodec, jsonPart, type Message } from "../../src/link/internal.ts";
+import { defineRegistry } from "../../src/registries/index.ts";
 import { Hold } from "../../src/remote/hold.ts";
 import { constant, type Writable } from "../../src/state/index.ts";
 import {
@@ -302,6 +304,10 @@ forEachCodec(() => {
 				const [held, made] = [holds.length, encoders.length];
 				hold(peer, 0, Halves);
 				await peer.next("bound");
+				// A member's encoder is made by its first change: none at the binding.
+				expect(encoders.length - made).toBe(0);
+				peer.send({ kind: "call", call: 0, hold: 0, method: HALVES.methods.set!, args: jsonPart(4) });
+				await peer.next("state");
 				const refs: WeakRef<object>[] = [new WeakRef(providerObject(server)), ...holds.slice(held)];
 				refs.push(...encoders.slice(made));
 				expect(refs).toHaveLength(4);
@@ -1472,6 +1478,85 @@ describe("a hold after its object's live failure (final review)", () => {
 		expect([ref.x.value, valuesOf(calls)]).toEqual([{ n: 1 }, [{ n: 1 }, { failed: "boom" }]]);
 		await client.close(context);
 		await server.close(context);
+	});
+});
+
+forEachCodec(() => {
+	describe("a hold placed while a reload publishes (review of 0e1c59248)", () => {
+		it("keeps its own fingerprint: refused against the outgoing object's contract, then bound by the new one", async () => {
+			const Old = remote("app.republished", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				state: { n: int() },
+			});
+			const Next = remote("app.republished", {
+				version: 1,
+				params: {},
+				hostAddress: () => Server(),
+				state: { n: num() },
+			});
+			expect(Next.fingerprint).not.toBe(Old.fingerprint);
+			const notify = defineRegistry<string, string>("app.reload-complete", { version: 1 });
+			const [second, far] = memoryLinkPair();
+			const late = new RawPeer(far);
+			const principal = { kind: "owner" } as const;
+			let accepted = 0;
+			const server = createHost<TestPrincipal>({
+				address: Server(),
+				principal: { kind: "server" },
+				onError(error) {
+					// A host callback after the new type table was installed, while the old object still has its contract.
+					if (error.kind !== "registry_undeclared") return;
+					accepted++;
+					server.accept(second, { principal, codec: testCodec() }, context);
+				},
+			});
+			const hold = (peer: RawPeer, Type: typeof Old | typeof Next) =>
+				peer.send({
+					kind: "hold",
+					hold: 0,
+					type: Type.name,
+					version: 1,
+					fingerprint: Type.fingerprint,
+					params: "{}",
+					address: SERVER_ADDRESS,
+				});
+			try {
+				await server.load(
+					[
+						{
+							name: "@test/app",
+							facet: defineFacet<TestPrincipal>((h) => h.serve(Old, () => ({ n: constant(1) }))),
+						},
+					],
+					context,
+				);
+				const [near, wire] = memoryLinkPair();
+				const early = new RawPeer(wire);
+				server.accept(near, { principal, codec: testCodec() }, context);
+				hold(early, Old);
+				await early.next("bound");
+				// Its hello and hold wait on the second link until it is accepted.
+				hold(late, Next);
+				await transported();
+				const facet = defineFacet<TestPrincipal>((h, self) => {
+					h.serve(Next, () => ({ n: constant(2) }));
+					self.contribute(notify, "new");
+				});
+				const report = await server.reload([{ name: "@test/app", facet }], context);
+				await transported();
+				expect([report.failed, accepted]).toEqual([[], 1]);
+				const shown = late.received.flatMap((message) => {
+					if (message.kind === "failed") return [message.cause.error.kind === "chord" ? message.kind : "?"];
+					if (message.kind === "bound") return [`bound ${partValue(message.holds[0]!.members[0]!.value)}`];
+					return [];
+				});
+				expect(shown).toEqual(["failed", "bound 2"]);
+			} finally {
+				await server.close(context);
+			}
+		});
 	});
 });
 
