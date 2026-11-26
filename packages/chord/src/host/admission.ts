@@ -525,17 +525,21 @@ function grantedOf(
 			return broken(`its admission granted ${JSON.stringify(name)}: no grantable member or flag of its contract`);
 		}
 	}
-	const names = [...new Set(listed as string[])].sort();
 	// No names is no grant: `allow({})` and `allow({ granted: [] })` are one decision.
-	if (names.length === 0) return { kind: "read", data, granted: NO_GRANTS };
-	return { kind: "read", data, granted: grantedSet(grants, names) };
+	if (listed.length === 0) return { kind: "read", data, granted: NO_GRANTS };
+	// Checked just above: grantable names.
+	return { kind: "read", data, granted: grantedSet(grants, listed as readonly string[]) };
 }
 
 /**
  * Whether `listed` (an allow's `granted`) names exactly the set `granted`, each name a grant: absent and empty are no
  * names; repeated names and their order do not count. Allocates nothing.
  */
-function sameNames(listed: JsonValue | undefined, granted: ReadonlySet<string>, grants: readonly string[]): boolean {
+function sameNames(
+	listed: JsonValue | readonly string[] | undefined,
+	granted: ReadonlySet<string>,
+	grants: readonly string[],
+): boolean {
 	if (listed === undefined) return granted.size === 0;
 	if (!Array.isArray(listed)) return false;
 	// Indexed: a for-of allocates an iterator per list.
@@ -577,38 +581,54 @@ type DecidedDeny = {
 type Decided = DecidedAllow | DecidedDeny;
 
 /**
- * The set of `names` (sorted, not empty, of the contract whose grantable names are `grants`): one per version and set
- * of names while any decision has it, shared by every decision that grants them (a thousand callers granted the same
- * names keep one set). Held weakly: a set goes with the last decision that granted it, its entry right after, and
- * all of a version's with its contract.
+ * The set of `listed` (not empty, grants of the contract whose grantable names are `grants`, in any order, repeated or
+ * not): one per version and set of names while any decision has it, shared by every decision that grants them (a
+ * thousand callers granted the same names keep one set), its names sorted. Found by a hash of the names' indexes and
+ * compared name by name: a lookup makes no key (it sorted, deduped and serialized the names before). Held weakly: a
+ * set goes with the last decision that granted it, its entry right after, and all of a version's with its contract.
  */
-function grantedSet(grants: readonly string[], names: readonly string[]): ReadonlySet<string> {
+function grantedSet(grants: readonly string[], listed: readonly string[]): ReadonlySet<string> {
 	let sets = grantedSets.get(grants);
 	if (sets === undefined) {
 		sets = new Map();
 		grantedSets.set(grants, sets);
 	}
-	const key = JSON.stringify(names);
-	let granted = sets.get(key)?.deref();
-	if (granted === undefined) {
-		granted = new Set(names);
-		sets.set(key, new WeakRef(granted));
-		collectedSets.register(granted, { sets, key });
+	// A bit per index (modulo 31): order and repetition do not change it; exact up to 31 grants.
+	let hash = 0;
+	for (let index = 0; index < listed.length; index++) hash |= 1 << (grants.indexOf(listed[index]!) % 31);
+	const bucket = sets.get(hash);
+	if (bucket !== undefined) {
+		for (let index = 0; index < bucket.length; index++) {
+			const granted = bucket[index]!.deref();
+			if (granted !== undefined && sameNames(listed, granted, grants)) return granted;
+		}
 	}
+	// In the grants' order, which is sorted: a set's names iterate sorted.
+	const granted: ReadonlySet<string> = new Set(grants.filter((name) => listed.includes(name)));
+	const ref = new WeakRef(granted);
+	if (bucket === undefined) sets.set(hash, [ref]);
+	else bucket.push(ref);
+	collectedSets.register(granted, { sets, hash, ref });
 	return granted;
 }
 
-/** A version's granted sets by their names' JSON, each while a decision has it. */
-type GrantedSets = Map<string, WeakRef<ReadonlySet<string>>>;
+/** A version's granted sets by the hash of their names, each while a decision has it. */
+type GrantedSets = Map<number, WeakRef<ReadonlySet<string>>[]>;
 
 const grantedSets = new WeakMap<readonly string[], GrantedSets>();
 
-/** Drops the entry of a collected set, unless the same names were granted again meanwhile. */
-const collectedSets = new FinalizationRegistry<{ readonly sets: GrantedSets; readonly key: string }>(
-	({ sets, key }) => {
-		if (sets.get(key)?.deref() === undefined) sets.delete(key);
-	},
-);
+/** Drops the entry of a collected set (its bucket with it when it was the last). */
+const collectedSets = new FinalizationRegistry<{
+	readonly sets: GrantedSets;
+	readonly hash: number;
+	readonly ref: WeakRef<ReadonlySet<string>>;
+}>(({ sets, hash, ref }) => {
+	const bucket = sets.get(hash);
+	if (bucket === undefined) return;
+	const index = bucket.indexOf(ref);
+	if (index >= 0) bucket.splice(index, 1);
+	if (bucket.length === 0) sets.delete(hash);
+});
 
 /**
  * Refuses `self.job` in an admitted type's factory (slice 14 §2.1), in an attempt and in staging: work for a person

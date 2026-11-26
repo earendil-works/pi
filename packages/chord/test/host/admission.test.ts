@@ -1886,6 +1886,40 @@ describe("what a decision keeps (hold memory)", () => {
 		await h.close(context);
 	});
 
+	it("sets of names whose hashes collide (more than 31 grants) are told apart name by name", async () => {
+		const names = Array.from({ length: 40 }, (_, index) => `g${String(index).padStart(2, "0")}`);
+		const Many = remote("heap.many", {
+			version: 1,
+			params: { n: int() },
+			hostAddress: () => Server(),
+			state: { name: str() },
+			flags: Object.fromEntries(names.map((name) => [name, name])),
+		});
+		// g00 and g31 are indexes 0 and 31 of the sorted grants: one hash.
+		const lists = [["g00"], ["g31"], ["g31", "g00"], ["g00", "g31", "g00"], ["g31"]];
+		const h = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet<TestPrincipal>((host) =>
+			host.serve(Many, () => ({ name: constant("n") }), {
+				admit: ({ n }) => constant(allow({ granted: lists[n]! })),
+			}),
+		);
+		await h.load([{ name: "@test/many", facet }], context);
+		const held = [];
+		for (let n = 0; n < lists.length; n++) held.push(await h.get(Many, { n }, context));
+		expect(held.map((reference) => [...reference.granted])).toEqual([
+			["g00"],
+			["g31"],
+			["g00", "g31"],
+			["g00", "g31"],
+			["g31"],
+		]);
+		expect(held[0]!.granted).not.toBe(held[1]!.granted);
+		expect(held[2]!.granted).toBe(held[3]!.granted);
+		expect(held[4]!.granted).toBe(held[1]!.granted);
+		for (const reference of held) reference.release();
+		await h.close(context);
+	});
+
 	it("an admitted object held over a link, its admission reading one reference: under 14 KiB at both ends", async () => {
 		const { server, client } = await linked(things, { child: { kind: "owner" } });
 		const hold = async (from: number, to: number) => {
