@@ -208,7 +208,14 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelectorAll('[data-nav-group="above"] [data-nav-thing]').length === 2`);
 		await browser.wait(`document.querySelector('[data-nav-group="above"]')?.textContent.includes("from Pi")`);
 		await press('[data-settings-tab="what"]');
-		await press("[data-what-is-here] [data-switch]");
+		// Plans is hidden here by name: the rows' order is no promise.
+		await browser.wait(
+			`[...document.querySelectorAll("[data-here-thing]")].some((e) => e.textContent.includes("Plans"))`,
+		);
+		const plans = await browser.evaluate<string>(
+			`[...document.querySelectorAll('[data-here-thing]')].find((e) => e.textContent.includes("Plans")).dataset.hereThing`,
+		);
+		await press(`[data-here-thing="${plans}"] [data-switch]`);
 		await browser.wait(`document.querySelector("[data-nav-hidden]")?.textContent === "1 hidden"`);
 		await shots("07-family-desktop");
 		// Below the link (a thing hidden here gives nothing here, so the Sketch): everyone's Draw is inherited; unticking it
