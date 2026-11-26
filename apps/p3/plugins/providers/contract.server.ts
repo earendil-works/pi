@@ -39,7 +39,7 @@ export type LoginRow = Static<typeof LoginRow>;
 
 /**
  * What a refresh changes of a login: its credential (pi-ai's), the models its account has and its version (a rotation),
- * when it failed, and who holds the login for a refresh (`holder` `""`: nobody) until when on the holder's clock.
+ * when it failed, and which server process holds the login for a refresh (`holder` `""`: none).
  */
 export const LoginChange = obj({
 	credential: opt(unknown()),
@@ -47,7 +47,6 @@ export const LoginChange = obj({
 	version: opt(str()),
 	failedAt: opt(int()),
 	holder: opt(str()),
-	heldUntil: opt(int()),
 });
 
 /** What a refresh changes of a login (see `LoginChange`). */

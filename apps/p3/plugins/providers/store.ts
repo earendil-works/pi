@@ -8,8 +8,10 @@
 // across the store's objects too (a lease in its row: after a reload the next object waits for the one before), each
 // written only over the credential it read (its row's version, new at every write) and under a context that outlives
 // both its caller and the store's object, so a token the provider rotated is never lost. The lease is the server
-// process's (one at a time has the store) and runs out on its monotonic clock: a clock set forward never hands a
-// running refresh's token to a second one, and a lease of a process that is gone (a restart) holds nothing.
+// process's (one at a time has the store) and runs out only with its refresh: a refresh still running (its provider
+// may ignore the abort pi-ai gives it) never has its token sent a second time; a request waiting for it gives up after
+// a while instead. A lease of a process that is gone (a restart) holds nothing; so a release that could not be
+// written (the store closing) holds its login until the next start.
 
 import {
 	type AuthContext,
@@ -47,7 +49,7 @@ import { Turns } from "./turns.ts";
  * Every login: its provider, how it signs in (its credential's kind), its credential (pi-ai's `Credential`), when its
  * last refresh failed (0: it did not), the ids of the models its account has (`null`: all of the provider's), its
  * version (a new random one at every write of the credential: a refresh that read an older one writes nothing), and
- * which server process holds it for a refresh (`""`: none) until when on that process's monotonic clock.
+ * which server process holds it for a refresh (`""`: none).
  */
 const Logins = defineTable("providers.logins", {
 	version: 1,
@@ -60,7 +62,6 @@ const Logins = defineTable("providers.logins", {
 		models: json(union([arr(str()), nul()]), { version: 1 }),
 		version: str(),
 		holder: str(),
-		heldUntil: int(),
 	},
 	key: ["thing"],
 });
@@ -85,14 +86,14 @@ const NO_AMBIENT: AuthContext = { env: async () => undefined, fileExists: async 
 const RETRY_AFTER_MS = 2 * 60_000;
 
 /**
- * How long a refresh holds a login on its process's monotonic clock (pi-ai's refresh times out after 15 s: a bound for
- * a release that was lost), and how often a waiting one looks.
+ * How long a request waits for a refresh this process runs (pi-ai's refresh times out after 15 s, unless its provider
+ * ignores the abort) before it fails, on the monotonic clock; and how often it looks.
  */
-const LEASE_MS = 60_000;
+const WAIT_MS = 60_000;
 const POLL_MS = 50;
 
 /** A lease released: nobody holds the login. */
-const RELEASED = { holder: "", heldUntil: 0 } as const;
+const RELEASED = { holder: "" } as const;
 
 /** What a request learned of its refresh: whether it failed (or was refused at once, after a failed one). */
 type Refresh = { failed: boolean };
@@ -136,20 +137,21 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		/**
 		 * Holds login `thing` for a refresh: waits while another request of this process holds it (one of the store's
 		 * previous object, after a reload), then takes it; `gone` once the login is, `cooling` while the last refresh
-		 * failed a moment ago (the one this request waited for, perhaps).
+		 * failed a moment ago (the one this request waited for, perhaps), `busy` when the one it waited for still runs.
 		 */
 		const lease = async (thing: string, context: Context) => {
+			const until = performance.now() + WAIT_MS;
 			for (;;) {
 				const leased = await self.tx(async (tx) => {
 					const row = await tx.get(logins, { thing });
 					if (row === undefined) return { kind: "gone" } as const;
 					if (cooling(row.failedAt)) return { kind: "cooling" } as const;
-					const now = Math.ceil(performance.now());
-					if (row.holder === me && row.heldUntil > now) return { kind: "held" } as const;
-					tx.update(logins, { thing }, { holder: me, heldUntil: now + LEASE_MS });
+					if (row.holder === me) return { kind: "held" } as const;
+					tx.update(logins, { thing }, { holder: me });
 					return { kind: "leased", row } as const;
 				}, context);
 				if (leased.kind !== "held") return leased;
+				if (performance.now() >= until) return { kind: "busy" } as const;
 				await sleep(POLL_MS, context);
 			}
 		};
@@ -173,6 +175,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					refresh.failed = true;
 					throw new Error("providers: the last refresh failed a moment ago");
 				}
+				// Not a failed refresh: the request fails (`authFailed`), the login stays as it is.
+				if (leased.kind === "busy") throw new Error("providers: a refresh of this login still runs");
 				const { row } = leased;
 				const current = row.credential as Credential;
 				let next: Credential | undefined;
@@ -308,8 +312,9 @@ function rotatedModels(
 ): string[] | null {
 	try {
 		return modelsOf(provider, next);
-	} catch (error) {
-		reportError(`providers: login ${thing}: its models`, nameOf(error), context);
+	} catch {
+		// Nothing of the thrown value: a provider's (its name, its text) may carry anything, or throw itself.
+		reportError(`providers: login ${thing}: its models`, "its provider could not tell them", context);
 		return known;
 	}
 }
@@ -324,13 +329,27 @@ function needsSignIn(thing: string): PluginError {
 	return new PluginError("providers.signInAgain", `providers: login ${thing} needs a sign-in again`);
 }
 
+/** pi-ai's `ModelsError` codes: fixed texts, the only part of a thrown value that is logged. */
+const CODES: ReadonlySet<unknown> = new Set([
+	"model_source",
+	"model_validation",
+	"provider",
+	"stream",
+	"auth",
+	"oauth",
+]);
+
 /**
- * A thrown value by its kind alone (pi-ai's `ModelsError` with its code, a fixed text): a provider's error text may
- * carry what its server answered, tokens among it.
+ * A thrown value as the log may name it: pi-ai's `ModelsError` by its code, anything else as an error. A provider's
+ * error (its name, its text) may carry what its server answered, tokens among it, and its fields may throw.
  */
 export function nameOf(error: unknown): string {
-	if (error instanceof ModelsError) return `ModelsError(${error.code})`;
-	return error instanceof Error ? error.name : typeof error;
+	try {
+		if (error instanceof ModelsError && CODES.has(error.code)) return `ModelsError(${error.code})`;
+	} catch {
+		// A provider's value whose field throws: named as any other.
+	}
+	return "an error";
 }
 
 /** pi-ai's request auth as the contract carries it: absent fields left out. */

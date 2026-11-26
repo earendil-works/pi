@@ -2,10 +2,11 @@
 // lookups) searches the key, never scans or sorts; a credential is created once and replaced only with one of its own
 // provider; a refresh keeps the token its provider rotated whatever ends meanwhile (its caller, the store's object in
 // a reload) and is written over the credential it read only (a replacement, a removal and a new login meanwhile win);
-// one refresh at a time across a reload, a clock set forward too, a lease of a process that is gone holding nothing;
-// a rotation is stored when its account's models cannot be told; a failed refresh refuses the login for a while (a
+// one refresh at a time across a reload, a clock set forward too, a refresh still running never taken over (its
+// waiter fails), a lease of a process that is gone holding nothing; a rotation is stored when its account's models
+// cannot be told, nothing of the provider's error logged; a failed refresh refuses the login for a while (a
 // request that waited for it too), then one request tries again, and a success clears it; a failed derivation of an
-// unexpired token refuses nothing (Astra's and Opus's reproductions, rounds 1 to 3); the device id is made once and
+// unexpired token refuses nothing (Astra's and Opus's reproductions, rounds 1 to 4); the device id is made once and
 // kept across a reload.
 
 import assert from "node:assert/strict";
@@ -28,6 +29,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { fauxProvider } from "@earendil-works/p3/v1/server";
 import { FAUX_PROVIDER, keyOf } from "../../../test/plugins/faux-login/contract.ts";
+import { eventually } from "../../../test/until.ts";
 import thingsServer from "../../things/server.ts";
 import { LoginStore } from "../contract.server.ts";
 import { PROVIDERS, providerFacets, providersWorld } from "./hosts.ts";
@@ -268,6 +270,63 @@ describe("a rotation", () => {
 		// The models known before stay.
 		assert.deepEqual(JSON.parse(String(row.models)), ["m"]);
 	});
+
+	it("is stored, and nothing of the provider's error logged, when that error's name is private or throws (Astra)", async (t) => {
+		const base = fauxProvider({ provider: "named", api: "named", models: [{ id: "m" }] }).provider;
+		let throws = false;
+		const named = {
+			name: "named",
+			facet: defineFacet((_host, self) =>
+				self.contribute(LoginProviders, [
+					{
+						...base,
+						filterModels: (models, credential) => {
+							if (credential?.type !== "oauth" || credential.access !== "fresh") return models;
+							const error = new Error("listing failed");
+							Object.defineProperty(error, "name", {
+								get: () => {
+									if (throws) throw new Error("no name");
+									return "PRIVATE-MARKER";
+								},
+							});
+							throw error;
+						},
+						auth: {
+							oauth: {
+								name: "named",
+								login: async () => {
+									throw new Error("no sign-in");
+								},
+								refresh: async (credential) => ({
+									...credential,
+									access: "fresh",
+									refresh: "fresh",
+									expires: Date.now() + 3_600_000,
+								}),
+								toAuth: async (credential) => ({ apiKey: credential.access }),
+							},
+						},
+					},
+				]),
+			),
+		};
+		const host = await served(t, [named]);
+		const store = await host.store();
+		const lines: string[] = [];
+		const log = console.error;
+		console.error = (...args: unknown[]) => lines.push(args.join(" "));
+		try {
+			for (const thing of ["private", "throwing"]) {
+				throws = thing === "throwing";
+				await store.create({ thing, provider: "named", credential: OLD }, context);
+				assert.equal((await store.authorize({ thing }, context)).auth.apiKey, "fresh");
+				assert.equal(JSON.parse(String(host.stored(thing).credential)).refresh, "fresh");
+			}
+		} finally {
+			console.error = log;
+		}
+		assert.ok(!lines.join("\n").includes("PRIVATE-MARKER"), lines.join("\n"));
+	});
 });
 
 describe("a reload while a refresh runs", () => {
@@ -327,7 +386,7 @@ describe("a reload while a refresh runs", () => {
 		assert.equal((await next).auth.apiKey, "rotated");
 	});
 
-	it("lets a refresh that outlived its lease and failed refuse nothing its predecessor's rotation wrote", async (t) => {
+	it("lets a refresh that read an older credential and failed refuse nothing its predecessor's rotation wrote", async (t) => {
 		// Each refresh waits for its own gate; the first rotates the token, the second (the spent token) is refused.
 		const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
 		const entered = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
@@ -349,21 +408,22 @@ describe("a reload while a refresh runs", () => {
 		await entered[0]!.promise;
 		await host.reload();
 		await new Promise((resolve) => setTimeout(resolve, 5_500));
-		// The first refresh outlives its lease (a minute on the process's clock): the next object's request refreshes the
-		// token it read too.
-		const now = performance.now.bind(performance);
-		performance.now = () => now() + 61_000;
-		try {
-			const next = (await host.store()).authorize({ thing: "t" }, context);
-			await entered[1]!.promise;
-			gates[0]!.resolve();
-			await first;
-			// Its refusal comes after the rotation was written: it read the older credential, so it marks nothing.
-			gates[1]!.resolve();
-			await assert.rejects(next, { code: "providers.signInAgain" });
-		} finally {
-			performance.now = now;
-		}
+		// The lease as a process that is gone would have left it: the next object's request refreshes the token it read too.
+		const next = await host.store();
+		await next.settle({ thing: "t", version: String(host.stored("t").version), change: { holder: "1@0" } }, context);
+		const second = next.authorize({ thing: "t" }, context);
+		await entered[1]!.promise;
+		gates[0]!.resolve();
+		await first;
+		// The older call answered its caller at the reload's drain; its rotation is written once its provider answers.
+		await eventually(
+			async () => JSON.parse(String(host.stored("t").credential)).access,
+			(access) => access === "rotated",
+			2000,
+		);
+		// Its refusal comes after the rotation was written: it read the older credential, so it marks nothing.
+		gates[1]!.resolve();
+		await assert.rejects(second, { code: "providers.signInAgain" });
 		assert.equal((await (await host.store()).authorize({ thing: "t" }, context)).auth.apiKey, "rotated");
 	});
 });
@@ -420,6 +480,31 @@ describe("the lease of a refresh", () => {
 		}
 	});
 
+	it("of a refresh still running is never taken: a request waiting for it a minute fails, sending nothing (Astra)", async (t) => {
+		const { entered, release, plugin } = gated();
+		const host = await served(t, [plugin]);
+		const older = await host.store();
+		await older.create({ thing: "t", provider: "gated", credential: OLD }, context);
+		const first = older.authorize({ thing: "t" }, context).catch(() => undefined);
+		await entered.promise;
+		await host.reload();
+		await new Promise((resolve) => setTimeout(resolve, 5_500));
+		const next = (await host.store()).authorize({ thing: "t" }, context);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		// A minute on the process's clock: the first refresh (its provider ignoring the abort) still runs.
+		const now = performance.now.bind(performance);
+		performance.now = () => now() + 61_000;
+		try {
+			// A second refresh of the same token would be refused ("already rotated") and mark the login.
+			await assert.rejects(next, { code: "providers.authFailed" });
+		} finally {
+			performance.now = now;
+		}
+		release.resolve();
+		await first;
+		assert.equal((await (await host.store()).authorize({ thing: "t" }, context)).auth.apiKey, "rotated");
+	});
+
 	it("of a server process that is gone (a restart) holds nothing", { timeout: 5_000 }, async (t) => {
 		const { release, plugin } = gated();
 		release.resolve();
@@ -427,7 +512,7 @@ describe("the lease of a refresh", () => {
 		const store = await host.store();
 		await store.create({ thing: "t", provider: "gated", credential: OLD }, context);
 		const { version } = host.stored("t");
-		const change = { holder: "1@0", heldUntil: Number.MAX_SAFE_INTEGER };
+		const change = { holder: "1@0" };
 		await store.settle({ thing: "t", version: String(version), change }, context);
 		assert.equal((await store.authorize({ thing: "t" }, context)).auth.apiKey, "rotated");
 	});
