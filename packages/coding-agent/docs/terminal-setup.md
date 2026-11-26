@@ -270,34 +270,19 @@ Pi updates the command when you start, resume, or fork a session, and once a new
 The terminal resumes a command only if a rule trusts it. Rex rules with a `flags` table do not work for Pi yet (Node overwrites the command line Rex checks them against), so add one rule per flag combination you use, with the flags in the order you type them. In Rex's `init.lua`:
 
 ```lua
+-- One rule per command: the words after `pi`, as Pi reports them.
 local function trust_pi(name, ...)
-	rex.set("resume.trust.pi_" .. name, {
-		command = { "pi", "--session", rex.match.uuid, ... },
-	})
+	rex.set("resume.trust.pi_" .. name, { command = { "pi", ... } })
 end
 
-trust_pi("plain")
-trust_pi("readonly", "-t", "read,grep,find,ls")
-trust_pi("readonly_noext", "-t", "read,grep,find,ls", "--no-extensions")
+local id = rex.match.uuid
+trust_pi("plain", "--session", id)
+trust_pi("readonly", "--session", id, "-t", "read,grep,find,ls")
+trust_pi("readonly_noext", "--session", id, "-t", "read,grep,find,ls", "--no-extensions")
+-- A separate profile set with PI_CODING_AGENT_DIR and PI_CODING_AGENT_SESSION_DIR: absolute paths, before --session
+trust_pi("work", "--agent-dir", "/home/you/.pi/work/agent", "--session-dir", "/home/you/.pi/work/agent/sessions", "--session", id)
 ```
 
 A Pi started with a combination no rule lists comes back as a plain shell, not without its flags.
-
-When `--agent-dir` or `--session-dir` are in the command, put them before `--session`, as Pi reports them, with absolute paths. For example, for a separate profile that a shell function selects in `~/work` by setting `PI_CODING_AGENT_DIR=~/.pi/work/agent` and `PI_CODING_AGENT_SESSION_DIR=~/.pi/work/agent/sessions`:
-
-```lua
-rex.set("resume.trust.pi_work_readonly", {
-	command = {
-		"pi",
-		"--agent-dir", "/home/you/.pi/work/agent",
-		"--session-dir", "/home/you/.pi/work/agent/sessions",
-		"--session", rex.match.uuid,
-		"-t", "read,grep,find,ls",
-	},
-	dir = "~/work",
-})
-```
-
-`dir` limits the rule to sessions under `~/work`.
 
 Pi removes `OSC7577_TOKEN` from its own environment at startup, so shells, editors, and extension processes it starts cannot replace its command or register commands of their own. Whether and when the terminal resumes a command is up to the terminal.
