@@ -23,6 +23,9 @@ const SIZE = { columns: 120, rows: 40 };
 /** How much of a terminal's output `read` answers at most (its end). */
 const READ = 16_000;
 
+/** How many bytes of kept output `read` asks for: enough for `READ` characters once escapes are taken out. */
+const READ_BYTES = 4 * READ;
+
 /** How long `read` waits at most before it reads. */
 const MAX_WAIT = 30_000;
 
@@ -74,7 +77,7 @@ function terminalTool(held: Held, session: HarnessSession) {
 				}
 				case "read": {
 					if (wait_ms !== undefined && wait_ms > 0) await sleep(wait_ms, context);
-					const { data } = await ref.backlog({ terminal: named(terminal) }, context);
+					const { data } = await ref.backlog({ terminal: named(terminal), max: READ_BYTES }, context);
 					const output = plain(Buffer.from(data, "base64").toString()).slice(-READ);
 					return text(output === "" ? "(no output yet)" : output);
 				}

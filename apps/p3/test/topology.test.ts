@@ -20,15 +20,17 @@ import {
 	ThisDevice,
 	until,
 } from "@earendil-works/p3/v1";
-import { PeopleStore, ServerCommands, SessionsStore } from "@earendil-works/p3/v1/server";
+import { Http, PeopleStore, type Router, ServerCommands, SessionsStore } from "@earendil-works/p3/v1/server";
+import { MachineHosts, TerminalHosts } from "../plugins/environments/contract.server.ts";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
-import { Files, FilesKind } from "../plugins/files/contract.ts";
+import { Machine } from "../plugins/environments/kind.ts";
+import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../plugins/files/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
-import { Terminals, TerminalsKind } from "../plugins/terminals/contract.ts";
+import { ATTACH_PATH, Terminals, TerminalsKind } from "../plugins/terminals/contract.ts";
 import { OneThing, ThingsStore } from "../plugins/things/contract.server.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import { type Topology, topology } from "./topology.ts";
-import { eventually, within } from "./until.ts";
+import { collected, eventually, within } from "./until.ts";
 
 const PERSON: P3Principal = { kind: "person", id: "p1", name: "Ann" };
 
@@ -52,6 +54,17 @@ async function withSession(idleMs?: number) {
 	const sessions = await owner.get(Sessions, {}, context);
 	const id = await sessions.create(one("one"), context);
 	return { t, owner, sessions, id };
+}
+
+/** The handlers of the files and terminals plugins' routes in the HTTP component's router. */
+function routes(router: Router): object[] {
+	const paths = [`GET ${DOWNLOAD_PATH}`, `PUT ${UPLOAD_PATH}`, `GET ${ATTACH_PATH}`];
+	return paths.map((key) => {
+		const [method, path] = key.split(" ") as [string, string];
+		const match = router.route(method, path);
+		assert.ok(match !== undefined && match !== "bad_path", key);
+		return match.handler;
+	});
 }
 
 /** Whether `promise` rejects with a ChordError of `code`. */
@@ -129,6 +142,50 @@ describe("reloads while in use", () => {
 		await until(panes.state, (state) => state.kind === "live", within("Terminals again", context));
 		// This device's terminals are pending (its `openPty` refuses): the list is what goes on, empty.
 		await until(panes.terminals!, (list) => list.length === 0, within("the list", context));
+		assert.deepEqual(t.errors, []);
+	});
+
+	it("the environments, files and terminals plugins: the old objects are collected after a reload (guide 8.6)", async () => {
+		const t = await topology(context);
+		running = t;
+		const [pi, files, terminals, machine, ann] = await t.server.root(async (ctx) => {
+			const things = await ctx.get(ThingsStore, {});
+			const one = async (kind: string) => (await ctx.get(OneThing, { kind })).thing.value;
+			const root = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
+			const by = { kind: "plugin", plugin: "test" } as const;
+			const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
+			await things.putParty({ workspace: root, party: { kind: "person", person }, source: by }, ctx);
+			return [root, await one(FilesKind.name), await one(TerminalsKind.name), await one(MACHINE_KIND), person];
+		}, context);
+		const person = await t.client({ kind: "person", id: ann, name: "Ann" });
+		const browser = await person.get(Files, { workspace: pi, thing: files }, context);
+		const panes = await person.get(Terminals, { workspace: pi, thing: terminals }, context);
+		const held = await person.get(Machine, { workspace: pi, thing: machine }, context);
+		// The markers: what each plugin's objects made (the terminal host, the machines' resolver, the routes), read
+		// through one registry value each, read again after the reloads (a value read once keeps its composition).
+		const registries = {
+			terminals: await t.server.registry(TerminalHosts, context),
+			machines: await t.server.registry(MachineHosts, context),
+			http: await t.server.registry(Http, context),
+		};
+		const marked = () => [
+			new WeakRef(registries.terminals.value!),
+			new WeakRef(registries.machines.value),
+			...routes(registries.http.value).map((route) => new WeakRef(route)),
+		];
+		const before = marked();
+		for (const plugin of ["environments", "files", "terminals"]) await t.reload(`@earendil-works/p3-${plugin}`);
+		await until(browser.state, (state) => state.kind === "live", within("Files again", context));
+		await until(panes.state, (state) => state.kind === "live", within("Terminals again", context));
+		await until(held.state, (state) => state.kind === "live", within("the machine again", context));
+		await browser.entries!({ machine, path: tmpdir() }, context);
+		assert.equal(held.info.value.status, "ready");
+		const after = marked();
+		assert.ok(
+			before.every((ref, i) => ref.deref() !== after[i]!.deref()),
+			"new objects",
+		);
+		assert.ok(await collected(before), "the old objects of the three plugins are collected");
 		assert.deepEqual(t.errors, []);
 	});
 

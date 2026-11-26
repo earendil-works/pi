@@ -1,20 +1,79 @@
 // The terminal host (`TerminalHost`): the terminals of every machine this plugin serves, keyed by terminal id, each
 // with its program (a `Pty` the machine's host started) and its output ring (ring.ts). One per plugin load, made by
-// its contribution (server.ts); its end kills every program, since nobody could reach one after. Lists are kept per
-// owner and replaced only when one of the owner's terminals changes, so a change elsewhere wakes nobody here.
+// its keeper (`serveTerminals`), which also serves each owner's list; its end kills every program, since nobody could
+// reach one after. Lists are kept per owner and replaced only when one of the owner's terminals starts, ends or
+// closes (a resize changes no row), so a change elsewhere wakes nobody here. Only running programs count against the
+// bounds: an ended one keeps its row and output, not a slot.
 
-import { type Context, forbidden } from "@earendil-works/p3/v1";
+import {
+	type Context,
+	contribute,
+	type FacetHost,
+	forbidden,
+	type P3Principal,
+	withCancel,
+} from "@earendil-works/p3/v1";
+import type { FileError } from "@earendil-works/p3/v1/server";
 import {
 	type MachineHostResolver,
+	MachineHosts,
 	type Pty,
 	TERMINAL_BACKLOG,
 	TERMINAL_FRAME,
 	type TerminalHost,
+	TerminalHosts,
+	TerminalKeeper,
+	TerminalList,
 	type TerminalRequest,
-	type TerminalRow,
 } from "./contract.server.ts";
+import type { TerminalRow } from "./contract.ts";
 import { messages } from "./messages.ts";
 import { Ring } from "./ring.ts";
+
+/**
+ * Serves the terminal host on `host`: the registry it is read through (`TerminalHosts`), the object that makes and
+ * keeps it with its closing for the things' delete hooks (`TerminalKeeper`), and each owner's list (`TerminalList`).
+ */
+export function serveTerminals(host: FacetHost<P3Principal>): void {
+	host.serve(TerminalHosts, { compose: (table) => table[0]?.value });
+	host.serve(TerminalKeeper, (_params, self) => {
+		const hosts = self.registry(MachineHosts);
+		const terminals = new HostedTerminals(() => hosts.value);
+		self.open(
+			async () => terminals,
+			(ended) => ended.end(),
+		);
+		self.contribute(TerminalHosts, terminals);
+		return {
+			closeMachine: async ({ machine }) => {
+				terminals.closeMachine(machine);
+				return null;
+			},
+			closeOwners: async ({ prefix }) => {
+				terminals.closeOwners(prefix);
+				return null;
+			},
+		};
+	});
+	// Held while the plugin is loaded, so a terminal outlives its viewers and the plugins showing it.
+	contribute(host, "environments.terminals-keep", (self) => void self.get(TerminalKeeper, {}));
+
+	host.serve(TerminalList, ({ owner }, self) => {
+		// Held, so the host is there; read when the object opens, after the keeper contributed it.
+		self.get(TerminalKeeper, {});
+		const terminals = self.registry(TerminalHosts);
+		const list = self.writable<TerminalRow[]>([]);
+		self.open(
+			async () => {
+				const at = terminals.value;
+				list.set(at?.list(owner) ?? []);
+				return at?.watch(owner, (rows) => list.set(rows));
+			},
+			(stop) => stop?.(),
+		);
+		return { terminals: self.derive([list], ([rows]) => rows) };
+	});
+}
 
 /** How many terminals one host runs at most, over every owner (opens under way counted). */
 const MAX_HOSTED = 100;
@@ -29,14 +88,14 @@ type Hosted = {
 	closed: boolean;
 };
 
-/** An open under way: whose, on which machine, and whether a close took it back meanwhile. */
-type Pending = { readonly owner: string; readonly machine: string; cancelled: boolean };
+/** An open under way: whose, on which machine, and how it is taken back (its own cancellation). */
+type Pending = { readonly owner: string; readonly machine: string; readonly cancel: () => void };
 
 /** The empty list, one value. */
 const NONE: TerminalRow[] = [];
 
 /** The terminal host over the machines `hosts` resolves (read at each open). */
-export class Terminals implements TerminalHost {
+export class HostedTerminals implements TerminalHost {
 	readonly #hosts: () => MachineHostResolver;
 	readonly #terminals = new Map<string, Hosted>();
 	readonly #lists = new Map<string, TerminalRow[]>();
@@ -62,24 +121,24 @@ export class Terminals implements TerminalHost {
 		};
 	}
 
-	ownerOf(id: string): string | undefined {
-		return this.#terminals.get(id)?.owner;
+	owners(): string[] {
+		return [...this.#lists.keys()];
 	}
 
 	async open(request: TerminalRequest, context: Context): Promise<string> {
-		const { owner, machine, folder, columns, rows, openedBy, max } = request;
+		const { owner, machine, folder, columns, rows, max } = request;
 		if (this.#ended) throw notHere(machine);
-		let pendingOwn = 0;
-		for (const pending of this.#pending) if (pending.owner === owner) pendingOwn++;
-		if (this.list(owner).length + pendingOwn >= max || this.#terminals.size + this.#pending.size >= MAX_HOSTED) {
+		if (this.#running(owner) >= max || this.#running(undefined) >= MAX_HOSTED) {
 			throw forbidden(`environments: too many terminals for ${owner}`, { message: messages.message("tooMany") });
 		}
-		// The slot is taken before the first await, so two opens cannot both pass the count.
-		const pending: Pending = { owner, machine, cancelled: false };
+		// The slot is taken before the first await, so two opens cannot both pass the count; the open's own
+		// cancellation is what an end of the host, the machine or the owner takes it back with.
+		const { context: starting, cancel } = withCancel(context);
+		const pending: Pending = { owner, machine, cancel };
 		this.#pending.add(pending);
 		const id = crypto.randomUUID();
 		const hosted: Hosted = {
-			row: { id, machine, folder, columns, rows, openedBy, exitCode: null },
+			row: { id, machine, folder, exitCode: null },
 			owner,
 			pty: undefined,
 			ring: new Ring(TERMINAL_BACKLOG),
@@ -94,18 +153,18 @@ export class Terminals implements TerminalHost {
 		};
 		let pty: Pty;
 		try {
-			const at = await this.#hosts()(machine, context);
+			const at = await this.#hosts()(machine, starting);
 			if (at === undefined) throw notHere(machine);
-			pty = await at.openPty({ cwd: folder, columns, rows, onData }, context);
+			if (starting.abortSignal?.aborted) throw takenBack(id);
+			const opened = await at.openPty({ cwd: folder, columns, rows, onData }, starting);
+			if (starting.abortSignal?.aborted) {
+				if (opened.ok) opened.value.close();
+				throw takenBack(id);
+			}
+			if (!opened.ok) throw ptyRefused(opened.error);
+			pty = opened.value;
 		} finally {
 			this.#pending.delete(pending);
-		}
-		// Closed while it started (the host ended, the machine or the owner went): nobody could reach it.
-		if (this.#ended || pending.cancelled) {
-			pty.close();
-			throw forbidden(`environments: terminal ${id} closed while it started`, {
-				message: messages.message("notHere"),
-			});
 		}
 		hosted.pty = pty;
 		this.#terminals.set(id, hosted);
@@ -121,15 +180,14 @@ export class Terminals implements TerminalHost {
 		return id;
 	}
 
-	write(id: string, data: string): void {
-		this.#terminals.get(id)?.pty?.write(data);
+	write(id: string, data: string): boolean {
+		const pty = this.#terminals.get(id)?.pty;
+		pty?.write(data);
+		return pty !== undefined;
 	}
 
 	resize(id: string, columns: number, rows: number): void {
-		const hosted = this.#terminals.get(id);
-		if (hosted === undefined) return;
-		hosted.pty?.resize(columns, rows);
-		this.#change(hosted, { ...hosted.row, columns, rows });
+		this.#terminals.get(id)?.pty?.resize(columns, rows);
 	}
 
 	close(id: string): void {
@@ -147,20 +205,20 @@ export class Terminals implements TerminalHost {
 	}
 
 	closeOwners(prefix: string): void {
-		for (const pending of this.#pending) if (pending.owner.startsWith(prefix)) pending.cancelled = true;
+		for (const pending of this.#pending) if (pending.owner.startsWith(prefix)) pending.cancel();
 		for (const [id, hosted] of this.#terminals) if (hosted.owner.startsWith(prefix)) this.close(id);
 	}
 
 	closeMachine(machine: string): void {
-		for (const pending of this.#pending) if (pending.machine === machine) pending.cancelled = true;
+		for (const pending of this.#pending) if (pending.machine === machine) pending.cancel();
 		for (const [id, hosted] of this.#terminals) if (hosted.row.machine === machine) this.close(id);
 	}
 
-	tail(id: string): { readonly end: number; readonly bytes: Uint8Array } {
+	tail(id: string, max: number): { readonly end: number; readonly bytes: Uint8Array } {
 		const ring = this.#terminals.get(id)?.ring;
-		return ring === undefined
-			? { end: 0, bytes: new Uint8Array() }
-			: { end: ring.end, bytes: ring.read(0, TERMINAL_BACKLOG) };
+		if (ring === undefined) return { end: 0, bytes: new Uint8Array() };
+		const length = Math.min(max, TERMINAL_BACKLOG);
+		return { end: ring.end, bytes: ring.read(ring.end - length, length) };
 	}
 
 	async next(
@@ -184,8 +242,18 @@ export class Terminals implements TerminalHost {
 	/** Ends the host: every program is killed, every open under way taken back. */
 	end(): void {
 		this.#ended = true;
-		for (const pending of this.#pending) pending.cancelled = true;
+		for (const pending of this.#pending) pending.cancel();
 		for (const id of [...this.#terminals.keys()]) this.close(id);
+	}
+
+	/** How many programs run (opens under way included): `owner`'s, or every owner's (`undefined`). */
+	#running(owner: string | undefined): number {
+		let running = 0;
+		for (const pending of this.#pending) if (owner === undefined || pending.owner === owner) running++;
+		for (const hosted of this.#terminals.values()) {
+			if (hosted.row.exitCode === null && (owner === undefined || hosted.owner === owner)) running++;
+		}
+		return running;
 	}
 
 	/** Replaces `hosted`'s row with `row` in its owner's list. */
@@ -211,6 +279,18 @@ function notHere(machine: string) {
 	return forbidden(`environments: machine ${machine} runs no terminals here`, {
 		message: messages.message("notHere"),
 	});
+}
+
+/** The refusal of an open taken back while it started (by its caller, or the end of its host, machine or owner). */
+function takenBack(id: string) {
+	return forbidden(`environments: terminal ${id} closed while it started`, { message: messages.message("notHere") });
+}
+
+/** The refusal of a machine that could not start a program: it has no terminals (`not_supported`), or it failed. */
+function ptyRefused(error: FileError) {
+	const message =
+		error.code === "not_supported" ? messages.message("noTerminals") : messages.message("ptyFailed", error.message);
+	return forbidden(`environments: no terminal: ${error.message}`, { message });
 }
 
 /** Wakes everyone waiting for `hosted`'s output. */

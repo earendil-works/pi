@@ -5,7 +5,7 @@
 // folder is outside the data folder, so Files lists it.
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -196,5 +196,32 @@ describe("a new session's folder", () => {
 		const browser = await client.get(Files, { workspace: pi, thing: files }, context);
 		const page = await browser.entries!({ machine: where.environment, path: where.folder }, context);
 		assert.deepEqual(page.entries, []);
+	});
+});
+
+describe("ranges (astra round 2, should 10)", () => {
+	it("answers a resumed download's range from the one reader, and 416 for a range past the end", async () => {
+		const path = join(root, "range");
+		await writeFile(path, "onetwo");
+		const ann = await signedIn("Ann");
+		const part = await fetch(downloadAddress(path), { headers: { cookie: ann.cookie, Range: "bytes=3-5" } });
+		assert.deepEqual([part.status, await part.text()], [206, "two"]);
+		const past = await fetch(downloadAddress(path), { headers: { cookie: ann.cookie, Range: "bytes=10-" } });
+		assert.equal(past.status, 416);
+		await past.arrayBuffer();
+		const head = await fetch(downloadAddress(path), { method: "HEAD", headers: { cookie: ann.cookie } });
+		assert.deepEqual([head.status, head.headers.get("content-length")], [200, "6"]);
+	});
+});
+
+describe("the test server's own folders (astra round 2, must 5)", () => {
+	it("removes nothing beside the data directory it was given", async () => {
+		const dataDir = join(root, "example");
+		const sibling = `${dataDir}-work`;
+		await mkdir(sibling);
+		await writeFile(join(sibling, "sentinel"), "unrelated");
+		const nested = await testServer({ dataDir }, context);
+		await nested.close(context);
+		assert.equal(await readFile(join(sibling, "sentinel"), "utf8"), "unrelated");
 	});
 });

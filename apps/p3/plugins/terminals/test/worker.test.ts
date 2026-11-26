@@ -71,8 +71,8 @@ function toolsOf(things: HeldThing<typeof Terminals>[], at = session({ machine: 
 
 describe("the terminals' harness part", () => {
 	it("gives no tool without Use on the nearest Terminals", () => {
-		assert.deepEqual(toolsOf([held(["terminals", "attach", "backlog"], {})]), []);
-		assert.deepEqual(toolsOf([held(USE, {}), held(["backlog"], {})]), [], "the nearest (last) decides");
+		assert.deepEqual(toolsOf([held(["terminals", "attach"], {})]), []);
+		assert.deepEqual(toolsOf([held(USE, {}), held(["terminals"], {})]), [], "the nearest (last) decides");
 	});
 
 	it("gives one tool that lists, opens at the location, types, reads plain text and closes", async () => {
@@ -92,6 +92,8 @@ describe("the terminals' harness part", () => {
 			{ terminal: "t1", bytes: "q" },
 		]);
 		assert.equal(await run(tools, "terminal", { action: "read", terminal: "t1" }), "$ ls\nREADME.md\n");
+		// The kept output's tail only, not the whole backlog (opus round 2, S1).
+		assert.deepEqual(calls.backlog, [{ terminal: "t1", max: 64_000 }]);
 		await run(tools, "terminal", { action: "close", terminal: "t1" });
 		assert.deepEqual(calls.close, [{ terminal: "t1" }]);
 		await assert.rejects(run(tools, "terminal", { action: "close" }), /needs `terminal`/);

@@ -24,15 +24,16 @@ import {
 import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { ExecutionEnvironments } from "@earendil-works/p3/v1/worker";
-import { eventually, within } from "../../../test/until.ts";
+import { collected, eventually, within } from "../../../test/until.ts";
 import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
-import { MachineHosts, MachineTypes, reachMachine } from "../contract.server.ts";
+import { MachineHosts, reachMachine } from "../contract.server.ts";
 import { MACHINE_KIND } from "../contract.ts";
 import { Machine, MachineKind } from "../kind.ts";
 import { MachinesStore } from "../store.ts";
+import { fakeMachine, fakeType } from "./fake-machine.ts";
 
 /** The plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -40,31 +41,21 @@ const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
 /** Who sets things up in the tests. */
 const BY: Source = { kind: "plugin", plugin: "test" };
 
-/** What the server facet uses of other plugins. */
 /** What the test type's machines did: connections made and ended, by settings' host. */
 const typeLog: string[] = [];
 
 /** A machine type of the test's (`remote`), whose settings name a host. */
-const remoteType = defineFacet((_host, self) => {
-	self.contribute(MachineTypes, {
-		type: "remote",
-		label: { namespace: "test", key: "remote", params: [] },
-		settings: obj({ host: str() }),
-		connect: async (settings) => {
-			const { host } = settings as { host: string };
-			typeLog.push(`connect ${host}`);
-			return {
-				env: undefined as never,
-				hidden: [],
-				listNames: async () => [],
-				createFile: () => Promise.reject(new Error("no files")),
-				openPty: () => Promise.reject(new Error("no terminals")),
-				close: async () => void typeLog.push(`close ${host}`),
-			};
-		},
-	});
-});
+const remoteType = fakeType(
+	(settings) => {
+		const { host } = settings as { host: string };
+		typeLog.push(`connect ${host}`);
+		return { ...fakeMachine().host, close: async () => void typeLog.push(`close ${host}`) };
+	},
+	"remote",
+	obj({ host: str() }),
+);
 
+/** What the server facet uses of other plugins. */
 const STUBS = [
 	{ name: "@earendil-works/p3-a-remote-type", facet: remoteType },
 	{ name: "@earendil-works/p3-people", facet: peopleServer },
@@ -131,6 +122,19 @@ describe("the environments plugin on the server", () => {
 		await assert.rejects(things.setGrants({ source: BY, grants: [grant] }, context), (error) =>
 			isChordError(error, "invalid"),
 		);
+	});
+
+	it("keeps no machine's info once every hold is released (guide 8.7)", async () => {
+		const ann = await person("Ann");
+		const info = await t.root(
+			async (ctx) => {
+				const ref = await ctx.get(Machine, { workspace: pi, thing: machine }, { readyTimeout: 500 });
+				return new WeakRef(ref.info.value);
+			},
+			context,
+			{ principal: ann },
+		);
+		assert.ok(await collected([info]));
 	});
 
 	it("reaches a machine's host for a person with an answer and an agent with Work here, else refuses", async () => {

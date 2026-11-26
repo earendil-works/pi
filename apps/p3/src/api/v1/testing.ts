@@ -4,7 +4,7 @@
 // process with the built-in plugins and the plugins under test, its session workers as real processes, clients signed
 // in as the owner.
 
-import { mkdtemp, realpath, rm, stat, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink } from "node:fs/promises";
 import { hostname, tmpdir, userInfo } from "node:os";
 import { basename, join, resolve } from "node:path";
 import {
@@ -69,7 +69,10 @@ export async function testPlugin(
 	facet: TestedFacet,
 	context: Context,
 ): Promise<TestedPlugin<P3Principal>> {
-	const dir = await mkdtemp(join(tmpdir(), "p3-test-plugin-"));
+	// The test's own folder: its directory and its work root inside, so its close removes only what it made.
+	const own = await mkdtemp(join(tmpdir(), "p3-test-plugin-"));
+	const dir = join(own, "data");
+	await mkdir(dir, { mode: 0o700 });
 	let server: Host<P3Principal> | undefined;
 	const host =
 		facet.kind === "server"
@@ -89,7 +92,7 @@ export async function testPlugin(
 				platform: KINDS[facet.kind].platform,
 				stubs: facet.stubs ?? [],
 				hostStubs: (tested, store) => {
-					if (facet.kind === "server") return serverStubs(tested, store, dir, context);
+					if (facet.kind === "server") return serverStubs(tested, store, dir, join(own, "work"), context);
 					if (facet.server !== undefined) server = standInServer(tested, facet.session, facet.server, context);
 					return workerStubs(facet, tested, store, dir);
 				},
@@ -102,12 +105,11 @@ export async function testPlugin(
 		tested.close = (ctx) =>
 			close(ctx)
 				.finally(() => server?.close(ctx))
-				.finally(() => rm(dir, { recursive: true, force: true }))
-				.finally(() => rm(`${dir}-work`, { recursive: true, force: true }));
+				.finally(() => rm(own, { recursive: true, force: true }));
 		return tested;
 	} catch (error) {
 		await server?.close(context);
-		await rm(dir, { recursive: true, force: true });
+		await rm(own, { recursive: true, force: true });
 		throw error;
 	}
 }
@@ -138,7 +140,7 @@ function standInServer(
 }
 
 /** The base's facet of the server on the test's host, with a runtime whose server does not listen. */
-function serverStubs(host: Host<P3Principal>, store: ChordStore, dataDir: string, context: Context) {
+function serverStubs(host: Host<P3Principal>, store: ChordStore, dataDir: string, workRoot: string, context: Context) {
 	const sessions = host.route(
 		Session,
 		{
@@ -150,7 +152,7 @@ function serverStubs(host: Host<P3Principal>, store: ChordStore, dataDir: string
 	);
 	const runtime: ServerRuntime = {
 		dataDir,
-		workRoot: `${dataDir}-work`,
+		workRoot,
 		machine: { user: userInfo().username, hostname: hostname() },
 		host,
 		store,
@@ -192,7 +194,10 @@ export type TestServerOptions = {
 	readonly plugins?: readonly string[];
 	/** A copy of the built-in plugins that the test edits and applies; p3's own by default. */
 	readonly builtIn?: string;
-	/** A data directory a stopped test server left, to start on again; a new temporary one by default. */
+	/**
+	 * A data directory a stopped test server left, to start on again (the new server owns it: its close removes it);
+	 * by default a new one, in a temporary root of the server's own.
+	 */
 	readonly dataDir?: string;
 	/** How long a worker idles before it stops itself: 300 ms by default, so a test sees it stop. */
 	readonly idleMs?: number;
@@ -241,10 +246,22 @@ export type TestServer = {
 /**
  * Starts p3's real server in this process on a new temporary data directory (or on `options.dataDir`): the built-in
  * plugins, the plugins under test and the data directory's user root, built as a Pi builds them; its session workers
- * forked as real processes.
+ * forked as real processes. Its sessions work in a work root inside a temporary root of its own (kept across a
+ * restart); its close removes that root and the data directory, nothing beside them.
  */
-export async function testServer(options: TestServerOptions, context: Context): Promise<TestServer> {
-	const dataDir = options.dataDir ?? (await mkdtemp(join(tmpdir(), "p3-test-")));
+export function testServer(options: TestServerOptions, context: Context): Promise<TestServer> {
+	return startTestServer(options, undefined, context);
+}
+
+/** `testServer` in the temporary root `owned` (a restart's), else a new one. */
+async function startTestServer(
+	options: TestServerOptions,
+	owned: string | undefined,
+	context: Context,
+): Promise<TestServer> {
+	const root = owned ?? (await mkdtemp(join(tmpdir(), "p3-test-")));
+	const dataDir = options.dataDir ?? join(root, "data");
+	const workRoot = join(root, "work");
 	const tested = await mkdtemp(join(tmpdir(), "p3-tested-"));
 	const userRoot = join(dataDir, "plugins");
 	const idleMs = options.idleMs ?? TEST_IDLE_MS;
@@ -257,7 +274,7 @@ export async function testServer(options: TestServerOptions, context: Context): 
 		const server = await startServer(
 			{
 				dataDir,
-				workRoot: `${dataDir}-work`,
+				workRoot,
 				roots: [
 					{ path: options.builtIn ?? PLUGINS, required: true },
 					{ path: tested, required: true },
@@ -317,7 +334,7 @@ export async function testServer(options: TestServerOptions, context: Context): 
 			apply: (ctx) => server.runtime.apply(ctx),
 			restart: async (ctx) => {
 				await stop(ctx);
-				const next = await testServer({ ...options, dataDir }, ctx);
+				const next = await startTestServer({ ...options, dataDir }, root, ctx);
 				handedOver = true;
 				return next;
 			},
@@ -328,17 +345,14 @@ export async function testServer(options: TestServerOptions, context: Context): 
 				} finally {
 					if (closed && !handedOver) {
 						await rm(dataDir, { recursive: true, force: true });
-						await rm(`${dataDir}-work`, { recursive: true, force: true });
+						await rm(root, { recursive: true, force: true });
 					}
 				}
 			},
 		};
 	} catch (error) {
 		await rm(tested, { recursive: true, force: true });
-		if (options.dataDir === undefined) {
-			await rm(dataDir, { recursive: true, force: true });
-			await rm(`${dataDir}-work`, { recursive: true, force: true });
-		}
+		if (owned === undefined) await rm(root, { recursive: true, force: true });
 		throw error;
 	}
 }

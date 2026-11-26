@@ -13,19 +13,18 @@ import { fileURLToPath } from "node:url";
 import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
-	defineFacet,
 	isChordError,
-	obj,
 	type P3Principal,
 	type Reference,
 	until,
 } from "@earendil-works/p3/v1";
 import { Http, type HttpRequest } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import { within } from "../../../test/until.ts";
-import { MachineTypes, type Pty, type PtyOptions, TERMINAL_BACKLOG } from "../../environments/contract.server.ts";
+import { collected, within } from "../../../test/until.ts";
+import { TERMINAL_BACKLOG, TerminalHosts } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
+import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
 import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Party, Source } from "../../things/contract.ts";
@@ -35,78 +34,19 @@ import { ATTACH_PATH, Terminals, TerminalsKind } from "../contract.ts";
 /** A person's principal. */
 type Person = Extract<P3Principal, { kind: "person" }>;
 
-/** A fake program in a terminal: what it was given, and `say`/`exit` to make it answer. */
-type FakePty = {
-	readonly options: PtyOptions;
-	readonly typed: string[];
-	size: [number, number];
-	closed: boolean;
-	/** Settles when the program is closed. */
-	readonly ended: Promise<void>;
-	say(text: string): void;
-	exit(code: number): void;
-};
-
 /** Who sets things up in the tests. */
 const BY: Source = { kind: "plugin", plugin: "test" };
 
-/** The programs the stand-in machine host started, in order. */
-const started: FakePty[] = [];
+/** The stand-in machine of each test: this device's, whose programs are fakes. */
+let fake = fakeMachine();
 
-/** While set, the stand-in's `openPty` waits for it before it answers (an open under way). */
-let gate: Promise<void> | undefined;
-
-/**
- * A stand-in for this device's machine type: its plugin name sorts first, so it wins the type's name over the
- * environments plugin's, whose terminals are pending.
- */
-const fakeHost = defineFacet((_host, self) => {
-	self.contribute(MachineTypes, {
-		type: "local",
-		label: { namespace: "test", key: "fake", params: [] },
-		settings: obj({}),
-		connect: async () => ({
-			env: undefined as never,
-			hidden: [],
-			listNames: async () => [],
-			createFile: () => Promise.reject(new Error("no files here")),
-			close: async () => {},
-			openPty: async (options: PtyOptions) => {
-				await gate;
-				let exited: (code: number) => void = () => {};
-				let ended: () => void = () => {};
-				const fake: FakePty & Pty = {
-					options,
-					typed: [],
-					size: [options.columns, options.rows],
-					closed: false,
-					say: (text) => options.onData(new TextEncoder().encode(text)),
-					exit: (code) => exited(code),
-					write: (data) => void fake.typed.push(data),
-					resize: (columns, rows) => {
-						fake.size = [columns, rows];
-					},
-					close: () => {
-						fake.closed = true;
-						ended();
-					},
-					ended: new Promise((resolve) => {
-						ended = resolve;
-					}),
-					exited: new Promise((resolve) => {
-						exited = resolve;
-					}),
-				};
-				started.push(fake);
-				return fake;
-			},
-		}),
-	});
-});
+/** Its programs, in the order they started. */
+const started = () => fake.started;
 
 /** What the terminals plugin's server facet uses of other plugins. */
 const STUBS = [
-	{ name: "@earendil-works/p3-a-fake-machine", facet: fakeHost },
+	// Sorts first, so its type wins this device's name over the environments plugin's, whose terminals are pending.
+	{ name: "@earendil-works/p3-a-fake-machine", facet: fakeType(() => fake.host) },
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 	{ name: "@earendil-works/p3-people", facet: peopleServer },
@@ -124,8 +64,7 @@ let machine: string;
 let closed: boolean;
 
 beforeEach(async () => {
-	started.length = 0;
-	gate = undefined;
+	fake = fakeMachine();
 	closed = false;
 	t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs: STUBS }, context);
 	things = await t.host.get(ThingsStore, {}, context);
@@ -204,7 +143,7 @@ async function refused(promise: Promise<unknown>, code: string, key?: string): P
 describe("Terminals and its ticks", () => {
 	it("is made in Pi once, and gives everyone there Watch, the agents Use; Watch is for people", async () => {
 		const ann = await person("Ann");
-		assert.deepEqual(await holding(ann, async (r) => [...r.granted].sort()), ["attach", "backlog", "terminals"]);
+		assert.deepEqual(await holding(ann, async (r) => [...r.granted].sort()), ["attach", "terminals"]);
 		const worker = await agent("s1");
 		const use = ["attach", "backlog", "close", "open", "resize", "terminals", "type"];
 		assert.deepEqual(await holding(worker, async (r) => [...r.granted].sort()), use);
@@ -220,7 +159,7 @@ describe("Terminals and its ticks", () => {
 		const kim = await person("Kim");
 		await grant(pi, terminals, { kind: "person", person: ann.id }, ["use"]);
 		const id = await holding(ann, (a, ctx) => a.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
-		started[0]!.say("hi");
+		started()[0]!.say("hi");
 		await holding(kim, async (k, ctx) => {
 			await until(k.terminals!, (list) => list.length === 1, within("Kim's list", ctx));
 			assert.equal(await (await attached(k, id, ctx))(), "hi");
@@ -240,26 +179,27 @@ describe("one terminal, many viewers", () => {
 		await grant(pi, terminals, { kind: "person", person: ann.id }, ["use"]);
 		await holding(ann, async (a, ctx) => {
 			const id = await a.open!({ machine, folder: "/tmp", ...SIZE }, ctx);
-			assert.equal(started.length, 1);
-			assert.equal(started[0]!.options.cwd, "/tmp");
-			started[0]!.say("hello ");
+			assert.equal(started().length, 1);
+			assert.equal(started()[0]!.options.cwd, "/tmp");
+			started()[0]!.say("hello ");
 			await holding(kim, async (k, kctx) => {
 				const next = await attached(k, id, kctx);
 				assert.equal(await next(), "hello ");
-				const backlog = await k.backlog!({ terminal: id }, kctx);
-				assert.deepEqual(backlog, { data: Buffer.from("hello ").toString("base64") });
+				assert.equal(k.backlog, undefined, "the backlog is Use's");
+				const backlog = await a.backlog!({ terminal: id, max: 3 }, ctx);
+				assert.deepEqual(backlog, { data: Buffer.from("lo ").toString("base64") }, "at most `max` bytes");
 				await a.type!({ terminal: id, bytes: "ls\r" }, ctx);
-				assert.deepEqual(started[0]!.typed, ["ls\r"]);
-				started[0]!.say("world");
+				assert.deepEqual(started()[0]!.typed, ["ls\r"]);
+				started()[0]!.say("world");
 				assert.equal(await next(), "world");
 			});
 			await a.resize!({ terminal: id, columns: 100, rows: 30 }, ctx);
-			assert.deepEqual(started[0]!.size, [100, 30]);
-			started[0]!.exit(3);
+			assert.deepEqual(started()[0]!.size, [100, 30]);
+			started()[0]!.exit(3);
 			await until(a.terminals!, (list) => list[0]?.exitCode === 3, within("the exit", ctx));
-			assert.equal(a.terminals!.value[0]!.columns, 100);
+			await refused(a.type!({ terminal: id, bytes: "x" }, ctx), "invalid", "notRunning");
 			await a.close!({ terminal: id }, ctx);
-			assert.equal(started[0]!.closed, true);
+			assert.equal(started()[0]!.closed, true);
 			await until(a.terminals!, (list) => list.length === 0, within("closed", ctx));
 			await refused(a.type!({ terminal: id, bytes: "x" }, ctx), "invalid", "noTerminal");
 		});
@@ -274,41 +214,41 @@ describe("one terminal, many viewers", () => {
 			const anns = await attached(a, id, ctx);
 			await holding(kim, async (k, kctx) => {
 				const kims = await attached(k, id, kctx);
-				started[0]!.say("one");
+				started()[0]!.say("one");
 				assert.equal(await kims(), "one");
 			});
 			assert.equal(await anns(), "one");
-			started[0]!.say("two");
+			started()[0]!.say("two");
 			assert.equal(await anns(), "two");
 		});
-		assert.equal(started[0]!.closed, false);
+		assert.equal(started()[0]!.closed, false);
 	});
 
 	it("outlives its viewers, and ends with the environments plugin's host", async () => {
 		const ann = await person("Ann");
 		await grant(pi, terminals, { kind: "person", person: ann.id }, ["use"]);
 		const id = await holding(ann, (a, ctx) => a.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
-		started[0]!.say("still here");
+		started()[0]!.say("still here");
 		await holding(ann, async (a, ctx) => {
 			await until(a.terminals!, (list) => list.some((terminal) => terminal.id === id), within("the list", ctx));
 			const { data } = await a.backlog!({ terminal: id }, ctx);
 			assert.equal(Buffer.from(data, "base64").toString(), "still here");
 		});
-		assert.equal(started[0]!.closed, false);
+		assert.equal(started()[0]!.closed, false);
 		await t.close(context);
 		closed = true;
-		await started[0]!.ended;
+		await started()[0]!.ended;
 	});
 
 	it("keeps the last BACKLOG bytes exactly, however the program's output comes (astra repro)", async () => {
 		const worker = await agent("s1");
 		await holding(worker, async (w, ctx) => {
 			const one = await w.open!({ machine, folder: "/tmp", ...SIZE }, ctx);
-			started[0]!.options.onData(new Uint8Array(TERMINAL_BACKLOG + 1).fill(65));
+			started()[0]!.options.onData(new Uint8Array(TERMINAL_BACKLOG + 1).fill(65));
 			assert.equal(Buffer.from((await w.backlog!({ terminal: one }, ctx)).data, "base64").length, TERMINAL_BACKLOG);
 			const two = await w.open!({ machine, folder: "/tmp", ...SIZE }, ctx);
-			started[1]!.options.onData(new Uint8Array(TERMINAL_BACKLOG).fill(65));
-			started[1]!.say("!");
+			started()[1]!.options.onData(new Uint8Array(TERMINAL_BACKLOG).fill(65));
+			started()[1]!.say("!");
 			const tail = Buffer.from((await w.backlog!({ terminal: two }, ctx)).data, "base64");
 			assert.equal(tail.length, TERMINAL_BACKLOG);
 			assert.equal(tail.at(-1), "!".charCodeAt(0));
@@ -322,7 +262,7 @@ describe("one terminal, many viewers", () => {
 		await holding(ann, async (a, ctx) => {
 			const next = await attached(a, id, ctx);
 			const piece = new Uint8Array(64 * 1024).fill(66);
-			for (let sent = 0; sent < 10 * 1024 * 1024; sent += piece.length) started[0]!.options.onData(piece);
+			for (let sent = 0; sent < 10 * 1024 * 1024; sent += piece.length) started()[0]!.options.onData(piece);
 			let received = 0;
 			while (received < TERMINAL_BACKLOG) received += (await next()).length;
 			assert.equal(received, TERMINAL_BACKLOG);
@@ -351,7 +291,7 @@ describe("where a call may reach", () => {
 				// Closing only ends a program: Use here is enough.
 				await k.close!({ terminal: id }, kctx);
 			});
-			assert.equal(started[0]!.closed, true);
+			assert.equal(started()[0]!.closed, true);
 		});
 	});
 
@@ -362,12 +302,12 @@ describe("where a call may reach", () => {
 		const anns = await holding(ann, (a, ctx) => a.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		await holding(worker, async (w, ctx) => {
 			const own = await w.open!({ machine, folder: "/tmp", ...SIZE }, ctx);
-			started[1]!.say("$ ");
+			started()[1]!.say("$ ");
 			assert.deepEqual(await w.backlog!({ terminal: own }, ctx), { data: Buffer.from("$ ").toString("base64") });
 			await w.type!({ terminal: own, bytes: "pwd\r" }, ctx);
-			assert.deepEqual(started[1]!.typed, ["pwd\r"]);
+			assert.deepEqual(started()[1]!.typed, ["pwd\r"]);
 			await w.type!({ terminal: anns, bytes: "x" }, ctx);
-			assert.deepEqual(started[0]!.typed, ["x"]);
+			assert.deepEqual(started()[0]!.typed, ["x"]);
 			assert.deepEqual(await w.backlog!({ terminal: anns }, ctx), { data: "" });
 		});
 	});
@@ -398,7 +338,7 @@ describe("where a call may reach", () => {
 		await holding(worker, async (w, ctx) => {
 			for (let i = 0; i < 19; i++) await w.open!({ machine, folder: "/tmp", ...SIZE }, ctx);
 			let open: () => void = () => {};
-			gate = new Promise((resolve) => {
+			fake.gate = new Promise((resolve) => {
 				open = resolve;
 			});
 			const both = Promise.allSettled([
@@ -408,7 +348,7 @@ describe("where a call may reach", () => {
 			open();
 			const [first, second] = await both;
 			assert.deepEqual([first.status, second.status].sort(), ["fulfilled", "rejected"]);
-			assert.equal(started.length, 20);
+			assert.equal(started().length, 20);
 		});
 	});
 });
@@ -421,23 +361,23 @@ describe("a terminal's lifetime", () => {
 		const id = await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		await grant(pi, terminals, { kind: "agents" }, ["use"], false);
 		assert.deepEqual(await holding(worker, async (w) => [...w.granted]), []);
-		assert.equal(started[0]!.closed, false);
+		assert.equal(started()[0]!.closed, false);
 		await holding(ann, (a, ctx) => a.close!({ terminal: id }, ctx));
-		assert.equal(started[0]!.closed, true);
+		assert.equal(started()[0]!.closed, true);
 	});
 
 	it("ends when its machine goes (astra repro)", async () => {
 		const worker = await agent("s1");
 		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		await things.unlink({ workspace: pi, thing: machine }, context);
-		await started[0]!.ended;
+		await started()[0]!.ended;
 	});
 
 	it("ends when its Terminals thing goes (astra repro)", async () => {
 		const worker = await agent("s1");
 		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		await things.unlink({ workspace: pi, thing: terminals }, context);
-		await started[0]!.ended;
+		await started()[0]!.ended;
 	});
 });
 
@@ -457,5 +397,100 @@ describe("a held Terminals", () => {
 				within("Watch withheld", ctx),
 			);
 		});
+	});
+});
+
+describe("a stream holds what lets its viewer in (round 2)", () => {
+	it("ends when the machine is withheld from the person, with nothing printed after (opus round 2, M1)", async () => {
+		const ann = await person("Ann");
+		const worker = await agent("s1");
+		const id = await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
+		await holding(ann, async (a, ctx) => {
+			const next = await attached(a, id, ctx);
+			started()[0]!.say("before ");
+			assert.equal(await next(), "before ");
+			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
+			await until(a.terminals!, (rows) => rows.length === 0, within("the list without it", ctx));
+			await refused(a.attach!({ terminal: id }, ctx), "forbidden", "notHere");
+			started()[0]!.say("secret");
+			assert.equal(await next(), "", "the stream ended");
+		});
+	});
+
+	it("ends a read under way when its terminal leaves the person's list, with no output meanwhile (astra round 2)", async () => {
+		const ann = await person("Ann");
+		const worker = await agent("s1");
+		const id = await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
+		await holding(ann, async (a, ctx) => {
+			const next = await attached(a, id, ctx);
+			const waiting = next();
+			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
+			await until(a.terminals!, (rows) => !rows.some((row) => row.id === id), within("the list", ctx));
+			assert.equal(await waiting, "");
+		});
+	});
+
+	it("ends when the person leaves the workspace", async () => {
+		const ann = await person("Ann");
+		const worker = await agent("s1");
+		const id = await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
+		await holding(ann, async (a, ctx) => {
+			const next = await attached(a, id, ctx);
+			const waiting = next();
+			await things.removeParty({ workspace: pi, party: { kind: "person", person: ann.id } }, context);
+			assert.equal(await waiting, "");
+			started()[0]!.say("after");
+			assert.equal(await next(), "");
+		});
+		assert.equal(started()[0]!.closed, false, "the terminal runs on");
+	});
+
+	it("does not start when the terminal is not in the person's list", async () => {
+		const ann = await person("Ann");
+		const worker = await agent("s1");
+		const id = await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
+		await holding(ann, async (a, ctx) => {
+			const { url } = await a.attach!({ terminal: id }, ctx);
+			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
+			await until(a.terminals!, (rows) => rows.length === 0, within("the list", ctx));
+			const entry = t
+				.contributions(Http)
+				.flatMap(({ value }) => Object.entries(value.routes ?? {}))
+				.find(([name]) => name === `GET ${ATTACH_PATH}`)![1];
+			const handler = typeof entry === "function" ? entry : entry.handler;
+			const request = { method: "GET", query: new URL(url, "http://p3").searchParams } as unknown as HttpRequest;
+			assert.deepEqual(await handler(request, ctx), { kind: "error", status: 403 });
+		});
+	});
+});
+
+describe("terminals of a workspace that went", () => {
+	it("are closed at the next open, and free their slots (opus round 2, S2)", async () => {
+		const worker = await agent("s1");
+		const host = (await t.host.registry(TerminalHosts, context)).value!;
+		const gone = await host.open(
+			{ owner: `${terminals}/a-workspace-that-went`, machine, folder: "/tmp", ...SIZE, max: 20 },
+			context,
+		);
+		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
+		assert.equal(started()[0]!.closed, true);
+		assert.equal(
+			host.owners().some((owner) => owner.endsWith("a-workspace-that-went")),
+			false,
+		);
+		assert.equal(host.write(gone, "x"), false);
+	});
+});
+
+describe("caches and holds", () => {
+	it("keeps nothing of a viewer once their hold is released: their list is collected (guide 8.7)", async () => {
+		const ann = await person("Ann");
+		const worker = await agent("s1");
+		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
+		const list = await holding(ann, async (a, ctx) => {
+			await until(a.terminals!, (rows) => rows.length === 1, within("the list", ctx));
+			return new WeakRef(a.terminals!.value);
+		});
+		assert.ok(await collected([list]));
 	});
 });

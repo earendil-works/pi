@@ -1,4 +1,5 @@
-// The machines on the server, whatever their type (decision 117): `MachineKeeper`, held while the plugin is loaded,
+// The machines on the server, whatever their type (decision 117): the registries of their types (`MachineTypes`, the
+// first by plugin name winning a type's name) and hosts (`MachineHosts`); `MachineKeeper`, held while the plugin is loaded,
 // connects a machine from its type and settings when it is first asked for (`MachineHosts`, which it contributes),
 // keeps the connection until the settings change, the machine goes or the plugin unloads, and writes a new machine's
 // type and settings once checked (`make`, the kind's create hook); `MachineInfoHere` is one machine's info, one object
@@ -22,11 +23,10 @@ import {
 } from "@earendil-works/p3/v1";
 import { OneThing, ThingsStore } from "../things/contract.server.ts";
 import { type MachineHost, MachineHosts, type MachineType, MachineTypes } from "./contract.server.ts";
-import { MACHINE_KIND } from "./contract.ts";
 import { MachineInfo } from "./kind.ts";
 import { messages } from "./messages.ts";
 import { MachinesStore } from "./store.ts";
-import { THIS_DEVICE_TYPE } from "./this-device.ts";
+import { THIS_DEVICE, THIS_DEVICE_TYPE } from "./this-device.ts";
 
 /** The machines' connections and writes, once per server: what the kind's hooks reach through a `ctx`. */
 export const MachineKeeper = local("environments.machine-keeper", {
@@ -47,14 +47,22 @@ export const MachineInfoHere = local("environments.machine-info", {
 	members: { info: MachineInfo },
 });
 
-/** This device's machine: the kind's one thing. */
-const THIS_DEVICE = { kind: MACHINE_KIND };
-
 /** A machine's connection: the type and settings revision it was made from, and its host. */
 type Connection = { readonly type: MachineType; readonly revision: number; readonly host: Promise<MachineHost> };
 
-/** Serves `MachineKeeper` and `MachineInfoHere` on `host`, and holds the keeper while the plugin is loaded. */
+/**
+ * Serves the machines' registries, `MachineKeeper` and `MachineInfoHere` on `host`, and holds the keeper while the
+ * plugin is loaded.
+ */
 export function serveMachines(host: FacetHost<P3Principal>): void {
+	host.serve(MachineHosts, { compose: (table) => table[0]?.value ?? (async () => undefined) });
+	host.serve(MachineTypes, {
+		compose: (table) => {
+			const byName = new Map<string, (typeof table)[number]>();
+			for (const item of table) if (!byName.has(item.value.type)) byName.set(item.value.type, item);
+			return byName;
+		},
+	});
 	host.serve(MachineKeeper, (_params, self) => {
 		const types = self.registry(MachineTypes);
 		const store = self.get(MachinesStore, {});

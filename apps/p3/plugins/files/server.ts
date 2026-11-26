@@ -9,7 +9,7 @@ import { type MachineHost, MachineHosts, type NameEntry, reachMachine } from "..
 import { givesTo } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
 import { DOWNLOAD_PATH, type Entry, FilesKind, type Hit, UPLOAD_PATH } from "./contract.ts";
-import { hiddenIn, must, placed, placedEntry, placedNew, refusalOf } from "./places.ts";
+import { hiddenIn, joined, must, placed, placedEntry, placedNew } from "./places.ts";
 import { serveTransfers } from "./transfers.ts";
 
 /** How many entries one page of `entries` holds. */
@@ -77,8 +77,8 @@ async function paged(
 	after: string | undefined,
 	context: Context,
 ): Promise<{ entries: Entry[]; next?: string }> {
-	const sorted = (await names(at, folder, context))
-		.filter(({ name }) => !hiddenIn(at, joined(folder, name)))
+	const sorted = must(await at.listNames(folder, Number.POSITIVE_INFINITY, context))
+		.names.filter(({ name }) => !hiddenIn(at, joined(folder, name)))
 		.map((entry) => ({ key: sortKey(entry), entry }))
 		.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 	const start = after === undefined ? 0 : sorted.findIndex(({ key }) => key > after);
@@ -96,7 +96,9 @@ async function paged(
 
 /**
  * The paths below `folder` whose name contains `wanted` (lower case), at most `HITS`: a walk of the folders, breadth
- * first, symbolic links, `.git` and hidden folders not entered; bounded by `SEARCH_BOUNDS` and `context`'s abort.
+ * first, symbolic links, `.git` and hidden folders not entered, a folder that cannot be read left out; bounded by
+ * `SEARCH_BOUNDS` (the entries read, the time, checked before every folder and entry) and `context`'s abort, which
+ * fails the search.
  */
 async function searched(
 	at: MachineHost,
@@ -109,11 +111,12 @@ async function searched(
 	const queue = [folder];
 	let walked = 0;
 	for (let next = 0; next < queue.length; next++) {
+		if (walked >= SEARCH_BOUNDS.maxEntries || Date.now() > deadline) return { hits, truncated: true };
+		const listed = await at.listNames(queue[next]!, SEARCH_BOUNDS.maxEntries - walked, context);
 		context.abortSignal?.throwIfAborted();
-		// A folder that cannot be read is left out.
-		const listed = await names(at, queue[next]!, context).catch(() => []);
-		for (const { name, kind } of listed) {
-			if (walked++ === SEARCH_BOUNDS.maxEntries || Date.now() > deadline) return { hits, truncated: true };
+		if (!listed.ok) continue;
+		for (const { name, kind } of listed.value.names) {
+			walked++;
 			const path = joined(queue[next]!, name);
 			if (name === ".git" || hiddenIn(at, path)) continue;
 			if (name.toLowerCase().includes(wanted)) {
@@ -122,24 +125,9 @@ async function searched(
 			}
 			if (kind === "directory") queue.push(path);
 		}
+		if (listed.value.more || Date.now() > deadline) return { hits, truncated: true };
 	}
 	return { hits, truncated: false };
-}
-
-/** `folder`'s names and kinds; a machine's failure as the caller sees it. */
-async function names(at: MachineHost, folder: string, context: Context): Promise<readonly NameEntry[]> {
-	try {
-		return await at.listNames(folder, context);
-	} catch (error) {
-		// A trust boundary: Node's errors carry their code.
-		const code = error instanceof Error && "code" in error ? String(error.code) : undefined;
-		throw refusalOf(code, error instanceof Error ? error.message : String(error));
-	}
-}
-
-/** `name` in `folder`. */
-function joined(folder: string, name: string): string {
-	return folder === "/" ? `/${name}` : `${folder}/${name}`;
 }
 
 /** An entry's place in a folder's order: folders first, then by name (byte order). */

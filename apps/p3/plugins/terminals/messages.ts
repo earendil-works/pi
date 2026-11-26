@@ -11,6 +11,7 @@ export const messages = defineMessages("terminals", {
 		tickUse: "Use",
 		notAbsolute: "A folder starts at the machine's root (/).",
 		noTerminal: "This terminal does not exist here.",
+		notRunning: "This terminal's program has ended.",
 		noHost: "Terminals cannot be reached now.",
 		pane: "Terminals",
 		open: "New terminal",

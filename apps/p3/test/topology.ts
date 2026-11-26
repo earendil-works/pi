@@ -4,7 +4,7 @@
 // runner it contributes is asked by the waker alone. `reload` renews a plugin's facet object on the server or a
 // worker (its objects restart, as after an edit); `count` reads the server's metrics.
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import {
@@ -104,7 +104,10 @@ export type Topology = {
 
 /** Starts a topology: the server loaded, with its route to session workers; `idleMs` is each worker's idle time. */
 export async function topology(context: Context, idleMs = 60_000): Promise<Topology> {
-	const dataDir = await mkdtemp(join(tmpdir(), "p3-topology-"));
+	// The topology's own root: the data and work roots inside, so its close removes only what it made.
+	const root = await mkdtemp(join(tmpdir(), "p3-topology-"));
+	const dataDir = join(root, "data");
+	await mkdir(dataDir, { mode: 0o700 });
 	const errors: Topology["errors"][number][] = [];
 	const closed: string[] = [];
 	const workers = new Map<string, Worker>();
@@ -151,7 +154,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 	const sessions = server.route(Session, { authorize: () => true, admit: admitRoute, resolve: startWorker }, context);
 	const runtime: ServerRuntime = {
 		dataDir,
-		workRoot: `${dataDir}-work`,
+		workRoot: join(root, "work"),
 		machine: { user: userInfo().username, hostname: hostname() },
 		host: server,
 		store,
@@ -216,8 +219,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 			await http.close(context);
 			await server.close(context);
 			await store.close(context);
-			await rm(dataDir, { recursive: true, force: true });
-			await rm(`${dataDir}-work`, { recursive: true, force: true });
+			await rm(root, { recursive: true, force: true });
 		},
 	};
 }

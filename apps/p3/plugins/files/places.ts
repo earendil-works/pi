@@ -45,9 +45,14 @@ export async function placedNew(at: MachineHost, path: string, context: Context)
 		throw invalid("args", `files: ${path} names no file`, { message: messages.message("notFound") });
 	}
 	const folder = await placed(at, slash === 0 ? "/" : path.slice(0, slash), context);
-	const target = folder === "/" ? `/${name}` : `${folder}/${name}`;
+	const target = joined(folder, name);
 	if (hiddenIn(at, target)) throw hidden(target);
 	return target;
+}
+
+/** `name` in `folder`. */
+export function joined(folder: string, name: string): string {
+	return folder === "/" ? `/${name}` : `${folder}/${name}`;
 }
 
 /** Refuses a relative `path`. */
@@ -70,13 +75,12 @@ function hidden(path: string) {
 /** `result`'s value, or its error as the caller sees it. */
 export function must<T>(result: Result<T, FileError>): T {
 	if (result.ok) return result.value;
-	throw refusalOf(result.error.code, result.error.message);
+	throw refusalOf(result.error);
 }
 
-/** A machine's failure (`code`: a `FileError`'s or a Node error's) as the caller sees it. */
-export function refusalOf(code: string | undefined, reason: string) {
-	if (code === "not_found" || code === "ENOENT") {
-		return invalid("args", `files: ${reason}`, { message: messages.message("notFound") });
-	}
-	return invalid("args", `files: ${reason}`, { message: messages.message("failed", reason) });
+/** A machine's failure as the caller sees it. */
+function refusalOf(error: FileError) {
+	const message =
+		error.code === "not_found" ? messages.message("notFound") : messages.message("failed", error.message);
+	return invalid("args", `files: ${error.message}`, { message });
 }

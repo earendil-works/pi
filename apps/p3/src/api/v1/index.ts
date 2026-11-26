@@ -32,6 +32,8 @@ export {
 	withCancel,
 } from "@earendil-works/chord/context";
 export type { JsonValue } from "@earendil-works/chord/json";
+/** What `until` follows: a reference's state, a member, any watchable. */
+export type { NativeWatchable } from "@earendil-works/chord/watch";
 // The contracts p3 promises to third-party plugins (Chord decision "The app kit, point 5"): the built-in plugins'
 // own files, re-exported; a plugin built against `/v1` keeps v1's contracts.
 export * from "../../../plugins/apps/contract.ts";

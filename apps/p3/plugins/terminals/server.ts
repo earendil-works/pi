@@ -4,18 +4,21 @@
 // A terminal belongs to its Terminals thing and workspace (the host's owner key); each caller sees the ones of its
 // workspace on machines it may use there, checked for the caller (`checkMachine`, through the things plugin's index).
 // Anyone with Use types in any terminal here: limiting an agent to the terminals it opened is a limit, postponed
-// (decision 89). A Terminals thing that goes takes its terminals with it (its delete hook).
+// (decision 89). A Terminals thing that goes takes its terminals with it (its delete hook); the terminals of a
+// workspace that went are closed at the next open anywhere, until the things plugin tells kinds that a workspace went
+// (ERNDL-1143).
 
-import { defineFacet, forbidden, invalid } from "@earendil-works/p3/v1";
+import { type Context, defineFacet, forbidden, invalid, type Reference } from "@earendil-works/p3/v1";
 import {
 	checkMachine,
 	machineAvailable,
+	TERMINAL_BACKLOG,
 	type TerminalHost,
 	TerminalHosts,
 	TerminalKeeper,
 	TerminalList,
 } from "../environments/contract.server.ts";
-import { givesTo } from "../things/contract.server.ts";
+import { givesTo, ThingsStore } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
 import { serveAttach } from "./attach.ts";
 import { ATTACH_PATH, TerminalsKind } from "./contract.ts";
@@ -60,8 +63,8 @@ export default defineFacet((host) => {
 				attach: async ({ terminal }) => ({
 					url: `${ATTACH_PATH}?${new URLSearchParams({ workspace, thing, terminal: usable(terminal) })}`,
 				}),
-				backlog: async ({ terminal }) => ({
-					data: Buffer.from(at().tail(usable(terminal)).bytes).toString("base64"),
+				backlog: async ({ terminal, max }) => ({
+					data: Buffer.from(at().tail(usable(terminal), max ?? TERMINAL_BACKLOG).bytes).toString("base64"),
 				}),
 				open: async ({ machine, folder, columns, rows }, ctx) => {
 					checkMachine(machine, caller, answers.value[machine]);
@@ -70,10 +73,16 @@ export default defineFacet((host) => {
 							message: messages.message("notAbsolute"),
 						});
 					}
-					return at().open({ owner, machine, folder, columns, rows, openedBy: caller, max: MAX_TERMINALS }, ctx);
+					const host = at();
+					await sweep(host, await ctx.get(ThingsStore, {}), ctx);
+					return host.open({ owner, machine, folder, columns, rows, max: MAX_TERMINALS }, ctx);
 				},
 				type: async ({ terminal, bytes }) => {
-					at().write(usable(terminal), bytes);
+					if (!at().write(usable(terminal), bytes)) {
+						throw invalid("args", `terminals: ${terminal} has ended`, {
+							message: messages.message("notRunning"),
+						});
+					}
 					return null;
 				},
 				resize: async ({ terminal, columns, rows }) => {
@@ -94,3 +103,12 @@ export default defineFacet((host) => {
 	});
 	serveAttach(host);
 });
+
+/** Closes the terminals of the owners whose workspace went (an owner key ends with its workspace's id). */
+async function sweep(host: TerminalHost, store: Reference<typeof ThingsStore>, context: Context): Promise<void> {
+	for (const owner of host.owners()) {
+		const workspace = owner.slice(owner.indexOf("/") + 1);
+		if ((await store.workspaces.one.page({ workspace }, 1, context)).items.length > 0) continue;
+		for (const { id } of host.list(owner)) host.close(id);
+	}
+}

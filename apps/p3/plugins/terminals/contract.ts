@@ -3,11 +3,11 @@
 // terminal host (the environments plugin's), belongs to the Terminals thing and the workspace it was opened in, and is
 // listed there only. One terminal, many viewers: each viewer reads its bytes from the address `attach` answers (its
 // kept output, then what follows, raw), the agent its kept output with `backlog`. Watch (for people) lists terminals
-// and attaches to them; Use (people and agents) does that too, and opens terminals, types in them, resizes and closes
-// them.
+// and attaches to them; Use (people and agents) does that too, and opens terminals, types in them, reads their kept
+// output, resizes and closes them.
 
-import { arr, int, method, nul, obj, type Static, str, union } from "@earendil-works/p3/v1";
-import { Caller } from "../things/contract.ts";
+import { arr, int, method, obj, opt, str } from "@earendil-works/p3/v1";
+import { TerminalRow } from "../environments/contract.ts";
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";
 
@@ -24,23 +24,6 @@ const Columns = int({ min: 1, max: 1000 });
 const Rows = int({ min: 1, max: 1000 });
 
 /**
- * An open terminal: its id, the machine and folder it started in, its size, who opened it, and its exit code once its
- * program ended (`null` while it runs; it stays listed until closed).
- */
-export const TerminalInfo = obj({
-	id: str(),
-	machine: str(),
-	folder: str(),
-	columns: int(),
-	rows: int(),
-	openedBy: Caller,
-	exitCode: union([int(), nul()]),
-});
-
-/** An open terminal (see `TerminalInfo`). */
-export type TerminalInfo = Static<typeof TerminalInfo>;
-
-/**
  * Terminals (`terminals.pane`): one per Pi, made by this plugin, linked in Pi only (below it can only be hidden or have
  * its ticks withheld); the nearest one reaching a workspace applies. A new link gives everyone here Watch and the
  * agents Use; Use for people is the owner's (the owner flag) and whoever it is granted to.
@@ -51,8 +34,8 @@ export const TerminalsKind = defineThing("terminals.pane", {
 	workspaces: "one",
 	stacking: "nearest",
 	state: {
-		/** The terminals open in this workspace, oldest first. */
-		terminals: arr(TerminalInfo),
+		/** The terminals open in this workspace on machines the caller may use here, oldest first. */
+		terminals: arr(TerminalRow),
 	},
 	methods: {
 		/**
@@ -60,14 +43,16 @@ export const TerminalsKind = defineThing("terminals.pane", {
 		 * the person loses Watch and Use (served while the person holds Terminals).
 		 */
 		attach: method(obj({ terminal: TerminalId }), obj({ url: str() })),
-		/** A terminal's kept output (its last bytes, base64), for an agent reading what its program printed. */
-		backlog: method(obj({ terminal: TerminalId }), obj({ data: str() })),
+		/**
+		 * A terminal's kept output, its last `max` bytes at most (base64), for an agent reading what its program printed.
+		 */
+		backlog: method(obj({ terminal: TerminalId, max: opt(int({ min: 0 })) }), obj({ data: str() })),
 		/** Opens a terminal running the machine's shell in `folder` (absolute); answers its id. */
 		open: method(
 			obj({ machine: MachineId, folder: str({ min: 1, max: 4096 }), columns: Columns, rows: Rows }),
 			str(),
 		),
-		/** Types `bytes` into a terminal (keys as the terminal reads them: `\r` is Enter). */
+		/** Types `bytes` into a terminal (keys as the terminal reads them: `\r` is Enter); refused once its program ended. */
 		type: method(obj({ terminal: TerminalId, bytes: str({ max: 64 * 1024 }) })),
 		/** Gives a terminal a new size. */
 		resize: method(obj({ terminal: TerminalId, columns: Columns, rows: Rows })),
@@ -75,7 +60,7 @@ export const TerminalsKind = defineThing("terminals.pane", {
 		close: method(obj({ terminal: TerminalId })),
 	},
 	ticks: {
-		watch: { label: messages.message("tickWatch"), for: "people", gives: ["terminals", "attach", "backlog"] },
+		watch: { label: messages.message("tickWatch"), for: "people", gives: ["terminals", "attach"] },
 		use: {
 			label: messages.message("tickUse"),
 			gives: ["terminals", "attach", "backlog", "open", "type", "resize", "close"],
