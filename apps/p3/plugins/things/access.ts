@@ -19,9 +19,14 @@ import {
 	agentCounts,
 	answerOf,
 	type Counted,
+	GONE,
 	type KindsLookup,
+	type Maker,
 	NOBODY,
+	type OwnHere,
+	ownAnswerOf,
 	ownerAnswer,
+	ownerOwnAnswer,
 	type PersonEntries,
 	personCounts,
 	sameAnswer,
@@ -38,11 +43,55 @@ export type Reader = {
 	person(id: string, context: Context): Promise<PersonEntries>;
 };
 
-/** What one commit wrote to: the workspaces and persons whose entries on disk differ now. */
-export type Touched = { readonly workspaces: Set<string>; readonly persons: Set<string> };
+/**
+ * What one commit wrote to: the workspaces and persons whose entries on disk differ now, and the things renamed (no
+ * access changes; the probes that show names are asked again).
+ */
+export type Touched = { readonly workspaces: Set<string>; readonly persons: Set<string>; readonly things: Set<string> };
 
 /** An attached watcher: the answers now, and how to stop. */
 export type Attachment = { readonly value: Answers; detach(): void };
+
+/** What a probe's computation reads, synchronously, of what is loaded (its `prepare` loaded what it needs). */
+export type Look = {
+	/** What loaded workspace `workspace` ends up with (`GONE` for one not loaded or not there). */
+	access(workspace: string): WorkspaceAccess;
+	/** Loaded workspace `workspace`'s entries (`undefined`: not loaded, or not there). */
+	entries(workspace: string): WorkspaceEntries | undefined;
+	/** The answer `caller` (a person loaded) gets for `thing` in loaded workspace `workspace`, as admission computes it. */
+	answer(workspace: string, thing: string, caller: Caller): Answer | undefined;
+	/** Loaded person `person`'s entries (`undefined`: not loaded). */
+	person(person: string): PersonEntries | undefined;
+};
+
+/** How a probe's `prepare` loads what its computation reads: a workspace with its ancestors, a person. */
+export type Load = {
+	workspace(id: string): Promise<void>;
+	person(id: string): Promise<void>;
+};
+
+/**
+ * A value computed over the index, followed (a list of a workspace's contents, a caller's roots): asked again after
+ * every commit that touched `workspace` or a workspace above it (`scope: "here"`), or anything (`"any"`: what depends
+ * on workspaces below or elsewhere), and after any person or the kinds changed. `prepare` loads what `compute` reads,
+ * before each computation; `compute` is pure over what is loaded and answers a new value whenever it differs (`same`
+ * says whether it does). `watched` and `persons` name what it keeps loaded.
+ */
+export type Probe<T> = {
+	readonly workspace: string;
+	readonly scope: "here" | "any";
+	prepare(load: Load, look: Look, context: Context): Promise<void>;
+	compute(look: Look): T;
+	same(a: T, b: T): boolean;
+	watched(): Iterable<string>;
+	persons(): Iterable<string>;
+};
+
+/** A probe attached: its value now, and how to stop. */
+export type ProbeAttachment<T> = { readonly value: T; detach(): void };
+
+/** One attached probe: what it computes, whom it tells, the value last told. */
+type ProbeView = { readonly probe: Probe<unknown>; readonly observer: FollowObserver<unknown>; last: unknown };
 
 /** A workspace in memory: its entries (`undefined`: it does not exist) and its result once computed. */
 type Loaded = { entries: WorkspaceEntries | undefined; access: WorkspaceAccess | undefined };
@@ -78,6 +127,7 @@ export class AccessIndex {
 	readonly #views = new Set<View>();
 	readonly #viewsAt = new Map<string, Set<View>>();
 	readonly #viewsOf = new Map<string, Set<View>>();
+	readonly #probes = new Set<ProbeView>();
 	#queue: Promise<unknown> = Promise.resolve();
 	#closed = false;
 
@@ -132,6 +182,27 @@ export class AccessIndex {
 	}
 
 	/**
+	 * Attaches `observer` to `probe`'s value: loads what it needs, computes it, and tells the observer each changed
+	 * value from then on, until `detach`. `undefined` once it closed.
+	 */
+	probe<T>(
+		probe: Probe<T>,
+		observer: FollowObserver<unknown>,
+		context: Context,
+	): Promise<ProbeAttachment<T> | undefined> {
+		if (!this.open) return Promise.resolve(undefined);
+		return this.#run(async () => {
+			if (!this.open) return undefined;
+			await this.#ensure(probe.workspace, context);
+			await probe.prepare(this.#load(context), this.#look(context), context);
+			if (this.#closed) return undefined;
+			const view: ProbeView = { probe, observer, last: probe.compute(this.#look(context)) };
+			this.#probes.add(view);
+			return { value: view.last as T, detach: () => this.#probes.delete(view) };
+		});
+	}
+
+	/**
 	 * Runs `transaction`, one commit of the store that says what it wrote to in `touched`, one at a time with every
 	 * other operation, then follows it: the loaded entries among the touched ones are read again, the results at and
 	 * below the touched workspaces dropped, and every view there and of a touched person asked again; answers what the
@@ -141,7 +212,7 @@ export class AccessIndex {
 	commit<R>(transaction: (touched: Touched) => Promise<R>): Promise<R> {
 		const queued = performance.now();
 		return this.#run(async () => {
-			const touched: Touched = { workspaces: new Set(), persons: new Set() };
+			const touched: Touched = { workspaces: new Set(), persons: new Set(), things: new Set() };
 			const started = performance.now();
 			this.#context.telemetry.metrics?.histogram("things.store.wait").record(started - queued);
 			const result = await transaction(touched);
@@ -165,19 +236,26 @@ export class AccessIndex {
 			if (!(await this.#reread(new Set(this.#workspaces.keys()), new Set()))) return;
 			for (const loaded of this.#workspaces.values()) loaded.access = undefined;
 			this.#ask(this.#views);
+			await this.#askProbes(this.#probes);
 		});
 	}
 
 	/** Drops every workspace with no view at or below it and every person nobody watches as. */
 	forgetUnwatched(): void {
 		const keep = new Set<string>();
-		for (const watched of this.#viewsAt.keys()) {
+		const persons = new Set(this.#viewsOf.keys());
+		const watching = [...this.#viewsAt.keys()];
+		for (const { probe } of this.#probes) {
+			watching.push(probe.workspace, ...probe.watched());
+			for (const person of probe.persons()) persons.add(person);
+		}
+		for (const watched of watching) {
 			for (let at = watched; at !== "" && !keep.has(at); at = this.#workspaces.get(at)?.entries?.parent ?? "") {
 				keep.add(at);
 			}
 		}
 		for (const id of this.#workspaces.keys()) if (!keep.has(id)) this.#workspaces.delete(id);
-		for (const id of this.#persons.keys()) if (!this.#viewsOf.has(id)) this.#persons.delete(id);
+		for (const id of this.#persons.keys()) if (!persons.has(id)) this.#persons.delete(id);
 		this.#forgetWhenAbove = this.#workspaces.size + this.#persons.size + this.#keepUnwatched;
 		this.#viewsAtSweep = this.#views.size;
 	}
@@ -209,7 +287,8 @@ export class AccessIndex {
 
 	/** Follows a commit that wrote `touched` (see `commit`); nothing once closed (no view is left to tell). */
 	async #adopt(touched: Touched): Promise<void> {
-		if (this.#closed || (touched.workspaces.size === 0 && touched.persons.size === 0)) return;
+		if (this.#closed || (touched.workspaces.size === 0 && touched.persons.size === 0 && touched.things.size === 0))
+			return;
 		const loaded = new Set([...touched.workspaces].filter((id) => this.#workspaces.has(id)));
 		if (!(await this.#reread(loaded, touched.persons))) return;
 		const asked = new Set<View>();
@@ -222,6 +301,54 @@ export class AccessIndex {
 		}
 		for (const id of touched.persons) for (const view of this.#viewsOf.get(id) ?? []) asked.add(view);
 		this.#ask(asked);
+		const probes = new Set<ProbeView>();
+		for (const view of this.#probes) {
+			const { workspace, scope } = view.probe;
+			const here = this.#workspaces.has(workspace) && this.#isAtOrBelow(workspace, touched.workspaces);
+			if (scope === "any" || here || touched.persons.size > 0 || touched.things.size > 0) probes.add(view);
+		}
+		await this.#askProbes(probes);
+	}
+
+	/**
+	 * Asks each of `views` again (its `prepare`, then its computation) and tells its observer a changed value; a load
+	 * that fails recovers (nothing half read is told), an observer that throws is reported.
+	 */
+	async #askProbes(views: ReadonlySet<ProbeView>): Promise<void> {
+		for (const view of views) {
+			if (!this.#probes.has(view)) continue;
+			try {
+				await this.#ensure(view.probe.workspace, this.#context);
+				await view.probe.prepare(this.#load(this.#context), this.#look(this.#context), this.#context);
+			} catch (error) {
+				this.#recover(error);
+				return;
+			}
+			const value = view.probe.compute(this.#look(this.#context));
+			if (view.probe.same(view.last, value)) continue;
+			view.last = value;
+			try {
+				view.observer.advance({ kind: "value", value, ops: [], retired: false }, this.#context);
+			} catch (error) {
+				reportError("things: a probe's watcher of the access index failed", error, this.#context);
+			}
+		}
+	}
+
+	/** What a probe's `prepare` loads through. */
+	#load(context: Context): Load {
+		return { workspace: (id) => this.#ensure(id, context), person: (id) => this.#ensurePerson(id, context) };
+	}
+
+	/** What a probe's computation reads. */
+	#look(context: Context): Look {
+		return {
+			access: (workspace) => (this.#workspaces.has(workspace) ? this.#accessOf(workspace, context) : GONE),
+			entries: (workspace) => this.#workspaces.get(workspace)?.entries,
+			answer: (workspace, thing, caller) =>
+				this.#workspaces.has(workspace) ? this.#answerNow(workspace, thing, caller, context) : undefined,
+			person: (person) => this.#persons.get(person),
+		};
 	}
 
 	/**
@@ -260,10 +387,11 @@ export class AccessIndex {
 
 	/** Ends every view's observer with `error`; the views go. */
 	#endViews(error: ChordError): void {
-		const views = [...this.#views];
+		const views = [...this.#views, ...this.#probes];
 		this.#views.clear();
 		this.#viewsAt.clear();
 		this.#viewsOf.clear();
+		this.#probes.clear();
 		for (const view of views) view.observer.end({ kind: "failed", error });
 	}
 
@@ -311,14 +439,38 @@ export class AccessIndex {
 	}
 
 	/**
-	 * The view's answers now (rule 5): an owner every tick for people of each available thing (item 99), anyone else the
-	 * answer of their counted parties. The last answers when nothing differs, and each unchanged thing's answer object
-	 * kept.
+	 * The answer `caller` gets for `thing` in `workspace` now, loading what that needs (`undefined`: nothing), one at a
+	 * time with every other operation: not live (R41, `ThingsStore.answerOf`; linking's check, R9).
+	 */
+	answer(workspace: string, thing: string, caller: Caller, context: Context): Promise<Answer | undefined> {
+		return this.#run(async () => {
+			await this.#ensure(workspace, context);
+			if (caller.kind === "person") await this.#ensurePerson(caller.person, context);
+			return this.#answerNow(workspace, thing, caller, context);
+		});
+	}
+
+	/** The answer `caller` (a person loaded) gets for `thing` in loaded workspace `workspace` now. */
+	#answerNow(workspace: string, thing: string, caller: Caller, context: Context): Answer | undefined {
+		const access = this.#accessOf(workspace, context);
+		const everything = this.#everything(caller);
+		const counted = everything ? NOBODY : this.#counted(access, caller);
+		if (access.own?.id === thing) return this.#ownAnswer(workspace, access.own, caller, counted, context);
+		const given = access.things.get(thing);
+		if (given === undefined) return undefined;
+		const kinds = this.#kinds();
+		return everything ? ownerAnswer(given.kind, kinds) : answerOf(given, counted, kinds);
+	}
+
+	/**
+	 * The view's answers now (rule 5): an owner (and the server) every tick for people of each available thing (item
+	 * 99), anyone else the answer of their counted parties; the workspace's own thing among them (item 88). The last
+	 * answers when nothing differs, and each unchanged thing's answer object kept.
 	 */
 	#answers(view: View, context: Context): Answers {
 		const access = this.#accessOf(view.workspace, context);
 		const { caller } = view;
-		const owner = caller.kind === "person" && this.#persons.get(caller.person)?.owner === true;
+		const owner = this.#everything(caller);
 		const counted = owner ? NOBODY : this.#counted(access, caller);
 		const kinds = this.#kinds();
 		const last = view.last;
@@ -334,9 +486,8 @@ export class AccessIndex {
 		};
 		let same = true;
 		let size = 0;
-		for (const [thing, given] of access.things) {
-			const answer = owner ? ownerOf(given.kind) : answerOf(given, counted, kinds);
-			if (answer === undefined) continue;
+		const put = (thing: string, answer: Answer | undefined) => {
+			if (answer === undefined) return;
 			const before = last[thing];
 			if (sameAnswer(before, answer)) answers[thing] = before!;
 			else {
@@ -344,8 +495,36 @@ export class AccessIndex {
 				same = false;
 			}
 			size++;
-		}
+		};
+		for (const [thing, given] of access.things)
+			put(thing, owner ? ownerOf(given.kind) : answerOf(given, counted, kinds));
+		if (access.own !== undefined)
+			put(access.own.id, this.#ownAnswer(view.workspace, access.own, caller, counted, context));
 		return same && size === Object.keys(last).length ? last : answers;
+	}
+
+	/**
+	 * `caller`'s answer on workspace `workspace`'s own thing (`own`), `counted` there: an owner's and the server's every
+	 * tick for people and every kind people may make, anyone else's as their parties give it; with the workspaces
+	 * above it they are present in (item 96).
+	 */
+	#ownAnswer(workspace: string, own: OwnHere, caller: Caller, counted: Counted, context: Context): Answer | undefined {
+		const kinds = this.#kinds();
+		const everything = this.#everything(caller);
+		const answer = everything ? ownerOwnAnswer(own.kind, kinds) : ownAnswerOf(own, counted, makerOf(caller), kinds);
+		if (answer === undefined) return undefined;
+		const above: string[] = [];
+		for (let at = this.#workspaces.get(workspace)?.entries?.parent ?? ""; at !== ""; ) {
+			const access = this.#accessOf(at, context);
+			if (everything || this.#counted(access, caller).parties.length > 0) above.push(at);
+			at = this.#workspaces.get(at)?.entries?.parent ?? "";
+		}
+		return { ...answer, above };
+	}
+
+	/** Whether `caller` gets everything available (items 78, 99): an owner, or the server (trusted server code). */
+	#everything(caller: Caller): boolean {
+		return caller.kind === "server" || (caller.kind === "person" && this.#persons.get(caller.person)?.owner === true);
 	}
 
 	/** Rule 4: whom `caller` counts as in a workspace with `access`. */
@@ -365,7 +544,8 @@ export class AccessIndex {
 		const loaded = this.#workspaces.get(id)!;
 		if (loaded.access !== undefined) return loaded.access;
 		const own = loaded.entries;
-		if (own === undefined) loaded.access = ABOVE_THE_ROOT;
+		// A workspace that does not exist, or whose line above is cut (a removal under way), gives nothing.
+		if (own === undefined) loaded.access = GONE;
 		else {
 			const above = own.parent === "" ? ABOVE_THE_ROOT : this.#accessOf(own.parent, context);
 			loaded.access = accessHere(above, own, this.#kinds());
@@ -379,6 +559,11 @@ export class AccessIndex {
 		for (let at = id; at !== ""; at = this.#workspaces.get(at)?.entries?.parent ?? "") if (above.has(at)) return true;
 		return false;
 	}
+}
+
+/** Whom `caller` is for the Make ceiling: a session's agent, else a person (the server has every answer anyway). */
+function makerOf(caller: Caller): Maker {
+	return caller.kind === "agent" ? "agent" : "person";
 }
 
 /** The ops that turn `before` into `after`: a thing's answer set, or deleted. */

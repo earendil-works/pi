@@ -11,6 +11,7 @@ import {
 	constant,
 	deny,
 	type FacetHost,
+	invalid,
 	type P3Principal,
 	until,
 	type Watchable,
@@ -72,7 +73,7 @@ const CATCHING_UP: Decision = deny("things: the kind's grants are being read aga
 const SERVER: Caller = { kind: "server" };
 
 /** Who `principal` is as a caller: a person, a session's agent (its worker), the server. */
-function callerOf(principal: P3Principal): Caller {
+export function callerOf(principal: P3Principal): Caller {
 	switch (principal.kind) {
 		case "person":
 			return { kind: "person", person: principal.id };
@@ -105,10 +106,11 @@ export function serveGives(host: FacetHost<P3Principal>): void {
 
 /**
  * The caller of a `callerKey` (`person:<id>`, `worker:<session>`, `server`); params are server code's, so any other
- * text is the server, which no workspace gives anything.
+ * text is refused. The server gets everything available, as an owner does.
  */
-function callerOfKey(key: string): Caller {
+export function callerOfKey(key: string): Caller {
 	if (key.startsWith("person:")) return { kind: "person", person: key.slice("person:".length) };
 	if (key.startsWith("worker:")) return { kind: "agent", session: key.slice("worker:".length) };
-	return SERVER;
+	if (key === "server") return SERVER;
+	throw invalid("params", `things: ${key} is no caller key`);
 }

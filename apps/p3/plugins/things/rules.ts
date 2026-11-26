@@ -6,8 +6,8 @@
 // (`takenFromNamed`), and a people switch naming a person hides them by every route (`hiddenHere`). The index
 // (`access.ts`) computes with these and nothing else.
 
-import { OPEN } from "./contract.ts";
-import type { TickFor } from "./kind.ts";
+import { isReserved, kindOfMakeTick, MAKE_ANY, OPEN, type Party, type Source } from "./contract.ts";
+import type { Makers, Stacking, TickFor, WorkspaceSort } from "./kind.ts";
 
 /** A party's key (`partyKey`), as the maps in memory are keyed. */
 export type PartyKey = string;
@@ -27,6 +27,9 @@ export function audienceOf(kind: "everyone" | "agents" | "person" | "group" | "a
 export type GrantEntry = {
 	readonly thing: string;
 	readonly party: PartyKey;
+	/** Its party and source as written (what the Settings view shows of a row). */
+	readonly who: Party;
+	readonly source: Source;
 	readonly audience: Audience;
 	readonly tick: string;
 	/** Given (counts where the thing is linked), or withheld (there and below). */
@@ -35,6 +38,12 @@ export type GrantEntry = {
 
 /** What is written about one workspace (read from disk when first needed). */
 export type WorkspaceEntries = {
+	/** Its id: the id of its own thing, whose grants are written here (item 88). */
+	readonly id: string;
+	/** Its own thing's kind (a workspace kind). */
+	readonly kind: string;
+	/** Its own thing's name. */
+	readonly name: string;
 	/** The workspace above (`""`: none, the root). */
 	readonly parent: string;
 	readonly showsThings: boolean;
@@ -45,7 +54,10 @@ export type WorkspaceEntries = {
 	readonly members: ReadonlySet<PartyKey>;
 	/** By item key: whether that thing or party from above is shown here. */
 	readonly switches: ReadonlyMap<string, boolean>;
+	/** The grant rows written here on other things. */
 	readonly grants: readonly GrantEntry[];
+	/** The grant rows written here on the workspace's own thing (item 88). */
+	readonly ownGrants: readonly GrantEntry[];
 };
 
 /**
@@ -54,6 +66,8 @@ export type WorkspaceEntries = {
  */
 export type ThingHere = {
 	readonly kind: string;
+	/** The workspace it is linked in, whose grants apply (the nearest link at or above). */
+	readonly at: string;
 	readonly ticks: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 	/**
 	 * The ticks rows at or below the link withhold from a person or a named agent by every route (item 106); `OPEN`
@@ -62,11 +76,25 @@ export type ThingHere = {
 	readonly takenFromNamed: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 };
 
-/** What a workspace ends up with: the things available, the parties present, the persons hidden by every route. */
+/**
+ * What the workspace's own thing gives here (item 88: its own grants, written at itself, count here only and never come
+ * down): as a thing linked here, with its Make ticks among the parties' ticks, and the Make ticks withheld from each
+ * party here (a withheld `@make:<kind>` takes that kind from the party's `MAKE_ANY` too).
+ */
+export type OwnHere = ThingHere & {
+	readonly id: string;
+	readonly makesWithheld: ReadonlyMap<PartyKey, ReadonlySet<string>>;
+};
+
+/**
+ * What a workspace ends up with: the things available, the parties present, the persons hidden by every route, and its
+ * own thing (none above the root and for a workspace that is gone).
+ */
 export type WorkspaceAccess = {
 	readonly things: ReadonlyMap<string, ThingHere>;
 	readonly present: ReadonlySet<PartyKey>;
 	readonly hidden: ReadonlySet<PartyKey>;
+	readonly own: OwnHere | undefined;
 };
 
 /**
@@ -77,6 +105,14 @@ export type KindsLookup = {
 	tickFor(kind: string, tick: string): TickFor | undefined;
 	ticksOf(kind: string): readonly string[];
 	ticksVersionOf(kind: string): number;
+	/** How several things of the kind reaching one workspace combine (`all` for a kind no plugin registers). */
+	stackingOf(kind: string): Stacking;
+	/** Who makes things of the kind (`undefined`: no plugin registers it). */
+	makersOf(kind: string): Makers | undefined;
+	/** Whether the kind's things are workspaces (`no` for a kind no plugin registers). */
+	sortOf(kind: string): WorkspaceSort;
+	/** Every registered kind's name, sorted. */
+	kinds(): readonly string[];
 };
 
 /** A person's entries: the owner flag, and their groups (party key, outside). */
@@ -93,12 +129,34 @@ export type Counted = { readonly parties: readonly PartyKey[]; readonly named: P
 
 /**
  * What a caller gets for one thing: its ticks, sorted (perhaps none: here without ticks, R10), with the thing's kind
- * and the ticks version they were read at (what an admission checks before it reads them).
+ * and the ticks version they were read at (what an admission checks before it reads them); on a workspace's own thing
+ * also the kinds they may make there (`makes`, sorted, item 114). Never a reserved tick in `ticks`.
  */
-export type Answer = { readonly kind: string; readonly ticksVersion: number; readonly ticks: string[] };
+export type Answer = {
+	readonly kind: string;
+	readonly ticksVersion: number;
+	readonly ticks: string[];
+	readonly makes?: string[];
+	/**
+	 * Only on a workspace's own thing: the workspaces above it the caller is present in, nearest first (item 96: the
+	 * only ones whose names they may see).
+	 */
+	readonly above?: string[];
+};
 
 /** What the workspace above the root ends up with. */
-export const ABOVE_THE_ROOT: WorkspaceAccess = { things: new Map(), present: new Set(), hidden: new Set() };
+export const ABOVE_THE_ROOT: WorkspaceAccess = {
+	things: new Map(),
+	present: new Set(),
+	hidden: new Set(),
+	own: undefined,
+};
+
+/**
+ * What a workspace that does not exist, or one below a workspace that is gone (a removal under way), ends up with:
+ * nothing (its own entries count for nothing once its line above is cut).
+ */
+export const GONE: WorkspaceAccess = { things: new Map(), present: new Set(), hidden: new Set(), own: undefined };
 
 /** Counts as nothing. */
 export const NOBODY: Counted = { parties: [], named: undefined };
@@ -109,11 +167,13 @@ const NO_TICKS: ReadonlyMap<PartyKey, ReadonlySet<string>> = new Map();
 
 /** What a workspace ends up with (rules 1 to 3): shares with `above` whatever its own entries leave as it is. */
 export function accessHere(above: WorkspaceAccess, own: WorkspaceEntries, kinds: KindsLookup): WorkspaceAccess {
-	const things = thingsHere(above.things, own, kinds);
-	const present = partiesHere(above.present, own);
-	const hidden = hiddenHere(above.hidden, own);
-	if (things === above.things && present === above.present && hidden === above.hidden) return above;
-	return { things, present, hidden };
+	if (above === GONE) return GONE;
+	return {
+		things: thingsHere(above.things, own, kinds),
+		present: partiesHere(above.present, own),
+		hidden: hiddenHere(above.hidden, own),
+		own: ownHere(own, kinds),
+	};
 }
 
 /**
@@ -141,7 +201,8 @@ function thingsHere(
 		if (list === undefined) giving.set(thing, [grant]);
 		else list.push(grant);
 	}
-	for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));
+	for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, own.id, giving.get(thing) ?? [], kinds));
+	dropFarther(here, own, kinds);
 	// The withheld rows of each thing applied at once: one copy per thing, however many rows (a wide workspace).
 	const withholding = new Map<string, GrantEntry[]>();
 	for (const grant of own.grants) {
@@ -155,19 +216,72 @@ function thingsHere(
 }
 
 /**
+ * Decision 75: a kind that stacks `nearest` and has a thing linked here applies only with the things linked here, here
+ * and below; its things from above stop being available (the same goes for a thing of it linked nearer still).
+ */
+function dropFarther(here: Map<string, ThingHere>, own: WorkspaceEntries, kinds: KindsLookup): void {
+	const nearest = new Set([...own.links.values()].filter((kind) => kinds.stackingOf(kind) === "nearest"));
+	if (nearest.size === 0) return;
+	for (const [thing, given] of here) if (nearest.has(given.kind) && !own.links.has(thing)) here.delete(thing);
+}
+
+/**
+ * The workspace's own thing (item 88): what its own grants (thing: itself), written here, give, with what is withheld
+ * here; its kind's ticks count as for any thing, and a Make tick counts for whom its kind's `makers` lets make (R2).
+ */
+function ownHere(own: WorkspaceEntries, kinds: KindsLookup): OwnHere {
+	const rows = own.ownGrants;
+	const given = linkedHere(
+		own.kind,
+		own.id,
+		rows.filter((row) => row.gives),
+		kinds,
+	);
+	const withholding = rows.filter((row) => !row.gives);
+	const makesWithheld = new Map<PartyKey, Set<string>>();
+	for (const { party, tick } of withholding) {
+		if (kindOfMakeTick(tick) === undefined) continue;
+		const set = makesWithheld.get(party) ?? new Set<string>();
+		makesWithheld.set(party, set.add(tick));
+	}
+	const thing = withholding.length === 0 ? given : withheld(given, withholding);
+	return { ...thing, id: own.id, makesWithheld };
+}
+
+/** Whom a Make tick is for (item 114): its kind's `makers` (anyone: all, people: people); `undefined`: nobody. */
+function makeTickFor(tick: string, kinds: KindsLookup): TickFor | undefined {
+	const kind = kindOfMakeTick(tick)!;
+	if (kind === "*") return "all";
+	switch (kinds.makersOf(kind)) {
+		case "anyone":
+			return "all";
+		case "people":
+			return "people";
+		default:
+			return undefined;
+	}
+}
+
+/**
  * A thing linked here: the parties its giving rows written here (`grants`) let in, each with its ticks (nothing below
  * a link adds). `OPEN` lets its party in with no tick; a tick that counts lets it in with that tick (item 113).
  */
-function linkedHere(kind: string, grants: readonly GrantEntry[], kinds: KindsLookup): ThingHere {
+function linkedHere(kind: string, at: string, grants: readonly GrantEntry[], kinds: KindsLookup): ThingHere {
 	const ticks = new Map<PartyKey, Set<string>>();
 	for (const grant of grants) {
 		const open = grant.tick === OPEN;
-		if (!open && !isFor(kinds.tickFor(kind, grant.tick), grant.audience)) continue;
+		// A Make tick counts only on a workspace's own thing (item 114).
+		const forWhom = !isReserved(grant.tick)
+			? kinds.tickFor(kind, grant.tick)
+			: kindOfMakeTick(grant.tick) !== undefined && kinds.sortOf(kind) !== "no"
+				? makeTickFor(grant.tick, kinds)
+				: undefined;
+		if (!open && !isFor(forWhom, grant.audience)) continue;
 		const own = ticks.get(grant.party) ?? new Set<string>();
 		if (!open) own.add(grant.tick);
 		ticks.set(grant.party, own);
 	}
-	return { kind, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromNamed: NO_TICKS };
+	return { kind, at, ticks: ticks.size === 0 ? NO_TICKS : ticks, takenFromNamed: NO_TICKS };
 }
 
 /** Whether a tick for `forWhom` counts for a party of `audience` (an unknown tick counts for nobody). */
@@ -200,7 +314,7 @@ function withheld(given: ThingHere, rows: readonly GrantEntry[]): ThingHere {
 		}
 	}
 	if (ticks === undefined && named === undefined) return given;
-	return { kind: given.kind, ticks: ticks ?? given.ticks, takenFromNamed: named ?? given.takenFromNamed };
+	return { ...given, ticks: ticks ?? given.ticks, takenFromNamed: named ?? given.takenFromNamed };
 }
 
 /**
@@ -279,6 +393,73 @@ export function answerOf(given: ThingHere, counted: Counted, kinds: KindsLookup)
 	return { kind: given.kind, ticksVersion: kinds.ticksVersionOf(given.kind), ticks: kept.sort() };
 }
 
+/** Whom a caller is, for the Make ceiling (item 114): a person or an agent. */
+export type Maker = "person" | "agent";
+
+/**
+ * Rule 5 on a workspace's own thing (item 88): a counted caller is let in (`Workspace` is held by anyone present), with
+ * the kind's ticks of their counted parties less what is withheld from their named party, and `makes` (item 114): the
+ * kinds their Make ticks name (`MAKE_ANY`: every registered kind), each party's less what is withheld from it, less
+ * what is withheld from the named party, within the ceiling (`makeable`). `undefined`: not counted, or `OPEN` withheld
+ * from their named party.
+ */
+export function ownAnswerOf(own: OwnHere, counted: Counted, maker: Maker, kinds: KindsLookup): Answer | undefined {
+	if (counted.parties.length === 0) return undefined;
+	const taken = counted.named === undefined ? undefined : own.takenFromNamed.get(counted.named);
+	if (taken?.has(OPEN) === true) return undefined;
+	const ticks = new Set<string>();
+	const makes = new Set<string>();
+	for (const party of counted.parties) {
+		const given = own.ticks.get(party);
+		if (given === undefined) continue;
+		const partyMakes = new Set<string>();
+		for (const tick of given) {
+			if (kindOfMakeTick(tick) === undefined) ticks.add(tick);
+			else for (const kind of madeWith(tick, kinds)) partyMakes.add(kind);
+		}
+		for (const tick of own.makesWithheld.get(party) ?? [])
+			for (const kind of madeWith(tick, kinds)) partyMakes.delete(kind);
+		for (const kind of partyMakes) makes.add(kind);
+	}
+	for (const tick of taken ?? []) {
+		ticks.delete(tick);
+		if (kindOfMakeTick(tick) !== undefined) for (const kind of madeWith(tick, kinds)) makes.delete(kind);
+	}
+	return {
+		kind: own.kind,
+		ticksVersion: kinds.ticksVersionOf(own.kind),
+		ticks: [...ticks].sort(),
+		makes: [...makes].filter((kind) => makeable(kind, own.kind, maker, kinds)).sort(),
+	};
+}
+
+/**
+ * Rule 5 for an owner on a workspace's own thing (items 78, 99, 114): every tick for people, and every kind people may
+ * make there.
+ */
+export function ownerOwnAnswer(kind: string, kinds: KindsLookup): Answer {
+	const answer = ownerAnswer(kind, kinds);
+	return { ...answer, makes: kinds.kinds().filter((each) => makeable(each, kind, "person", kinds)) };
+}
+
+/** The registered kinds a Make tick names: `MAKE_ANY` every one, `@make:<kind>` that one if it is registered. */
+function madeWith(tick: string, kinds: KindsLookup): readonly string[] {
+	const kind = kindOfMakeTick(tick)!;
+	if (tick === MAKE_ANY) return kinds.kinds();
+	return kinds.makersOf(kind) === undefined ? [] : [kind];
+}
+
+/**
+ * The Make ceiling (item 114): whether `maker` may make a thing of `kind` in a workspace of kind `workspace`: its
+ * `makers` lets them (anyone: people and agents; people: people; plugin: nobody through a workspace), and a leaf holds
+ * no workspaces (decision 13).
+ */
+export function makeable(kind: string, workspace: string, maker: Maker, kinds: KindsLookup): boolean {
+	if (kinds.sortOf(workspace) === "leaf" && kinds.sortOf(kind) !== "no") return false;
+	const makers = kinds.makersOf(kind);
+	return makers === "anyone" || (makers === "people" && maker === "person");
+}
+
 /**
  * Rule 5 for an owner (items 78, 99): every tick of the kind meant for people (`people` or `all`), none for agents
  * only.
@@ -298,6 +479,17 @@ export function ownerAnswer(kind: string, kinds: KindsLookup): Answer {
 export function sameAnswer(a: Answer | undefined, b: Answer | undefined): boolean {
 	if (a === b) return true;
 	if (a === undefined || b === undefined || a.kind !== b.kind || a.ticksVersion !== b.ticksVersion) return false;
-	if (a.ticks.length !== b.ticks.length) return false;
-	return a.ticks.every((tick, i) => tick === b.ticks[i]);
+	return (
+		sameNames(a.ticks, b.ticks) &&
+		(a.makes === undefined) === (b.makes === undefined) &&
+		sameNames(a.makes ?? NO_NAMES, b.makes ?? NO_NAMES) &&
+		sameNames(a.above ?? NO_NAMES, b.above ?? NO_NAMES)
+	);
+}
+
+const NO_NAMES: readonly string[] = [];
+
+/** Whether two sorted lists of names are the same, name by name. */
+function sameNames(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((name, i) => name === b[i]);
 }

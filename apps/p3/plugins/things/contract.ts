@@ -14,6 +14,27 @@ export const RESERVED = "@";
  */
 export const OPEN = "@open";
 
+/** The prefix of a Make tick (item 114): `@make:<kind name>` lets its party make things of that kind in a workspace. */
+const MAKE = "@make:";
+
+/** The Make tick for every kind, also kinds registered later (item 114): `@make:*`. */
+export const MAKE_ANY = `${MAKE}*`;
+
+/** The Make tick of kind `kind` (item 114): `@make:<kind name>`; built only here, never by hand. */
+export function makeTick(kind: { readonly name: string }): string {
+	return `${MAKE}${kind.name}`;
+}
+
+/** Whether `tick` is reserved (item 113): `OPEN` and the Make ticks; a kind's own tick names cannot be. */
+export function isReserved(tick: string): boolean {
+	return tick.startsWith(RESERVED);
+}
+
+/** The kind a Make tick names (`*` for `MAKE_ANY`), or `undefined` for any other tick. */
+export function kindOfMakeTick(tick: string): string | undefined {
+	return tick.startsWith(MAKE) ? tick.slice(MAKE.length) : undefined;
+}
+
 /**
  * Who wrote something: a person by hand, a session's agent (a thing it made), a thing (a share, a bot: it goes with
  * it), a sign-in provider, a plugin.
@@ -96,6 +117,21 @@ export function partyKey(party: Party): string {
 			return `group/${party.group}`;
 		case "agent":
 			return `agent/${party.session}`;
+	}
+}
+
+/** The party whose key (`partyKey`) is `key`: its inverse, for what the index keeps by key. */
+export function partyOf(key: string): Party {
+	if (key === "everyone" || key === "agents") return { kind: key };
+	const at = key.indexOf("/");
+	const id = key.slice(at + 1);
+	switch (key.slice(0, at)) {
+		case "person":
+			return { kind: "person", person: id };
+		case "group":
+			return { kind: "group", group: id };
+		default:
+			return { kind: "agent", session: id };
 	}
 }
 
