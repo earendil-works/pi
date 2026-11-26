@@ -161,3 +161,20 @@ export function matchesHash(token: string, hash: string): boolean {
 	const kept = Buffer.from(hash, "hex");
 	return given.length === kept.length && timingSafeEqual(given, kept);
 }
+// pi-ai for the providers plugin's server facet: the built-in providers people sign in to, their sign-in flows and
+// the request auth a login's credential resolves to (refreshed on the server only).
+export {
+	type AuthContext,
+	type AuthEvent,
+	type AuthInteraction,
+	type AuthPrompt,
+	type AuthResult,
+	type Credential,
+	type CredentialStore,
+	createModels,
+	// pi-ai's faux provider, for plugins' tests: a provider people sign in to without a network.
+	fauxProvider,
+	type Models,
+	type Provider,
+} from "@earendil-works/pi-ai";
+export { builtinProviders } from "@earendil-works/pi-ai/providers/all";

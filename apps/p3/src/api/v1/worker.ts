@@ -31,8 +31,8 @@ export {
 	type MutableModels,
 	type Provider,
 } from "@earendil-works/pi-ai";
-// Until real provider logins (ERNDL-705): a deployment's own login plugin builds on it. Outside v1's promise.
-export { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+// The built-in providers, for the providers plugin's worker facet: a login's requests (its auth comes from the server).
+export { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 export {
 	type Conversation,
 	type ConversationId,
