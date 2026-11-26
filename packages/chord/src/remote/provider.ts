@@ -35,6 +35,7 @@ import {
 	type WireEvent,
 	wireError,
 } from "../link/internal.ts";
+import { appended, NO_ITEMS } from "../lists.ts";
 import { parentOf } from "../telemetry.ts";
 import { Hold, holdRequest } from "./hold.ts";
 import type { HostLink } from "./host-link.ts";
@@ -102,7 +103,7 @@ export class ProviderSide implements EventSender {
 	#ownSent = 0;
 	#ownAcked = 0;
 	/** The holds the current batch touched, in order; its flush sends or queues them. */
-	#touched: Hold[] = [];
+	#touched: readonly Hold[] = NO_ITEMS;
 	/** Holds whose ops wait in their pending queues for a slot. */
 	readonly #waiting = new Set<Hold>();
 	/** Holds waiting for a slot to send their first binding. */
@@ -114,11 +115,13 @@ export class ProviderSide implements EventSender {
 	/** When state began waiting for a slot (`performance.now()`), while some waits: `chord.backpressure.wait`. */
 	#waitingSince: number | undefined;
 	/** The event flush's entries for this origin's holds served here, until it sends them (`sendEvents`). */
-	#events: WireEvent[] = [];
+	#events: readonly WireEvent[] = NO_ITEMS;
 	/** The sender of each `event` message of this origin in flight, in order: an event `ack` consumes the first ones. */
 	readonly #tickets: EventTicket[] = [];
 	/** This host's own `event` messages in flight: at most the host's `eventWindow`. */
 	#eventsInFlight = 0;
+	/** The end of a batch that touched its holds (`#flush`): one function for every batch, no closure per batch. */
+	readonly #flushBatch = (context: Context): void => this.#flush(context);
 	/** Whom the holds of a link other than the parent act for: the link's principal and the peer's incarnation. */
 	#linkCaller: Caller | undefined;
 
@@ -178,8 +181,8 @@ export class ProviderSide implements EventSender {
 			else entry.drop();
 		}
 		// A batch or an event flush running later finds nothing of this side.
-		this.#touched = [];
-		this.#events = [];
+		this.#touched = NO_ITEMS;
+		this.#events = NO_ITEMS;
 		const relay = this.#relay;
 		if (relay === undefined) return;
 		this.link.host.relays.delete(relay.origin);
@@ -418,19 +421,21 @@ export class ProviderSide implements EventSender {
 			entry.part = this.link.part(jsonPart(entry.value), this.link.context);
 			metrics.counter("chord.events.encodes").add(1);
 		}
-		this.#events.push({ hold, member, at: entry.at, value: entry.part });
+		this.#events = appended(this.#events, { hold, member, at: entry.at, value: entry.part });
 	}
 
 	/** The event flush visited every entry: this origin's admitted entries go as one `event` message, taking a slot. */
 	sendEvents(): void {
 		const events = this.#events;
-		this.#events = [];
+		this.#events = NO_ITEMS;
 		// The side closed during the flush.
 		if (events.length === 0) return;
 		this.#eventsInFlight++;
 		this.#tickets.push(LOCAL);
 		this.link.host.metrics.counter("chord.events.sent").add(events.length);
-		this.send({ kind: "event", events });
+		// A list of its own (`Message` types it mutable): `appended` made it from the shared empty one, never written
+		// again once handed off here.
+		this.send({ kind: "event", events: events as WireEvent[] });
 	}
 
 	/** A hold's object is live: its `bound` goes now when a slot is free, else with the next free slot's bindings. */
@@ -466,8 +471,8 @@ export class ProviderSide implements EventSender {
 
 	/** A hold's members changed in the current batch; its flush sends or queues it. */
 	touched(hold: Hold): void {
-		if (this.#touched.length === 0) this.link.host.batch.flushing((context) => this.#flush(context));
-		this.#touched.push(hold);
+		if (this.#touched.length === 0) this.link.host.batch.flushing(this.#flushBatch);
+		this.#touched = appended(this.#touched, hold);
 	}
 
 	/**
@@ -757,11 +762,11 @@ export class ProviderSide implements EventSender {
 		const holds = this.#touched;
 		// The side closed during the batch: nothing is sent.
 		if (holds.length === 0) return;
-		this.#touched = [];
+		this.#touched = NO_ITEMS;
 		// A hold touched in this batch may have left its binding since (a reload unbound it).
 		if (this.#free) {
-			const entries: StateEntry[] = [];
-			for (const hold of holds) if (hold.bound) entries.push(hold.entry(context));
+			let entries: readonly StateEntry[] = NO_ITEMS;
+			for (const hold of holds) if (hold.bound) entries = appended(entries, hold.entry(context));
 			if (entries.length > 0) this.#sendOwn({ kind: "state", holds: entries });
 			return;
 		}
