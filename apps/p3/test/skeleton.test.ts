@@ -3,16 +3,15 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { BACKGROUND_CONTEXT as context, until } from "@earendil-works/p3/v1";
 import { WorkerRunners } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
-import { BACKUP_MARKER } from "@earendil-works/p3/v1/worker";
 import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
 import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
@@ -109,12 +108,12 @@ describe("session workers", () => {
 		);
 	});
 
-	it("a worker opens its session's store with an outbox exactly while the backup marker is there", async () => {
+	it("a plugin switches its session store's outbox, and the next start keeps the setting", async () => {
 		const { t, id } = await withSession();
 		const dir = join(t.dataDir, "workers", id);
-		await mkdir(dirname(join(dir, BACKUP_MARKER)), { recursive: true });
-		await writeFile(join(dir, BACKUP_MARKER), "");
 		const held = await probe(t, id);
+		assert.equal(outboxOf(dir), 0);
+		await held.outbox(true, context);
 		assert.equal(outboxOf(dir), 1);
 		const pid = held.pid.value;
 		held.release();
@@ -122,9 +121,11 @@ describe("session workers", () => {
 			async () => alive(pid),
 			(lives) => !lives,
 		);
-		// Backup stopped for good: the next start opens the store without its outbox.
-		await rm(join(dir, BACKUP_MARKER));
-		await probe(t, id);
+		// The base opens the store with its persisted setting: backup stays on across starts.
+		const again = await probe(t, id);
+		assert.equal(outboxOf(dir), 1);
+		// Backup stopped for good.
+		await again.outbox(false, context);
 		assert.equal(outboxOf(dir), 0);
 	});
 

@@ -6,7 +6,6 @@
 // then its store (which settles the queued commits), and exits 0, non-zero when a close failed or did not finish in 3 s.
 // Control messages travel beside the link's frames on the same IPC channel (`api/v1/control.ts`).
 
-import { access } from "node:fs/promises";
 import { flushCompileCache } from "node:module";
 import { join } from "node:path";
 import { createHost, defineFacet, type Facet, type IpcPort, ipcLink } from "@earendil-works/chord";
@@ -16,7 +15,7 @@ import { processLock } from "@earendil-works/chord/workers/child";
 import * as v1 from "@earendil-works/p3/v1";
 import { reportError, Session } from "@earendil-works/p3/v1";
 import * as v1worker from "@earendil-works/p3/v1/worker";
-import { BACKUP_MARKER, WorkerBusy, WorkerRuntime } from "@earendil-works/p3/v1/worker";
+import { WorkerBusy, WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { type FromWorker, type ToWorker, workerControl, workerMessage } from "./api/v1/control.ts";
 import { type P3Principal, SERVER, workerPrincipal } from "./app.ts";
 import { openPrivateStore, privateDirectory } from "./files.ts";
@@ -124,13 +123,9 @@ function runWorker(): void {
  * `WorkerRuntime.close` does.
  */
 async function open(message: Start, parent: ReturnType<typeof ipcLink>, close: () => void): Promise<WorkerRuntime> {
-	// Backup is on for this session (the backup plugin's marker): the store records an outbox, which the plugin
-	// uploads. Without the marker the outbox is off, its pending commits dropped.
-	const outbox = await access(join(message.dir, BACKUP_MARKER)).then(
-		() => true,
-		() => false,
-	);
-	const store = await openPrivateStore(join(message.dir, "store.sqlite"), context, { outbox });
+	// The store's outbox keeps its persisted setting: the backup plugin switches it (`store.setOutbox`) as backup is
+	// turned on or off for the session.
+	const store = await openPrivateStore(join(message.dir, "store.sqlite"), context);
 	const host = createHost<P3Principal>({
 		address: Session({ id: message.session }),
 		principal: workerPrincipal(message.session),

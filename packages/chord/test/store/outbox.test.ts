@@ -1,5 +1,6 @@
 // Tests of the outbox (slice 6a §2; decisions "The outbox is optional, internal and versioned", small items 3-4): on,
-// off and kept across opens, its commits in their recorded form, `trim` and its floor, and the format check.
+// off and kept across opens, switched on an open store in the commit queue, its commits in their recorded form, `trim`
+// and its floor, and the format check.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,6 +69,51 @@ describe("the outbox", () => {
 		store = await open(false);
 		expect(store.outbox).toBeUndefined();
 		await store.close(context);
+	});
+
+	it("switches on an open store from its lastSeq, and off dropping what it recorded; kept across opens", async () => {
+		const open = await onFile();
+		let store = await open();
+		await created(store, "a");
+		await store.setOutbox(true, context);
+		expect(store.outbox?.floor).toBe(1);
+		await created(store, "b");
+		expect((await store.outbox!.read(1, 10, context)).map((commit) => commit.seq)).toEqual([2]);
+		// Asking for the current setting changes nothing.
+		await store.setOutbox(true, context);
+		expect((await store.outbox!.read(1, 10, context)).map((commit) => commit.seq)).toEqual([2]);
+		await store.close(context);
+		store = await open();
+		expect(store.outbox?.floor).toBe(1);
+		await store.setOutbox(false, context);
+		expect(store.outbox).toBeUndefined();
+		await created(store, "c");
+		await store.close(context);
+		store = await open();
+		expect(store.outbox).toBeUndefined();
+		// On again: from the head, nothing of before.
+		await store.setOutbox(true, context);
+		expect(store.outbox?.floor).toBe(3);
+		expect(await store.outbox!.read(3, 10, context)).toEqual([]);
+		await store.close(context);
+	});
+
+	it("records a commit whole or not at all: those queued before the switch as the outbox was, those after as it is", async () => {
+		const store = await memoryStore();
+		const before = created(store, "before");
+		const switched = store.setOutbox(true, context);
+		const after = created(store, "after");
+		await Promise.all([before, switched, after]);
+		expect(store.outbox?.floor).toBe(1);
+		const recorded = await store.outbox!.read(1, 10, context);
+		expect(recorded.map((commit) => commit.seq)).toEqual([2]);
+		expect(recorded[0]!.writes[0]).toMatchObject({ kind: "document.create", record: { key: "after" } });
+	});
+
+	it("refuses a switch on a closed store", async () => {
+		const store = await memoryStore();
+		await store.close(context);
+		expect(await rejection(store.setOutbox(true, context))).toMatchObject({ code: "released" });
 	});
 
 	it("records creations with their ids and seqs; trim is idempotent and refuses beyond lastSeq", async () => {
