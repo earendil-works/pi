@@ -3791,6 +3791,22 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   column past that left out; (2) no test switch for the old path: the differential check is the oracle (every read
   equal to a fresh run after every commit) with a mutation check.
 
+- **Identical live reads share one source (owner, 2026-11-26: "fix the mechanism, never work around it in plugins";
+  ERNDL-1176; bench `test/bench/identical-reads.ts`):** the problem: 100 callers each with their own object reading
+  the same named query, arguments and window made 100 `OpenQuery`s and `Read`s, and every write ran, decoded and
+  diffed it 100 times (notes 8 ms, a 500-item checklist 45 ms per write), against 1.5 ms for one shared object. The
+  rule: readers of the same provider instance's named query (its `OwnQuery`, which goes with the provider's attempt
+  and keeps the map of its shared reads) with the same arguments (their canonical JSON, made once per read) and shape
+  (`rows <first>` or `count`, a text made once per declaration) share one live read (`store/shared-read.ts`),
+  reference-counted by the readers' subscriptions: one `OpenQuery`, one `Read` in the index and commit index, one
+  run, one decode and one value per write. The first reader makes it and starts its first run; a later one takes its
+  current value at once; the last one to leave closes it. Framed sources handed the same two values diff them once (a
+  weak map by the earlier value, `state/framed.ts`). Arguments that change move a reader between reads; a provider's
+  retirement closes the read for all its readers, which move to one read of the successor; a shared run is counted
+  once (in the commit's context). A shared read runs without its first reader's abort signal: it outlives that
+  reader's attempt. The owner's own window (`self.query`) is not shared. Lists come next (their pages shared while
+  their bookmarks are equal).
+
 - **A stall leaves no holder live and old (owner, 2026-11-24, decisions of that day item 5; spec `slice-15.md` §4,
   §8, built 2026-11-25):** reproduced across processes: a stalled host keeps its links (its late tick is no silence);
   its peers find it silent past `close` and close theirs, and their holders wait `loading` until a new link; none is

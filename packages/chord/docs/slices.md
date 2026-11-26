@@ -447,9 +447,10 @@ Left by the first part itself:
 - **Small leftovers of code review round 1:** `QueryPage` (contracts) and `Page` (store) are one shape with two
   names; a list decodes every loaded row's identity on each page adoption (0.6 ms a message at 20 pages); a list's
   method is `more` beside the values `more` and `moreAfter`, as the spec has it.
-- **Reads are not shared between readers** (§3.1's last bullet; test 3): two readers of one query with equal
-  arguments are two reads. The case that brings it back: many readers of identical arguments measured in a commit
-  step.
+- **A list's pages are not shared between lists** (decision "Identical live reads share one source"; ERNDL-1176):
+  live queries and counts share one read per (provider instance, query, arguments, shape); two lists of one query
+  with equal arguments are still two tilings. Next: share pages keyed by (query, arguments, bookmarks), every fresh
+  list's first page, pages behind a list's own `more` its own.
 - **A failed migration's held reads** keep their rows and stay held; §5 asks for `failed unavailable` ("table X is
   not ready") with the rows as last values. The case: a screen that must say why it is stale.
 - **Staging knows a recorded handle as a table, a named query of the object, or anything else.** A table given to

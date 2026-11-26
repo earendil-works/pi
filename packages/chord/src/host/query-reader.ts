@@ -9,7 +9,7 @@ import { canonicalJson } from "../data/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { type Batch, type Dependent, type DeriveSource, type FramedSource, Source } from "../state/internal.ts";
 import type { LiveTarget } from "../store/live-query.ts";
-import type { NamedQueryHandle } from "./named-query.ts";
+import type { NamedQueryHandle, NamedTarget } from "./named-query.ts";
 
 /** The arguments a factory gave a reader: a value, or a watchable the arguments follow. */
 export type GivenArguments =
@@ -157,11 +157,11 @@ export class GivenQuery implements Dependent {
 	 * What reading the query reads now: the provider's declaration for the arguments' value. Throws while the provider
 	 * is not live or the arguments have no value; arguments the provider refuses throw its `invalid/args`.
 	 */
-	target(context: Context): LiveTarget {
+	target(context: Context): NamedTarget {
 		this.#read = undefined;
 		const args = this.#value();
 		const target = this.handle.provided().target(args, context);
-		this.#read = canonicalJson(args, context);
+		this.#read = target.sharing.args;
 		return target;
 	}
 

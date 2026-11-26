@@ -574,6 +574,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const target: LiveTarget = {
 			// The query is of `handle`'s table (checked above); every column of the row is read.
 			spec: { query: q as unknown as Query, table: handle.sql.table, projection: {}, owner: handle },
+			// The owner's own window: nobody shares it.
+			sharing: undefined,
 			// A table's rows hold its columns' values: scalars and JSON.
 			decode: (stored, context) => rows.decode(stored, context) as JsonValue,
 		};

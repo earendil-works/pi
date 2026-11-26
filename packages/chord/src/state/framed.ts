@@ -113,7 +113,7 @@ export abstract class FramedSource extends Source {
 		if (state.kind === "value") {
 			// Listed by a change, so `before` was kept (a detach in the batch leaves no value).
 			const after = state.value;
-			const ops: readonly Op[] = before === NO_VALUE ? [["r", after]] : diffRevisions(before!, after);
+			const ops: readonly Op[] = before === NO_VALUE ? [["r", after]] : diffOnce(before!, after);
 			if (ops.length > 0) this.publish(after, ops, false, context);
 			return;
 		}
@@ -143,4 +143,22 @@ export abstract class FramedSource extends Source {
 		this.#state = next;
 		this.dependents.invalidate();
 	}
+}
+
+/**
+ * The diff of the values of the sources a shared read feeds (`store/shared-read.ts`), by the earlier value: they all
+ * go from the same value to the same next one in one batch, which is diffed once. Weak: an earlier value nobody holds
+ * takes its diff along.
+ */
+const DIFFS = new WeakMap<object, { readonly after: JsonValue; readonly ops: readonly Op[] }>();
+
+/** The ops from `before` to `after`: the ones made already for these two values when there are some. */
+function diffOnce(before: JsonValue, after: JsonValue): readonly Op[] {
+	// A primitive (a count) diffs at once and cannot be a weak key.
+	if (typeof before !== "object" || before === null) return diffRevisions(before, after);
+	const made = DIFFS.get(before);
+	if (made?.after === after) return made.ops;
+	const ops = diffRevisions(before, after);
+	DIFFS.set(before, { after, ops });
+	return ops;
 }

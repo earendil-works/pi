@@ -1693,6 +1693,14 @@ watched (`benchmarks.md`). **There may be dragons** for a table written hundreds
 queries the skip test cannot skip. Maintaining a page from the written rows instead of running it again is left for
 when a case needs it.
 
+**Identical live reads share one source** (decision of the same name, 2026-11-26): readers of the same provider
+instance's named query with the same arguments (canonical JSON, made once per read) and shape (a `{ first }` window,
+or a count) share one open read (`store/shared-read.ts`), reference-counted by the readers: one entry in the store's
+index and commit index, one skip test, one run, one decode and one value per write, which every reader takes (their
+frames diff it once). A later reader takes the read's current value at once, with no run. Arguments that change move
+a reader to the read of its new key; the provider's restart moves every reader to one read of its successor; the
+last reader to leave closes the read. Lists do not share their pages yet (`slices.md`, "Carry-over").
+
 **Named queries** (slice 14, `slice-14.md` §3): a `local` contract lists them, `members: { sessions:
 queries(SessionRow, { visible: argsSchema, one: argsSchema }) }`, the argument schemas part of the fingerprint. The
 table's owner returns what `self.queries(table, { map, reads?, partnerReads? }, { name: builder })` gives: one
