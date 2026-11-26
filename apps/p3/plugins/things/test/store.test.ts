@@ -33,7 +33,7 @@ import { OPEN, type Source } from "../contract.ts";
 import { defineThing, ThingKinds } from "../kind.ts";
 import { serveThing } from "../serve.ts";
 import { BOARD, BOARD_PLUGIN, Board, FAIL, HOOKS } from "./kinds.ts";
-import { storedRows, THINGS, type World, world } from "./world.ts";
+import { RUNTIME, storedRows, THINGS, type World, world } from "./world.ts";
 
 const BY: Source = { kind: "plugin", plugin: "test" };
 
@@ -625,7 +625,7 @@ describe("races, failures and restarts", () => {
 			store: reopened,
 			onError: (error) => assert.fail(`host error ${error.kind}`),
 		});
-		await host.load([THINGS, plugin], context);
+		await host.load([RUNTIME, THINGS, plugin], context);
 		return {
 			store: await host.get(ThingsStore, {}, context),
 			close: async () => {
@@ -663,7 +663,7 @@ describe("races, failures and restarts", () => {
 				serveThing(at, Counter, { implement: () => ({}), create: async () => void versions.push(version) });
 			}),
 		});
-		await host.load([THINGS, counter(1)], context);
+		await host.load([RUNTIME, THINGS, counter(1)], context);
 		const things = await host.get(ThingsStore, {}, context);
 		const root = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 		await things.create({ workspace: root, kind: "test.counter", name: "one", by: source, input: 1 }, context);
@@ -683,7 +683,7 @@ describe("races, failures and restarts", () => {
 		const cold = host.get(Gives, { workspace: root, caller: "person:p" }, context);
 		await reached.promise;
 		const kinds = await host.registry(ThingKinds, context);
-		const reloading = host.reload([THINGS, counter(2)], context);
+		const reloading = host.reload([RUNTIME, THINGS, counter(2)], context);
 		let making: Promise<string> | undefined;
 		try {
 			await until(
@@ -1058,7 +1058,7 @@ describe("races, failures and restarts", () => {
 			await host.close(context);
 			await database.close(context);
 		});
-		await host.load([THINGS, BOARD], context);
+		await host.load([RUNTIME, THINGS, BOARD], context);
 		const s = await host.get(ThingsStore, {}, context);
 		const root = (await s.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 		const leaf = await s.createWorkspace({ parent: root, name: "leaf", kind: "things.workspace", by: BY }, context);

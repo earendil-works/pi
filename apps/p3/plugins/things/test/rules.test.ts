@@ -332,6 +332,10 @@ describe("the owner", () => {
 		assert.deepEqual((await ticks(c.team, c.sketch, `person:${c.kim}`))?.length, 5);
 		await store.setOwner({ person: c.kim, owner: false }, context);
 		assert.equal(await ticks(c.team, c.sketch, `person:${c.kim}`), undefined);
+		// The owner's person made at the first start hands the flag over too: Mario is the last owner then.
+		for (const { person } of (await store.persons.owners.page({}, 10, context)).items) {
+			if (person !== c.mario) await store.setOwner({ person, owner: false }, context);
+		}
 		await assert.rejects(
 			store.setOwner({ person: c.mario, owner: false }, context),
 			(error: Error & { details?: { message?: { key: string } } }) => error.details?.message?.key === "lastOwner",

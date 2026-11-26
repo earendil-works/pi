@@ -18,15 +18,31 @@ import {
 	openStore,
 	type P3Principal,
 	type PluginFacet,
+	defineFacet,
 	Server,
 	sqliteBackend,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import thingsServer from "../server.ts";
 import { BOARD } from "./kinds.ts";
 
 /** The things plugin as a host loads it. */
 export const THINGS: PluginFacet<P3Principal> = { name: "@earendil-works/p3-things", facet: thingsServer };
+
+/**
+ * The base's `ServerRuntime` as far as the things plugin reads it (the machine's user names the owner's person at
+ * the first start); a real server's base contributes the whole value.
+ */
+export const RUNTIME: PluginFacet<P3Principal> = {
+	name: "p3.server",
+	// The things store reads `machine` only: the rest of a server's runtime is no part of these tests.
+	facet: defineFacet((host) =>
+		host.serve(ServerRuntime, {
+			compose: () => ({ machine: { user: "ann", hostname: "test" } }) as unknown as ServerRuntime,
+		}),
+	),
+};
 
 /** A running test host. */
 export type World = {
@@ -59,7 +75,7 @@ export async function world(context: Context, more: readonly PluginFacet<P3Princ
 		readyTimeout: 5000,
 		onError: (error) => errors.push(error),
 	});
-	let facets: readonly PluginFacet<P3Principal>[] = [THINGS, BOARD, ...more];
+	let facets: readonly PluginFacet<P3Principal>[] = [RUNTIME, THINGS, BOARD, ...more];
 	const loaded = await host.load(facets, context);
 	if (loaded.failed.length > 0) throw new Error("world: plugins failed", { cause: loaded.failed[0]!.error });
 	return {

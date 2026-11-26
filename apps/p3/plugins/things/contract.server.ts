@@ -80,8 +80,17 @@ export type GrantInput = Static<typeof GrantInput>;
 /** A person: their id, name, whether they have the owner flag, and who made them. */
 export const PersonRow = obj({ person: str(), name: str(), owner: bool(), madeBy: Source });
 
+/** A group: its id, name, who changes its members, and whether it is outside. */
+export const GroupRow = obj({ group: str(), name: str(), managedBy: ManagedBy, outside: bool() });
+
+/** A party with a group's own tick. */
+export const GroupManagerRow = obj({ group: str(), party: Party });
+
 /** A person in a group, as one source put them there, with whether the group is outside. */
 export const GroupMemberRow = obj({ group: str(), person: str(), source: Source, outside: bool() });
+
+/** A person in a group as the group's page lists them: with their name. */
+export const GroupMemberNameRow = obj({ group: str(), person: str(), name: str(), source: Source });
 
 /** The things plugin's store: every table's rows as named queries (each a key or index search), and every write. */
 export const ThingsStore = local("things.store", {
@@ -95,8 +104,15 @@ export const ThingsStore = local("things.store", {
 		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
 		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
 		// `ofIds`: the persons of a list in one read (the notes plugin reads its notes' authors' names with it).
-		persons: queries(PersonRow, { one: obj({ person: str() }), ofIds: obj({ persons: arr(str()) }) }),
+		persons: queries(PersonRow, {
+			one: obj({ person: str() }),
+			ofIds: obj({ persons: arr(str()) }),
+			owners: obj({}),
+		}),
+		groups: queries(GroupRow, { one: obj({ group: str() }) }),
+		groupManagers: queries(GroupManagerRow, { of: obj({ group: str() }) }),
 		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
+		groupMembersNamed: queries(GroupMemberNameRow, { ofGroup: obj({ group: str() }) }),
 		/**
 		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
 		 * commit: the thing, its link, the kind's default grants, and every tick for its maker (`by`, a person or a
@@ -130,15 +146,28 @@ export const ThingsStore = local("things.store", {
 		setGrants: method(obj({ source: Source, grants: arr(GrantInput) })),
 		putParty: method(obj({ workspace: str(), party: Party, source: Source })),
 		removeParty: method(obj({ workspace: str(), party: Party })),
+		/** Makes a person (no owner flag), made by `madeBy` (the cleanup of that source takes them, step 3). */
 		createPerson: method(obj({ name: str(), madeBy: Source }), str()),
+		renamePerson: method(obj({ person: str(), name: str() })),
 		/** Gives or takes the owner flag; refuses taking it from the last owner. */
 		setOwner: method(obj({ person: str(), owner: bool() })),
+		/**
+		 * Removes a person, never one with the owner flag: the cleanup of their source, everything naming them, their
+		 * row; their sign-ins end right after the commit (retried until done).
+		 */
+		removePerson: method(obj({ person: str() })),
+		/** Makes a global group; nobody has its own tick yet (`setGroupManagers`). */
 		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool() }), str()),
+		renameGroup: method(obj({ group: str(), name: str() })),
+		/** Replaces who has the group's own tick (changing its members, renaming, removing it: decision 68). */
+		setGroupManagers: method(obj({ group: str(), parties: arr(Party) })),
+		/** Removes a group: its members, managers, every entry, grant and switch naming it, whoever wrote them. */
+		removeGroup: method(obj({ group: str() })),
 		addToGroup: method(obj({ group: str(), person: str(), source: Source })),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
 		/**
-		 * Removes what `source` wrote (grants, group members, workspace members) and the groups it manages, with all
-		 * naming them.
+		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the
+		 * groups it manages with all naming them, and the persons it made of whom nothing else is left.
 		 */
 		deleteEverythingFrom: method(obj({ source: Source })),
 	},

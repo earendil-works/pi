@@ -46,6 +46,7 @@ import { type Source, THING_PARAMS } from "../plugins/things/contract.ts";
 import { defineThing } from "../plugins/things/kind.ts";
 import thingsServer from "../plugins/things/server.ts";
 import { BOARD, Board } from "../plugins/things/test/kinds.ts";
+import { RUNTIME } from "../plugins/things/test/world.ts";
 
 /** A tick's label in the bench. */
 const LABEL = { namespace: "bench", key: "tick", params: [] };
@@ -164,6 +165,7 @@ async function measure(which: Variant): Promise<void> {
 		onError: (error) => console.error(error),
 	});
 	const plugins = [
+		RUNTIME,
 		{ name: "@earendil-works/p3-things", facet: thingsServer },
 		BOARD,
 		{ name: "bench", facet: benchFacet },
