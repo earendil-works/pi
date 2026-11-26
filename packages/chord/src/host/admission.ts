@@ -319,7 +319,12 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		if (this.#released) return;
 		this.#released = true;
 		const { label } = this.#owner;
-		const ended = stackless({ code: "released", reason: "ended", message: `${label}: its admission ended` });
+		// Only for what takes it (its derives and live queries): a decision without any made one for nothing (0.3 KiB).
+		const takers = this.#readers.length > 0 || this.#derives.length > 0;
+		// Left out only when no loop below runs that takes it.
+		const ended = (
+			takers ? stackless({ code: "released", reason: "ended", message: `${label}: its admission ended` }) : undefined
+		) as ChordError;
 		this.#unfollow();
 		const source = this.#source;
 		if (source instanceof Source) source.dependents.delete(this);

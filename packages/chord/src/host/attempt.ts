@@ -1428,8 +1428,18 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * and its writables (their watches ended).
 	 */
 	detach(): void {
-		const ended = this.#object.ended();
-		for (const adapted of this.#adapted?.values() ?? []) adapted.detach(ended);
+		const declarations = this.#registryDeclarations;
+		const adapted = this.#adapted;
+		// The object's error only for what takes it: an attempt with none of these made one for nothing (0.3 KiB).
+		const takers =
+			adapted !== undefined ||
+			this.#derives.length > 0 ||
+			this.#queries.length > 0 ||
+			this.#readers.length > 0 ||
+			(declarations !== undefined && declarations.writables.length > 0);
+		// Left out only when no loop below runs that takes it.
+		const ended = (takers ? this.#object.ended() : undefined) as ChordError;
+		if (adapted !== undefined) for (const each of adapted.values()) each.detach(ended);
 		this.#adapted = undefined;
 		for (const derive of this.#derives) derive.detach(ended);
 		for (const { live } of this.#queries) live.detach(ended);
@@ -1439,8 +1449,10 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		for (const handle of this.#tables?.values() ?? NO_ITEMS) handle.store.reads.retire(handle);
 		for (const follow of this.#follows) follow.detach();
 		for (const source of this.#sources ?? NO_ITEMS) source.detach();
-		for (const node of this.#members?.events.values() ?? []) if (node instanceof ReexposedEvents) node.detach();
-		const declarations = this.#registryDeclarations;
+		const events = this.#members?.events;
+		if (events !== undefined && events.size > 0) {
+			for (const node of events.values()) if (node instanceof ReexposedEvents) node.detach();
+		}
 		if (declarations !== undefined) for (const writable of declarations.writables) writable.detach(ended);
 	}
 
