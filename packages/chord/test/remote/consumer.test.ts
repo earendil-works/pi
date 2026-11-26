@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context, withCancel } from "../../src/context/index.ts";
@@ -155,6 +156,24 @@ forEachCodec(() => {
 			await expect(call).rejects.toThrow("user cancelled");
 			await transported();
 			expect(probe!.waits[0]!.abortSignal?.aborted).toBe(true);
+		});
+
+		it("listen to the caller's signal until they settle: a settled call leaves no abort listener behind", async () => {
+			const { client } = await linked((h) => void serveNotes(h));
+			const notes = await client.get(Notes, { session: "S1" }, context);
+			const { context: cancellable, cancel } = withCancel(context);
+			const signal = cancellable.abortSignal!;
+			const before = getEventListeners(signal, "abort").length;
+			const call = notes.add!({ text: "a" }, cancellable);
+			expect(getEventListeners(signal, "abort").length).toBeGreaterThan(before);
+			await call;
+			expect(getEventListeners(signal, "abort")).toHaveLength(before);
+			// Cancelled while in flight: rejected with the reason, its listener gone with the abort.
+			const waiting = notes.wait(cancellable);
+			await transported();
+			cancel(new Error("stop"));
+			await expect(waiting).rejects.toThrow("stop");
+			expect(getEventListeners(signal, "abort")).toHaveLength(0);
 		});
 
 		it("release: pending calls reject released, the provider aborts their handlers and lets the object go", async () => {
