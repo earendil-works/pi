@@ -847,8 +847,15 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * predecessors' go). The attempt parks on them, and on a denial showing `failed { denied }`, with no timer, and goes
 	 * on with the first allow. Resolves `undefined` once allowed, else with how the attempt ends.
 	 */
-	async #runAdmission(admission: ServedAdmission, deadline: Deadline): Promise<NotLive | undefined> {
-		await undefined;
+	#runAdmission(admission: ServedAdmission, deadline: Deadline): Promise<NotLive | undefined> {
+		// A reaction one turn later in place of `await undefined` in an async function: the same turns (what it returns,
+		// a value or the park's promise, resolves the outer promise as it resolved the async function's), without the
+		// async frame (about 0.8 KiB per attempt).
+		return Promise.resolve().then(() => this.#admission(admission, deadline));
+	}
+
+	/** `#runAdmission`'s steps, one turn after its start. */
+	#admission(admission: ServedAdmission, deadline: Deadline): NotLive | undefined | Promise<NotLive | undefined> {
 		if (this.#abandoned !== undefined) return this.#abandoned;
 		const object = this.#object;
 		const decision = new Decision({
@@ -872,9 +879,15 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	}
 
 	/** One check of its admission while it parks on it: allowed, it goes on; denied, it shows `failed { denied }`. */
-	async #decide(decision: Decision, long: ParkedLong): Promise<Parking> {
+	#decide(decision: Decision, long: ParkedLong): Promise<Parking> {
 		this.#admitted = undefined;
-		const verdict: Verdict = await decision.settle(long, this.#opening);
+		// A reaction to the settle in place of awaiting it in an async function: the same turns, without the async
+		// frame (about 0.45 KiB per check).
+		return decision.settle(long, this.#opening).then((verdict) => this.#decided(verdict));
+	}
+
+	/** What one check of its admission found: allowed, it goes on; denied, it shows `failed { denied }`. */
+	#decided(verdict: Verdict): Parking {
 		if (verdict.kind === "allow") {
 			this.#admitted = verdict;
 			this.#followed = verdict;
@@ -1677,13 +1690,32 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * natives, followed sources, derives computed, the keys references pin on its keyed members), under the deadline.
 	 * A dependency that leaves `live` meanwhile changes nothing (R18 after live).
 	 */
-	async #ownSteps(implementation: unknown, deadline: Deadline): Promise<Activation> {
-		let members: Members;
+	#ownSteps(implementation: unknown, deadline: Deadline): Promise<Activation> {
+		const broken = this.#checkOwn(implementation);
+		if (broken !== undefined) return Promise.resolve(broken);
+		// Most attempts open nothing here: their outcome is a promise resolved at once, as this one's was as an async
+		// function that never waited (whose frame cost about 1.2 KiB per activation); `#activate` returns it, which
+		// takes the same turns for both.
+		if (this.#readers.length === 0 && this.#natives.length === 0 && this.#follows.length === 0) {
+			return Promise.resolve(this.#computed());
+		}
+		return this.#opened(deadline);
+	}
+
+	/** The member check and its derives attached; how the attempt ends when it fails. */
+	#checkOwn(implementation: unknown): NotLive | undefined {
 		try {
-			members = checkImplementation(this.#object.served.contract, implementation, this.#sourceOwner, this.granted);
+			const members = checkImplementation(
+				this.#object.served.contract,
+				implementation,
+				this.#sourceOwner,
+				this.granted,
+			);
 			this.#members = members;
 			// Fed by their references from now on (the object's bindings tap them once it is live).
-			for (const node of members.events.values()) if (node instanceof ReexposedEvents) node.attach();
+			if (members.events.size > 0) {
+				for (const node of members.events.values()) if (node instanceof ReexposedEvents) node.attach();
+			}
 			if (this.#registryDeclarations !== undefined)
 				this.#registryDeclarations.contributions = this.#resolveContributions(this.#registryDeclarations);
 			const { host, label } = this.#object;
@@ -1695,6 +1727,11 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		} catch (error) {
 			return this.#broken(error);
 		}
+		return undefined;
+	}
+
+	/** Its readers, natives and followed sources opened in turn, then its derives computed. */
+	async #opened(deadline: Deadline): Promise<Activation> {
 		// Before the natives: an attempt that waits on a reader holds none (design §6), as one parked on a dependency.
 		// Awaited only with readers: an attempt without any takes no extra turn before its natives open.
 		if (this.#readers.length > 0) {
@@ -1719,6 +1756,11 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 				return this.#abandoned ?? { kind: "failed", cause };
 			}
 		}
+		return this.#computed();
+	}
+
+	/** Its derives computed (one that throws breaks it): live, unless it was abandoned meanwhile. */
+	#computed(): Activation {
 		try {
 			for (const derive of this.#derives) void derive.value;
 		} catch (error) {

@@ -1235,3 +1235,52 @@ describe("activation spans (slice 9)", () => {
 		expect(object.activationSpan).toBeUndefined();
 	});
 });
+
+// The hot-path pass made steps of an activation that wait for nothing synchronous (no async frame): each must keep the
+// turns it took, or other code would run earlier or later (2026-11-26).
+describe("the turns of an activation", () => {
+	const Plain = local("turns.plain", { version: 1, params: { id: str() }, members: { name: str() } });
+	const Roles = local("turns.roles", { version: 1, params: {}, members: { names: str() } });
+	const Admitted = remote("turns.admitted", {
+		version: 1,
+		params: { id: str() },
+		hostAddress: () => Server(),
+		state: { name: str() },
+		methods: { add: grantable(method(str(), str())) },
+	});
+
+	/** The turns until what `start` returns resolves. */
+	async function turnsOf(start: () => Promise<unknown>): Promise<number> {
+		let turns = 0;
+		let answered = -1;
+		void start().then(() => {
+			answered = turns;
+		});
+		for (let turn = 0; turn < 200 && answered < 0; turn++) {
+			await null;
+			turns++;
+		}
+		return answered;
+	}
+
+	it("are those before: a plain object live after 7, an admitted one after 14", async () => {
+		const h = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet((host) => {
+			host.serve(Plain, ({ id }) => ({ name: constant(id) }));
+			host.serve(Roles, () => ({ names: constant("add") }));
+			host.serve(Admitted, ({ id }) => ({ name: constant(id), add: async (text: string) => text }), {
+				admit: (_params, _principal, self) =>
+					self.derive([self.get(Roles, {}).names], ([name]) => allow({ granted: [name as "add"] })),
+			});
+		});
+		await h.load([{ name: "@test/turns", facet }], context);
+		const counts: number[] = [];
+		for (let id = 0; id < 3; id++) {
+			counts.push(await turnsOf(() => h.get(Plain, { id: `p${id}` }, context)));
+			counts.push(await turnsOf(() => h.get(Admitted, { id: `a${id}` }, context)));
+		}
+		// Measured on the base of the pass (every step an async function).
+		expect(counts).toEqual([7, 14, 7, 14, 7, 14]);
+		await h.close(context);
+	});
+});
