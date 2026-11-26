@@ -216,8 +216,8 @@ export const ThingsStore = local("things.store", {
 		 */
 		ensure: method(obj({ kind: str() }), str()),
 		/**
-		 * Links a thing into a workspace, with its kind's default grants there (`defaults`: without those the person removed, item 93; a
-		 * workspace is placed by its parent, never linked).
+		 * Links a thing into a workspace, with its kind's default grants there (`defaults`: without those the person
+		 * removed, item 93; a workspace is placed by its parent, never linked).
 		 */
 		link: method(obj({ workspace: str(), thing: str(), defaults: opt(DefaultsChoice) })),
 		/** Unlinks a thing and what the workspace wrote for it (R15); with its last link the thing goes. */
