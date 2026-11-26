@@ -166,3 +166,48 @@ describe("the terminal host", () => {
 		assert.deepEqual(handed.slice(0, copies.length), copies, "what was handed out is as it was");
 	});
 });
+
+describe("ended terminals (round 3)", () => {
+	it("keeps at most 20 ended terminals of an owner, the oldest let go (opus round 3, S1)", async () => {
+		const { terminals, machine } = hosted();
+		const ids: string[] = [];
+		for (let i = 0; i < 500; i++) {
+			ids.push(await terminals.open(request("a", 2), context));
+			machine.started[i]!.say("x");
+			machine.started[i]!.exit(0);
+			await settled();
+		}
+		assert.deepEqual(
+			terminals.list("a").map(({ id }) => id),
+			ids.slice(-20),
+		);
+	});
+
+	it("keeps at most 1 MiB of ended terminals' output of an owner", async () => {
+		const { terminals, machine } = hosted();
+		const ids: string[] = [];
+		for (let i = 0; i < 8; i++) {
+			ids.push(await terminals.open(request("a"), context));
+			machine.started[i]!.options.onData(new Uint8Array(200 * 1024));
+			machine.started[i]!.exit(0);
+			await settled();
+		}
+		// Each ring grew to 256 KiB: four fit.
+		assert.deepEqual(
+			terminals.list("a").map(({ id }) => id),
+			ids.slice(-4),
+		);
+	});
+
+	it("keeps a running terminal however many ended", async () => {
+		const { terminals, machine } = hosted();
+		const running = await terminals.open(request("a"), context);
+		for (let i = 1; i <= 25; i++) {
+			await terminals.open(request("a"), context);
+			machine.started[i]!.exit(0);
+			await settled();
+		}
+		assert.equal(terminals.list("a")[0]!.id, running);
+		assert.equal(terminals.list("a").length, 21);
+	});
+});

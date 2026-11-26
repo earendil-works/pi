@@ -56,29 +56,33 @@ export type NameEntry = { readonly name: string; readonly kind: "file" | "direct
 
 /**
  * A file being written for an upload, in the folder it lands in, under a name of its own (`MachineHost.stageFile`):
- * only its owner may read it while it is written. `publish` lands it whole at a path, `discard` removes it; each
- * closes it, and after either nothing else does anything.
+ * only its owner may read it while it is written. `publish` lands it whole at a path, `discard` removes it; whichever
+ * is called first settles it (each closes it), and a publish once called has won: a discard after it waits for it and
+ * removes nothing that landed.
  */
 export type StagedFile = {
 	/** Where it was made. */
 	readonly path: string;
+	/** What tells it apart from any file that later has its path (`removeStaged` checks it). */
+	readonly identity: string;
 	/** Appends `bytes`. */
 	write(bytes: Uint8Array, context: Context): Promise<Result<void, FileError>>;
 	/**
 	 * Moves it over `path` whole: with the permission bits of the regular file it replaces (without setuid, setgid and
-	 * sticky), or a new file's ordinary ones (`0666` less the umask); never broader than that.
+	 * sticky), or a new file's ordinary ones (`0666` less the umask); never broader than that. Refused once discarded.
 	 */
 	publish(path: string, context: Context): Promise<Result<void, FileError>>;
-	/** Removes it, where it is now (its folder may have moved meanwhile). */
-	discard(context: Context): Promise<Result<void, FileError>>;
+	/** Removes it, where it is now (its folder may have moved meanwhile), unless a publish landed it (`landed`). */
+	discard(context: Context): Promise<Result<"removed" | "landed", FileError>>;
 };
 
 /**
  * A machine as server code uses it, connected: its files and commands, the folders never shown (Pi's own data folder
  * on this device), a folder's names and kinds, at most `max` (`listNames`: no entry is read, for paging a large
- * folder; `Infinity`: all), a new file for an upload (`stageFile`: made exclusively in `folder`, so it never writes
- * through a link), its programs in pseudo-terminals (`not_supported` where it has none), and `close`, which ends the
- * connection (its settings changed, the machine or the plugin went).
+ * folder; `Infinity`: all; stops when `context` aborts), a new file for an upload (`stageFile`: made exclusively in
+ * `folder`, so it never writes through a link) and the removal of one a crash left (`removeStaged`: only while the
+ * file at its path is still that staged file, `absent` otherwise), its programs in pseudo-terminals (`not_supported`
+ * where it has none), and `close`, which ends the connection (its settings changed, the machine or the plugin went).
  */
 export type MachineHost = {
 	readonly env: ExecutionEnv;
@@ -89,6 +93,7 @@ export type MachineHost = {
 		context: Context,
 	): Promise<Result<{ readonly names: readonly NameEntry[]; readonly more: boolean }, FileError>>;
 	stageFile(folder: string, context: Context): Promise<Result<StagedFile, FileError>>;
+	removeStaged(path: string, identity: string, context: Context): Promise<Result<"removed" | "absent", FileError>>;
 	openPty(options: PtyOptions, context: Context): Promise<Result<Pty, FileError>>;
 	close(context: Context): Promise<void>;
 };

@@ -1,12 +1,13 @@
 // The machine type of this device (`local`, decision 117: the family's first type): the machine the server runs on,
 // with no settings. Its host is Node's environment here with Pi's data folder hidden, a folder's names in one read,
-// and an upload's file staged beside its target (only the server's user may read it, its name its own); its terminals
-// are pending a decision (pi-env's daemon, node-pty or a helper).
+// and an upload's file staged beside its target (only the server's user may read it, its name its own, known by its
+// device, inode and birth time, so a sweep never removes a file that replaced it); its terminals are pending a
+// decision (pi-env's daemon, node-pty or a helper).
 
 import { randomBytes } from "node:crypto";
 import { type FileHandle, lstat, open, opendir, readdir, readlink, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { contribute, type FacetHost, obj, type P3Principal } from "@earendil-works/p3/v1";
+import { type Context, contribute, type FacetHost, obj, type P3Principal } from "@earendil-works/p3/v1";
 import { FileError, NodeExecutionEnv, type Result, ServerRuntime } from "@earendil-works/p3/v1/server";
 import {
 	type MachineHost,
@@ -43,8 +44,9 @@ function thisDevice(dataDir: string): MachineHost {
 	return {
 		env: new NodeExecutionEnv({ cwd: homedir() }),
 		hidden: [dataDir],
-		listNames: (folder, max) => attempt(() => namesIn(folder, max)),
+		listNames: (folder, max, context) => attempt(() => namesIn(folder, max, context)),
 		stageFile: (folder) => attempt(() => staged(folder)),
+		removeStaged: (path, identity) => attempt(() => removedIf(path, identity)),
 		openPty: async () => ({ ok: false, error: new FileError("not_supported", "this device has no terminals yet") }),
 		close: async () => {},
 	};
@@ -53,15 +55,16 @@ function thisDevice(dataDir: string): MachineHost {
 /**
  * `folder`'s first `max` names and kinds, read without their entries, and whether it has more. All of them in one
  * read (a page of a folder sorts them all); a bounded read a name at a time, so it holds no more of a large folder
- * than its bound (each name costs a wait: about 7 µs).
+ * than its bound (each name costs a wait: about 7 µs), and stops when `context` aborts.
  */
-async function namesIn(folder: string, max: number): Promise<{ names: NameEntry[]; more: boolean }> {
+async function namesIn(folder: string, max: number, context: Context): Promise<{ names: NameEntry[]; more: boolean }> {
 	if (max === Number.POSITIVE_INFINITY) {
 		return { names: (await readdir(folder, { withFileTypes: true })).map(nameOf), more: false };
 	}
 	const names: NameEntry[] = [];
 	// Leaving the loop closes the folder.
 	for await (const entry of await opendir(folder, { bufferSize: 1024 })) {
+		context.abortSignal?.throwIfAborted();
 		if (names.length === max) return { names, more: true };
 		names.push(nameOf(entry));
 	}
@@ -84,41 +87,90 @@ async function staged(folder: string): Promise<StagedFile> {
 	for (let tries = 1; ; tries++) {
 		const path = `${folder === "/" ? "" : folder}/.p3-upload-${randomBytes(6).toString("hex")}`;
 		try {
-			return stagedAt(path, await open(path, "wx", 0o600));
+			const file = await open(path, "wx", 0o600);
+			return stagedAt(path, identityOf(await file.stat({ bigint: true })), file);
 		} catch (error) {
 			if (tries === STAGE_TRIES || codeOf(error) !== "EEXIST") throw error;
 		}
 	}
 }
 
-/** The staged file `file`, made at `path`. */
-function stagedAt(path: string, file: FileHandle): StagedFile {
-	// Where it was last found, and whether it is still open (a publish that failed after the close left it there).
-	let where = path;
-	let open = true;
-	const closed = async () => {
-		if (!open) return where;
-		open = false;
-		try {
-			where = await whereNow(path, file);
-		} finally {
-			await file.close();
-		}
-		return where;
+/**
+ * The staged file `file`, made at `path` with `identity`. Its publish and its discard have one owner: whichever is
+ * called first settles it, and a discard called after a publish waits for it and removes nothing that landed.
+ */
+function stagedAt(path: string, identity: string, file: FileHandle): StagedFile {
+	let landing: Promise<Result<void, FileError>> | undefined;
+	let removal: Promise<Result<"removed" | "landed", FileError>> | undefined;
+	// Closed once, by whichever settles it: where it was then.
+	let shut: Promise<string> | undefined;
+	const closed = () => {
+		shut ??= closing(path, file);
+		return shut;
 	};
 	return {
 		path,
+		identity,
 		write: (bytes) =>
 			attempt(async () => {
 				for (let at = 0; at < bytes.length; ) at += (await file.write(bytes, at, bytes.length - at)).bytesWritten;
 			}),
-		publish: (target) =>
-			attempt(async () => {
+		publish: (target) => {
+			if (landing !== undefined || removal !== undefined) {
+				return Promise.resolve({ ok: false, error: new FileError("invalid", "the staged file was settled") });
+			}
+			landing = attempt(async () => {
 				await file.chmod(await modeFor(target));
 				await rename(await closed(), target);
-			}),
-		discard: () => attempt(async () => unlink(await closed())),
+			});
+			return landing;
+		},
+		discard: () => {
+			removal ??= (async () => {
+				const landed = landing === undefined ? undefined : await landing;
+				if (landed?.ok === true) return { ok: true, value: "landed" as const };
+				return attempt(async () => {
+					if ((await removedIf(await closed(), identity)) === "absent") throw gone(path);
+					return "removed" as const;
+				});
+			})();
+			return removal;
+		},
 	};
+}
+
+/** Where the open `file` (made at `path`) is now, closed: closed also when it is no longer found. */
+async function closing(path: string, file: FileHandle): Promise<string> {
+	try {
+		return await whereNow(path, file);
+	} finally {
+		await file.close();
+	}
+}
+
+/** Removes the staged file at `path` if it is still the one with `identity`: never a file that replaced it. */
+async function removedIf(path: string, identity: string): Promise<"removed" | "absent"> {
+	const found = await lstat(path, { bigint: true }).catch((error: unknown) => {
+		if (codeOf(error) === "ENOENT") return undefined;
+		throw error;
+	});
+	if (found === undefined || !found.isFile() || identityOf(found) !== identity) return "absent";
+	await unlink(path);
+	return "removed";
+}
+
+/**
+ * A file's identity on this machine: its device, inode and birth time. An inode is reused once its file went; a file
+ * at the same random path with the inode and the birth time (the file system's clock tick) of a staged file is the
+ * residual chance.
+ */
+function identityOf(stats: { readonly dev: bigint; readonly ino: bigint; readonly birthtimeNs: bigint }): string {
+	return `${stats.dev}:${stats.ino}:${stats.birthtimeNs}`;
+}
+
+/** The refusal of a staged file that is no longer found. */
+function gone(path: string): FileError {
+	return new FileError("not_found", `the staged file made at ${path} is no longer found`, path);
 }
 
 /**
@@ -146,7 +198,7 @@ async function whereNow(path: string, file: FileHandle): Promise<string> {
 		const found = await lstat(candidate).catch(() => undefined);
 		if (found !== undefined && found.dev === own.dev && found.ino === own.ino) return candidate;
 	}
-	throw new FileError("not_found", `the staged file made at ${path} is no longer found`, path);
+	throw gone(path);
 }
 
 /** `fn`'s value, or what it threw as a `FileError` (a trust boundary: Node's errors carry their code). */

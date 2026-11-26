@@ -3,7 +3,8 @@
 // its keeper (`serveTerminals`), which also serves each owner's list; its end kills every program, since nobody could
 // reach one after. Lists are kept per owner and replaced only when one of the owner's terminals starts, ends or
 // closes (a resize changes no row), so a change elsewhere wakes nobody here. Only running programs count against the
-// bounds: an ended one keeps its row and output, not a slot.
+// bounds: an ended one keeps its row and output, not a slot, and an owner keeps at most `ENDED_ROWS` ended terminals
+// and `ENDED_BYTES` of their output, the oldest let go first.
 
 import {
 	type Context,
@@ -87,6 +88,12 @@ type Hosted = {
 	readonly waiting: Set<() => void>;
 	closed: boolean;
 };
+
+/** How many ended terminals an owner keeps (with their output) until closed: the oldest go first. */
+const ENDED_ROWS = 20;
+
+/** How many bytes of ended terminals' output an owner keeps: the oldest go first. */
+const ENDED_BYTES = 1024 * 1024;
 
 /** An open under way: whose, on which machine, and how it is taken back (its own cancellation). */
 type Pending = { readonly owner: string; readonly machine: string; readonly cancel: () => void };
@@ -176,6 +183,7 @@ export class HostedTerminals implements TerminalHost {
 			hosted.pty = undefined;
 			this.#change(hosted, { ...hosted.row, exitCode });
 			wake(hosted);
+			this.#trimEnded(owner);
 		});
 		return id;
 	}
@@ -244,6 +252,25 @@ export class HostedTerminals implements TerminalHost {
 		this.#ended = true;
 		for (const pending of this.#pending) pending.cancel();
 		for (const id of [...this.#terminals.keys()]) this.close(id);
+	}
+
+	/** Lets `owner`'s oldest ended terminals go while it keeps more than `ENDED_ROWS` of them or `ENDED_BYTES`. */
+	#trimEnded(owner: string): void {
+		const ended: Hosted[] = [];
+		let bytes = 0;
+		for (const { id, exitCode } of this.list(owner)) {
+			const hosted = this.#terminals.get(id);
+			if (hosted === undefined || exitCode === null) continue;
+			ended.push(hosted);
+			bytes += hosted.ring.size;
+		}
+		let kept = ended.length;
+		for (const oldest of ended) {
+			if (kept <= ENDED_ROWS && bytes <= ENDED_BYTES) return;
+			this.close(oldest.row.id);
+			kept--;
+			bytes -= oldest.ring.size;
+		}
 	}
 
 	/** How many programs run (opens under way included): `owner`'s, or every owner's (`undefined`). */

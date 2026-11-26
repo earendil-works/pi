@@ -2,15 +2,16 @@
 // holds the person's own reference to Files in the workspace, and the transfer holds what lets the person do it, live
 // (`held`): the member (`open` or `upload`) on that reference and the machine's availability to them there (their
 // answer on it). The moment either goes the transfer ends: the reader is closed or the staged file removed at once, not
-// at the next piece. Each route checks the member once when it starts (the tick, the machine and the path, live); the
-// upload checks it again before it lands.
+// at the next piece, a read under way cut. Both are checked before the machine's host is asked for. Each route checks
+// the member once when it starts (the tick, the machine and the path, live); the upload checks it again before it
+// lands, and from the landing's call on the landing has won over a loss.
 // - `GET /files/download`: one reader opened once (the path's last component not followed) and read as the browser
 //   asks (ranges answered), so a file saved meanwhile never splices two revisions; released when the response ends
 //   (read whole, a range, `HEAD`, 416, a disconnect), on a failure or a loss.
 // - `PUT /files/upload`: the body streamed into a file staged beside the target (`MachineHost.stageFile`: a name of its
 //   own, only the server's user reads it) and landed over the target once all of it came, keeping the replaced file's
-//   permission bits; discarded on a failure, a refusal, a loss or a disconnect, and remembered meanwhile so a crash's
-//   leftovers go (staging.ts). Two uploads of one name never mix: each has its file, the last one landed wins whole.
+//   permission bits; discarded on a failure, a refusal, a loss or a disconnect, and remembered meanwhile (with its
+//   identity) so a crash's leftovers go (staging.ts), never a file that took their place. Two uploads of one name never mix: each has its file, the last one landed wins whole.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -24,6 +25,7 @@ import {
 	type P3Principal,
 	type Reference,
 	reportError,
+	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import {
 	type BinaryReader,
@@ -31,7 +33,6 @@ import {
 	Http,
 	type HttpRequest,
 	type HttpResponse,
-	type Result,
 } from "@earendil-works/p3/v1/server";
 import {
 	abortWhen,
@@ -113,7 +114,10 @@ async function download(request: HttpRequest, hosts: MachineHostResolver, ctx: C
 			read: async (offset, length, pieceCtx) => {
 				try {
 					transfer.check();
-					return must(await reader.read(offset, length, pieceCtx));
+					// A loss cuts a read under way; what it read meanwhile is not the person's any more.
+					const bytes = must(await reader.read(offset, length, withAbortSignal(lost, pieceCtx)));
+					transfer.check();
+					return bytes;
 				} catch (error) {
 					await release();
 					throw error;
@@ -139,43 +143,63 @@ async function upload(
 	if (transfer === undefined) return { kind: "error", status: 403 };
 	const { files, at, lost } = transfer;
 	const { machine, path } = target;
-	let destination: string;
+	let folder: string;
 	try {
 		await check(files, "upload", target, ctx);
-		destination = await placedNew(at, path, ctx);
+		const destination = await placedNew(at, path, ctx);
+		folder = destination.slice(0, destination.lastIndexOf("/")) || "/";
 		await sweep(at, machine, staging, ctx);
 	} catch (error) {
 		return refused(error);
 	}
-	const staged = await at.stageFile(destination.slice(0, destination.lastIndexOf("/")) || "/", ctx);
+	const staged = await at.stageFile(folder, ctx);
 	if (!staged.ok) return { kind: "error", status: statusOf(staged.error) };
-	const file = staged.value;
-	let remembered: string | undefined;
-	let landed = false;
-	// Installed at once: a loss discards the staged file without waiting for the next piece; the request's end too,
-	// unless it landed.
-	const discard = once(async () => {
-		if (landed) return;
-		reportFailed(await file.discard(BACKGROUND_CONTEXT), "a staged file's removal", BACKGROUND_CONTEXT);
-		if (remembered !== undefined) await staging.forget({ id: remembered }, BACKGROUND_CONTEXT);
-	});
-	whenAborted(lost, discard);
+	const job = owned(staged.value, machine, staging);
+	// Installed at once: a loss discards the staged file without waiting for the next piece; the request's end too
+	// (after a landing it removes nothing).
+	whenAborted(lost, job.discard);
 	try {
-		remembered = await staging.remember({ machine, path: file.path, at: Date.now() }, ctx);
-		await received(request, file, transfer, ctx);
-		// Checked again before it lands: the tick, the machine and the path as they are now.
+		await job.remembered;
+		await received(request, staged.value, transfer, ctx);
+		// The final path first, then the last check, then the landing with no wait between: from the landing's call on
+		// it has won, and a loss after it removes nothing it landed.
+		const destination = await placedNew(at, path, ctx);
 		await check(files, "upload", target, ctx);
 		transfer.check();
-		must(await file.publish(await placedNew(at, path, ctx), ctx));
-		landed = true;
-		await staging.forget({ id: remembered }, ctx);
+		await job.land(destination, ctx);
 		return { kind: "json", value: {} };
 	} catch (error) {
-		await discard();
+		await job.discard();
 		if (lost.aborted && !isChordError(error)) return { kind: "error", status: 403 };
 		if (isChordError(error)) return refused(error);
 		throw error;
 	}
+}
+
+/**
+ * One upload's staged file with its row (staging.ts): remembered once it exists, forgotten once it landed or was
+ * removed. A discard that failed keeps the row, so the next upload's sweep tries again; a discard before the row was
+ * written forgets it once it is.
+ */
+function owned(file: StagedFile, machine: string, staging: Reference<typeof StagingStore>) {
+	// Written whatever becomes of the request: the row must outlive a disconnect.
+	const remembered = staging.remember(
+		{ machine, path: file.path, identity: file.identity, at: Date.now() },
+		BACKGROUND_CONTEXT,
+	);
+	const forget = async () => staging.forget({ id: await remembered }, BACKGROUND_CONTEXT);
+	return {
+		remembered,
+		land: async (destination: string, context: Context) => {
+			must(await file.publish(destination, context));
+			await forget();
+		},
+		discard: once(async () => {
+			const discarded = await file.discard(BACKGROUND_CONTEXT);
+			if (!discarded.ok) return reportError("files: a staged file's removal", discarded.error, BACKGROUND_CONTEXT);
+			await forget().catch((error: unknown) => reportError("files: a staged file's row", error, BACKGROUND_CONTEXT));
+		}),
+	};
 }
 
 /** Calls `member` of the person's Files for `target`: the tick, the machine and the path checked as they are now. */
@@ -193,7 +217,7 @@ async function check(
 /**
  * The transfer of `target` as the scope's person: their Files there with `member`, the machine's host, and a signal
  * aborted once the member or the machine's availability to them goes (or the scope ends); `undefined` when they have
- * neither now.
+ * neither now. Both are checked before the machine's host is asked for (it may connect), and again after.
  */
 async function held(
 	target: Target,
@@ -207,10 +231,13 @@ async function held(
 	if (principal?.kind !== "person") return undefined;
 	// The request's scope is the person's: the reference is admitted as them, and held while the transfer runs.
 	const files = await ctx.get(Files, { workspace, thing }).catch(() => undefined);
-	const at = await hosts(machine, ctx);
-	if (files?.[member] === undefined || at === undefined) return undefined;
+	if (files?.[member] === undefined) return undefined;
 	const caller = { kind: "person", person: principal.id } as const;
 	const answers = (await ctx.get(Gives, { workspace, caller: callerKey(principal) })).answers;
+	const allowed = () => files[member] !== undefined && machineAvailable(caller, answers.value[machine]);
+	if (!allowed()) return undefined;
+	const at = await hosts(machine, ctx);
+	if (at === undefined || !allowed()) return undefined;
 	const lost = new AbortController();
 	abortWhen(
 		files.state,
@@ -224,36 +251,57 @@ async function held(
 		at,
 		lost: lost.signal,
 		check: () => {
-			if (lost.signal.aborted || files[member] === undefined || !machineAvailable(caller, answers.value[machine])) {
-				throw gone();
-			}
+			if (lost.signal.aborted || !allowed()) throw gone();
 		},
 	};
 }
 
 /**
- * Writes the body into `file`, piece by piece, until it ends; a loss stops it at once (the piece awaited is left to the
- * connection: nothing more is read or written).
+ * Writes the body into `file`, piece by piece, until it ends; a loss stops it at once (one waiter on the loss, taken
+ * off at the end). The body is let go on every way out: at once, or, when a read still waits (an async generator's
+ * `return` waits for it), once that read settles, which the connection's end brings.
  */
 async function received(request: HttpRequest, file: StagedFile, transfer: Transfer, context: Context): Promise<void> {
 	const pieces = request.body(MAX_UPLOAD)[Symbol.asyncIterator]();
-	const stopped = new Promise<never>((_resolve, reject) => whenAborted(transfer.lost, () => reject(gone())));
-	// Its rejection is the loss, which the race below reports.
-	stopped.catch(() => {});
-	for (;;) {
-		const next = pieces.next();
-		// A piece the loss left pending may still fail (the browser goes away later): nobody waits for it.
-		next.catch(() => {});
-		const piece = await Promise.race([next, stopped]);
-		if (piece.done === true) return;
-		transfer.check();
-		must(await file.write(piece.value, context));
+	let pending: Promise<IteratorResult<Uint8Array>> | undefined;
+	let interrupt: ((error: unknown) => void) | undefined;
+	const stop = () => interrupt?.(gone());
+	transfer.lost.addEventListener("abort", stop, { once: true });
+	try {
+		for (;;) {
+			transfer.check();
+			const next = pieces.next();
+			pending = next;
+			const piece = await new Promise<IteratorResult<Uint8Array>>((resolve, reject) => {
+				interrupt = reject;
+				next.then(resolve, reject);
+			});
+			pending = undefined;
+			if (piece.done === true) return;
+			transfer.check();
+			must(await file.write(piece.value, context));
+		}
+	} finally {
+		transfer.lost.removeEventListener("abort", stop);
+		interrupt = undefined;
+		await letGo(pieces, pending);
 	}
+}
+
+/** Ends `pieces` (its producer's cleanup runs): now, or after `pending`, the read that still waits, settles. */
+async function letGo(
+	pieces: AsyncIterator<Uint8Array>,
+	pending: Promise<IteratorResult<Uint8Array>> | undefined,
+): Promise<void> {
+	const end = () => pieces.return?.().catch(() => undefined);
+	if (pending === undefined) await end();
+	else void pending.then(end, end);
 }
 
 /**
  * Removes the staged files on `machine` an earlier server process left (a crash), and forgets them: those made before
- * this process started.
+ * this process started, each only while it is still that staged file (never one that replaced it). A removal that
+ * failed keeps its row, for the next sweep.
  */
 async function sweep(
 	at: MachineHost,
@@ -262,10 +310,10 @@ async function sweep(
 	context: Context,
 ): Promise<void> {
 	const before = Math.floor(performance.timeOrigin);
-	for (const { id, path } of await staging.stale({ machine, before }, context)) {
-		const removed = await at.env.remove(path, { force: true }, context);
-		reportFailed(removed, "a crash's staged file's removal", context);
-		await staging.forget({ id }, context);
+	for (const { id, path, identity } of await staging.stale({ machine, before }, context)) {
+		const removed = await at.removeStaged(path, identity, context);
+		if (!removed.ok) reportError("files: a crash's staged file's removal", removed.error, context);
+		else await staging.forget({ id }, context);
 	}
 }
 
@@ -282,11 +330,6 @@ function once(fn: () => Promise<void>): () => Promise<void> {
 function whenAborted(signal: AbortSignal, fn: () => unknown): void {
 	if (signal.aborted) void fn();
 	else signal.addEventListener("abort", () => void fn(), { once: true });
-}
-
-/** Reports `result`'s failure, if it failed (a cleanup nobody waits for). */
-function reportFailed(result: Result<void, FileError>, what: string, context: Context): void {
-	if (!result.ok) reportError(`files: ${what}`, result.error, context);
 }
 
 /** The refusal of a transfer whose tick or machine went. */

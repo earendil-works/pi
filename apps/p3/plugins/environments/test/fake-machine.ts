@@ -27,7 +27,7 @@ export type FakeMachine = {
 };
 
 /** What files a fake machine has: none by default (`env` and `listNames` refuse), else `files`'s members. */
-type FakeFiles = Partial<Pick<MachineHost, "env" | "hidden" | "listNames" | "stageFile">>;
+type FakeFiles = Partial<Pick<MachineHost, "env" | "hidden" | "listNames" | "stageFile" | "removeStaged">>;
 
 /** A new stand-in machine with `files`. */
 export function fakeMachine(files: FakeFiles = {}): FakeMachine {
@@ -40,6 +40,7 @@ export function fakeMachine(files: FakeFiles = {}): FakeMachine {
 			hidden: [],
 			listNames: none,
 			stageFile: none,
+			removeStaged: none,
 			...files,
 			openPty: async (options) => {
 				await machine.gate;

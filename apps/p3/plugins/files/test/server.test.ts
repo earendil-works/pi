@@ -31,7 +31,7 @@ import {
 } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { collected, eventually, within } from "../../../test/until.ts";
-import { MachineHosts } from "../../environments/contract.server.ts";
+import { MachineHosts, type StagedFile } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import peopleServer from "../../people/server.ts";
@@ -39,6 +39,7 @@ import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Party, type Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
 import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../contract.ts";
+import { must } from "../places.ts";
 import { StagingStore } from "../staging.ts";
 
 /** A person's principal. */
@@ -646,21 +647,209 @@ describe("a transfer's lifetime (round 2)", () => {
 		assert.deepEqual(await readdir(moved), []);
 	});
 
+	/** A staged file left as a crash leaves one (remembered as made before this process started): it and its row. */
+	async function crashLeft(text: string) {
+		const at = await hostOf();
+		const staged = (await at.stageFile(root, context)) as { ok: true; value: StagedFile };
+		assert.ok(staged.ok);
+		const file = staged.value;
+		must(await file.write(Buffer.from(text), context));
+		const staging = await t.host.get(StagingStore, {}, context);
+		const id = await staging.remember({ machine, path: file.path, identity: file.identity, at: 1 }, context);
+		return { at, file, staging, id, before: Math.floor(performance.timeOrigin) };
+	}
+
 	it("removes the staged files an earlier server process left, at the next upload to the machine (should 8)", async () => {
 		const ann = await person("Ann");
 		await grant(pi, files, { kind: "person", person: ann.id }, ["edit"]);
-		const left = join(root, ".p3-upload-0123456789ab");
-		await writeFile(left, "a crash's partial");
-		const staging = await t.host.get(StagingStore, {}, context);
-		// Made before this process started: a crash's.
-		const id = await staging.remember({ machine, path: left, at: 1 }, context);
-		const before = Math.floor(performance.timeOrigin);
-		assert.deepEqual(await staging.stale({ machine, before }, context), [{ id, path: left }]);
+		const { file, staging, id, before } = await crashLeft("a crash's partial");
+		assert.deepEqual(await staging.stale({ machine, before }, context), [
+			{ id, path: file.path, identity: file.identity },
+		]);
 		await holding(ann, pi, async (f, ctx) => {
 			assert.equal((await upload(f, join(root, "new"), [Buffer.from("x")], ctx)).kind, "json");
 		});
-		await assert.rejects(lstat(left), { code: "ENOENT" });
+		await assert.rejects(lstat(file.path), { code: "ENOENT" });
 		assert.deepEqual(await staging.stale({ machine, before }, context), []);
+		await file.discard(context);
+	});
+
+	it("never removes a file that took a crash's staged file's place, and forgets the row (astra round 3, must 3)", async () => {
+		const ann = await person("Ann");
+		await grant(pi, files, { kind: "person", person: ann.id }, ["edit"]);
+		const { file, staging, before } = await crashLeft("a crash's partial");
+		// Made while the staged file still was: another inode.
+		await writeFile(join(root, "own"), "someone's own file");
+		await rm(file.path);
+		await rename(join(root, "own"), file.path);
+		await holding(ann, pi, async (f, ctx) => {
+			assert.equal((await upload(f, join(root, "new"), [Buffer.from("x")], ctx)).kind, "json");
+		});
+		assert.equal(await readFile(file.path, "utf8"), "someone's own file");
+		assert.deepEqual(await staging.stale({ machine, before }, context), []);
+		await file.discard(context);
+	});
+
+	it("keeps the row of a staged file whose removal failed, for the next sweep (astra round 3, must 3)", async () => {
+		const ann = await person("Ann");
+		await grant(pi, files, { kind: "person", person: ann.id }, ["edit"]);
+		const { at, file, staging, id, before } = await crashLeft("a crash's partial");
+		const removeStaged = at.removeStaged;
+		at.removeStaged = async () => ({ ok: false, error: new FileError("unknown", "simulated temporary failure") });
+		try {
+			await holding(ann, pi, async (f, ctx) => {
+				assert.equal((await upload(f, join(root, "new"), [Buffer.from("x")], ctx)).kind, "json");
+			});
+		} finally {
+			at.removeStaged = removeStaged;
+		}
+		assert.equal(await readFile(file.path, "utf8"), "a crash's partial");
+		assert.deepEqual(await staging.stale({ machine, before }, context), [
+			{ id, path: file.path, identity: file.identity },
+		]);
+		await file.discard(context);
+	});
+
+	it("keeps the row of an upload whose discard failed (astra round 3, must 3)", async () => {
+		const ann = await person("Ann");
+		await grant(pi, files, { kind: "person", person: ann.id }, ["edit"]);
+		const at = await hostOf();
+		const stage = at.stageFile;
+		at.stageFile = async (folder, ctx) => {
+			const made = await stage(folder, ctx);
+			if (!made.ok) return made;
+			// The real discard runs (the file is closed), and is answered as failed.
+			const discard = made.value.discard;
+			return {
+				ok: true,
+				value: {
+					...made.value,
+					discard: async (c) => {
+						await discard(c);
+						return { ok: false, error: new FileError("unknown", "simulated") };
+					},
+				},
+			};
+		};
+		try {
+			await holding(ann, pi, async (f, ctx) => {
+				const { url } = await f.upload!({ machine, path: join(root, "draft") }, ctx);
+				const broken = {
+					...request(url, "PUT"),
+					body: async function* () {
+						yield Buffer.from("a");
+						throw new Error("the browser went away");
+					},
+				} as unknown as HttpRequest;
+				await assert.rejects(route(`PUT ${UPLOAD_PATH}`)(broken, ctx), /went away/);
+			});
+		} finally {
+			at.stageFile = stage;
+		}
+		const staging = await t.host.get(StagingStore, {}, context);
+		const rows = await staging.stale({ machine, before: Date.now() + 1000 }, context);
+		assert.equal(rows.length, 1, "the row stays for a later sweep");
+	});
+
+	it("lets the body go when writing a piece fails (astra round 3, must 2)", async () => {
+		const ann = await person("Ann");
+		await grant(pi, files, { kind: "person", person: ann.id }, ["edit"]);
+		const at = await hostOf();
+		const stage = at.stageFile;
+		at.stageFile = async (folder, ctx) => {
+			const made = await stage(folder, ctx);
+			if (!made.ok) return made;
+			return {
+				ok: true,
+				value: { ...made.value, write: async () => ({ ok: false, error: new FileError("unknown", "disk full") }) },
+			};
+		};
+		let released = 0;
+		try {
+			await holding(ann, pi, async (f, ctx) => {
+				const { url } = await f.upload!({ machine, path: join(root, "draft") }, ctx);
+				const failing = {
+					...request(url, "PUT"),
+					body: async function* () {
+						try {
+							yield Uint8Array.of(1);
+							yield Uint8Array.of(2);
+						} finally {
+							released++;
+						}
+					},
+				} as unknown as HttpRequest;
+				assert.equal((await route(`PUT ${UPLOAD_PATH}`)(failing, ctx)).kind, "error");
+			});
+		} finally {
+			at.stageFile = stage;
+		}
+		assert.equal(released, 1, "the producer's cleanup ran");
+		assert.deepEqual((await readdir(root)).sort(), ["README.md", "src"]);
+	});
+
+	it("lets a stalled body go once its read settles, after a loss answered the refusal (astra round 3, must 2)", async () => {
+		const ann = await person("Ann");
+		await grant(pi, files, { kind: "person", person: ann.id }, ["edit"]);
+		let released = 0;
+		const resume = Promise.withResolvers<void>();
+		await holding(ann, pi, async (f, ctx) => {
+			const { url } = await f.upload!({ machine, path: join(root, "inert") }, ctx);
+			const entered = Promise.withResolvers<void>();
+			const stalled = {
+				...request(url, "PUT"),
+				body: async function* () {
+					try {
+						yield Buffer.from("before the pause");
+						entered.resolve();
+						await resume.promise;
+						yield Buffer.from("never written");
+					} finally {
+						released++;
+					}
+				},
+			} as unknown as HttpRequest;
+			const submitting = route(`PUT ${UPLOAD_PATH}`)(stalled, ctx);
+			await entered.promise;
+			await grant(pi, files, { kind: "person", person: ann.id }, ["edit"], false);
+			assert.deepEqual(await submitting, { kind: "error", status: 403 });
+			assert.equal(released, 0, "the read still waits");
+		});
+		resume.resolve();
+		await eventually(
+			() => released,
+			(count) => count === 1,
+		);
+		assert.deepEqual((await readdir(root)).sort(), ["README.md", "src"]);
+	});
+
+	it("ends a download's read under way when Browse is withheld (astra round 3, must 1)", async () => {
+		const ann = await person("Ann");
+		const reading = Promise.withResolvers<void>();
+		const waiting = (reader: BinaryReader) =>
+			Object.assign(Object.create(reader) as BinaryReader, {
+				read: (_offset: number, _length: number, ctx: Context) =>
+					new Promise((resolve) => {
+						reading.resolve();
+						ctx.abortSignal?.addEventListener(
+							"abort",
+							() => resolve({ ok: false, error: new FileError("aborted", "aborted") }),
+							{ once: true },
+						);
+					}),
+			});
+		await readers(waiting, async () => {
+			await holding(ann, pi, async (f, ctx) => {
+				const { url } = await f.open!({ machine, path: join(root, "README.md") }, ctx);
+				const response = await route(`GET ${DOWNLOAD_PATH}`)(request(url, "GET"), ctx);
+				assert.equal(response.kind, "bytes");
+				if (response.kind !== "bytes") return;
+				const piece = response.read(0, 2, ctx);
+				await reading.promise;
+				await grant(pi, files, { kind: "person", person: ann.id }, ["browse"], false);
+				await assert.rejects(piece);
+			});
+		});
 	});
 
 	it("takes raw bytes, bounded by the upload's limit (astra round 2)", async () => {

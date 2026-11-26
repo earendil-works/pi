@@ -1,5 +1,6 @@
 // A terminal's output ring: it keeps exactly the last `capacity` bytes, whether they came in one write larger than it
-// or in many small ones across its end; reads start at the oldest byte kept when asked for older ones, and copy.
+// or in many small ones across its end; reads start at the oldest byte kept when asked for older ones, and copy; its
+// buffer starts small and grows only with what was written (astra and opus round 3).
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -31,5 +32,20 @@ describe("the output ring", () => {
 		const copy = ring.read(22, 8);
 		ring.write(counting(30, 8));
 		assert.deepEqual(copy, counting(22, 8), "a read is a copy");
+	});
+
+	it("starts small and grows with the output, keeping every byte, up to its capacity, then wraps", () => {
+		const ring = new Ring(64 * 1024);
+		assert.equal(ring.size, 0);
+		ring.write(counting(0, 1));
+		assert.equal(ring.size, 4 * 1024, "one byte costs the first size");
+		let written = 1;
+		for (const length of [5000, 10_000, 30_000, 40_000]) {
+			ring.write(counting(written, length));
+			written += length;
+		}
+		assert.equal(ring.size, 64 * 1024);
+		assert.deepEqual([ring.start, ring.end], [written - 64 * 1024, written]);
+		assert.deepEqual(ring.read(0, 64 * 1024), counting(written - 64 * 1024, 64 * 1024));
 	});
 });

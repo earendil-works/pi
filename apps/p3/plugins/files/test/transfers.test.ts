@@ -18,6 +18,8 @@ import {
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { eventually } from "../../../test/until.ts";
+import { MachineHosts } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import { SignIns } from "../../sign-in/contract.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
@@ -211,6 +213,48 @@ describe("ranges (astra round 2, should 10)", () => {
 		await past.arrayBuffer();
 		const head = await fetch(downloadAddress(path), { method: "HEAD", headers: { cookie: ann.cookie } });
 		assert.deepEqual([head.status, head.headers.get("content-length")], [200, "6"]);
+	});
+});
+
+describe("one reader per response (astra round 3)", () => {
+	it("opens and closes one reader for HEAD, a range, a 416 and an empty file", async () => {
+		const ann = await signedIn("Ann");
+		const at = (await (await t.host.registry(MachineHosts, context)).value(machine, context))!;
+		const original = at.env.openBinaryReader.bind(at.env);
+		let opens = 0;
+		let closes = 0;
+		at.env.openBinaryReader = async (...args) => {
+			const opened = await original(...args);
+			if (!opened.ok) return opened;
+			opens++;
+			const close = opened.value.close.bind(opened.value);
+			opened.value.close = async (ctx) => {
+				closes++;
+				return close(ctx);
+			};
+			return opened;
+		};
+		try {
+			const path = join(root, "ranges-release");
+			await writeFile(path, "abcdef");
+			const probe = async (method: string, range: string | undefined, status: number, text: string) => {
+				const headers = { cookie: ann.cookie, ...(range === undefined ? {} : { Range: range }) };
+				const reply = await fetch(downloadAddress(path), { method, headers });
+				assert.deepEqual([reply.status, await reply.text()], [status, text]);
+				await eventually(
+					() => closes,
+					(count) => count === opens,
+				);
+			};
+			await probe("HEAD", undefined, 200, "");
+			await probe("GET", "bytes=1-2", 206, "bc");
+			await probe("GET", "bytes=12-", 416, "");
+			await writeFile(path, "");
+			await probe("GET", undefined, 200, "");
+			assert.deepEqual([opens, closes], [4, 4]);
+		} finally {
+			at.env.openBinaryReader = original;
+		}
 	});
 });
 

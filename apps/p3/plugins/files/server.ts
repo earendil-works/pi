@@ -4,7 +4,7 @@
 // path (places.ts). The machine's files are the environments plugin's `MachineHost`. A folder's page reads the folder's
 // names once and reads only the page's entries.
 
-import { type Context, defineFacet } from "@earendil-works/p3/v1";
+import { type Context, defineFacet, withAbortSignal } from "@earendil-works/p3/v1";
 import { type MachineHost, MachineHosts, type NameEntry, reachMachine } from "../environments/contract.server.ts";
 import { givesTo } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
@@ -97,8 +97,8 @@ async function paged(
 /**
  * The paths below `folder` whose name contains `wanted` (lower case), at most `HITS`: a walk of the folders, breadth
  * first, symbolic links, `.git` and hidden folders not entered, a folder that cannot be read left out; bounded by
- * `SEARCH_BOUNDS` (the entries read, the time, checked before every folder and entry) and `context`'s abort, which
- * fails the search.
+ * `SEARCH_BOUNDS` (the entries read, the time, checked before every folder and inside its listing) and `context`'s
+ * abort, which fails the search.
  */
 async function searched(
 	at: MachineHost,
@@ -112,8 +112,11 @@ async function searched(
 	let walked = 0;
 	for (let next = 0; next < queue.length; next++) {
 		if (walked >= SEARCH_BOUNDS.maxEntries || Date.now() > deadline) return { hits, truncated: true };
-		const listed = await at.listNames(queue[next]!, SEARCH_BOUNDS.maxEntries - walked, context);
+		// The deadline reaches into the listing: a large folder stops being read at it.
+		const bounded = withAbortSignal(AbortSignal.timeout(Math.max(0, deadline - Date.now())), context);
+		const listed = await at.listNames(queue[next]!, SEARCH_BOUNDS.maxEntries - walked, bounded);
 		context.abortSignal?.throwIfAborted();
+		if (!listed.ok && bounded.abortSignal?.aborted === true) return { hits, truncated: true };
 		if (!listed.ok) continue;
 		for (const { name, kind } of listed.value.names) {
 			walked++;
