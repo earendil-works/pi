@@ -18,7 +18,8 @@ import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, parse, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { build, type Loader, type Plugin } from "esbuild";
+import type { Loader, Plugin } from "esbuild";
+import { build } from "../esbuild.ts";
 import { type BaseInputs, readRecorded, recordedSources } from "../plugins/base-inputs.ts";
 import { conditionsOf } from "../surfaces/bundle.ts";
 

@@ -224,6 +224,234 @@ describe("plugin scripts", () => {
 	});
 });
 
+describe("an apply that changes nothing (perf pass, waste 3)", () => {
+	/** A web plugin whose script says `text`, with a stylesheet. */
+	const plugin = (text: string, css = ".notes { color: red; }") => ({
+		"web.ts": `import { defineFacet } from "@test/app/v1";\nimport "./notes.css";\nexport default defineFacet(() => { globalThis.said = "${text}"; });`,
+		"notes.css": css,
+	});
+
+	/** Writes `files` into plugin `notes` of `root`, waits until it is dirty, and applies. */
+	async function apply(app: Awaited<ReturnType<typeof webApp>>["app"], root: string, files: Record<string, string>) {
+		for (const [file, text] of Object.entries(files)) await writeFile(join(root, "notes", file), text);
+		while (!app.plugins.state.value.dirty.includes("@test/notes"))
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		return app.applyChanges(context);
+	}
+
+	it("publishes nothing: the set stays the same object, its watchers hear nothing", async () => {
+		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
+		const scripts = await app.host.get(WebScripts, {}, context);
+		const before = scripts.set.value;
+		const heard: unknown[] = [];
+		const watch = await scripts.set.watch(context);
+		watch.start(async (call) => {
+			heard.push(call);
+		});
+		for (let round = 0; round < 5; round++) {
+			const result = await apply(app, root, plugin("a"));
+			expect(result.steps.find(({ name }) => name === "web")?.hosts).toEqual([
+				{
+					kind: "reloaded",
+					host: "web",
+					report: { plugins: { added: [], changed: [], removed: [] }, failed: [], objects: [] },
+				},
+			]);
+		}
+		expect(scripts.set.value).toBe(before);
+		expect(heard).toEqual([]);
+		await watch.stop();
+		scripts.release();
+		await app.close(context);
+	});
+
+	it("publishes a change of one byte, in the script or in its stylesheet", async () => {
+		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
+		const scripts = await app.host.get(WebScripts, {}, context);
+		const first = scripts.set.value;
+		await apply(app, root, plugin("b"));
+		const second = scripts.set.value;
+		expect(second.plugins[0]!.digest).not.toBe(first.plugins[0]!.digest);
+		// Only the stylesheet.
+		await apply(app, root, plugin("b", ".notes { color: rad; }"));
+		const third = scripts.set.value;
+		expect(third.plugins[0]!.css).not.toBe(second.plugins[0]!.css);
+		scripts.release();
+		await app.close(context);
+	});
+});
+
+describe("an apply that changes nothing (perf pass, waste 3)", () => {
+	/** A web plugin whose script says `text`, with a stylesheet. */
+	const plugin = (text: string, css = ".notes { color: red; }") => ({
+		"web.ts": `import { defineFacet } from "@test/app/v1";\nimport "./notes.css";\nexport default defineFacet(() => { globalThis.said = "${text}"; });`,
+		"notes.css": css,
+	});
+
+	/** Writes `files` into plugin `notes` of `root`, waits until it is dirty, and applies. */
+	async function apply(app: Awaited<ReturnType<typeof webApp>>["app"], root: string, files: Record<string, string>) {
+		for (const [file, text] of Object.entries(files)) await writeFile(join(root, "notes", file), text);
+		while (!app.plugins.state.value.dirty.includes("@test/notes"))
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		return app.applyChanges(context);
+	}
+
+	it("publishes nothing: the set stays the same object, its watchers hear nothing", async () => {
+		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
+		const scripts = await app.host.get(WebScripts, {}, context);
+		const before = scripts.set.value;
+		const heard: unknown[] = [];
+		const watch = await scripts.set.watch(context);
+		watch.start(async (call) => {
+			heard.push(call);
+		});
+		for (let round = 0; round < 5; round++) {
+			const result = await apply(app, root, plugin("a"));
+			expect(result.steps.find(({ name }) => name === "web")?.hosts).toEqual([
+				{
+					kind: "reloaded",
+					host: "web",
+					report: { plugins: { added: [], changed: [], removed: [] }, failed: [], objects: [] },
+				},
+			]);
+		}
+		expect(scripts.set.value).toBe(before);
+		expect(heard).toEqual([]);
+		await watch.stop();
+		scripts.release();
+		await app.close(context);
+	});
+
+	it("publishes a change of one byte, in the script or in its stylesheet", async () => {
+		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
+		const scripts = await app.host.get(WebScripts, {}, context);
+		const first = scripts.set.value;
+		await apply(app, root, plugin("b"));
+		const second = scripts.set.value;
+		expect(second.plugins[0]!.digest).not.toBe(first.plugins[0]!.digest);
+		// Only the stylesheet.
+		await apply(app, root, plugin("b", ".notes { color: rad; }"));
+		const third = scripts.set.value;
+		expect(third.plugins[0]!.css).not.toBe(second.plugins[0]!.css);
+		scripts.release();
+		await app.close(context);
+	});
+});
+
+describe("an apply that changes nothing (perf pass, waste 3)", () => {
+	/** A web plugin whose script says `text`, with a stylesheet. */
+	const plugin = (text: string, css = ".notes { color: red; }") => ({
+		"web.ts": `import { defineFacet } from "@test/app/v1";\nimport "./notes.css";\nexport default defineFacet(() => { globalThis.said = "${text}"; });`,
+		"notes.css": css,
+	});
+
+	/** Writes `files` into plugin `notes` of `root`, waits until it is dirty, and applies. */
+	async function apply(app: Awaited<ReturnType<typeof webApp>>["app"], root: string, files: Record<string, string>) {
+		for (const [file, text] of Object.entries(files)) await writeFile(join(root, "notes", file), text);
+		while (!app.plugins.state.value.dirty.includes("@test/notes"))
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		return app.applyChanges(context);
+	}
+
+	it("publishes nothing: the set stays the same object, its watchers hear nothing", async () => {
+		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
+		const scripts = await app.host.get(WebScripts, {}, context);
+		const before = scripts.set.value;
+		const heard: unknown[] = [];
+		const watch = await scripts.set.watch(context);
+		watch.start(async (call) => {
+			heard.push(call);
+		});
+		for (let round = 0; round < 5; round++) {
+			const result = await apply(app, root, plugin("a"));
+			expect(result.steps.find(({ name }) => name === "web")?.hosts).toEqual([
+				{
+					kind: "reloaded",
+					host: "web",
+					report: { plugins: { added: [], changed: [], removed: [] }, failed: [], objects: [] },
+				},
+			]);
+		}
+		expect(scripts.set.value).toBe(before);
+		expect(heard).toEqual([]);
+		await watch.stop();
+		scripts.release();
+		await app.close(context);
+	});
+
+	it("publishes a change of one byte, in the script or in its stylesheet", async () => {
+		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
+		const scripts = await app.host.get(WebScripts, {}, context);
+		const first = scripts.set.value;
+		await apply(app, root, plugin("b"));
+		const second = scripts.set.value;
+		expect(second.plugins[0]!.digest).not.toBe(first.plugins[0]!.digest);
+		// Only the stylesheet.
+		await apply(app, root, plugin("b", ".notes { color: rad; }"));
+		const third = scripts.set.value;
+		expect(third.plugins[0]!.css).not.toBe(second.plugins[0]!.css);
+		scripts.release();
+		await app.close(context);
+	});
+});
+
+describe("an apply that changes nothing (perf pass, waste 3)", () => {
+	/** A web plugin whose script says `text`, with a stylesheet. */
+	const plugin = (text: string, css = ".notes { color: red; }") => ({
+		"web.ts": `import { defineFacet } from "@test/app/v1";\nimport "./notes.css";\nexport default defineFacet(() => { globalThis.said = "${text}"; });`,
+		"notes.css": css,
+	});
+
+	/** Writes `files` into plugin `notes` of `root`, waits until it is dirty, and applies. */
+	async function apply(app: Awaited<ReturnType<typeof webApp>>["app"], root: string, files: Record<string, string>) {
+		for (const [file, text] of Object.entries(files)) await writeFile(join(root, "notes", file), text);
+		while (!app.plugins.state.value.dirty.includes("@test/notes"))
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		return app.applyChanges(context);
+	}
+
+	it("publishes nothing: the set stays the same object, its watchers hear nothing", async () => {
+		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
+		const scripts = await app.host.get(WebScripts, {}, context);
+		const before = scripts.set.value;
+		const heard: unknown[] = [];
+		const watch = await scripts.set.watch(context);
+		watch.start(async (call) => {
+			heard.push(call);
+		});
+		for (let round = 0; round < 5; round++) {
+			const result = await apply(app, root, plugin("a"));
+			expect(result.steps.find(({ name }) => name === "web")?.hosts).toEqual([
+				{
+					kind: "reloaded",
+					host: "web",
+					report: { plugins: { added: [], changed: [], removed: [] }, failed: [], objects: [] },
+				},
+			]);
+		}
+		expect(scripts.set.value).toBe(before);
+		expect(heard).toEqual([]);
+		await watch.stop();
+		scripts.release();
+		await app.close(context);
+	});
+
+	it("publishes a change of one byte, in the script or in its stylesheet", async () => {
+		const { app, root } = await webApp({ plugins: { notes: plugin("a") } });
+		const scripts = await app.host.get(WebScripts, {}, context);
+		const first = scripts.set.value;
+		await apply(app, root, plugin("b"));
+		const second = scripts.set.value;
+		expect(second.plugins[0]!.digest).not.toBe(first.plugins[0]!.digest);
+		// Only the stylesheet.
+		await apply(app, root, plugin("b", ".notes { color: rad; }"));
+		const third = scripts.set.value;
+		expect(third.plugins[0]!.css).not.toBe(second.plugins[0]!.css);
+		scripts.release();
+		await app.close(context);
+	});
+});
+
 describe("an app serving the surface itself (routes: false)", () => {
 	it("contributes no routes, and gives the files, the page's assets and the base hash", async () => {
 		const root = join(await tempDir(), "plugins");

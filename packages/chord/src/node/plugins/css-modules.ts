@@ -10,7 +10,7 @@
 import { createHash } from "node:crypto";
 import { basename, relative } from "node:path";
 import { Script } from "node:vm";
-import { build } from "esbuild";
+import { build } from "../esbuild.ts";
 
 /** A CSS module scoped: its stylesheet with unique class names, and the mapping its import gives. */
 export type ScopedCss = { readonly css: string; readonly classes: Readonly<Record<string, string>> };

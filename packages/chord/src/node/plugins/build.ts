@@ -10,15 +10,9 @@ import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
-import {
-	type BuildFailure,
-	build,
-	type Plugin as EsbuildPlugin,
-	type Loader,
-	type Message,
-	type OnLoadResult,
-} from "esbuild";
+import type { BuildFailure, Plugin as EsbuildPlugin, Loader, Message, OnLoadResult } from "esbuild";
 import type { Context } from "../../context/index.ts";
+import { build } from "../esbuild.ts";
 import { SCOPED_CSS, scopeCssModule } from "./css-modules.ts";
 import { discoverPackage, type Plugin } from "./discover.ts";
 import { PLUGINS_SPECIFIER, packageName } from "./evaluate.ts";

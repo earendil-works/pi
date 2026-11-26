@@ -18,7 +18,6 @@ import { CSS, JAVASCRIPT, mimeOf, type ServedFile } from "./served.ts";
 /** How many sets' files stay served: the current one and the few before it, for clients loading them meanwhile. */
 const KEPT_SETS = 4;
 
-/** One plugin's published script: its digest, its registered text, its stylesheet. */
 /**
  * One plugin's published script: its digest, its registered text, its stylesheet and assets (kept with the script: a
  * plugin whose next build fails keeps all three).
@@ -66,7 +65,7 @@ export class PublishedScripts<P extends Principal> {
 	 * server's load (the surface's build publishes it). The plugins whose build failed.
 	 */
 	async start(context: Context): Promise<readonly PluginFailure[]> {
-		return this.#publish(await this.#plugins.scripts(this.#kind, context));
+		return this.#publish(await this.#plugins.scripts(this.#kind, context)).failed;
 	}
 
 	/** A published file by its path, from the last few sets. */
@@ -88,8 +87,9 @@ export class PublishedScripts<P extends Principal> {
 			kinds: [this.#kind],
 			reload: async (_built: Built, context: Context) => {
 				const before = new Map([...this.#current].map(([plugin, { digest }]) => [plugin, digest]));
-				const failed = this.#publish(this.#plugins.current(this.#kind) ?? []);
-				await publishTo(this.#host, this.#surface, this.set, context);
+				const { failed, changed } = this.#publish(this.#plugins.current(this.#kind) ?? []);
+				// A set equal to the current one is no new set: nothing to push, no copy of its files kept.
+				if (changed) await publishTo(this.#host, this.#surface, this.set, context);
 				const after = [...this.#current];
 				const plugins = {
 					added: after.filter(([plugin]) => !before.has(plugin)).map(([plugin]) => plugin),
@@ -105,9 +105,13 @@ export class PublishedScripts<P extends Principal> {
 
 	/**
 	 * Takes `scripts` (the kind's complete set) as the current one: a failed build keeps its plugin's last script; its
-	 * files kept with the last few sets'. The plugins whose build failed.
+	 * files kept with the last few sets'. The plugins whose build failed, and whether the set changed: one whose every
+	 * plugin publishes what it published (the same digest, stylesheet and assets) keeps the current set and its files.
 	 */
-	#publish(scripts: readonly PluginScript[]): readonly PluginFailure[] {
+	#publish(scripts: readonly PluginScript[]): {
+		readonly failed: readonly PluginFailure[];
+		readonly changed: boolean;
+	} {
 		const failed: PluginFailure[] = [];
 		const next = new Map<string, Published>();
 		for (const { plugin, built } of scripts) {
@@ -120,6 +124,7 @@ export class PublishedScripts<P extends Principal> {
 			const kept = this.#current.get(plugin.name);
 			if (kept !== undefined) next.set(plugin.name, kept);
 		}
+		if (this.#set !== undefined && sameScripts(this.#current, next)) return { failed, changed: false };
 		this.#current.clear();
 		for (const [name, each] of [...next].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
 			this.#current.set(name, each);
@@ -127,7 +132,7 @@ export class PublishedScripts<P extends Principal> {
 		this.#sets.push(files);
 		if (this.#sets.length > KEPT_SETS) this.#sets.shift();
 		this.#set = set;
-		return failed;
+		return { failed, changed: true };
 	}
 
 	/**
@@ -161,4 +166,16 @@ export class PublishedScripts<P extends Principal> {
 		files.set(url, { mime: JAVASCRIPT, bytes: new TextEncoder().encode(body) });
 		return { set: { base: this.#base, combined: url, plugins: entries }, files };
 	}
+}
+
+/** Whether `next` publishes the plugins `current` does, each the same: its digest, stylesheet and assets' names. */
+function sameScripts(current: ReadonlyMap<string, Published>, next: ReadonlyMap<string, Published>): boolean {
+	if (current.size !== next.size) return false;
+	for (const [name, now] of next) {
+		const was = current.get(name);
+		if (was === undefined || was.digest !== now.digest || was.css !== now.css) return false;
+		// Assets are named by their content.
+		if (was.assets.map(({ name }) => name).join("\n") !== now.assets.map(({ name }) => name).join("\n")) return false;
+	}
+	return true;
 }
