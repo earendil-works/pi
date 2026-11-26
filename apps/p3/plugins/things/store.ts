@@ -391,12 +391,10 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 		self.onLive(async (ctx) => {
 			live = ctx;
-			const left = await self.tx(async (tx) => {
-				const persons = [];
-				// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
-				for await (const { person } of tx.rows(t.signOuts, query(SignOuts))) persons.push(person);
-				return persons;
-			}, ctx);
+			// Read outside a transaction: a store that ends meanwhile leaves no transaction to drain. The whole table:
+			// removed persons whose sign-ins are still to end are few, read at the start only.
+			const left: string[] = [];
+			for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);
 			if (left.length > 0) void signOut(left, ctx);
 			await adopt(ctx);
 			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx)]);
@@ -422,7 +420,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const owners = self.registry(OwnerSeeds);
 		const adopt = async (ctx: Ctx<P3Principal>) => {
 			const owner = owners.value;
-			if (owner !== null) await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);
+			if (owner === null) return;
+			// Adopted already (every start but the first, every reload): no write, so a reload ending the store meanwhile
+			// leaves no transaction behind.
+			if ((await t.persons.get({ person: owner.person }, ctx))?.owner === 1) return;
+			await write((tx, touched) => people.adoptOwner(tx, touched, owner), ctx);
 		};
 		self.on(owners, async () => {
 			if (live !== undefined) await adopt(live);
