@@ -19,7 +19,7 @@ import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
-import { DOWNLOAD_PATH, FilesKind } from "../contract.ts";
+import { DOWNLOAD_PATH, FilesKind } from "../kind.ts";
 
 /** How often the stand-in machine was connected to. */
 let connections = 0;

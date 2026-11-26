@@ -9,19 +9,19 @@
 // (ERNDL-1143).
 
 import { type Context, defineFacet, forbidden, invalid, type Reference } from "@earendil-works/p3/v1";
+import { checkMachine, machineAvailable } from "../environments/contract.server.ts";
 import {
-	checkMachine,
-	machineAvailable,
 	TERMINAL_BACKLOG,
 	type TerminalHost,
 	TerminalHosts,
 	TerminalKeeper,
 	TerminalList,
-} from "../environments/contract.server.ts";
+	type TerminalOwner,
+} from "../environments/contract.terminal-host.server.ts";
 import { givesTo, ThingsStore } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
 import { serveAttach } from "./attach.ts";
-import { ATTACH_PATH, TerminalsKind } from "./contract.ts";
+import { ATTACH_PATH, TerminalsKind } from "./kind.ts";
 import { messages } from "./messages.ts";
 
 /** How many terminals one workspace has open at most. */
@@ -29,12 +29,11 @@ const MAX_TERMINALS = 20;
 
 export default defineFacet((host) => {
 	serveThing(host, TerminalsKind, {
-		one: { name: "Terminals" },
 		implement: ({ workspace, thing }, { caller }, self) => {
 			const terminals = self.registry(TerminalHosts);
 			const answers = givesTo(self, workspace, caller);
-			const owner = `${thing}/${workspace}`;
-			const list = self.get(TerminalList, { owner }).terminals;
+			const owner: TerminalOwner = { thing, workspace };
+			const list = self.get(TerminalList, owner).terminals;
 			const at = (): TerminalHost => {
 				const found = terminals.value;
 				if (found === undefined)
@@ -98,17 +97,17 @@ export default defineFacet((host) => {
 			};
 		},
 		delete: async (thing, ctx) => {
-			await (await ctx.get(TerminalKeeper, {})).closeOwners({ prefix: `${thing}/` }, ctx);
+			await (await ctx.get(TerminalKeeper, {})).closeThing({ thing }, ctx);
 		},
+		one: { name: "Terminals" },
 	});
 	serveAttach(host);
 });
 
-/** Closes the terminals of the owners whose workspace went (an owner key ends with its workspace's id). */
+/** Closes the terminals of the workspaces that went. */
 async function sweep(host: TerminalHost, store: Reference<typeof ThingsStore>, context: Context): Promise<void> {
-	for (const owner of host.owners()) {
-		const workspace = owner.slice(owner.indexOf("/") + 1);
-		if ((await store.workspaces.one.page({ workspace }, 1, context)).items.length > 0) continue;
-		for (const { id } of host.list(owner)) host.close(id);
+	for (const { workspace } of host.owners()) {
+		if ((await store.workspaces.one.page({ workspace }, 1, context)).items.length === 0)
+			host.closeWorkspace(workspace);
 	}
 }

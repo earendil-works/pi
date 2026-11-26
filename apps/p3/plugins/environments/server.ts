@@ -9,7 +9,7 @@ import { hostname } from "node:os";
 import { admitOwner, defineFacet } from "@earendil-works/p3/v1";
 import { OneThing, ThingsStore } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
-import { TerminalKeeper } from "./contract.server.ts";
+import { TerminalKeeper } from "./contract.terminal-host.server.ts";
 import { Environments, ThisDevice } from "./contract.ts";
 import { MachineKind } from "./kind.ts";
 import { MachineInfoHere, MachineKeeper, serveMachines } from "./machines.ts";
@@ -27,9 +27,9 @@ export default defineFacet((host) => {
 	serveTerminals(host);
 
 	serveThing(host, MachineKind, {
-		one: { name: hostname() },
 		implement: ({ thing }, _admitted, self) => ({ info: self.get(MachineInfoHere, { machine: thing }).info }),
-		// The seeded machine (made by this plugin, with no input) is this device's, which stores nothing (machines.ts).
+		// The seeded machine (made by this plugin, with no input) is this device's, which stores nothing (machines.ts),
+		// until the things plugin's `one` takes an input (things2): then it is a `local` machine with a row like any.
 		create: async (thing, input, by, ctx) => {
 			if (input === undefined && by.kind === "plugin" && by.plugin === ENVIRONMENTS_PLUGIN) return;
 			await (await ctx.get(MachineKeeper, {})).make({ machine: thing, input }, ctx);
@@ -39,6 +39,7 @@ export default defineFacet((host) => {
 			await (await ctx.get(TerminalKeeper, {})).closeMachine({ machine: thing }, ctx);
 			await (await ctx.get(MachineKeeper, {})).forget({ machine: thing }, ctx);
 		},
+		one: { name: hostname() },
 	});
 
 	host.serve(

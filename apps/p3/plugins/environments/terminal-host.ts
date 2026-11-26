@@ -15,18 +15,17 @@ import {
 	withCancel,
 } from "@earendil-works/p3/v1";
 import type { FileError } from "@earendil-works/p3/v1/server";
+import { type MachineHostResolver, MachineHosts, type Pty } from "./contract.server.ts";
 import {
-	type MachineHostResolver,
-	MachineHosts,
-	type Pty,
 	TERMINAL_BACKLOG,
 	TERMINAL_FRAME,
 	type TerminalHost,
 	TerminalHosts,
 	TerminalKeeper,
 	TerminalList,
+	type TerminalOwner,
 	type TerminalRequest,
-} from "./contract.server.ts";
+} from "./contract.terminal-host.server.ts";
 import type { TerminalRow } from "./contract.ts";
 import { messages } from "./messages.ts";
 import { Ring } from "./ring.ts";
@@ -50,8 +49,8 @@ export function serveTerminals(host: FacetHost<P3Principal>): void {
 				terminals.closeMachine(machine);
 				return null;
 			},
-			closeOwners: async ({ prefix }) => {
-				terminals.closeOwners(prefix);
+			closeThing: async ({ thing }) => {
+				terminals.closeThing(thing);
 				return null;
 			},
 		};
@@ -59,7 +58,7 @@ export function serveTerminals(host: FacetHost<P3Principal>): void {
 	// Held while the plugin is loaded, so a terminal outlives its viewers and the plugins showing it.
 	contribute(host, "environments.terminals-keep", (self) => void self.get(TerminalKeeper, {}));
 
-	host.serve(TerminalList, ({ owner }, self) => {
+	host.serve(TerminalList, (owner, self) => {
 		// Held, so the host is there; read when the object opens, after the keeper contributed it.
 		self.get(TerminalKeeper, {});
 		const terminals = self.registry(TerminalHosts);
@@ -82,7 +81,9 @@ const MAX_HOSTED = 100;
 /** A running or ended terminal: its row, owner, program (none once it exited), output and who waits for more. */
 type Hosted = {
 	row: TerminalRow;
-	readonly owner: string;
+	readonly owner: TerminalOwner;
+	/** The owner's key in the host's maps. */
+	readonly key: string;
 	pty: Pty | undefined;
 	readonly ring: Ring;
 	readonly waiting: Set<() => void>;
@@ -96,7 +97,12 @@ const ENDED_ROWS = 20;
 const ENDED_BYTES = 1024 * 1024;
 
 /** An open under way: whose, on which machine, and how it is taken back (its own cancellation). */
-type Pending = { readonly owner: string; readonly machine: string; readonly cancel: () => void };
+type Pending = {
+	readonly owner: TerminalOwner;
+	readonly key: string;
+	readonly machine: string;
+	readonly cancel: () => void;
+};
 
 /** The empty list, one value. */
 const NONE: TerminalRow[] = [];
@@ -105,7 +111,8 @@ const NONE: TerminalRow[] = [];
 export class HostedTerminals implements TerminalHost {
 	readonly #hosts: () => MachineHostResolver;
 	readonly #terminals = new Map<string, Hosted>();
-	readonly #lists = new Map<string, TerminalRow[]>();
+	/** Each owner's list, by the owner's key, with the owner it is of. */
+	readonly #lists = new Map<string, { readonly owner: TerminalOwner; readonly rows: TerminalRow[] }>();
 	readonly #watchers = new Map<string, Set<(rows: TerminalRow[]) => void>>();
 	readonly #pending = new Set<Pending>();
 	#ended = false;
@@ -114,39 +121,42 @@ export class HostedTerminals implements TerminalHost {
 		this.#hosts = hosts;
 	}
 
-	list(owner: string): TerminalRow[] {
-		return this.#lists.get(owner) ?? NONE;
+	list(owner: TerminalOwner): TerminalRow[] {
+		return this.#rows(keyOf(owner));
 	}
 
-	watch(owner: string, listener: (rows: TerminalRow[]) => void): () => void {
-		const listeners = this.#watchers.get(owner) ?? new Set();
-		this.#watchers.set(owner, listeners);
+	watch(owner: TerminalOwner, listener: (rows: TerminalRow[]) => void): () => void {
+		const key = keyOf(owner);
+		const listeners = this.#watchers.get(key) ?? new Set();
+		this.#watchers.set(key, listeners);
 		listeners.add(listener);
 		return () => {
 			listeners.delete(listener);
-			if (listeners.size === 0 && this.#watchers.get(owner) === listeners) this.#watchers.delete(owner);
+			if (listeners.size === 0 && this.#watchers.get(key) === listeners) this.#watchers.delete(key);
 		};
 	}
 
-	owners(): string[] {
-		return [...this.#lists.keys()];
+	owners(): TerminalOwner[] {
+		return [...this.#lists.values()].map(({ owner }) => owner);
 	}
 
 	async open(request: TerminalRequest, context: Context): Promise<string> {
 		const { owner, machine, folder, columns, rows, max } = request;
+		const key = keyOf(owner);
 		if (this.#ended) throw notHere(machine);
-		if (this.#running(owner) >= max || this.#running(undefined) >= MAX_HOSTED) {
-			throw forbidden(`environments: too many terminals for ${owner}`, { message: messages.message("tooMany") });
+		if (this.#running(key) >= max || this.#running(undefined) >= MAX_HOSTED) {
+			throw forbidden(`environments: too many terminals for ${key}`, { message: messages.message("tooMany") });
 		}
 		// The slot is taken before the first await, so two opens cannot both pass the count; the open's own
 		// cancellation is what an end of the host, the machine or the owner takes it back with.
 		const { context: starting, cancel } = withCancel(context);
-		const pending: Pending = { owner, machine, cancel };
+		const pending: Pending = { owner, key, machine, cancel };
 		this.#pending.add(pending);
 		const id = crypto.randomUUID();
 		const hosted: Hosted = {
 			row: { id, machine, folder, exitCode: null },
 			owner,
+			key,
 			pty: undefined,
 			ring: new Ring(TERMINAL_BACKLOG),
 			waiting: new Set(),
@@ -175,7 +185,7 @@ export class HostedTerminals implements TerminalHost {
 		}
 		hosted.pty = pty;
 		this.#terminals.set(id, hosted);
-		this.#publish(owner, [...this.list(owner), hosted.row]);
+		this.#publish(owner, key, [...this.#rows(key), hosted.row]);
 		void pty.exited.then((exitCode) => {
 			if (hosted.closed) return;
 			// An ended program keeps its row and output until closed; its pseudo-terminal is released now.
@@ -183,7 +193,7 @@ export class HostedTerminals implements TerminalHost {
 			hosted.pty = undefined;
 			this.#change(hosted, { ...hosted.row, exitCode });
 			wake(hosted);
-			this.#trimEnded(owner);
+			this.#trimEnded(key);
 		});
 		return id;
 	}
@@ -207,14 +217,20 @@ export class HostedTerminals implements TerminalHost {
 		this.#terminals.delete(id);
 		this.#publish(
 			hosted.owner,
-			this.list(hosted.owner).filter((row) => row.id !== id),
+			hosted.key,
+			this.#rows(hosted.key).filter((row) => row.id !== id),
 		);
 		wake(hosted);
 	}
 
-	closeOwners(prefix: string): void {
-		for (const pending of this.#pending) if (pending.owner.startsWith(prefix)) pending.cancel();
-		for (const [id, hosted] of this.#terminals) if (hosted.owner.startsWith(prefix)) this.close(id);
+	closeThing(thing: string): void {
+		for (const pending of this.#pending) if (pending.owner.thing === thing) pending.cancel();
+		for (const [id, hosted] of this.#terminals) if (hosted.owner.thing === thing) this.close(id);
+	}
+
+	closeWorkspace(workspace: string): void {
+		for (const pending of this.#pending) if (pending.owner.workspace === workspace) pending.cancel();
+		for (const [id, hosted] of this.#terminals) if (hosted.owner.workspace === workspace) this.close(id);
 	}
 
 	closeMachine(machine: string): void {
@@ -254,11 +270,16 @@ export class HostedTerminals implements TerminalHost {
 		for (const id of [...this.#terminals.keys()]) this.close(id);
 	}
 
-	/** Lets `owner`'s oldest ended terminals go while it keeps more than `ENDED_ROWS` of them or `ENDED_BYTES`. */
-	#trimEnded(owner: string): void {
+	/** The list of the owner with key `key`. */
+	#rows(key: string): TerminalRow[] {
+		return this.#lists.get(key)?.rows ?? NONE;
+	}
+
+	/** Lets the oldest ended terminals of the owner `key` go while it keeps more than `ENDED_ROWS` or `ENDED_BYTES`. */
+	#trimEnded(key: string): void {
 		const ended: Hosted[] = [];
 		let bytes = 0;
-		for (const { id, exitCode } of this.list(owner)) {
+		for (const { id, exitCode } of this.#rows(key)) {
 			const hosted = this.#terminals.get(id);
 			if (hosted === undefined || exitCode === null) continue;
 			ended.push(hosted);
@@ -273,12 +294,12 @@ export class HostedTerminals implements TerminalHost {
 		}
 	}
 
-	/** How many programs run (opens under way included): `owner`'s, or every owner's (`undefined`). */
-	#running(owner: string | undefined): number {
+	/** How many programs run (opens under way included): the owner `key`'s, or every owner's (`undefined`). */
+	#running(key: string | undefined): number {
 		let running = 0;
-		for (const pending of this.#pending) if (owner === undefined || pending.owner === owner) running++;
+		for (const pending of this.#pending) if (key === undefined || pending.key === key) running++;
 		for (const hosted of this.#terminals.values()) {
-			if (hosted.row.exitCode === null && (owner === undefined || hosted.owner === owner)) running++;
+			if (hosted.row.exitCode === null && (key === undefined || hosted.key === key)) running++;
 		}
 		return running;
 	}
@@ -289,16 +310,22 @@ export class HostedTerminals implements TerminalHost {
 		hosted.row = row;
 		this.#publish(
 			hosted.owner,
-			this.list(hosted.owner).map((each) => (each === old ? row : each)),
+			hosted.key,
+			this.#rows(hosted.key).map((each) => (each === old ? row : each)),
 		);
 	}
 
-	/** Makes `rows` `owner`'s list and tells its watchers. */
-	#publish(owner: string, rows: TerminalRow[]): void {
-		if (rows.length === 0) this.#lists.delete(owner);
-		else this.#lists.set(owner, rows);
-		for (const listener of this.#watchers.get(owner) ?? []) listener(rows.length === 0 ? NONE : rows);
+	/** Makes `rows` the list of `owner` (key `key`) and tells its watchers. */
+	#publish(owner: TerminalOwner, key: string, rows: TerminalRow[]): void {
+		if (rows.length === 0) this.#lists.delete(key);
+		else this.#lists.set(key, { owner, rows });
+		for (const listener of this.#watchers.get(key) ?? []) listener(rows.length === 0 ? NONE : rows);
 	}
+}
+
+/** An owner's key in the host's maps (ids hold no newline). */
+function keyOf({ thing, workspace }: TerminalOwner): string {
+	return `${thing}\n${workspace}`;
 }
 
 /** The refusal of a machine that is not there (gone, or its type not installed). */

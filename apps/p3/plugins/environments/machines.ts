@@ -50,19 +50,23 @@ export const MachineInfoHere = local("environments.machine-info", {
 /** A machine's connection: the type and settings revision it was made from, and its host. */
 type Connection = { readonly type: MachineType; readonly revision: number; readonly host: Promise<MachineHost> };
 
-/**
- * Serves the machines' registries, `MachineKeeper` and `MachineInfoHere` on `host`, and holds the keeper while the
- * plugin is loaded.
- */
+/** Serves the machines' registries, `MachineKeeper` (held while the plugin is loaded) and `MachineInfoHere` on `host`. */
 export function serveMachines(host: FacetHost<P3Principal>): void {
 	host.serve(MachineHosts, { compose: (table) => table[0]?.value ?? (async () => undefined) });
 	host.serve(MachineTypes, {
+		// The first by plugin name wins a type's name.
 		compose: (table) => {
 			const byName = new Map<string, (typeof table)[number]>();
 			for (const item of table) if (!byName.has(item.value.type)) byName.set(item.value.type, item);
 			return byName;
 		},
 	});
+	serveKeeper(host);
+	serveInfo(host);
+}
+
+/** Serves `MachineKeeper`, which connects machines and writes their rows, and holds it while the plugin is loaded. */
+function serveKeeper(host: FacetHost<P3Principal>): void {
 	host.serve(MachineKeeper, (_params, self) => {
 		const types = self.registry(MachineTypes);
 		const store = self.get(MachinesStore, {});
@@ -110,7 +114,10 @@ export function serveMachines(host: FacetHost<P3Principal>): void {
 		};
 	});
 	contribute(host, "environments.machines-keep", (self) => void self.get(MachineKeeper, {}));
+}
 
+/** Serves `MachineInfoHere`: one machine's info, one object per machine. */
+function serveInfo(host: FacetHost<P3Principal>): void {
 	host.serve(MachineInfoHere, ({ machine }, self) => {
 		const named = self.liveQuery(self.get(ThingsStore, {}).things.one, { thing: machine }, { first: 1 });
 		const device = self.get(OneThing, THIS_DEVICE);

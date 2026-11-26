@@ -25,7 +25,7 @@ import { seeded } from "../../environments/test/seeded.ts";
 import { SignIns } from "../../sign-in/contract.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
-import { DOWNLOAD_PATH, Files, FilesKind } from "../contract.ts";
+import { DOWNLOAD_PATH, Files, FilesKind } from "../kind.ts";
 
 /** A person's principal. */
 type Person = Extract<P3Principal, { kind: "person" }>;

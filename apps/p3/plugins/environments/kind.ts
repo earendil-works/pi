@@ -30,7 +30,9 @@ export type MachineInfo = Static<typeof MachineInfo>;
 export const MachineKind = defineThing(MACHINE_KIND, {
 	version: 1,
 	makers: "plugin",
-	// A machine's type and settings (`{ type, settings }`), checked by the create hook against its type's schema.
+	// A machine's type and settings (`{ type, settings }`), checked by the create hook against its type's schema. Any
+	// input until the things plugin's `one` takes one (things2): the seeded machine is made with none, and the store
+	// checks a seed's input too; then `obj({ type: str(), settings: unknown() })`.
 	create: { input: unknown() },
 	state: { info: MachineInfo },
 	ticks: { work: { label: messages.message("tickWork"), for: "agents" } },

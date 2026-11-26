@@ -14,8 +14,9 @@ import {
 	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import { Http, type HttpRequest, type HttpResponse } from "@earendil-works/p3/v1/server";
-import { abortWhen, type TerminalHost, TerminalHosts } from "../environments/contract.server.ts";
-import { ATTACH_PATH, Terminals } from "./contract.ts";
+import { type TerminalHost, TerminalHosts } from "../environments/contract.terminal-host.server.ts";
+import { abortWhen } from "../things/contract.server.ts";
+import { ATTACH_PATH, Terminals } from "./kind.ts";
 
 /** Serves the attach route on `host`. */
 export function serveAttach(host: FacetHost<P3Principal>): void {

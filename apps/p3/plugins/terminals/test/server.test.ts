@@ -21,7 +21,7 @@ import {
 import { Http, type HttpRequest } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { collected, within } from "../../../test/until.ts";
-import { TERMINAL_BACKLOG, TerminalHosts } from "../../environments/contract.server.ts";
+import { TERMINAL_BACKLOG, TerminalHosts } from "../../environments/contract.terminal-host.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
@@ -30,7 +30,7 @@ import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Party, Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
-import { ATTACH_PATH, Terminals, TerminalsKind } from "../contract.ts";
+import { ATTACH_PATH, Terminals, TerminalsKind } from "../kind.ts";
 
 /** A person's principal. */
 type Person = Extract<P3Principal, { kind: "person" }>;
@@ -470,13 +470,13 @@ describe("terminals of a workspace that went", () => {
 		const worker = await agent("s1");
 		const host = (await t.host.registry(TerminalHosts, context)).value!;
 		const gone = await host.open(
-			{ owner: `${terminals}/a-workspace-that-went`, machine, folder: "/tmp", ...SIZE, max: 20 },
+			{ owner: { thing: terminals, workspace: "a-workspace-that-went" }, machine, folder: "/tmp", ...SIZE, max: 20 },
 			context,
 		);
 		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		assert.equal(started()[0]!.closed, true);
 		assert.equal(
-			host.owners().some((owner) => owner.endsWith("a-workspace-that-went")),
+			host.owners().some((owner) => owner.workspace === "a-workspace-that-went"),
 			false,
 		);
 		assert.equal(host.write(gone, "x"), false);

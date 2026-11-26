@@ -1,7 +1,8 @@
 // The things plugin's contracts for server facets only: the store (`ThingsStore`: every table's rows as named
 // queries, and every write; trusted server code, it checks no caller), `Gives` (what a workspace gives one caller,
 // what every thing's admission derives from), the registry the store hands its access index to admissions through
-// (`AccessHandles`), the kinds' hooks (`ThingHooks`), and a kind's seeded thing (`OneThing`).
+// (`AccessHandles`), the kinds' hooks (`ThingHooks`), a kind's seeded thing (`OneThing`), and for kinds whose calls or
+// streams name another thing, what a workspace gives a caller (`givesTo`) and a stream's hold on it (`abortWhen`).
 
 import {
 	arr,
@@ -14,6 +15,7 @@ import {
 	local,
 	map,
 	method,
+	type NativeWatchable,
 	num,
 	obj,
 	opt,
@@ -24,6 +26,7 @@ import {
 	str,
 	type TableItem,
 	unknown,
+	until,
 	type Watchable,
 } from "@earendil-works/p3/v1";
 import type { Attachment } from "./access.ts";
@@ -176,6 +179,21 @@ export function givesTo(
 	if (caller.kind === "server") return constant({});
 	const key = caller.kind === "person" ? `person:${caller.person}` : `worker:${caller.session}`;
 	return self.get(Gives, { workspace, caller: key }).answers;
+}
+
+/**
+ * Aborts `controller` once `lost` holds for `source`'s value (the current one included) or its watch ends, unless
+ * `context` aborts first: how a kind's stream (a download, a terminal's bytes) holds what lets its caller in
+ * (decision 25) and ends the moment that goes.
+ */
+export function abortWhen<T>(
+	source: NativeWatchable<T>,
+	lost: (value: T) => boolean,
+	controller: AbortController,
+	context: Context,
+): void {
+	const end = () => controller.abort();
+	void until(source, lost, context).then(end, end);
 }
 
 /**

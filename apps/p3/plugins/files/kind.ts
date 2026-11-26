@@ -1,4 +1,4 @@
-// The files plugin's contract: Files (`files.browser`), the one thing in Pi through which people browse, search,
+// The files kind: Files (`files.browser`), the one thing in Pi through which people browse, search,
 // download and upload the files of the machines a workspace sees (decision 24). Every call names its machine (a
 // machine thing's id) and an absolute path; the server refuses a machine that is not available to the caller in the
 // workspace, and Pi's own data folder. Browse gives listing, searching and opening (an address to read a file from);
@@ -33,6 +33,12 @@ export const Hit = obj({ path: str(), kind: oneOf("file", "directory", "symlink"
 
 /** A search hit (see `Hit`). */
 export type Hit = Static<typeof Hit>;
+
+/** What Browse gives: listing, searching and opening. */
+export const FILES_BROWSES = ["entries", "search", "open"] as const;
+
+/** What Edit gives: uploading, renaming and removing. */
+export const FILES_EDITS = ["upload", "rename", "remove"] as const;
 
 /**
  * Files (`files.browser`): one per Pi, made by this plugin, linked in Pi only (below it can only be hidden or have its
@@ -71,8 +77,9 @@ export const FilesKind = defineThing("files.browser", {
 		remove: method(obj({ machine: MachineId, path: Path })),
 	},
 	ticks: {
-		browse: { label: messages.message("tickBrowse"), for: "people", gives: ["entries", "search", "open"] },
-		edit: { label: messages.message("tickEdit"), for: "people", gives: ["upload", "rename", "remove"] },
+		// No member is plain: someone let in with no tick gets an empty object.
+		browse: { label: messages.message("tickBrowse"), for: "people", gives: FILES_BROWSES },
+		edit: { label: messages.message("tickEdit"), for: "people", gives: FILES_EDITS },
 	},
 	defaultGrants: { everyone: ["browse"] },
 });

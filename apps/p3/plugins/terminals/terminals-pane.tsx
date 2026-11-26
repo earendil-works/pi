@@ -6,11 +6,18 @@
 
 import { Button, IconButton } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Reference, reportError, withCancel } from "@earendil-works/p3/v1";
-import { CloseIcon, useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
+import {
+	CloseIcon,
+	refusalText,
+	useHold,
+	useLive,
+	useMessages,
+	useRefState,
+	useWatch,
+} from "@earendil-works/p3/v1/web";
 import { useCallback, useState } from "react";
 import { messages as machineMessages } from "../environments/messages.ts";
-import { refusalText } from "../environments/refusal.ts";
-import { Terminals } from "./contract.ts";
+import { Terminals } from "./kind.ts";
 import { messages } from "./messages.ts";
 import { PlainScreen, type TerminalScreen } from "./screen.tsx";
 import styles from "./terminals-pane.module.css";

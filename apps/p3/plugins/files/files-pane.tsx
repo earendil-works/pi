@@ -10,6 +10,7 @@ import {
 	DescriptionIcon,
 	EditIcon,
 	FolderIcon,
+	refusalText,
 	SearchIcon,
 	useHold,
 	useLive,
@@ -18,9 +19,8 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { type ChangeEvent, useCallback, useEffect, useState } from "react";
 import { messages as machineMessages } from "../environments/messages.ts";
-import { refusalText } from "../environments/refusal.ts";
-import { type Entry, Files, type Hit } from "./contract.ts";
 import styles from "./files-pane.module.css";
+import { type Entry, FILES_BROWSES, FILES_EDITS, Files, type Hit } from "./kind.ts";
 import { messages } from "./messages.ts";
 
 /** What the pane opens on: the workspace, its Files thing, a machine thing's id and an absolute folder on it. */
@@ -43,8 +43,8 @@ export function FilesPane(props: FilesPaneProps) {
 	const ref = useHold(Files, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const state = useRefState(ref);
-	const reader = withGranted(live, "entries", "search", "open");
-	const writer = withGranted(live, "upload", "rename", "remove");
+	const reader = withGranted(live, ...FILES_BROWSES);
+	const writer = withGranted(live, ...FILES_EDITS);
 	const [folder, setFolder] = useState(props.folder);
 	// A change (upload, rename, removal) shows the folder anew: `changes` counts them.
 	const [changes, setChanges] = useState(0);

@@ -1,8 +1,10 @@
-// What a refused call says to a person, for the panes of the kinds that reach machines (Files, Terminals): the message
-// a refusal's details carry (`{ message }`, as the plugins refuse) rendered by the translator of its namespace, else
-// the error's own text.
+// What a refused call says to a person (`/v1/web` re-exports it), for every view that shows a refusal: the message a
+// refusal's details carry (`{ message }`, as plugins refuse: guide 4.2) rendered by the translator of its namespace,
+// else the error's own text. The view passes the translators of the namespaces it expects (its own, and those of the
+// plugins its calls reach); one that finds any namespace's translator by itself needs Chord to render a message of any
+// namespace from the page's `Translations`.
 
-import { isChordError, type MessageData, type Translator } from "@earendil-works/p3/v1";
+import { isChordError, type MessageData, type Translator } from "@earendil-works/chord";
 
 /** The text of `failure` for a person, through `translators` by namespace (the pane's and the plugins' it calls). */
 export function refusalText(

@@ -35,15 +35,14 @@ import {
 	type HttpResponse,
 } from "@earendil-works/p3/v1/server";
 import {
-	abortWhen,
 	type MachineHost,
 	type MachineHostResolver,
 	MachineHosts,
 	machineAvailable,
 	type StagedFile,
 } from "../environments/contract.server.ts";
-import { Gives } from "../things/contract.server.ts";
-import { DOWNLOAD_PATH, Files, UPLOAD_PATH } from "./contract.ts";
+import { abortWhen, Gives } from "../things/contract.server.ts";
+import { DOWNLOAD_PATH, Files, UPLOAD_PATH } from "./kind.ts";
 import { must, placed, placedNew } from "./places.ts";
 import { StagingStore, serveStaging } from "./staging.ts";
 

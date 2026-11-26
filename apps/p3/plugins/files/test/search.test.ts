@@ -18,7 +18,7 @@ import { seeded } from "../../environments/test/seeded.ts";
 import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import thingsServer from "../../things/server.ts";
-import { Files, FilesKind } from "../contract.ts";
+import { Files, FilesKind } from "../kind.ts";
 
 /** The folder the stand-in host hides. */
 let hiddenFolder = "";

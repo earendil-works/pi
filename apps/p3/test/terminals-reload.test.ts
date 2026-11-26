@@ -19,7 +19,7 @@ import environmentsServer from "../plugins/environments/server.ts";
 import { fakeMachine, fakeType } from "../plugins/environments/test/fake-machine.ts";
 import { seeded } from "../plugins/environments/test/seeded.ts";
 import peopleServer from "../plugins/people/server.ts";
-import { Terminals, TerminalsKind } from "../plugins/terminals/contract.ts";
+import { Terminals, TerminalsKind } from "../plugins/terminals/kind.ts";
 import terminalsServer from "../plugins/terminals/server.ts";
 import { OneThing, ThingsStore } from "../plugins/things/contract.server.ts";
 import thingsServer from "../plugins/things/server.ts";

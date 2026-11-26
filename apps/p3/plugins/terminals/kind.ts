@@ -1,4 +1,4 @@
-// The terminals plugin's contract: Terminals (`terminals.pane`), the one thing in Pi through which people and agents
+// The terminals kind: Terminals (`terminals.pane`), the one thing in Pi through which people and agents
 // open terminals on the machines a workspace sees and watch them (decision 24). A terminal runs on its machine's
 // terminal host (the environments plugin's), belongs to the Terminals thing and the workspace it was opened in, and is
 // listed there only. One terminal, many viewers: each viewer reads its bytes from the address `attach` answers (its
@@ -60,6 +60,7 @@ export const TerminalsKind = defineThing("terminals.pane", {
 		close: method(obj({ terminal: TerminalId })),
 	},
 	ticks: {
+		// No member is plain: someone let in with no tick gets an empty object. A member may be in both ticks (97).
 		watch: { label: messages.message("tickWatch"), for: "people", gives: ["terminals", "attach"] },
 		use: {
 			label: messages.message("tickUse"),

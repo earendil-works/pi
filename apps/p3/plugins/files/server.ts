@@ -8,7 +8,7 @@ import { type Context, defineFacet, withAbortSignal } from "@earendil-works/p3/v
 import { type MachineHost, MachineHosts, type NameEntry, reachMachine } from "../environments/contract.server.ts";
 import { givesTo } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
-import { DOWNLOAD_PATH, type Entry, FilesKind, type Hit, UPLOAD_PATH } from "./contract.ts";
+import { DOWNLOAD_PATH, type Entry, FilesKind, type Hit, UPLOAD_PATH } from "./kind.ts";
 import { hiddenIn, joined, must, placed, placedEntry, placedNew } from "./places.ts";
 import { serveTransfers } from "./transfers.ts";
 
@@ -23,7 +23,6 @@ const SEARCH_BOUNDS = { maxEntries: 50_000, timeoutMs: 5_000 };
 
 export default defineFacet((host) => {
 	serveThing(host, FilesKind, {
-		one: { name: "Files" },
 		implement: ({ workspace, thing }, { caller }, self) => {
 			const hosts = self.registry(MachineHosts);
 			const answers = givesTo(self, workspace, caller);
@@ -63,6 +62,7 @@ export default defineFacet((host) => {
 				},
 			};
 		},
+		one: { name: "Files" },
 	});
 	serveTransfers(host);
 });

@@ -1,10 +1,11 @@
-// `refusalText` (refusal.ts): a refusal's message rendered by the translator of its namespace, else the error's text.
+// `refusalText` (`/v1/web`, src/api/v1/refusal.ts): a refusal's message rendered by the translator of its namespace,
+// else the error's text.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { forbidden } from "@earendil-works/p3/v1";
-import { messages } from "../messages.ts";
-import { refusalText } from "../refusal.ts";
+import { messages } from "../plugins/environments/messages.ts";
+import { refusalText } from "../src/api/v1/refusal.ts";
 
 describe("refusalText", () => {
 	const translators = { environments: messages };

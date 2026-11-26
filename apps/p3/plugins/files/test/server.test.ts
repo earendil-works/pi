@@ -39,7 +39,7 @@ import peopleServer from "../../people/server.ts";
 import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Party, type Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
-import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../contract.ts";
+import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../kind.ts";
 import { must } from "../places.ts";
 import { StagingStore } from "../staging.ts";
 import { owned } from "../transfers.ts";

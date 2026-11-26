@@ -21,13 +21,14 @@ import {
 	until,
 } from "@earendil-works/p3/v1";
 import { Http, PeopleStore, type Router, ServerCommands, SessionsStore } from "@earendil-works/p3/v1/server";
-import { MachineHosts, TerminalHosts } from "../plugins/environments/contract.server.ts";
+import { MachineHosts } from "../plugins/environments/contract.server.ts";
+import { TerminalHosts } from "../plugins/environments/contract.terminal-host.server.ts";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import { Machine } from "../plugins/environments/kind.ts";
 import { seeded } from "../plugins/environments/test/seeded.ts";
-import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../plugins/files/contract.ts";
+import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../plugins/files/kind.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
-import { ATTACH_PATH, Terminals, TerminalsKind } from "../plugins/terminals/contract.ts";
+import { ATTACH_PATH, Terminals, TerminalsKind } from "../plugins/terminals/kind.ts";
 import { OneThing, ThingsStore } from "../plugins/things/contract.server.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import { type Topology, topology } from "./topology.ts";

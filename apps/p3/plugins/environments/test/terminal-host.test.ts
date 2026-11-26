@@ -18,8 +18,18 @@ function hosted() {
 	return { terminals, machine };
 }
 
-/** What `open` takes, for `owner`, at most `max` of the owner's running. */
-const request = (owner: string, max = 20) => ({ owner, machine: "m1", folder: "/tmp", columns: 80, rows: 24, max });
+/** The owner `thing` names: that Terminals thing in workspace `w`. */
+const own = (thing: string, workspace = "w") => ({ thing, workspace });
+
+/** What `open` takes, for `thing`'s owner, at most `max` of the owner's running. */
+const request = (thing: string, max = 20, workspace = "w") => ({
+	owner: own(thing, workspace),
+	machine: "m1",
+	folder: "/tmp",
+	columns: 80,
+	rows: 24,
+	max,
+});
 
 /** Waits until what was started has run up to its next wait (an open into the machine's gate). */
 const settled = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -35,14 +45,14 @@ describe("the terminal host", () => {
 	it("replaces an owner's list only when one of its terminals starts, ends or closes; a resize changes none", async () => {
 		const { terminals, machine } = hosted();
 		const seen: string[] = [];
-		terminals.watch("a", () => seen.push("a"));
+		terminals.watch(own("a"), () => seen.push("a"));
 		const a = await terminals.open(request("a"), context);
-		const listA = terminals.list("a");
+		const listA = terminals.list(own("a"));
 		const b = await terminals.open(request("b"), context);
 		terminals.resize(b, 100, 30);
 		terminals.resize(a, 100, 30);
 		assert.deepEqual(machine.started[0]!.size, [100, 30]);
-		assert.equal(terminals.list("a"), listA, "neither b's change nor a resize replaces a's list");
+		assert.equal(terminals.list(own("a")), listA, "neither b's change nor a resize replaces a's list");
 		assert.deepEqual(seen, ["a"]);
 	});
 
@@ -55,7 +65,7 @@ describe("the terminal host", () => {
 		machine.started[0]!.exit(0);
 		assert.equal((await waiting).bytes.length, 0);
 		assert.equal(machine.started[0]!.closed, true);
-		assert.equal(terminals.list("a")[0]!.exitCode, 0);
+		assert.equal(terminals.list(own("a"))[0]!.exitCode, 0);
 		assert.equal(Buffer.from(terminals.tail(id, 1024).bytes).toString(), "bye");
 		assert.equal(terminals.write(id, "y"), false, "an ended program answers that it did not get it");
 		assert.deepEqual(machine.started[0]!.typed, ["x"]);
@@ -68,8 +78,8 @@ describe("the terminal host", () => {
 		machine.started[0]!.exit(0);
 		await settled();
 		await terminals.open(request("a", 1), context);
-		assert.deepEqual(terminals.owners(), ["a"]);
-		assert.equal(terminals.list("a").length, 2, "the ended one is still listed");
+		assert.deepEqual(terminals.owners(), [own("a")]);
+		assert.equal(terminals.list(own("a")).length, 2, "the ended one is still listed");
 	});
 
 	it("answers at most the asked tail of the kept output (opus round 2, S1)", async () => {
@@ -92,7 +102,7 @@ describe("the terminal host", () => {
 		go = gated(machine);
 		const byOwner = terminals.open(request("ab"), context);
 		await settled();
-		terminals.closeOwners("a");
+		terminals.closeThing("ab");
 		go();
 		await assert.rejects(byOwner);
 		assert.deepEqual(
@@ -118,7 +128,7 @@ describe("the terminal host", () => {
 			cancel();
 			go();
 			await assert.rejects(entering);
-			assert.deepEqual(terminals.list("a"), []);
+			assert.deepEqual(terminals.list(own("a")), []);
 			assert.equal(
 				machine.started.every((program) => program.closed),
 				true,
@@ -153,17 +163,34 @@ describe("the terminal host", () => {
 			for (const row of rows) Object.freeze(row);
 			handed.push(Object.freeze(rows));
 		};
-		terminals.watch("a", freeze);
+		terminals.watch(own("a"), freeze);
 		const one = await terminals.open(request("a"), context);
 		const two = await terminals.open(request("a"), context);
-		freeze(terminals.list("a"));
+		freeze(terminals.list(own("a")));
 		const copies = handed.map((rows) => structuredClone(rows));
 		terminals.resize(one, 90, 30);
 		machine.started[0]!.exit(1);
 		await settled();
 		terminals.close(two);
-		terminals.closeOwners("a");
+		terminals.closeThing("ab");
 		assert.deepEqual(handed.slice(0, copies.length), copies, "what was handed out is as it was");
+	});
+});
+
+describe("owners", () => {
+	it("closes the terminals of one Terminals thing in every workspace, and of one workspace for every thing", async () => {
+		const { terminals, machine } = hosted();
+		await terminals.open(request("t1", 20, "w1"), context);
+		await terminals.open(request("t1", 20, "w2"), context);
+		await terminals.open(request("t2", 20, "w1"), context);
+		terminals.closeThing("t1");
+		assert.deepEqual(
+			machine.started.map((program) => program.closed),
+			[true, true, false],
+		);
+		terminals.closeWorkspace("w1");
+		assert.equal(machine.started[2]!.closed, true);
+		assert.deepEqual(terminals.owners(), []);
 	});
 });
 
@@ -178,7 +205,7 @@ describe("ended terminals (round 3)", () => {
 			await settled();
 		}
 		assert.deepEqual(
-			terminals.list("a").map(({ id }) => id),
+			terminals.list(own("a")).map(({ id }) => id),
 			ids.slice(-20),
 		);
 	});
@@ -194,7 +221,7 @@ describe("ended terminals (round 3)", () => {
 		}
 		// Each ring grew to 256 KiB: four fit.
 		assert.deepEqual(
-			terminals.list("a").map(({ id }) => id),
+			terminals.list(own("a")).map(({ id }) => id),
 			ids.slice(-4),
 		);
 	});
@@ -207,7 +234,7 @@ describe("ended terminals (round 3)", () => {
 			machine.started[i]!.exit(0);
 			await settled();
 		}
-		assert.equal(terminals.list("a")[0]!.id, running);
-		assert.equal(terminals.list("a").length, 21);
+		assert.equal(terminals.list(own("a"))[0]!.id, running);
+		assert.equal(terminals.list(own("a")).length, 21);
 	});
 });

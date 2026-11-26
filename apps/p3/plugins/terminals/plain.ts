@@ -1,5 +1,5 @@
 // A terminal's output as plain text, for what shows it without a terminal emulator: the pane's `PlainScreen` and the
-// agent's `terminal_read`.
+// agent's `terminal` tool (its `read`).
 
 /**
  * `text` without escape sequences (CSI `ESC [ … final`, OSC `ESC ] … BEL` or `ESC ] … ESC \`, two-byte `ESC x`)
