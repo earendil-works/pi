@@ -278,13 +278,14 @@ export function stripImageSequences(line: string): string {
 }
 
 /**
- * Generate a random image ID for Kitty graphics protocol.
+ * Generate a random image ID in [1, 0x7fffffff] for Kitty graphics protocol.
  * Uses random IDs to avoid collisions between different module instances
  * (e.g., main app vs extensions).
  */
 export function allocateImageId(): number {
-	// Use random ID in range [1, 0xffffffff] to avoid collisions
-	return Math.floor(Math.random() * 0xfffffffe) + 1;
+	// Konsole parses Kitty graphics keys as signed 32-bit integers. Larger IDs read as 0, so the image
+	// is never stored and `d=I` deletes every such placement (#12548).
+	return Math.floor(Math.random() * 0x7fffffff) + 1;
 }
 
 export function encodeKitty(
