@@ -710,6 +710,29 @@ describe("the order of a read", () => {
 		}
 	});
 
+	it("grants the base's sorted names without duplicates, in any order and repeated, at 3 to 65 names", () => {
+		let seed = 11;
+		const next = () => {
+			seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+			return seed / 2_147_483_648;
+		};
+		for (const size of [3, 31, 32, 33, 59, 60, 61, 65]) {
+			const grants = Array.from({ length: size }, (_, index) => `n${String(index).padStart(2, "0")}`);
+			const read = reader(grants);
+			for (let round = 0; round < 20; round++) {
+				const listed = grants.filter(() => next() < 0.6);
+				for (let extra = 0; extra < 3 && listed.length > 0; extra++) {
+					listed.push(listed[Math.floor(next() * listed.length)]!);
+				}
+				listed.sort(() => next() - 0.5);
+				const verdict = read({ granted: listed });
+				expect([size, round, [...verdict.granted]]).toEqual([size, round, [...new Set(listed)].sort()]);
+				// The same names in another order, repeated once more: the same decision.
+				expect(read({ granted: [...listed].reverse().concat(listed.slice(0, 1)) })).toBe(verdict);
+			}
+		}
+	});
+
 	it("the admitted value has the rest copy's own keys in their order and its prototype", () => {
 		const read = reader(["a"]);
 		const value = Object.assign(

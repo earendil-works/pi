@@ -469,30 +469,42 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 			return brokenRead("its admission's value is an object (allow({ granted, ...data }))", label);
 		}
 		const listed = value.granted;
+		const { indexes } = grantTable(grants);
+		// The names as bits of their grants' indexes (a contract of up to 60 grants): repeated names and their order do
+		// not count, an equal read compares two numbers.
+		let low = 0;
+		let high = 0;
 		if (listed !== undefined) {
 			if (!Array.isArray(listed)) return brokenRead("its admission's granted is a list of names", label);
 			// Indexed: a for-of allocates an iterator per list.
 			for (let index = 0; index < listed.length; index++) {
 				const name = listed[index];
-				if (typeof name !== "string" || !grants.includes(name)) {
+				const at = typeof name === "string" ? indexes.get(name) : undefined;
+				if (at === undefined) {
 					return brokenRead(
 						`its admission granted ${JSON.stringify(name)}: no grantable member or flag of its contract`,
 						label,
 					);
 				}
+				if (at < BITS) low |= 1 << at;
+				else high |= 1 << (at - BITS);
 			}
 		}
 		countWalk(context);
 		const last = this.#decided?.kind === "allow" ? this.#decided : undefined;
-		const kept = last === undefined ? NO_ITEMS : namesOf(last.verdict.granted);
-		// Checked above: grants.
-		const names = namesOfListed(listed as readonly string[] | undefined, kept);
-		if (last !== undefined && names === kept && sameJson(last.value, value, "granted"))
-			return last.equal(decision, value);
+		// A larger contract: its names sorted, without duplicates, compared with the last allow's.
+		const sorted =
+			grants.length <= 2 * BITS || listed === undefined ? undefined : [...new Set(listed as string[])].sort();
+		const sameNames =
+			sorted === undefined
+				? last?.low === low && last.high === high
+				: last !== undefined && sameList(sorted, namesOf(last.verdict.granted));
+		if (last !== undefined && sameNames && sameJson(last.value, value, "granted")) return last.equal(decision, value);
+		const names = sorted ?? namesOfBits(grants, low, high);
 		const { granted: _, ...data } = value;
 		const granted = names.length === 0 ? NO_GRANTS : grantedSet(grants, names);
 		const verdict: Allowed = { kind: "allow", value: { ...data, granted } as AdmittedValue, granted };
-		this.#decided = new DecidedAllow(verdict, decision, value);
+		this.#decided = new DecidedAllow(verdict, decision, value, low, high);
 		return verdict;
 	}
 
@@ -501,7 +513,7 @@ export class Decision implements AdmitSelf, Dependent, RegistryWaiter {
 		const last = this.#decided?.kind === "allow" ? this.#decided : undefined;
 		if (last !== undefined && sameJson(last.value, value)) return last.equal(decision, value);
 		const verdict: Allowed = { kind: "allow", value, granted: NO_GRANTS };
-		this.#decided = new DecidedAllow(verdict, decision, value);
+		this.#decided = new DecidedAllow(verdict, decision, value, 0, 0);
 		return verdict;
 	}
 
@@ -534,64 +546,18 @@ function brokenRead(message: string, label: string): Extract<Verdict, { readonly
 	return { kind: "broken", error: asChordError(new Error(message), label) };
 }
 
-/**
- * The names of a checked `listed` sorted and without duplicates (`[...new Set(listed)].sort()`), or `kept` itself when
- * those are its names: absent and empty are no names, repeated names and their order do not count. Against up to 60
- * kept names a bit per name, no allocation for an equal list; a new short list is sorted by insertion (a sort's work
- * list cost 0.8 KiB for two names).
- */
-function namesOfListed(listed: readonly string[] | undefined, kept: readonly string[]): readonly string[] {
-	if (listed === undefined) return kept.length === 0 ? kept : NO_ITEMS;
-	if (kept.length > 2 * BITS || listed.length > SHORT_NAMES) {
-		const names = [...new Set(listed)].sort();
-		return sameList(names, kept) ? kept : names;
-	}
-	// Two words of 30 bits: small integers in every tier of V8 (a 31st bit made 31 names five times slower than 30
-	// once the code left its optimized form).
-	let low = 0;
-	let high = 0;
-	for (let index = 0; index < listed.length; index++) {
-		const at = kept.indexOf(listed[index]!);
-		if (at >= BITS) high |= 1 << (at - BITS);
-		else if (at >= 0) low |= 1 << at;
-		else {
-			// Another name: the names before it are the kept ones seen so far.
-			const names = keptSeen(kept, low, high);
-			for (let rest = index; rest < listed.length; rest++) inserted(names, listed[rest]!);
-			return names;
-		}
-	}
-	const all =
-		kept.length <= BITS
-			? low === 2 ** kept.length - 1 && high === 0
-			: low === 2 ** BITS - 1 && high === 2 ** (kept.length - BITS) - 1;
-	return all ? kept : keptSeen(kept, low, high);
-}
-
-/** The bits of one word of seen names. */
+/** The bits of one word of a decision's names: small integers in every tier of V8 (a 31st bit is not). */
 const BITS = 30;
 
-/** A list of names this long at most is sorted by insertion; a longer one by a set and a sort. */
-const SHORT_NAMES = 64;
-
-/** The kept names whose bits `low` and `high` have, in their (sorted) order. */
-function keptSeen(kept: readonly string[], low: number, high: number): string[] {
+/** The names whose grant indexes `low` and `high` have, in the grants' order (sorted, `fingerprint.ts`). */
+function namesOfBits(grants: readonly string[], low: number, high: number): readonly string[] {
+	if (low === 0 && high === 0) return NO_ITEMS;
 	const names: string[] = [];
-	for (let at = 0; at < kept.length; at++) {
+	for (let at = 0; at < grants.length; at++) {
 		const seen = at < BITS ? low & (1 << at) : high & (1 << (at - BITS));
-		if (seen !== 0) names.push(kept[at]!);
+		if (seen !== 0) names.push(grants[at]!);
 	}
 	return names;
-}
-
-/** Inserts `name` into the sorted `names` unless it is there (the order of a default sort: by UTF-16 code units). */
-function inserted(names: string[], name: string): void {
-	let at = names.length;
-	while (at > 0 && names[at - 1]! > name) at--;
-	if (at > 0 && names[at - 1] === name) return;
-	names.push(name);
-	for (let index = names.length - 1; index > at; index--) names[index] = names[index - 1]!;
-	names[at] = name;
 }
 
 /** Whether two of Chord's sorted name lists are the same. */
@@ -622,11 +588,16 @@ class DecidedAllow {
 	readonly verdict: Allowed;
 	decision: unknown;
 	value: JsonValue;
+	/** Its names as bits of their grants' indexes (a contract of up to 60 grants; none for a route). */
+	readonly low: number;
+	readonly high: number;
 
-	constructor(verdict: Allowed, decision: unknown, value: JsonValue) {
+	constructor(verdict: Allowed, decision: unknown, value: JsonValue, low: number, high: number) {
 		this.verdict = verdict;
 		this.decision = decision;
 		this.value = value;
+		this.low = low;
+		this.high = high;
 	}
 
 	/** An equal read of `decision` and `value`: this decision, kept as read from them. */
@@ -651,29 +622,14 @@ type Decided =
  * all of a version's with its contract.
  */
 function grantedSet(grants: readonly string[], names: readonly string[]): ReadonlySet<string> {
-	let sets = grantedSets.get(grants);
-	if (sets === undefined) {
-		const buckets: Buckets = new Map();
-		// Drops the entry of a collected set (its bucket with it when it was the last).
-		const collected = new FinalizationRegistry<{ readonly hash: number; readonly ref: WeakRef<ReadonlySet<string>> }>(
-			({ hash, ref }) => {
-				const bucket = buckets.get(hash);
-				if (bucket === undefined) return;
-				const index = bucket.indexOf(ref);
-				if (index >= 0) bucket.splice(index, 1);
-				if (bucket.length === 0) buckets.delete(hash);
-			},
-		);
-		sets = { buckets, collected };
-		grantedSets.set(grants, sets);
-	}
-	const { buckets } = sets;
+	const sets = grantTable(grants);
+	const { buckets, indexes } = sets;
 	// Every index mixed in, in the names' (sorted) order (FNV-1a over 32 bits): an OR of index bits modulo 31 put every
 	// combination of a contract with more than 31 grants that shares 31 of them into one bucket. Collisions are told
 	// apart name by name.
 	let hash = 0x811c9dc5;
 	for (let index = 0; index < names.length; index++) {
-		hash = Math.imul(hash ^ (grants.indexOf(names[index]!) + 1), 0x01000193);
+		hash = Math.imul(hash ^ (indexes.get(names[index]!)! + 1), 0x01000193);
 	}
 	const bucket = buckets.get(hash);
 	if (bucket !== undefined) {
@@ -707,14 +663,39 @@ const setNames = new WeakMap<ReadonlySet<string>, readonly string[]>();
 type Buckets = Map<number, WeakRef<ReadonlySet<string>>[]>;
 
 /**
- * A version's buckets and the registry that drops a collected set's entry: owned by the version's entry alone (its
- * holdings name no table), so a set an app keeps keeps neither the buckets nor their registrations once the version is
- * gone.
+ * A version's grant table: each grant's index, its granted sets' buckets and the registry that drops a collected set's
+ * entry; owned by the version's entry alone (the registry's holdings name no table), so a set an app keeps keeps neither
+ * the buckets nor their registrations once the version is gone.
  */
 type GrantedSets = {
+	readonly indexes: ReadonlyMap<string, number>;
 	readonly buckets: Buckets;
 	readonly collected: FinalizationRegistry<{ readonly hash: number; readonly ref: WeakRef<ReadonlySet<string>> }>;
 };
+
+/**
+ * The grant table of the version whose grants are `grants`, made by the first use. A function of its own: the
+ * registry's callback closes over this function's variables alone.
+ */
+function grantTable(grants: readonly string[]): GrantedSets {
+	let table = grantedSets.get(grants);
+	if (table === undefined) {
+		const buckets: Buckets = new Map();
+		// Drops the entry of a collected set (its bucket with it when it was the last).
+		const collected = new FinalizationRegistry<{ readonly hash: number; readonly ref: WeakRef<ReadonlySet<string>> }>(
+			({ hash, ref }) => {
+				const bucket = buckets.get(hash);
+				if (bucket === undefined) return;
+				const index = bucket.indexOf(ref);
+				if (index >= 0) bucket.splice(index, 1);
+				if (bucket.length === 0) buckets.delete(hash);
+			},
+		);
+		table = { indexes: new Map(grants.map((grant, index) => [grant, index])), buckets, collected };
+		grantedSets.set(grants, table);
+	}
+	return table;
+}
 
 /** The granted sets of each version, by its grants: gone with the version. */
 const grantedSets = new WeakMap<readonly string[], GrantedSets>();
