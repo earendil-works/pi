@@ -18,9 +18,14 @@ let sequence: number | undefined;
 export function uuidv7(): string {
 	const timestamp = Math.max(Date.now(), lastTimestamp);
 	lastTimestamp = timestamp;
+	// The random bytes first, where pi-ai's generator took them: the random source may throw (nothing of this id has
+	// changed then) or mint an id itself (it takes its own bytes and sequence; this id's come after). No code of
+	// anyone's runs from here to the text.
+	const at = takeRandom();
+	const pool = POOL;
 	if (sequence === undefined) {
 		sequence = 0;
-		for (let index = 0; index < 5; index++) sequence = sequence * 256 + randomByte();
+		for (let index = 0; index < 5; index++) sequence = sequence * 256 + pool[at + index]!;
 	} else {
 		if (sequence === MAX_SEQUENCE) throw new RangeError("UUIDv7 generator sequence exhausted");
 		sequence++;
@@ -33,29 +38,35 @@ export function uuidv7(): string {
 	bytes[8] = 0x80 | (Math.floor(sequence / 2 ** 23) & 0x3f);
 	bytes[9] = Math.floor(sequence / 2 ** 15) & 0xff;
 	bytes[10] = Math.floor(sequence / 2 ** 7) & 0xff;
-	bytes[11] = ((sequence % 128) << 1) | (randomByte() & 0x01);
-	for (let index = 12; index < 16; index++) bytes[index] = randomByte();
+	bytes[11] = ((sequence % 128) << 1) | (pool[at + 5]! & 0x01);
+	for (let index = 12; index < 16; index++) bytes[index] = pool[at + index - 6]!;
 	return uuidText(bytes);
 }
 
 /** The bytes of the id being made: one buffer, rewritten by each id (no code runs between its writes and its text). */
 const ID = new Uint8Array(16);
 
+/** Random bytes per id: five for a first sequence, one for byte 11's low bit, four for the last bytes. */
+const PER_ID = 10;
+
 /**
- * A random byte from a pool refilled by the platform's generator: one call per 256 bytes, not one per id. The pool
- * holds random bytes not yet used, never an id or anything derived from one.
+ * Where an id's `PER_ID` random bytes start in the pool, refilled by the platform's generator first when too few are
+ * left: one call per 25 ids, not one per id. The pool holds random bytes not yet used, never an id or anything derived
+ * from one. A refill that throws takes nothing.
  */
-function randomByte(): number {
-	if (poolAt === POOL.length) {
+function takeRandom(): number {
+	if (poolAt + PER_ID > POOL.length) {
 		globalThis.crypto.getRandomValues(POOL);
 		poolAt = 0;
 	}
-	return POOL[poolAt++]!;
+	const at = poolAt;
+	poolAt += PER_ID;
+	return at;
 }
 
-const POOL = new Uint8Array(256);
+const POOL = new Uint8Array(250);
 
-/** The next unused byte of the pool; at its end, the pool is refilled first. */
+/** The next unused byte of the pool; past its end, the pool is refilled first. */
 let poolAt = POOL.length;
 
 const HEX = "0123456789abcdef";

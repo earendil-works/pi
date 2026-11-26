@@ -45,6 +45,42 @@ describe("uuidv7", () => {
 		vi.restoreAllMocks();
 	});
 
+	// First in this file: it needs the module's first id. Found by the review of the pass (astra2, 2026-11-26).
+	it("seeds the sequence from random bytes on a retry after the first random source threw", () => {
+		const now = vi.spyOn(Date, "now").mockReturnValue(100);
+		vi.spyOn(crypto, "getRandomValues")
+			.mockImplementationOnce(() => {
+				throw new Error("unavailable");
+			})
+			.mockImplementation((bytes) => {
+				(bytes as Uint8Array).fill(255);
+				return bytes;
+			});
+		expect(() => uuidv7()).toThrow("unavailable");
+		expect(uuidv7()).toBe("00000000-0064-77ff-bfff-ffffffffffff");
+		now.mockRestore();
+	});
+
+	it("gives an id minted by the random source during a refill a sequence of its own", () => {
+		let inner: string | undefined;
+		let reenter = false;
+		vi.spyOn(Date, "now").mockReturnValue(100);
+		vi.spyOn(crypto, "getRandomValues").mockImplementation((bytes) => {
+			if (reenter) {
+				reenter = false;
+				inner = uuidv7();
+			}
+			(bytes as Uint8Array).fill(0);
+			return bytes;
+		});
+		const ids = Array.from({ length: 50 }, () => uuidv7());
+		// Into the next refill of the pool (one per 25 ids): the random source mints one id meanwhile.
+		reenter = true;
+		for (let id = 0; id < 30 && inner === undefined; id++) ids.push(uuidv7());
+		expect(inner).toBeDefined();
+		expect(new Set([...ids, inner]).size).toBe(ids.length + 1);
+	});
+
 	it("writes pi-ai's layout: the milliseconds, version 7, the sequence, variant 10", () => {
 		const before = Date.now();
 		const id = uuidv7();
@@ -72,6 +108,8 @@ describe("uuidv7", () => {
 	});
 
 	it("gives ids of random bits apart from the sequence: no two of a thousand share them", () => {
+		// Past what earlier tests' stubs left in the pool.
+		for (let id = 0; id < 30; id++) uuidv7();
 		const tails = new Set(Array.from({ length: 1_000 }, () => uuidv7().slice(-8)));
 		expect(tails.size).toBeGreaterThan(990);
 	});
