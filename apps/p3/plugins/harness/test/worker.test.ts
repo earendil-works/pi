@@ -419,4 +419,44 @@ describe("the harness plugin on a worker", () => {
 			await writeFile(join(folder, "gate"), "");
 		}
 	});
+
+	it("sends to a subagent, whose answer comes back once; archived, it is gone from the list (Opus, round 1)", async () => {
+		const tool = (when: string, name: string, args: object): Step => ({
+			when,
+			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
+		});
+		const script: Step[] = [
+			tool("@spawn", "subagent_spawn", { name: "reader", message: "first task" }),
+			says("Started reader.", "started"),
+			says("first task", "first answer"),
+			says("[subagent reader answered] first answer", "noted one"),
+			tool("@send", "subagent_send", { name: "reader", message: "second task" }),
+			says("Sent to reader.", "sent"),
+			says("second task", "second answer"),
+			says("[subagent reader answered] second answer", "noted two"),
+			tool("@archive", "subagent_archive", { name: "reader" }),
+			says("Archived reader.", "archived"),
+			tool("@list", "subagent_list", {}),
+			says("No subagents.", "none"),
+			says("", "ok"),
+		];
+		await start([login("login", "faux", script), coding(), subagents()]);
+		const answered = (text: string) =>
+			eventually(
+				() => requests().filter(({ last }) => last === `[subagent reader answered] ${text}`).length,
+				(count) => count === 1,
+				5000,
+			);
+		await ask("@spawn");
+		await answered("first answer");
+		await (await harness()).durable.waitForIdle(context);
+		await ask("@send");
+		await answered("second answer");
+		await (await harness()).durable.waitForIdle(context);
+		await ask("@archive");
+		await ask("@list");
+		assert.ok(requests().some(({ last }) => last === "No subagents."));
+		// Each answer reported once.
+		assert.equal(requests().filter(({ last }) => last.startsWith("[subagent reader answered]")).length, 2);
+	});
 });
