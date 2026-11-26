@@ -18,5 +18,6 @@ export const messages = defineMessages("checklist", {
 		add: "Add",
 		full: (max: number) => `A checklist holds at most ${formatNumber(max)} items.`,
 		noItem: "This item is not here any more.",
+		gone: "This checklist does not exist any more.",
 	},
 });

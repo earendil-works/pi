@@ -1,6 +1,6 @@
 // The checklist store on the server (`ChecklistStore`): every checklist's items, keyed by the checklist's thing id (the
 // thing itself, its name and where it is linked are the things plugin's), its named query, and every write. A
-// checklist's items live as long as its thing: its kind's `delete` clears them.
+// checklist's items live as long as its thing: its kind's `delete` clears them and marks the checklist gone.
 
 import {
 	bool,
@@ -37,7 +37,10 @@ export const ChecklistStore = local("checklist.store", {
 		add: method(obj({ checklist: str(), text: str() }), str()),
 		/** Marks item `id` done or not; refused for an item the checklist does not have. */
 		tick: method(obj({ checklist: str(), id: str(), done: bool() })),
-		/** Removes every item of a checklist (its thing is gone). */
+		/**
+		 * Removes every item of a checklist and marks it gone (its thing is gone): an add begun before, committed after,
+		 * is refused, so no item comes back under a dead id.
+		 */
 		clear: method(obj({ checklist: str() })),
 	},
 });
@@ -50,10 +53,21 @@ const Items = defineTable("checklist.items", {
 	indexes: { by_order: ["checklist", "seq"] },
 });
 
+/**
+ * The checklists whose thing is gone (`clear`). Thing ids are never used again, so a mark stays: one row per deleted
+ * checklist.
+ */
+const Gone = defineTable("checklist.gone", {
+	version: 1,
+	columns: { checklist: str() },
+	key: ["checklist"],
+});
+
 /** Serves `ChecklistStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(ChecklistStore, (_params, self) => {
 		const items = self.table(Items);
+		const gone = self.table(Gone);
 		/**
 		 * How many items checklist `checklist` holds: its last item's `seq` (items are numbered from 1 and never removed
 		 * one by one), one row of index `by_order`.
@@ -79,6 +93,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			add: async ({ checklist, text }, ctx) => {
 				const id = crypto.randomUUID();
 				await self.tx(async (tx) => {
+					// Checked in the add's own transaction, which `clear`'s is ordered with: an add begun before the
+					// delete and committed after it is refused.
+					if ((await tx.get(gone, { checklist })) !== undefined) {
+						throw invalid("args", `checklist: ${checklist} is gone`, { message: messages.message("gone") });
+					}
 					// A full checklist refuses, so its readers, which read `MAX_ITEMS` items, never miss one.
 					const held = await count(tx, checklist);
 					if (held >= MAX_ITEMS) {
@@ -105,6 +124,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				self.tx(async (tx) => {
 					// The key's prefix `checklist`: one statement.
 					tx.deleteWhere(items, (item) => eq(item.checklist, checklist));
+					tx.put(gone, { checklist });
 					return null;
 				}, ctx),
 		};
