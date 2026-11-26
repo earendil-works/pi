@@ -55,7 +55,7 @@ import {
 	Source as SourceSchema,
 	sourceKey,
 } from "./contract.ts";
-import { type DefaultGrants, type KindInfo, ThingKinds } from "./kind.ts";
+import { type DefaultGrants, type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
 import { ticksNow } from "./migration.ts";
@@ -931,6 +931,12 @@ class Writes {
 			"workspace",
 		);
 		await deleteTold(tx, t.grants, Grants, (g) => eq(g.partyKey, agent), touched.workspaces, "workspace");
+		// What other workspaces wrote about it: rows withholding its own thing below it are gone with the subtree, but
+		// switches on it or its agent elsewhere (index `by_item`) and rows naming it as a thing (`by_thing`) are not.
+		for (const item of [itemKey({ kind: "thing", thing: workspace }), agent]) {
+			await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), touched.workspaces, "workspace");
+		}
+		await deleteTold(tx, t.grants, Grants, (g) => eq(g.thing, workspace), touched.workspaces, "workspace");
 		tx.delete(t.workspaces, { workspace });
 		if (row !== undefined) {
 			tx.delete(t.things, { thing: workspace });
@@ -1093,6 +1099,8 @@ class Writes {
 	): Promise<null> {
 		const upgraded = new Set<string>();
 		for (const { workspace, thing, party, tick, gives } of grants) {
+			// A row is written only in a workspace that stands (none in a removed one); removing one needs no line.
+			if (gives !== undefined) await this.#mustBeWorkspace(tx, workspace);
 			const link = await tx.get(this.#t.links, { workspace, thing });
 			// A workspace's own grants are written at itself (item 88): there it is as linked.
 			const own = thing === workspace;
@@ -1104,13 +1112,7 @@ class Writes {
 			const kind = link?.of ?? (await tx.get(this.#t.things, { thing }))?.kind;
 			if (kind === undefined) throw invalid("args", `things: no thing ${thing}`);
 			const info = this.#kind(kind).value;
-			const made = kindOfMakeTick(tick);
-			const forWhom =
-				made === undefined
-					? info.ticks.find(({ name }) => name === tick)?.for
-					: own && info.workspace !== "no"
-						? makeTickFor(made, (kind) => this.#kinds().get(kind)?.value.makers)
-						: undefined;
+			const forWhom = this.#forOf(info, own, tick);
 			// A row is removed whatever its tick (one the kind lost too); written, its tick must be the kind's, `OPEN`,
 			// or on a workspace's own grants a Make tick of a registered kind (item 114).
 			if (gives !== undefined && tick !== OPEN && forWhom === undefined) {
@@ -1347,9 +1349,28 @@ class Writes {
 					throw invalid("args", `things: ${tick} is no default of ${item.value.name} for ${party.kind}`);
 			}
 			const written = kept === undefined ? offered : offered.filter((tick) => kept.includes(tick));
-			for (const tick of written)
+			for (const tick of written) {
+				// What a workspace kind's defaults or its create hook's answer name is checked as a written grant is (93,
+				// 114): a tick of the kind for that party, `OPEN`, or on a workspace's own thing a Make tick of a
+				// registered kind its makers let that party make.
+				if (tick !== OPEN && !isFor(this.#forOf(item.value, thing === workspace, tick), audienceOf(party.kind))) {
+					throw invalid("args", `things: ${item.value.name}'s default ${tick} cannot be given to ${party.kind}`);
+				}
 				this.#grant(tx, workspace, thing, party, source, tick, true, item.value.ticksVersion);
+			}
 		}
+	}
+
+	/**
+	 * Whom `tick` is for on a thing of kind `info` (`own`: the workspace's own thing): a tick of the kind's, or on a
+	 * workspace's own thing a Make tick, for whom its kind's makers let make (item 114); `undefined`: no such tick.
+	 */
+	#forOf(info: KindInfo, own: boolean, tick: string): TickFor | undefined {
+		const made = kindOfMakeTick(tick);
+		if (made === undefined) return info.ticks.find(({ name }) => name === tick)?.for;
+		return own && info.workspace !== "no"
+			? makeTickFor(made, (kind) => this.#kinds().get(kind)?.value.makers)
+			: undefined;
 	}
 
 	/**

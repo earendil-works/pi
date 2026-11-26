@@ -1,8 +1,8 @@
 // The objects the page holds about a workspace and what is in it (ERNDL-1141 §6, §8, §9, and the page's additions
 // recorded there): the workspace itself (`Workspace`: its info, and every change a workspace tick allows), its lists
 // (the caller's roots, its children, what is here, who is here, what the caller may link here), one thing as it is
-// available here (`ThingInfo`), who may do what with a thing here (`WhoMay`), and every registered kind as data
-// (`ThingKindsView`, slice 1's). Every list is paged and live; a "from" never names a workspace the caller is not present in (item 96).
+// available here (`ThingInfo`) and who may do what with a thing here (`WhoMay`). Every list is live and bounded by one
+// workspace (no further pages until slice 6); a "from" never names a workspace the caller is not present in (item 96).
 
 import {
 	arr,
@@ -172,7 +172,7 @@ export const WorkspacePeople = remote("things.people", {
 
 /**
  * The things the caller may link here (Link where each is linked now: in the workspaces above where they have Link), by
- * a name prefix; held by anyone with Link here.
+ * a name prefix; held by anyone present here (linking itself needs Link here, `Workspace.link`).
  */
 export const Linkable = remote("things.linkable", {
 	version: 1,

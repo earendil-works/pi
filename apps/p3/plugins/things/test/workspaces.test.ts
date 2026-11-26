@@ -1226,3 +1226,44 @@ describe("round 1: what open lists cost a commit", () => {
 		});
 	});
 });
+
+describe("round 1: nits", () => {
+	it("a removal also takes what other workspaces wrote about the removed one (switches on it or its agent, rows naming it)", async () => {
+		const { fam, robot } = await family();
+		const other = await space(pi, "Other");
+		await store.setSwitch(
+			{ workspace: other, item: { kind: "party", party: { kind: "agent", session: robot } }, shown: false },
+			context,
+		);
+		await store.setSwitch({ workspace: other, item: { kind: "thing", thing: robot }, shown: false }, context);
+		await store.removeWorkspace({ workspace: fam }, context);
+		await eventually(
+			() => w.rows("removing").length,
+			(left) => left === 0,
+		);
+		assert.deepEqual(
+			w.rows("switches").filter((row) => String(row.itemKey).includes(robot)),
+			[],
+		);
+		// A row is written only in a workspace that stands.
+		await assert.rejects(
+			store.setGrants(
+				{
+					source: BY,
+					grants: [{ workspace: robot, thing: robot, party: { kind: "everyone" }, tick: "read", gives: true }],
+				},
+				context,
+			),
+			/no workspace/,
+		);
+	});
+
+	it("a create hook's default grants are checked as written grants are", async () => {
+		const { fam } = await family();
+		SESSION.answer = { defaultGrants: { agents: ["send"] } };
+		await assert.rejects(
+			store.createWorkspace({ kind: TestSession.name, name: "s", parent: fam, by: BY }, context),
+			/cannot be given to agents/,
+		);
+	});
+});
