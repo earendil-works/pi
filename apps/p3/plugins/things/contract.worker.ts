@@ -2,8 +2,8 @@
 // worker holds a reference to each thing available to its agent (`HeldThings`, contributed by the holding, slice 5), of
 // the kinds with a harness part on that worker; the harness calls each kind's part (`ThingHarnessParts`) with every
 // reference of the kind it holds and installs what the part gives: a Durable extension (tools, prompt sections,
-// hooks), an execution environment, model providers, prompt sections. Installing a plugin gives no session anything:
-// the agent gets exactly the things it holds.
+// hooks) under the kind's name, an execution environment, model providers. Installing a plugin gives no session
+// anything: the agent gets exactly the things it holds.
 
 import {
 	type Context,

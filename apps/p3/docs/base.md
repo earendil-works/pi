@@ -96,7 +96,7 @@ archived. An archived session starts for the owner only.
 
 | `creation` | Who makes one, where | For whom |
 | --- | --- | --- |
-| `content` (a canvas, notes, a checklist) | a writer of a session, or its agent, in that session (`SessionThings.create`, the agent's `make_thing`) | nobody |
+| `content` (a canvas, notes, a checklist) | a writer of a session, or its agent, in that session (`SessionThings.create`; the agent's `make_thing` is planned, slice 2) | nobody |
 | `person` (a login, an inbox, an MCP server) | a person, in "My things" (`MyThings.create`), with the input the kind's `Create` view collected (a sign-in) | themselves, one of their groups, or (the owner) the Pi |
 | `plugin` (the coding tools; the default) | only server code: `SessionsStore.ensureThing({ kind, owner })` gives the one thing of that kind and owner, made if there is none | whom the code says |
 
@@ -185,15 +185,18 @@ the session's worker holds a reference to each thing available to its agent (`He
 `contract.worker.ts`), and the harness calls each kind's harness part with them:
 
 - **One part per kind**, for all the things of it the agent holds: `thingHarnessPart(Kind, (things, session) => ({
-  extension, providers, prompt, env }))`, contributed to `ThingHarnessParts`, called again whenever that kind's list
+  extension, providers, env }))` (the extension has no name: it is installed under the kind's), contributed to
+  `ThingHarnessParts`, called again whenever that kind's list
   changes (a thing added, let go of, or granted anew), never with none. Each entry is `{ thing, workspace, ref }`. Its
   tools take a thing's id; a list tool names the things (`canvas_list`), so descriptions stay fixed text. A tool is
   offered only while its tick is granted on some thing (`ref.add`, `ref.granted.has("bash")`).
-- **A tool acts as the agent**: through the held reference, or `session.call(fn, context)`, which runs `fn` as the
-  session's worker with references of its own, released when `fn` settles.
+- **A tool acts as the agent** through the held reference (decision 120.1); `session.call(fn, context)` runs `fn` as
+  the session's worker with references of its own, released when `fn` settles, for a tool that needs one.
 - **A part's environment** is a function of the conversation's location (`{ machine, folder }`), answered by the
-  machine kind for the machines the agent may work on.
-- **The agent makes things** with the things plugin's own part (`make_thing`, over the session workspace's `make`).
+  machine kind for the machines the agent may work on (`thingHarnessPart(…, { env: "gives" })`). Once such a part is
+  registered, a machine withheld or let go of leaves no environment.
+- **The agent makes things** with the things plugin's own part, `make_thing` over the session workspace's `make`:
+  planned with slice 2's `Workspace` contract, not built yet.
 - Installing a plugin gives no session anything; there is no global tools registry. An agent that holds no login has
   no model.
 
@@ -493,7 +496,7 @@ function serveStore(host: FacetHost<P3Principal>): void {
 // so their descriptions stay fixed whatever checklists the agent holds.
 
 import { defineFacet, obj, str } from "@earendil-works/p3/v1";
-import { defineExtension, defineTool } from "@earendil-works/p3/v1/worker";
+import { defineTool } from "@earendil-works/p3/v1/worker";
 import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
 import { type Checklist, ChecklistKind } from "./contract.ts";
 
@@ -522,12 +525,12 @@ function checklistExtension(lists: readonly List[]) {
 		},
 	});
 	const tools = lists.some(({ ref }) => ref.granted.has("tick")) ? [tick] : [];
-	return defineExtension({ name: "checklist", tools: [/* checklist_list, checklist_read, */ ...tools] });
+	return { tools: [/* checklist_list, checklist_read, */ ...tools] };
 }
 ```
 
-The agent makes a new checklist with the things plugin's own part (`make_thing`, over the session workspace's
-`make`), not with a tool of the kind.
+The agent will make a new checklist with the things plugin's own part (`make_thing` over the session workspace's
+`make`, planned with slice 2), not with a tool of the kind.
 
 `web.tsx`:
 
@@ -752,7 +755,7 @@ party")
 - Everyone in a session reads every thing; options only limit writers.
 - The agent gets one extension per kind with all the session's things of it; tools take the thing's id; list tools.
 - How things of a kind come to exist: `content`, `person`, or `plugin` (the default).
-- The agent makes only content (since replaced: the things plugin's `make_thing`); it never makes an owned thing, never
+- The agent makes only content (to be replaced by the things plugin's `make_thing`, planned with slice 2); it never makes an owned thing, never
   keeps, never changes options.
 - "In all my sessions" (`everywhere`), and a session follows one party or nobody. The coding app's sessions follow
   the owner who made them; the coding tools are the Pi's, made by the tools plugin (`ensureThing`).
