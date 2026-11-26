@@ -25,6 +25,7 @@ import {
 	type StateEntry,
 	type WireEvent,
 } from "../link/internal.ts";
+import { appended, NO_ITEMS } from "../lists.ts";
 import { carrierOf } from "../telemetry.ts";
 import { CallWindow, type QueuedCall } from "./calls.ts";
 import { actingFor } from "./hold.ts";
@@ -421,21 +422,22 @@ export class ConsumerSide {
 	 * the link's limits fails only its hold (`too_large/part`); the others apply.
 	 */
 	#bound(holds: readonly BoundEntry[]): void {
-		const adoptions: (() => void)[] = [];
-		const bound: RemoteObject[] = [];
+		// Built by `appended` (most messages bind one hold: a list grown by push reserves 17 slots).
+		let adoptions: readonly (() => void)[] = NO_ITEMS;
+		let bound: readonly RemoteObject[] = NO_ITEMS;
 		let oversized: [RemoteObject, ChordError][] | undefined;
 		for (const entry of holds) {
 			const holder = this.#entries.get(entry.hold);
 			if (holder === undefined) continue;
 			try {
-				adoptions.push(holder.prepareBound(entry, this.#link));
+				adoptions = appended(adoptions, holder.prepareBound(entry, this.#link));
 			} catch (error) {
 				if (!isChordError(error, "too_large")) throw error;
 				oversized ??= [];
 				oversized.push([holder, error]);
 				continue;
 			}
-			bound.push(holder);
+			bound = appended(bound, holder);
 		}
 		this.#adopt(adoptions);
 		// Acknowledged before the references go live: the calls they send then (their parked ones) follow the `ack`, so
@@ -448,13 +450,13 @@ export class ConsumerSide {
 
 	/** One `state` message, as `#bound` does it. */
 	#state(holds: readonly StateEntry[]): void {
-		const adoptions: (() => void)[] = [];
+		let adoptions: readonly (() => void)[] = NO_ITEMS;
 		let oversized: [RemoteObject, ChordError][] | undefined;
 		for (const entry of holds) {
 			const holder = this.#entries.get(entry.hold);
 			if (holder === undefined) continue;
 			try {
-				adoptions.push(holder.prepare(entry, this.#link));
+				adoptions = appended(adoptions, holder.prepare(entry, this.#link));
 			} catch (error) {
 				if (!isChordError(error, "too_large")) throw error;
 				oversized ??= [];
