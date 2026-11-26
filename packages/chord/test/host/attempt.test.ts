@@ -1,4 +1,6 @@
 import { createHook } from "node:async_hooks";
+import { spawnSync } from "node:child_process";
+import { runInNewContext } from "node:vm";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context, withCancel, withTelemetry } from "../../src/context/index.ts";
@@ -1283,5 +1285,62 @@ describe("the turns of an activation", () => {
 		counts.push(await turnsOf(() => h.close(context)));
 		// Measured on the base of the pass (every step an async function).
 		expect(counts).toEqual([7, 14, 7, 14, 7, 14, 51]);
+	});
+
+	// Found by the third review of the pass (Astra): a Promise.resolve of the global took a turn more under another
+	// realm's constructor; an async function's promise is the realm's own, as `turns.ts`' are.
+	it("are those before under another realm's global Promise: admitted, built, then sealed", async () => {
+		const Admitted2 = remote("turns.foreign", {
+			version: 1,
+			params: { id: str() },
+			hostAddress: () => Server(),
+			state: { v: str() },
+			flags: { read: "may read" },
+		});
+		let turn = 0;
+		const log: string[] = [];
+		const h = createHost({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		const facet = defineFacet((host) =>
+			host.serve(
+				Admitted2,
+				() => {
+					log.push("factory");
+					return { v: constant("yes") };
+				},
+				{
+					admit: () => {
+						log.push("admit");
+						return constant(allow({}));
+					},
+				},
+			),
+		);
+		await h.load([{ name: "@test/foreign", facet }], context);
+		const own = globalThis.Promise;
+		try {
+			globalThis.Promise = runInNewContext("Promise");
+			const held = h.hold(Admitted2, { id: "x" }, context);
+			for (turn = 0; turn < 7; turn++) await null;
+			log.push("seal");
+			held.release();
+			for (; turn < 25; turn++) await null;
+		} finally {
+			globalThis.Promise = own;
+			await h.close(context);
+		}
+		expect(log).toEqual(["admit", "factory", "seal"]);
+	});
+
+	it("reject an activation whose own steps throw at the turn they did: before another rejection made later", () => {
+		const run = spawnSync(
+			process.execPath,
+			["--conditions=source", "--experimental-strip-types", "test/host/fixtures/rejection-order.ts"],
+			{ encoding: "utf8" },
+		);
+		const error = "TypeError: Cannot convert object to primitive value";
+		expect(JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "null")).toEqual([
+			`other ; ${error}`,
+			`other ; ${error}`,
+		]);
 	});
 });

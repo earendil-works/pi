@@ -13,6 +13,7 @@ import type { RegistryValueSource } from "../registries/internal.ts";
 import type { ChordObject } from "./object.ts";
 import { type Failed, LOADING, type RefState } from "./ref-state.ts";
 import type { Binding } from "./reference.ts";
+import { rejectedTurn } from "./turns.ts";
 
 /** One declared dependency: a reference (`self.get`) or a registry's value (`self.registry`). */
 export type Dependency =
@@ -154,33 +155,43 @@ export function pinKeys(
 	long: Blocked,
 	context: Context,
 ): Failed | undefined | Promise<Failed | undefined> {
-	for (let index = 0; index < references.length; index++) {
-		const { binding } = references[index]!;
-		const { label } = binding;
-		try {
-			const pinning = binding.pinKeys(context);
-			if (pinning === undefined) continue;
-			long.blockedBy({ label, state: "loading" });
-			return pinsLoading(references, index, pinning, long, context);
-		} catch (error) {
-			long.blockedBy({ label, state: "failed" });
-			return waitingOn(label, asChordError(error, label));
+	try {
+		for (let index = 0; index < references.length; index++) {
+			const { binding } = references[index]!;
+			// Read once, before the pin runs code of anyone's (a reference released meanwhile names its type alone).
+			const { label } = binding;
+			try {
+				const pinning = binding.pinKeys(context);
+				if (pinning === undefined) continue;
+				long.blockedBy({ label, state: "loading" });
+				return pinsLoading(references, index, label, pinning, long, context);
+			} catch (error) {
+				long.blockedBy({ label, state: "failed" });
+				return waitingOn(label, asChordError(error, label));
+			}
 		}
+	} catch (error) {
+		// What the async function threw rejected its promise at once: so does this one, the realm's own (`turns.ts`).
+		return rejectedTurn(error);
 	}
 	return undefined;
 }
 
-/** `pinKeys` from the reference at `from` on, whose keys load (`pinning`, named to `long` already). */
+/**
+ * `pinKeys` from the reference at `from` on, whose keys load (`pinning`, named to `long` as `label` already): the async
+ * function's steps from its first wait on.
+ */
 async function pinsLoading(
 	references: readonly { readonly binding: Binding }[],
 	from: number,
+	first: string,
 	pinning: Promise<void>,
 	long: Blocked,
 	context: Context,
 ): Promise<Failed | undefined> {
 	for (let index = from; index < references.length; index++) {
 		const { binding } = references[index]!;
-		const { label } = binding;
+		const label = index === from ? first : binding.label;
 		try {
 			const loading = index === from ? pinning : binding.pinKeys(context);
 			if (loading === undefined) continue;

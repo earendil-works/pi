@@ -435,3 +435,51 @@ describe("a denied dependency (slice 14 §2.2)", () => {
 		});
 	});
 });
+
+// The third review of the hot-path pass (Astra, 2026-11-26): pinKeys names a key's reference by the label it had
+// when the load started, read once (plugin code may release the reference meanwhile).
+describe("the keys a factory pinned", () => {
+	it("a failing first load is named by its target as it started, though initial() released the reference", async () => {
+		const Keys = local("app.keys", {
+			version: 1,
+			params: { id: int() },
+			members: { rows: keyed(obj({ n: int() })) },
+		});
+		const View = local("app.view", { version: 1, params: { id: int() }, members: { n: int() } });
+		let release: (() => void) | undefined;
+		const Rows = defineState("rows", {
+			version: 1,
+			keyed: true,
+			schema: obj({ n: int() }),
+			initial: () => {
+				if (release !== undefined) {
+					const once = release;
+					release = undefined;
+					once();
+					throw new Error("load failed");
+				}
+				return { n: 0 };
+			},
+		});
+		const { host } = await loaded((h) => {
+			h.serve(Keys, (_, self) => ({ rows: self.state(Rows) }));
+			h.serve(View, (_, self) => {
+				const reference = self.get(Keys, { id: 17 });
+				release = () => reference.release();
+				const at = reference.rows.at("a");
+				return { n: self.derive([at], ([row]) => row.n) };
+			});
+		});
+		try {
+			const kept = await host.get(Keys, { id: 17 }, context);
+			const view = host.hold(View, { id: 1 }, context);
+			const trace = statesOf(await view.state.watch(context));
+			await flushed();
+			expect(trace).toContainEqual(expect.stringContaining("waiting for app.keys(17):"));
+			kept.release();
+			view.release();
+		} finally {
+			await host.close(context);
+		}
+	});
+});
