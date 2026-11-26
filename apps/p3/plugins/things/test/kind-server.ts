@@ -64,8 +64,8 @@ export type KindServer<C extends Contract> = {
 		things: readonly string[],
 		fn: (extension: Extension, ctx: Ctx<P3Principal>, held: readonly HeldThing<C>[]) => Promise<T>,
 	): Promise<T>;
-	/** The kind's harness part as its worker facet contributes it. */
-	part(): Promise<TestedPlugin<P3Principal>>;
+	/** The kind's worker facet, built for session `session`'s worker as it builds it (once per session). */
+	worker(session: string): Promise<TestedPlugin<P3Principal>>;
 	close(): Promise<void>;
 };
 
@@ -82,10 +82,11 @@ export async function kindServer<C extends Contract>(
 	// A kind's contract has the things plugin's params, which a generic contract's type cannot say.
 	const get = (ctx: Ctx<P3Principal>, workspace: string, thing: string) =>
 		ctx.get(Kind.contract, { workspace, thing } as ParamsOf<C>, { readyTimeout: 500 });
-	let worker: Promise<TestedPlugin<P3Principal>> | undefined;
-	const part = () => {
-		worker ??= testPlugin(plugin.root, { kind: "worker", session: "s1" }, context);
-		return worker;
+	const workers = new Map<string, Promise<TestedPlugin<P3Principal>>>();
+	const worker = (session: string) => {
+		const built = workers.get(session) ?? testPlugin(plugin.root, { kind: "worker", session }, context);
+		workers.set(session, built);
+		return built;
 	};
 	return {
 		host,
@@ -113,7 +114,7 @@ export async function kindServer<C extends Contract>(
 		count: (name) => w.count(name),
 		reload: () => w.reload(plugin.name, context),
 		giving: async ({ session, workspace }, ids, fn) => {
-			const contributed = (await part()).contributions(ThingHarnessParts);
+			const contributed = (await worker(session)).contributions(ThingHarnessParts);
 			const entry = contributed.find(({ value }) => value.kind.name === Kind.name);
 			if (entry === undefined) throw new Error(`${Kind.name}: the worker facet contributes no harness part`);
 			const principal: P3Principal = { kind: "worker", session };
@@ -135,9 +136,9 @@ export async function kindServer<C extends Contract>(
 				{ principal },
 			);
 		},
-		part,
+		worker,
 		close: async () => {
-			await (await worker)?.close(context);
+			for (const built of workers.values()) await (await built).close(context);
 			await w.close(context);
 		},
 	};
@@ -153,27 +154,32 @@ async function holdAll<C extends Contract>(
 	const released = Promise.withResolvers<void>();
 	const held: { ref: Reference<C>; ctx: Ctx<P3Principal> }[] = [];
 	const roots: Promise<void>[] = [];
-	for (const principal of principals) {
-		const ready = Promise.withResolvers<void>();
-		const root = host.root(
-			async (ctx) => {
-				held.push({ ref: await get(ctx), ctx });
-				ready.resolve();
-				await released.promise;
-			},
-			context,
-			{ principal },
-		);
-		roots.push(root);
-		await Promise.race([ready.promise, root]);
-	}
-	return {
-		held,
-		release: async () => {
-			released.resolve();
-			await Promise.all(roots);
-		},
+	const release = async () => {
+		released.resolve();
+		await Promise.all(roots);
 	};
+	try {
+		for (const principal of principals) {
+			const ready = Promise.withResolvers<void>();
+			const root = host.root(
+				async (ctx) => {
+					held.push({ ref: await get(ctx), ctx });
+					ready.resolve();
+					await released.promise;
+				},
+				context,
+				{ principal },
+			);
+			roots.push(root);
+			await Promise.race([ready.promise, root]);
+		}
+	} catch (error) {
+		// A hold refused: the earlier ones end before the refusal reaches the test.
+		released.resolve();
+		await Promise.allSettled(roots);
+		throw error;
+	}
+	return { held, release };
 }
 
 /** Runs tool `name` of `extension` with `args` under `context`; its output's text. */

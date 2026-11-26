@@ -67,7 +67,9 @@ export async function kindE2E(context: Context): Promise<KindE2E> {
 		client: (principal) => t.client(context, principal),
 		reload: async (folder, plugin) => {
 			const file = join(root, folder, "server.ts");
-			await writeFile(file, `${await readFile(file, "utf8")}\nexport const RELOADED = ${++edits};\n`);
+			// A new export each time: a second one of the same name would not build.
+			edits += 1;
+			await writeFile(file, `${await readFile(file, "utf8")}\nexport const RELOADED_${edits} = ${edits};\n`);
 			await until(
 				t.plugins,
 				(marks) => marks.dirty.includes(plugin),
