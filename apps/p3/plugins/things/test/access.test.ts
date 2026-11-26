@@ -489,3 +489,71 @@ describe("the index against the reference", () => {
 		it(`the same with an index that forgets all the time, seed ${seed}`, (t) => run(t, seed, 150, true));
 	}
 });
+
+describe("the index's own mechanics", () => {
+	/** A reader over workspaces kept in a map (the tests change them by hand). */
+	const reader = (workspaces: Map<string, { parent: string; members: string[] }>): Reader => ({
+		workspace: async (id) => {
+			const found = workspaces.get(id);
+			if (found === undefined) return undefined;
+			return {
+				parent: found.parent,
+				showsThings: true,
+				showsPeople: true,
+				links: new Map(found.parent === "" ? [["sketch", Board.name]] : []),
+				members: new Set(found.members),
+				switches: new Map(),
+				hides: new Set(),
+				grants:
+					found.parent === ""
+						? [
+								{
+									thing: "sketch",
+									party: "everyone",
+									audience: "people",
+									gives: true,
+									ticks: ["read"],
+									takenAway: [],
+								},
+							]
+						: [],
+			};
+		},
+		person: async () => ({ owner: false, groups: [] }),
+	});
+	const observer = (told: Answers[]): FollowObserver<unknown> => ({
+		advance: (call) => void (call.kind === "value" && told.push(call.value as Answers)),
+		end: () => {},
+	});
+
+	it("a workspace asked about before it exists answers nothing, and what it gives once made under one not loaded", async () => {
+		const workspaces = new Map([
+			["pi", { parent: "", members: [] as string[] }],
+			["team", { parent: "pi", members: [] as string[] }],
+		]);
+		const index = new AccessIndex(reader(workspaces), () => LOOKUP);
+		const told: Answers[] = [];
+		const ada = { kind: "person", person: "ada" } as const;
+		const attached = await index.attach("later", ada, observer(told), context);
+		assert.deepEqual(attached?.value, {});
+		workspaces.set("later", { parent: "team", members: ["person/ada"] });
+		await index.changed({ workspaces: new Set(["later"]), persons: new Set() }, context);
+		assert.deepEqual(told, [{ sketch: { ticks: ["read"] } }]);
+		assert.deepEqual(index.loaded().workspaces, 3);
+	});
+
+	it("once closed it ends its watchers and attaches nothing", async () => {
+		const index = new AccessIndex(reader(new Map([["pi", { parent: "", members: [] }]])), () => LOOKUP);
+		const ended: string[] = [];
+		await index.attach(
+			"pi",
+			{ kind: "agent", session: "s" },
+			{ advance: () => {}, end: (end) => void ended.push(end.kind) },
+			context,
+		);
+		index.close();
+		assert.deepEqual(ended, ["failed"]);
+		assert.equal(index.open, false);
+		assert.equal(await index.attach("pi", { kind: "agent", session: "s" }, observer([]), context), undefined);
+	});
+});

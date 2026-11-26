@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, type Reference } from "@earendil-works/p3/v1";
 import { Gives, ThingsStore } from "../contract.server.ts";
 import type { Party, Source } from "../contract.ts";
+import { accessHere, answerOf, type GrantEntry, personCounts, type WorkspaceEntries } from "../rules.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
 import { type World, world } from "./world.ts";
 
@@ -168,7 +169,8 @@ describe("what the parties get", () => {
 		);
 		const share: Source = { kind: "thing", thing: "share" };
 		await store.putParty({ workspace: c.fix, party: { kind: "group", group: guests }, source: share }, context);
-		await store.addToGroup({ group: guests, person: c.kim, source: share }, context);
+		// Kim put in by hand: the membership goes with the group, whoever wrote it.
+		await store.addToGroup({ group: guests, person: c.kim, source: { kind: "plugin", plugin: "test" } }, context);
 		await store.addToGroup({ group: guests, person: c.ada, source: share }, context);
 		await grant(c.team, c.sketch, { kind: "group", group: guests }, ["read"], share);
 		assert.deepEqual(await ticks(c.fix, c.sketch, `person:${c.kim}`), ["read"]);
@@ -313,5 +315,45 @@ describe("ticks and kinds", () => {
 			context,
 		);
 		assert.deepEqual(await ticks(c.fix, made, `worker:${c.fix}`), ["bash", "draw", "moderate", "read", "write"]);
+	});
+});
+
+describe("the rules alone", () => {
+	/** A workspace's entries: nothing, then `own`. */
+	const entries = (own: Partial<WorkspaceEntries>): WorkspaceEntries => ({
+		parent: "",
+		showsThings: true,
+		showsPeople: true,
+		links: new Map(),
+		members: new Set(),
+		switches: new Map(),
+		hides: new Set(),
+		grants: [],
+		...own,
+	});
+	const lookup = { tickFor: () => "all" as const, ticksOf: () => ["draw", "read"] };
+	const grantOf = (own: Partial<GrantEntry>): GrantEntry => ({
+		thing: "sketch",
+		party: "everyone",
+		audience: "people",
+		gives: true,
+		ticks: [],
+		takenAway: [],
+		...own,
+	});
+
+	it("a giving grant stored below the link anyway counts for nothing", () => {
+		const top = accessHere(
+			{ things: new Map(), present: new Set(), hidden: new Set() },
+			entries({
+				links: new Map([["sketch", "k"]]),
+				members: new Set(["person/ada"]),
+				grants: [grantOf({ ticks: ["read"] })],
+			}),
+			lookup,
+		);
+		const below = accessHere(top, entries({ grants: [grantOf({ ticks: ["draw"] })] }), lookup);
+		const ada = personCounts(below, "person/ada", { owner: false, groups: [] });
+		assert.deepEqual(answerOf(below.things.get("sketch")!, ada), { ticks: ["read"] });
 	});
 });
