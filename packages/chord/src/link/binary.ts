@@ -254,7 +254,7 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 	switch (kind) {
 		case "hello": {
 			const protocol = reader.varint();
-			const incarnation = uuid(reader.raw(16));
+			const incarnation = reader.uuid();
 			const calls = reader.varint();
 			return { kind, protocol, incarnation, ...(calls === 0 ? {} : { calls }) };
 		}
@@ -262,7 +262,7 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 			const hold = reader.varint();
 			const type = reader.string();
 			const version = reader.varint();
-			const fingerprint = hexText(reader.raw(8));
+			const fingerprint = reader.fingerprint();
 			const params = reader.part();
 			const address = { kind: reader.string(), params: reader.json() };
 			const flags = reader.byte();
@@ -278,7 +278,7 @@ function decodeFields(kind: (typeof KINDS)[number], reader: Reader): Message {
 				address,
 			};
 			if (flags & PRINCIPAL) message.principal = reader.json() as { kind: string };
-			if (flags & INCARNATION) message.incarnation = uuid(reader.raw(16));
+			if (flags & INCARNATION) message.incarnation = reader.uuid();
 			if (flags & CHAIN) message.chain = reader.list(readUuid);
 			if (flags & LIMIT) message.limit = reader.varint();
 			return message;
@@ -361,7 +361,7 @@ function readVarint(reader: Reader): number {
 }
 
 function readUuid(reader: Reader): string {
-	return uuid(reader.raw(16));
+	return reader.uuid();
 }
 
 function readBoundEntry(reader: Reader): BoundEntry {
@@ -659,14 +659,32 @@ class Reader {
 	}
 
 	raw(length: number): Uint8Array {
-		if (length > this.#bytes.byteLength - this.#offset) throw new Error("binary: the message ends early");
-		const bytes = this.#bytes.subarray(this.#offset, this.#offset + length);
-		this.#offset += length;
-		return bytes;
+		const at = this.#skip(length);
+		return this.#bytes.subarray(at, at + length);
 	}
 
 	string(): string {
 		return readUtf8(this.raw(this.varint()));
+	}
+
+	/** 8 bytes (a fingerprint) as lowercase hex, read in place (no view per field). */
+	fingerprint(): string {
+		const at = this.#skip(8);
+		return hexText(this.#bytes, at);
+	}
+
+	/** 16 bytes as a UUID's text, read in place. */
+	uuid(): string {
+		const at = this.#skip(16);
+		return uuid(this.#bytes, at);
+	}
+
+	/** The offset of the next `length` bytes, which it passes. */
+	#skip(length: number): number {
+		if (length > this.#bytes.byteLength - this.#offset) throw new Error("binary: the message ends early");
+		const at = this.#offset;
+		this.#offset += length;
+		return at;
 	}
 
 	json(): unknown {
@@ -691,6 +709,9 @@ class Reader {
 	 */
 	#elements<T>(count: number, read: (reader: Reader) => T): T[] {
 		if (count > this.#bytes.byteLength - this.#offset) throw new Error("binary: a count does not fit");
+		// Most lists hold none or one: as literals they have no slack (a first `push` reserves 17 slots).
+		if (count === 0) return [];
+		if (count === 1) return [read(this)];
 		const list: T[] = [];
 		for (let index = 0; index < count; index++) list.push(read(this));
 		return list;
@@ -748,10 +769,10 @@ const FINGERPRINT_TEXT = new Uint8Array(16);
 
 const UUID_TEXT = UTF8.encode("00000000-0000-0000-0000-000000000000");
 
-/** 8 bytes (a fingerprint) as lowercase hex. */
-function hexText(bytes: Uint8Array): string {
+/** The 8 bytes of `bytes` from `at` (a fingerprint) as lowercase hex. */
+function hexText(bytes: Uint8Array, at: number): string {
 	for (let index = 0; index < 8; index++) {
-		const byte = bytes[index]!;
+		const byte = bytes[at + index]!;
 		FINGERPRINT_TEXT[index * 2] = DIGITS[byte >> 4]!;
 		FINGERPRINT_TEXT[index * 2 + 1] = DIGITS[byte & 15]!;
 	}
@@ -761,13 +782,13 @@ function hexText(bytes: Uint8Array): string {
 /** Where each of a UUID's 16 bytes is spelled in its text: two digits, after its dashes. */
 const UUID_AT = [0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34];
 
-/** 16 bytes as a UUID's text. */
-function uuid(bytes: Uint8Array): string {
+/** The 16 bytes of `bytes` from `at` as a UUID's text. */
+function uuid(bytes: Uint8Array, at: number): string {
 	for (let index = 0; index < 16; index++) {
-		const byte = bytes[index]!;
-		const at = UUID_AT[index]!;
-		UUID_TEXT[at] = DIGITS[byte >> 4]!;
-		UUID_TEXT[at + 1] = DIGITS[byte & 15]!;
+		const byte = bytes[at + index]!;
+		const to = UUID_AT[index]!;
+		UUID_TEXT[to] = DIGITS[byte >> 4]!;
+		UUID_TEXT[to + 1] = DIGITS[byte & 15]!;
 	}
 	return readUtf8(UUID_TEXT);
 }
