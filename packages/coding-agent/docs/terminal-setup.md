@@ -263,6 +263,26 @@ Reports never contain prompts or model output. Pi sends them only after the term
 
 Pi tells the terminal how to bring the session back after the terminal restarts, with the [Program Resume Protocol (OSC 7577)](https://www.superlogical.com/rex/docs/build/program-resume). Terminals that support it set `OSC7577_TOKEN` in the environment; Pi reports only when it is set.
 
-The command is the one Pi prints when you quit, such as `pi --session <id>`, to run in the session's directory. A terminal starts it without the environment Pi was started in, so the command carries what the environment chose: `--agent-dir` when `PI_CODING_AGENT_DIR` names a directory other than `~/.pi/agent`, and `--session-dir` when sessions are not in the default location. A terminal rule that trusts `pi --session <id>` does not match these longer commands; trust them separately. Pi updates it when you start, resume, or fork a session, and once a new session has its first message. A new session without messages has nothing to resume, so Pi removes the command until then. Quitting with `Ctrl+D`, `Ctrl+C` twice, or `/quit` removes it too; when the terminal itself closes or restarts, Pi keeps it.
+The command contains everything needed to resume the session, because the terminal runs it without Pi's environment: the session ID, `--agent-dir` and `--session-dir` when those folders are not the default, and the restriction and resource flags Pi was started with, as typed (tools, extensions, skills, prompt templates, themes, context files, system prompts, project trust, `--models`). For example, `pi --session <id> -t read,grep`. The terminal runs it in the session's directory. Other flags are left out, because the session keeps its model, thinking level, and name. The command Pi prints when you quit is the same without the repeated flags.
+
+Pi updates the command when you start, resume, or fork a session, and once a new session has its first message. It removes the command while a new session has no messages, when you quit (`Ctrl+D`, `Ctrl+C` twice, `/quit`), and, if Pi was started with flags, when you open a session from another directory, because relative paths in the flags would point elsewhere. When the terminal closes or restarts and ends Pi, Pi leaves the command in place, so the terminal can resume it.
+
+The terminal resumes a command only if a rule trusts it. Rex rules with a `flags` table do not work for Pi yet (Node overwrites the command line Rex checks them against), so add one rule per flag combination you use, with the flags in the order you type them. In Rex's `init.lua`:
+
+```lua
+-- One rule per command: the words after `pi`, as Pi reports them.
+local function trust_pi(name, ...)
+	rex.set("resume.trust.pi_" .. name, { command = { "pi", ... } })
+end
+
+local id = rex.match.uuid
+trust_pi("plain", "--session", id)
+trust_pi("readonly", "--session", id, "-t", "read,grep,find,ls")
+trust_pi("readonly_noext", "--session", id, "-t", "read,grep,find,ls", "--no-extensions")
+-- A separate profile set with PI_CODING_AGENT_DIR and PI_CODING_AGENT_SESSION_DIR: absolute paths, before --session
+trust_pi("work", "--agent-dir", "/home/you/.pi/work/agent", "--session-dir", "/home/you/.pi/work/agent/sessions", "--session", id)
+```
+
+A Pi started with a combination no rule lists comes back as a plain shell, not without its flags.
 
 Pi removes `OSC7577_TOKEN` from its own environment at startup, so shells, editors, and extension processes it starts cannot replace its command or register commands of their own. Whether and when the terminal resumes a command is up to the terminal.
