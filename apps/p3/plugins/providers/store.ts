@@ -14,6 +14,7 @@
 // written (the store closing) holds its login until the next start.
 
 import {
+	type Api,
 	type AuthContext,
 	type AuthResult,
 	arr,
@@ -23,10 +24,12 @@ import {
 	type CredentialStore,
 	defineTable,
 	eq,
+	evolveTable,
 	type FacetHost,
 	int,
 	invalid,
 	json,
+	type Model,
 	nul,
 	type P3Principal,
 	PluginError,
@@ -40,7 +43,8 @@ import {
 	unknown,
 } from "@earendil-works/p3/v1";
 import { createModels, ModelsError, ServerRuntime } from "@earendil-works/p3/v1/server";
-import { type LoginChange, LoginStore } from "./contract.server.ts";
+import { typeModels } from "./catalog.ts";
+import { CatalogStore, type LoginChange, LoginStore } from "./contract.server.ts";
 import { SignInMethod } from "./contract.ts";
 import type { RequestAuth } from "./kind.ts";
 import { LoginProviders } from "./login-providers.ts";
@@ -52,7 +56,7 @@ import { Turns } from "./turns.ts";
  * version (a new random one at every write of the credential: a refresh that read an older one writes nothing), and
  * which server process holds it for a refresh (`""`: none).
  */
-const Logins = defineTable("providers.logins", {
+const LoginsV1 = defineTable("providers.logins", {
 	version: 1,
 	columns: {
 		thing: str(),
@@ -66,6 +70,9 @@ const Logins = defineTable("providers.logins", {
 	},
 	key: ["thing"],
 });
+
+/** Version 2: the logins of a provider found by an index (a new catalog of its type works their accounts out again). */
+const Logins = evolveTable(LoginsV1, (t) => t.index("by_provider", ["provider"]));
 
 /** This Pi's device id, one row (`device` `"pi"`), made by the first sign-in that needs it. */
 const Device = defineTable("providers.device", {
@@ -113,6 +120,44 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			return found;
 		};
 		const runtime = self.registry(ServerRuntime);
+		const catalogs = self.get(CatalogStore, {});
+		/**
+		 * Provider `provider`'s chat models, for the cut to an account, and its catalog's revision: its type's catalog,
+		 * the stored one laid over the shipped ones. Not read for a provider that cuts nothing (every one but Copilot):
+		 * its accounts have them all.
+		 */
+		const offeredOf = async (provider: Provider, context: Context): Promise<Offered> => {
+			if (provider.filterModels === undefined) return NOTHING_OFFERED;
+			const [row] = (await catalogs.catalogs.one.page({ provider: provider.id }, 1, context)).items;
+			return { models: typeModels(provider, row?.entry), revision: row?.revision ?? "" };
+		};
+		/**
+		 * Works login `thing`'s account out again over its type's catalog as it is now, unless its credential changed
+		 * meanwhile (a write of its own then cut it).
+		 */
+		const recutOne = async (thing: string, provider: Provider, context: Context) => {
+			const offered = await offeredOf(provider, context);
+			const row = await read(thing, context);
+			if (row === undefined) return;
+			const models = rotatedModels(
+				thing,
+				provider,
+				offered.models,
+				row.models,
+				row.credential as Credential,
+				context,
+			);
+			if (!sameIds(models, row.models)) await settle(thing, row.version, { models }, context);
+		};
+		/**
+		 * After a credential write cut over `offered`: cuts it again if its type's catalog changed since (a new one may
+		 * have been stored while the write ran, and its recut have read the credential before it).
+		 */
+		const recutIfNewer = async (thing: string, provider: Provider, offered: Offered, context: Context) => {
+			if (provider.filterModels === undefined) return;
+			if ((await offeredOf(provider, context)).revision !== offered.revision)
+				await recutOne(thing, provider, context);
+		};
 		// This server process: its id and its start; a process id alone comes back after a restart.
 		const me = `${process.pid}@${performance.timeOrigin}`;
 		/** Changes login `thing` while its credential is still of `version`. */
@@ -170,6 +215,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return row === undefined ? [] : [{ providerId: provider.id, type: (row.credential as Credential).type }];
 			},
 			modify: async (_provider, fn) => {
+				// Read before the lease: nothing may fail between a rotation and its write.
+				const offered = await offeredOf(provider, context);
 				const leased = await lease(thing, context);
 				if (leased.kind === "gone") return undefined;
 				if (leased.kind === "cooling") {
@@ -196,10 +243,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				await ifStill(thing, row.version, {
 					...RELEASED,
 					credential: next,
-					models: rotatedModels(thing, provider, row.models, next, context),
+					models: rotatedModels(thing, provider, offered.models, row.models, next, context),
 					version: crypto.randomUUID(),
 					failedAt: 0,
 				});
+				// The rotation is stored, its cut too whatever the caller does since (Astra, round 2 of the catalog); a
+				// failure to cut it again only waits for the next catalog.
+				await recutIfNewer(thing, provider, offered, BACKGROUND_CONTEXT).catch(() => undefined);
 				return next;
 			},
 			delete: async () => {
@@ -207,26 +257,38 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			},
 		});
 		/** Stores login `thing`'s credential: `create` a new one, else replace one of the same provider. */
-		const store = (kind: "create" | "replace", thing: string, id: string, credential: unknown, ctx: Context) =>
-			self.tx(async (tx) => {
+		const store = async (
+			kind: "create" | "replace",
+			thing: string,
+			id: string,
+			credential: unknown,
+			ctx: Context,
+		) => {
+			// Only this plugin's server code stores credentials, pi-ai's.
+			const saved = credential as Credential;
+			const provider = providerOf(id);
+			const offered = await offeredOf(provider, ctx);
+			const models = modelsOf(provider, saved, offered.models);
+			await self.tx(async (tx) => {
 				const found = await tx.get(logins, { thing });
 				if (kind === "create" ? found !== undefined : found?.provider !== id) {
 					throw invalid("args", `providers: login ${thing} cannot take this credential (${kind})`);
 				}
-				// Only this plugin's server code stores credentials, pi-ai's.
-				const saved = credential as Credential;
 				tx.put(logins, {
 					thing,
 					provider: id,
 					method: saved.type,
 					credential,
 					failedAt: 0,
-					models: modelsOf(providerOf(id), saved),
+					models,
 					version: crypto.randomUUID(),
 					...RELEASED,
 				});
 				return null;
 			}, ctx);
+			await recutIfNewer(thing, provider, offered, ctx);
+			return null;
+		};
 		return {
 			logins: self.queries(
 				logins,
@@ -281,6 +343,23 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					return requestAuth(result);
 				}),
 			settle: async ({ thing, version, change }, ctx) => settle(thing, version, change, ctx),
+			recut: async ({ provider: id }, ctx) => {
+				const provider = providers.value.get(id)?.value;
+				if (provider?.filterModels === undefined) return null;
+				const things: string[] = [];
+				await self.tx(async (tx) => {
+					// Index `by_provider`: `provider` fixed. A provider has few logins: read whole.
+					for await (const row of tx.rows(
+						logins,
+						query(Logins).where((login) => eq(login.provider, id)),
+					)) {
+						things.push(row.thing);
+					}
+					return null;
+				}, ctx);
+				for (const thing of things) await recutOne(thing, provider, ctx);
+				return null;
+			},
 			device: (_args, ctx) =>
 				self.tx(async (tx) => {
 					const found = await tx.get(device, { device: "pi" });
@@ -293,11 +372,24 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 	});
 }
 
-/** The ids of the models `credential`'s account has at `provider` (`null`: the provider says all of its). */
-function modelsOf(provider: Provider, credential: Credential): string[] | null {
-	return provider.filterModels === undefined
-		? null
-		: provider.filterModels(provider.getModels(), credential).map(({ id }) => id);
+/** What a provider offers an account: its type's chat models, and its catalog's revision (`""`: none stored). */
+type Offered = { readonly models: readonly Model<Api>[]; readonly revision: string };
+
+/** What a provider that cuts nothing offers: its accounts have every model, so nothing is read. */
+const NOTHING_OFFERED: Offered = { models: [], revision: "" };
+
+/** Whether two id lists (`null`: all) are the same, in order. */
+function sameIds(a: readonly string[] | null, b: readonly string[] | null): boolean {
+	if (a === null || b === null) return a === b;
+	return a.length === b.length && a.every((id, at) => id === b[at]);
+}
+
+/**
+ * The ids of the models `credential`'s account has among its type's `offered` ones (`null`: the provider says all of
+ * them).
+ */
+function modelsOf(provider: Provider, credential: Credential, offered: readonly Model<Api>[]): string[] | null {
+	return provider.filterModels === undefined ? null : provider.filterModels(offered, credential).map(({ id }) => id);
 }
 
 /**
@@ -307,12 +399,13 @@ function modelsOf(provider: Provider, credential: Credential): string[] | null {
 function rotatedModels(
 	thing: string,
 	provider: Provider,
+	offered: readonly Model<Api>[],
 	known: string[] | null,
 	next: Credential,
 	context: Context,
 ): string[] | null {
 	try {
-		return modelsOf(provider, next);
+		return modelsOf(provider, next, offered);
 	} catch {
 		// Nothing of the thrown value: a provider's (its name, its text) may carry anything, or throw itself.
 		reportError(`providers: login ${thing}: its models`, "its provider could not tell them", context);

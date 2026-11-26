@@ -1,7 +1,7 @@
-// The providers plugin's contracts for server facets only: the store of the logins' credentials (`LoginStore`) and a
-// person's sign-ins with the credentials of finished ones (`SignIns`); this plugin's own server code only: they check
-// no caller. Credentials pass only between this plugin's objects on the server; no remote contract carries one, and no
-// method answers one.
+// The providers plugin's contracts for server facets only: the store of the logins' credentials (`LoginStore`), a
+// person's sign-ins with the credentials of finished ones (`SignIns`) and the provider types' stored model catalogs
+// (`CatalogStore`); this plugin's own server code only: they check no caller. Credentials pass only between this
+// plugin's objects on the server; no remote contract carries one, and no method answers one.
 
 import {
 	arr,
@@ -9,6 +9,7 @@ import {
 	local,
 	method,
 	nul,
+	num,
 	obj,
 	oneOf,
 	opt,
@@ -72,6 +73,11 @@ export const LoginStore = local("providers.store", {
 		 * a while, a request waiting for that refresh too; then one request tries again, and a success clears it.
 		 */
 		authorize: method(obj({ thing: str() }), RequestAuth),
+		/**
+		 * Works the accounts of provider `provider`'s logins out again over its type's catalog as it is now (its type
+		 * wrote a new one): only a provider that cuts its models by account (`filterModels`) has anything to do.
+		 */
+		recut: method(obj({ provider: str() })),
 		/** This Pi's device id for providers that sign in a device (made once, the same ever after). */
 		device: method(obj({}), str()),
 		/**
@@ -103,5 +109,48 @@ export const SignIns = local("providers.sign-ins", {
 		 * none; one at a time for the owner, so two at once make one.
 		 */
 		ensure: method(obj({ name: str(), workspace: str(), by: Source, provider: str(), credential: unknown() }), str()),
+	},
+});
+
+/**
+ * A provider's stored model catalog, as its type last got it: its models (pi-ai's chat definitions as the catalog
+ * server sends them, checked; plain data, typed `unknown` here), the catalog's Last-Modified (0: none, or no catalog
+ * there), compared with pi-ai's shipped model data's date (a catalog not newer lays nothing over the shipped models,
+ * whichever type wrote it), and its ETag.
+ */
+export const CatalogEntry = obj({ models: arr(unknown()), lastModified: num(), etag: opt(str()) });
+
+/** A provider's stored model catalog (see `CatalogEntry`). */
+export type CatalogEntry = Static<typeof CatalogEntry>;
+
+/** A provider's stored catalog and its revision (a new one whenever its body changes), by provider id. */
+export const CatalogRow = obj({ provider: str(), entry: CatalogEntry, revision: str() });
+
+/** A provider's stored catalog, by provider id (see `CatalogRow`). */
+export type CatalogRow = Static<typeof CatalogRow>;
+
+/** When a provider's catalog was last answered (`checkedAt`) and last failed (`failedAt`; 0: never). */
+export const CatalogStatus = obj({ checkedAt: num(), failedAt: num() });
+
+/** When a provider's catalog was last answered and failed (see `CatalogStatus`). */
+export type CatalogStatus = Static<typeof CatalogStatus>;
+
+/**
+ * The provider types' model catalogs, one row per provider, each written by its type's catalog (`login-catalogs.ts`):
+ * its body, read live by the provider's logins, and its timing, read by the type alone.
+ */
+export const CatalogStore = local("providers.catalog-store", {
+	version: 1,
+	params: {},
+	members: {
+		catalogs: queries(CatalogRow, { one: obj({ provider: str() }) }),
+		/** Provider `provider`'s catalog's timing (`null`: none stored). */
+		status: method(obj({ provider: str() }), union([CatalogStatus, nul()])),
+		/** Stores provider `provider`'s new catalog `entry`, answered at `at`: a new revision. */
+		write: method(obj({ provider: str(), entry: CatalogEntry, at: num() })),
+		/** Marks provider `provider`'s stored catalog answered unchanged at `at` (a 304): the body and revision stay. */
+		checked: method(obj({ provider: str(), at: num() })),
+		/** Marks provider `provider`'s catalog request failed at `at`: the stored body stays. */
+		failed: method(obj({ provider: str(), at: num() })),
 	},
 });
