@@ -351,11 +351,13 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   two-byte units 5.77 MB of buffers and 1,437 µs against 3.16 MB and 744 µs before the pass. On Node the rest is
   counted exactly.
 - **The encoder sizes a frame past its kept buffer from the message** (`partsLength` in `link/binary.ts`: parts and
-  their prefixes exactly, a failure by a flat 72 B, a text by its units and, once one fell short, every text at its
-  UTF-8). Rows measured above the code before the pass: 256 failures whose errors are strings of 2,000 two-byte
-  units 4.24 against 3.10 MB of buffers and 1,153 against 637 µs (4,096 of them 1.10 times); 256 failures of 100
-  two-byte bytes 1.22 times, 16 of 10 KiB 1.17 times. If such frames matter, size failures too or take frames past
-  the kept buffer back to the earlier growth; the kept buffer for small frames is the part that pays.
+  their prefixes exactly, a failure by a flat 72 B, an event by 24 B, a text by its units and, once one fell short,
+  every text at its UTF-8). Of 51 frame shapes the review measured against the code before the pass (Node, medians)
+  none is above it in both buffers and time; above it in one: failures whose errors are long (1.06 to 1.39 times
+  the buffers, at 0.3 to 1.0 times the time), events with small ids and stamps (1.44 to 1.55 times the buffers, at a
+  sixth of the time), one megabyte text that is not ASCII (the same buffers, 1.09 to 1.25 times the time: the
+  native count of its bytes). The estimate runs for every message: about 0.3 KiB of garbage per rebuilt object in
+  `hot-paths.ts` (its loops over holds and members); indexed loops would end that.
 - **Small items** (30 to 60 B each): an open query's compiled-plan wrapper, a given query's argument wrapper, a read
   plan's equality entries; a consumer's `#move` batch closure and list copy (about 0.3 KiB of garbage per move).
 

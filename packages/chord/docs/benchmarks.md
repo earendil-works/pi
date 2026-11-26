@@ -1327,9 +1327,9 @@ sampling heap profiler, garbage included; 7 runs):
 
 | Case | before | after |
 | --- | --- | --- |
-| hold and release | 70.0 µs, 64.5 KiB | 59.9 µs, 49.0 KiB |
+| hold and release | 69.8 µs, 64.5 KiB | 64.3 µs, 49.1 KiB |
 | re-read, the same decision | 1.4 µs, 2.8 KiB | 0.7 µs, 0.7 KiB |
-| rebuild, another grant | 36.7 µs, 41.6 KiB | 30.6 µs, 32.8 KiB |
+| rebuild, another grant | 36.6 µs, 41.6 KiB | 29.3 µs, 33.0 KiB |
 
 An admission compares what it reads with what it read last, field by field, its names as bits of the version's grant
 indexes: no canonical text, no sort, no key. With 43 grants an equal re-read takes 0.7 µs (7.0 before), a changed one
@@ -1434,7 +1434,11 @@ ending +31, −35 and −9 KiB; a round's work peaks at 11 MiB). Every cache of 
   bytes 3.06 → 0.83 MB; one text of 1 Mi three-byte units 11.56 MB, 3,129 µs → 4.20 MB, 1,204 µs; of two-byte units
   3.16 MB, 754 µs → 3.15 MB, 752 µs; four texts of 256 Ki two-byte units in one frame 3.99 MB, 995 µs → 3.15 MB,
   747 µs. Without a native UTF-8 count (a browser) a long non-ASCII text that did not fit
-  costs more than before (two-byte units: 5.77 MB, 1,437 µs).
+  costs more than before (two-byte units: 6.30 MB against 3.16 MB, 1,186 against 569 µs). Of 51 frame shapes the
+  review measured on Node none is above the code before the pass in both buffers and time; above it in one are
+  failures with long errors (up to 1.39 times the buffers, never slower), events with small ids and stamps (up to
+  1.55 times the buffers, at a sixth of the time) and single megabyte texts that are not ASCII (the same buffers,
+  1.09 to 1.25 times the time).
 - A list whose first page has more than about 120,000 rows loads, and its `more` too (the spread of a page into
   `push` overflowed the stack).
 - Internal types the package's declarations show changed shape: the store's `Read` (its constructor, its `sink` of
