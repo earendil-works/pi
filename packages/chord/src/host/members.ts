@@ -252,9 +252,15 @@ export function attachDerives(
 	state: ReadonlyMap<string, DeriveSource>,
 	report: (member: string | undefined) => (error: unknown) => void,
 ): void {
-	const exposed = new Map<DeriveSource, string>([...state].map(([member, source]) => [source, member]));
+	// Made only when a derive may be exposed: an admission's derives (no state members) and an attempt without derives
+	// made a map and two lists for nothing (about 0.5 KiB per activation).
+	if (derives.length === 0) return;
+	const exposed =
+		state.size === 0
+			? undefined
+			: new Map<DeriveSource, string>([...state].map(([member, source]) => [source, member]));
 	derives.forEach((derive, position) => {
-		const member = exposed.get(derive);
+		const member = exposed?.get(derive);
 		const name = member ?? `derive #${position + 1}`;
 		const resolve = (source: unknown, index: number): DeriveInput => {
 			const resolved = resolveWatchable(source) ?? (source instanceof NativeSource ? source : undefined);
