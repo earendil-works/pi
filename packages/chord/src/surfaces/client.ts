@@ -323,12 +323,15 @@ class Updates<P extends Principal> {
 	}
 
 	/**
-	 * Applies `set`: a new base calls `outdated`; else the changed scripts fetched, their new stylesheets loaded, the
+	 * Applies `set`: a set with no base (a surface still building) is skipped, a new base calls `outdated`; else the changed scripts fetched, their new stylesheets loaded, the
 	 * host reloaded with all and the stylesheets settled. `false` when it failed (reported `update_failed`): it is tried
 	 * again.
 	 */
 	async #apply(set: ScriptSet, context: Context): Promise<boolean> {
 		const options = this.#options;
+		// A server whose surface is still building shows a set with no base (a page reconnecting to a restarted server
+		// holds it first): nothing to apply, and no other base; its first set follows as a frame.
+		if (set.base === "") return true;
 		if (set.base !== options.base) {
 			options.outdated();
 			return true;
