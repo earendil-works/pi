@@ -2,8 +2,8 @@
 // signed in as persons): Ann and Ben are put into Pi, a notebook is made there, Ben's Write withheld; both hold it
 // open, Ann writes and Ben sees her note live, named, with no writing members of his own. A reload of the notes plugin
 // (a real edit of its server facet, applied as `p3 apply` does, restarting both callers' objects) while both hold it
-// keeps the notes and both holds: Ann writes again and Ben sees it. The agent's tools on a session's notebooks come
-// with sessions as session workspaces (ERNDL-704); their harness part is the worker test's.
+// keeps the notes and both holds: Ann writes again and Ben sees it; a second edit reloads again. The agent's tools on
+// a session's notebooks come with sessions as session workspaces (ERNDL-704); their harness part is the worker test's.
 
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
@@ -52,6 +52,14 @@ describe("the notes end to end", () => {
 		);
 		await anns.add!({ text: "after the reload" }, context);
 		await shows(bens, "after the reload", "Ann");
+		// A second edit of the same file reloads again (Astra, round 3: a repeated export did not build).
+		const again = await e.reload("notes", "@earendil-works/p3-notes");
+		assert.deepEqual(restarted(again, NotesKind.name), { changed: ["@earendil-works/p3-notes"], restarted: 2 });
+		await until(
+			anns.state,
+			(state) => state.kind === "live" && anns.add !== undefined,
+			within("Ann live again", context, 10_000),
+		);
 		assert.deepEqual(
 			bens.list.value.rows.map(({ text }) => text),
 			["after the reload", "before the reload"],

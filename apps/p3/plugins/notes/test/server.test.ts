@@ -4,11 +4,9 @@
 // leaves a reader on the same hold, live; the owner gets Write without being put in; a notebook hidden in a workspace,
 // or a caller removed, is denied), notes keyed by the notebook (the same in every workspace it is linked in), authors
 // as the admission says with persons' names read by id (any number of them), edits and removals, refusals, each
-// caller's pages of one shared list (each caller's bound its own: a new holder starts at its first page, removed notes
-// leave older ones reachable, a reload starts each at its first page; loads queued, one caller's cancel stops nobody
-// else's), and a page read now (`page`). The cost of the one shared read, whoever holds the notebook, is counted
-// (`chord.query.runs`), and so is its release with the last holder. Authors' names following a rename wait for
-// people's names to be editable (the things store cannot rename a person yet).
+// caller's pages (its own Chord list: the newest 50, 50 more with Older, older ones reachable after removals, new and
+// edited notes on top, kept across a reload), a page read now (`page`), and the counted cost of a note. Authors' names
+// following a rename wait for people's names to be editable (the things store cannot rename a person yet).
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -19,7 +17,6 @@ import {
 	type P3Principal,
 	type Reference,
 	until,
-	withCancel,
 } from "@earendil-works/p3/v1";
 import { collected, eventually, within } from "../../../test/until.ts";
 import { ThingHooks } from "../../things/contract.server.ts";
@@ -270,31 +267,27 @@ describe("a notebook's notes", () => {
 });
 
 describe("a notebook's pages", () => {
-	it("are each caller's: one caller's older notes load once and show only to it", async () => {
+	it("are each caller's: a fresh holder sees the newest 50, Older loads 50 more, for that caller only", async () => {
 		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
 		const notebook = await n.thingIn(n.pi);
 		await fill(ann, notebook, 120);
-		await n.holding(ben, n.pi, notebook, async (bens, outer) => {
+		await n.holding(ben, n.pi, notebook, async (bens, _outer) => {
 			await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
-				assert.deepEqual([notes.list.value.rows.length, notes.list.value.moreAfter], [50, true]);
+				assert.deepEqual([texts(notes), notes.list.value.moreAfter], [newestFirst(120).slice(0, 50), true]);
 				await notes.more(ctx);
 				assert.deepEqual([notes.list.value.rows.length, bens.list.value.rows.length], [100, 50]);
-				await bens.more(outer);
-				await bens.more(outer);
 				await notes.more(ctx);
-				assert.deepEqual(texts(notes), newestFirst(120));
-				assert.deepEqual(texts(bens), texts(notes));
-				assert.deepEqual([notes.list.value.moreAfter, bens.list.value.moreAfter], [false, false]);
+				assert.deepEqual([texts(notes), notes.list.value.moreAfter], [newestFirst(120), false]);
+				assert.deepEqual(texts(bens), newestFirst(120).slice(0, 50));
 			});
 		});
 	});
 
-	it("open at their first page, however far the shared list grew (Opus: 300 notes above its bookmark)", async () => {
+	it("show a fresh holder the newest 50, however many notes another holder wrote meanwhile", async () => {
 		const [cy, ann] = [await n.person("Cy"), await n.person("Ann")];
 		const notebook = await n.thingIn(n.pi);
 		await n.holding(cy, n.pi, notebook, async (cys, outer) => {
 			for (let i = 0; i < 300; i++) await cys.add!({ text: `n${i}` }, outer);
-			await until(cys.list, (list) => list.rows[0]?.text === "n299", within("Cy's notes", outer));
 			await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
 				assert.deepEqual(texts(notes), newestFirst(300).slice(0, 50));
 				await notes.more(ctx);
@@ -303,12 +296,11 @@ describe("a notebook's pages", () => {
 		});
 	});
 
-	it("reach older notes after every shown one was removed (Astra: 70 unreachable)", async () => {
+	it("reach older notes after every shown one was removed", async () => {
 		const ann = await n.person("Ann");
 		const notebook = await n.thingIn(n.pi);
 		await fill(ann, notebook, 120);
 		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
-			await until(notes.list, (list) => list.rows.length === 50, within("the first page", ctx));
 			for (const { id } of notes.list.value.rows) await notes.remove!({ id }, ctx);
 			await until(notes.list, (list) => list.rows.length === 0, within("all shown removed", ctx));
 			assert.equal(notes.list.value.moreAfter, true);
@@ -319,87 +311,30 @@ describe("a notebook's pages", () => {
 		});
 	});
 
-	it("start at the first page for a new holder, whatever another loaded and removed (Astra: none shown)", async () => {
-		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
+	it("show new and edited notes on top, keeping every loaded note: no gap, no duplicate", async () => {
+		const ann = await n.person("Ann");
 		const notebook = await n.thingIn(n.pi);
 		await fill(ann, notebook, 120);
 		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
 			await notes.more(ctx);
-			for (const { id } of notes.list.value.rows.slice(0, 50)) await notes.remove!({ id }, ctx);
-			await until(notes.list, (list) => list.rows.length === 50, within("50 removed", ctx));
-			await n.holding(ben, n.pi, notebook, async (bens, inner) => {
-				await until(bens.list, (list) => list.rows.length === 50, within("Ben's first page", inner));
-				assert.deepEqual(texts(bens), newestFirst(70).slice(0, 50));
-				assert.deepEqual(
-					(await bens.page({}, inner)).rows.map(({ text }) => text),
-					texts(bens),
-				);
-			});
+			const before = notes.list.value.rows;
+			for (const text of ["a", "b", "c"]) await notes.add!({ text }, ctx);
+			await notes.edit!({ id: before.at(-1)!.id, text: "moved" }, ctx);
+			await until(notes.list, (list) => list.rows[0]?.text === "moved", within("the edit on top", ctx));
+			const rows = notes.list.value.rows;
+			assert.deepEqual(
+				rows.slice(0, 4).map(({ text }) => text),
+				["moved", "c", "b", "a"],
+			);
+			assert.equal(new Set(rows.map(({ id }) => id)).size, rows.length);
+			assert.deepEqual(
+				rows.slice(4).map(({ id }) => id),
+				before.slice(0, -1).map(({ id }) => id),
+			);
 		});
 	});
 
-	it("load once when two callers ask in the same microtask, each with its page when its more resolves", async () => {
-		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
-		const notebook = await n.thingIn(n.pi);
-		await fill(ann, notebook, 120);
-		const holders = await n.holders([ann, ben], n.pi, notebook);
-		try {
-			const [anns, bens] = holders.held;
-			const runs = n.count("chord.query.runs");
-			const bensMore = bens!.ref.more(bens!.ctx);
-			await anns!.ref.more(anns!.ctx);
-			assert.equal(anns!.ref.list.value.rows.length, 100);
-			await bensMore;
-			assert.equal(bens!.ref.list.value.rows.length, 100);
-			// One page loaded (the list's run), and the names of its authors read again (all Ann's: the same).
-			assert.ok(n.count("chord.query.runs") - runs <= 2);
-		} finally {
-			await holders.release();
-		}
-	});
-
-	it("load on for the others when a caller stops waiting", async () => {
-		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
-		const notebook = await n.thingIn(n.pi);
-		await fill(ann, notebook, 120);
-		const holders = await n.holders([ann, ben], n.pi, notebook);
-		try {
-			const [anns, bens] = holders.held;
-			const cancelled = withCancel(anns!.ctx);
-			const stopped = anns!.ref.more(cancelled.context);
-			cancelled.cancel(new Error("Ann left"));
-			await assert.rejects(stopped);
-			await bens!.ref.more(bens!.ctx);
-			assert.equal(bens!.ref.list.value.rows.length, 100);
-		} finally {
-			await holders.release();
-		}
-	});
-
-	it("keep each caller's oldest note when notes move to the top: no gap, no duplicate", async () => {
-		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
-		const notebook = await n.thingIn(n.pi);
-		await fill(ann, notebook, 120);
-		await n.holding(ben, n.pi, notebook, async (bens, outer) => {
-			await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
-				await notes.more(ctx);
-				const oldest = notes.list.value.rows.at(-1)!;
-				// Three new notes and an edit of the oldest of Ben's page: Ann's two pages end at the same note.
-				for (const text of ["a", "b", "c"]) await notes.add!({ text }, ctx);
-				const benOldest = bens.list.value.rows.at(-1)!;
-				await notes.edit!({ id: benOldest.id, text: "moved" }, ctx);
-				await until(notes.list, (list) => list.rows[0]?.text === "moved", within("the edit", ctx));
-				const rows = notes.list.value.rows;
-				assert.equal(rows.at(-1)?.id, oldest.id);
-				assert.equal(new Set(rows.map(({ id }) => id)).size, rows.length);
-				assert.equal(rows.length, 103);
-				await until(bens.list, (list) => list.rows[0]?.text === "moved", within("Ben's edit", outer));
-				assert.equal(bens.list.value.rows.length, 53);
-			});
-		});
-	});
-
-	it("show each caller its first page after a reload, never another's (Astra: both saw 102)", async () => {
+	it("keep each caller's pages across a reload of the plugin", async () => {
 		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
 		const notebook = await n.thingIn(n.pi);
 		await fill(ann, notebook, 150);
@@ -407,14 +342,12 @@ describe("a notebook's pages", () => {
 		try {
 			const [anns, bens] = holders.held;
 			await anns!.ref.more(anns!.ctx);
-			assert.deepEqual([anns!.ref.list.value.rows.length, bens!.ref.list.value.rows.length], [100, 50]);
 			await n.reload();
 			await anns!.ref.add!({ text: "after the reload" }, anns!.ctx);
 			for (const { ref, ctx } of holders.held) {
 				await until(ref.list, (list) => list.rows[0]?.text === "after the reload", within("the new note", ctx));
-				// Its first page again, with the new note on top: at most its own bound, never the other's.
-				assert.equal(ref.list.value.rows.length, 51);
 			}
+			assert.deepEqual([anns!.ref.list.value.rows.length, bens!.ref.list.value.rows.length], [101, 51]);
 		} finally {
 			await holders.release();
 		}
@@ -441,47 +374,37 @@ describe("a notebook's pages", () => {
 });
 
 describe("the cost of a notebook's read", () => {
-	it("is one run of its list per note, however many hold it; a note by a shown author reads no names", async () => {
-		const persons = [await n.person("Ann"), await n.person("Ben"), await n.person("Cy")];
+	it("is one run of its list per note; a note by an author already shown reads no names", async () => {
+		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
 		const notebook = await n.thingIn(n.pi);
-		const holders = await n.holders(persons, n.pi, notebook);
-		try {
-			const [ann, ben] = holders.held;
-			const all = (text: string) =>
-				Promise.all(
-					holders.held.map(({ ref, ctx }) =>
-						until(ref.list, (list) => list.rows[0]?.text === text, within(text, ctx)),
-					),
-				);
-			await ann!.ref.add!({ text: "first" }, ann!.ctx);
-			await all("first");
-			const before = n.count("chord.query.runs");
-			await ann!.ref.add!({ text: "second" }, ann!.ctx);
-			await all("second");
-			assert.equal(n.count("chord.query.runs") - before, 1, "the shared list only");
-			const again = n.count("chord.query.runs");
-			await ben!.ref.add!({ text: "Ben's" }, ben!.ctx);
-			await all("Ben's");
-			assert.equal(n.count("chord.query.runs") - again, 2, "the shared list and the names, once");
-		} finally {
-			await holders.release();
-		}
+		await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
+			const added = async (by: typeof notes, text: string) => {
+				const before = n.count("chord.query.runs");
+				await by.add!({ text }, ctx);
+				await until(notes.list, (list) => list.rows[0]?.text === text, within(text, ctx));
+				return n.count("chord.query.runs") - before;
+			};
+			await added(notes, "first");
+			assert.equal(await added(notes, "second"), 1, "the list only");
+			await n.holding(ben, n.pi, notebook, async (bens) => {
+				const before = n.count("chord.query.runs");
+				await bens.add!({ text: "Ben's" }, ctx);
+				await until(notes.list, (list) => list.rows[0]?.text === "Ben's", within("Ben's", ctx));
+				// Ann's list and the names of its new author; Ben's own list and names.
+				assert.equal(n.count("chord.query.runs") - before, 4);
+			});
+		});
 	});
 });
 
-describe("a released notebook", () => {
-	it("releases its shared read with its last holder: the next holder opens it again", async () => {
-		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
+describe("the test server's holders", () => {
+	// Astra, round 3: a refused second hold left the first held, out of the test's reach.
+	it("release the earlier holds when a later one is refused", async () => {
+		const ann = await n.person("Ann");
+		const dana = await n.things.createPerson({ name: "Dana", madeBy: BY }, context);
 		const notebook = await n.thingIn(n.pi);
-		await fill(ann, notebook, 3);
-		const first = await n.holders([ann, ben], n.pi, notebook);
-		// A second holder joins the open shared read: it reads nothing.
-		const joined = n.count("chord.query.runs");
-		const third = await n.holders([await n.person("Cy")], n.pi, notebook);
-		assert.equal(n.count("chord.query.runs"), joined);
-		await third.release();
-		await first.release();
-		// With every holder gone the shared read closes (its object ends); a new holder opens it again.
+		await refused(n.holders([ann, { kind: "person", id: dana, name: "Dana" }], n.pi, notebook));
+		// Ann's object ended with her hold: holding it again opens its list again.
 		await eventually(
 			async () => {
 				const before = n.count("chord.query.runs");
@@ -492,7 +415,9 @@ describe("a released notebook", () => {
 			5000,
 		);
 	});
+});
 
+describe("a released notebook", () => {
 	it("is collected", async () => {
 		const ann = await n.person("Ann");
 		const notebook = await n.thingIn(n.pi);

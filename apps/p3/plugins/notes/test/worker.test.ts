@@ -42,7 +42,7 @@ const giving = <T>(
 describe("the notes kind's harness part", () => {
 	it("is the worker facet's one part, for the notes kind", async () => {
 		assert.deepEqual(
-			(await n.part()).contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
+			(await n.worker("s1")).contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
 			[NotesKind.name],
 		);
 	});
