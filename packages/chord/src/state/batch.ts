@@ -4,6 +4,8 @@
 import type { TelemetryMetrics } from "@earendil-works/pi-telemetry";
 import type { Context } from "../context/index.ts";
 import { invalid } from "../data/internal.ts";
+import type { Op } from "../delta/index.ts";
+import type { JsonValue } from "../json.ts";
 import { type ChordMetrics, chordMetrics } from "../telemetry.ts";
 
 /** What a batch reports: a watch listener that threw, or a frame delivery that threw (a derive's value is no JSON). */
@@ -25,6 +27,12 @@ export class Batch {
 	readonly #metrics: ChordMetrics;
 	/** Set while adopting, delivering or computing a derive; one flag per host. */
 	#running = false;
+	/**
+	 * The diffs the current commit's frames made, by the value before: framed sources handed the same two values diff
+	 * them once (`framed.ts`). Emptied with the commit: a diff kept by its earlier value keeps the later one, and that
+	 * one's diff the next, for as long as someone holds the earlier value.
+	 */
+	readonly diffs = new Map<JsonValue, { readonly after: JsonValue; readonly ops: readonly Op[] }>();
 	/** Set while a pure compute runs (a derive's, a registry's `compose`): nothing may change a source then. */
 	#computing = false;
 	/** The watched sources the current commit changed, each listed once by its `changed`. */
@@ -116,6 +124,7 @@ export class Batch {
 				this.#sending = false;
 				this.#changed = [];
 				this.#flushes = [];
+				this.diffs.clear();
 			}
 		});
 		const later = this.#later;

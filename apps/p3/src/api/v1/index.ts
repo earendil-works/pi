@@ -54,7 +54,6 @@ export * from "../../../plugins/environments/contract.ts";
 export * from "../../../plugins/people/contract.ts";
 export { LoginProviders } from "../../../plugins/providers/login-providers.ts";
 export * from "../../../plugins/sessions/contract.ts";
-export * from "../../../plugins/tools/contract.ts";
 export * from "../../../plugins/transcript/contract.ts";
 export { callerKey, P3Principal } from "../../app.ts";
 export { forward } from "./forward.ts";

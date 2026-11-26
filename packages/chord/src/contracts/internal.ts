@@ -22,6 +22,7 @@ export {
 	type VersionData,
 	versionAt,
 } from "./contract.ts";
+export { queryArguments } from "./declare.ts";
 export { editWith } from "./evolve.ts";
 export { fingerprintOf, hash64, NORMAL_FORM_VERSION } from "./fingerprint.ts";
 export type { Increment, MembersShape } from "./history.ts";

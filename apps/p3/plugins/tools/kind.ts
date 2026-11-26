@@ -1,7 +1,7 @@
-// The tools plugin's contract: the coding tools (read, write, edit, bash on the machine the agent works on) as a kind
-// of thing (`tools.coding`). Made only by its plugin, one thing in Pi; its four ticks are flag ticks for the agents
-// (decision 97): people use the tools through the agent, which acts with its own grants. A workspace hides the tools,
-// or withholds a tick (Bash in a shared session), where the agents should not have them.
+// The coding tools kind (`tools.coding`): read, write, edit and bash on the machine the agent works on. Made only by
+// its plugin, one thing in Pi; the nearest link decides. Its four ticks are flag ticks for the agents (decision 97),
+// each giving Durable's tool of its name; people use the tools through the agent. A new link gives the agents all
+// four; no guests. A workspace hides the tools, or withholds a tick (Bash in a shared session).
 
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";

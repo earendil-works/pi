@@ -3,7 +3,7 @@
 
 import { defineFacet } from "@earendil-works/p3/v1";
 import { serveThing } from "../things/serve.ts";
-import { SubagentsKind } from "./contract.ts";
+import { SubagentsKind } from "./kind.ts";
 
 export default defineFacet((host) => {
 	serveThing(host, SubagentsKind, { implement: () => ({}), one: { name: "Subagents" } });

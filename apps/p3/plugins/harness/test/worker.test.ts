@@ -80,8 +80,9 @@ describe("the harness plugin on a worker", () => {
 		held: Holding[],
 		change: Partial<ReturnType<typeof sessionRow>> = {},
 		extras: Extra[] = [],
+		options: { readonly ready?: boolean } = {},
 	): Promise<Server> {
-		const { stubs, server, control } = standIns({ ...sessionRow(SESSION, folder), ...change }, held, extras);
+		const { stubs, server, control } = standIns({ ...sessionRow(SESSION, folder), ...change }, held, extras, options);
 		harnessControl = control;
 		t = await testPlugin(
 			fileURLToPath(new URL("../", import.meta.url)),
@@ -137,6 +138,18 @@ describe("the harness plugin on a worker", () => {
 		await start([login("login", "faux", [says("hi", "hello")]), coding("tools", ["read", "write", "edit"])]);
 		await ask("hi");
 		assert.deepEqual(requests()[0]?.tools, ["edit", "read", "write"]);
+	});
+
+	it("takes only bash from the offered tools when Bash is withheld: the kind keeps its place among the others", async () => {
+		// The coding tools are held before the login, whose part gives a tool too.
+		const faux = login("login", "faux", [says("", "ok")], true);
+		const server = await start([coding(), faux]);
+		await ask("one");
+		server.hold([coding("tools", ["read", "write", "edit"]), faux]);
+		await ask("two");
+		assert.deepEqual(requests()[1]?.tools, ["edit", "read", "test_session", "write"]);
+		// Durable removes and offers every tool again when their order changed: an extension replaced in place keeps it.
+		assert.deepEqual(requests()[1]?.removed, ["bash"]);
 	});
 
 	it("offers no tools to the next request once the agent let go of the tools", async () => {
@@ -285,7 +298,7 @@ describe("the harness plugin on a worker", () => {
 		);
 	});
 
-	it("runs the tools where a part gives the location's environment; none there: none; no such part: the location's", async () => {
+	it("runs the tools where a part gives the location's environment; none there or the machine let go of: none", async () => {
 		const elsewhere = join(folder, "machine");
 		await mkdir(elsewhere);
 		const script = [runs("where", "pwd"), says("", "done")];
@@ -306,7 +319,8 @@ describe("the harness plugin on a worker", () => {
 			.map(({ last }) => last.trim());
 		assert.equal(results[0], elsewhere);
 		assert.match(results[1] ?? "", /No execution environment/, "none on a machine the part does not give");
-		assert.equal(results[2], folder, "no machine part: the environments plugin's");
+		// Astra and Opus, round 1: the machine let go of (Work withheld) leaves no environment, no fallback.
+		assert.match(results[2] ?? "", /No execution environment/, "a machine part registered: no fallback");
 	});
 
 	it("tells a part where a conversation works: the session's location, live", async () => {
@@ -365,5 +379,129 @@ describe("the harness plugin on a worker", () => {
 		server.hold([held[0]!, held[1]!, subagents(false)]);
 		await ask("after");
 		assert.deepEqual(requests().at(-1)?.tools, ["bash", "edit", "read", "write"]);
+	});
+
+	it("ends a queued message whose subagent's run then failed, and reports it (Astra, round 1)", async () => {
+		const tool = (when: string, name: string, args: object): Step => ({
+			when,
+			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
+		});
+		const script = [
+			tool("@spawn", "subagent_spawn", { name: "reader", message: "child-start" }),
+			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo not-scripted"),
+			says("Started reader.", "ok"),
+			tool("@queue", "subagent_send", { name: "reader", message: "later", followUp: true }),
+			says("Sent to reader.", "ok"),
+			says("[subagent reader failed:", "noted"),
+		];
+		await start([login("l", "faux", script), coding(), subagents()]);
+		const open = await harness();
+		try {
+			await open.submit(undefined, { text: "@spawn", requestId: "spawn" }, context);
+			await eventually(() => existsSync(join(folder, "started")), Boolean);
+			await open.submit(undefined, { text: "@queue", requestId: "q" }, context);
+			await eventually(
+				() => open.durable.inspect(context),
+				(found) =>
+					found.submissions.some((s) => s.status === "queued" && s.requestId?.startsWith("subagent:") === true),
+			);
+			await writeFile(join(folder, "gate"), "");
+			await eventually(
+				() => requests(),
+				(seen) => seen.some((request) => request.last.startsWith("[subagent reader failed:")),
+				5000,
+			);
+			await eventually(
+				() => open.durable.inspect(context),
+				(found) => found.tasks.length === 0 && found.submissions.length === 0,
+				5000,
+			);
+		} finally {
+			await writeFile(join(folder, "gate"), "");
+		}
+	});
+
+	it("sends to a subagent, whose answer comes back once; archived, it is gone from the list (Opus, round 1)", async () => {
+		const tool = (when: string, name: string, args: object): Step => ({
+			when,
+			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
+		});
+		const script: Step[] = [
+			tool("@spawn", "subagent_spawn", { name: "reader", message: "first task" }),
+			says("Started reader.", "started"),
+			says("first task", "first answer"),
+			says("[subagent reader answered] first answer", "noted one"),
+			tool("@send", "subagent_send", { name: "reader", message: "second task" }),
+			says("Sent to reader.", "sent"),
+			says("second task", "second answer"),
+			says("[subagent reader answered] second answer", "noted two"),
+			tool("@archive", "subagent_archive", { name: "reader" }),
+			says("Archived reader.", "archived"),
+			tool("@list", "subagent_list", {}),
+			says("No subagents.", "none"),
+			says("", "ok"),
+		];
+		await start([login("login", "faux", script), coding(), subagents()]);
+		const answered = (text: string) =>
+			eventually(
+				() => requests().filter(({ last }) => last === `[subagent reader answered] ${text}`).length,
+				(count) => count === 1,
+				5000,
+			);
+		await ask("@spawn");
+		await answered("first answer");
+		await (await harness()).durable.waitForIdle(context);
+		await ask("@send");
+		await answered("second answer");
+		await (await harness()).durable.waitForIdle(context);
+		await ask("@archive");
+		await ask("@list");
+		assert.ok(requests().some(({ last }) => last === "No subagents."));
+		// Each answer reported once.
+		assert.equal(requests().filter(({ last }) => last.startsWith("[subagent reader answered]")).length, 2);
+	});
+
+	it("waits with the first submit until the holding is ready, which then gives the agent its tools", async () => {
+		const held = [login("login", "faux", [says("", "ok")]), coding()];
+		const server = await start([], {}, [], { ready: false });
+		const open = await harness();
+		const submitted = open.submit(undefined, { text: "hi", requestId: "hi" }, context);
+		// The holding is slow: nothing reached the model while it was not ready.
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.deepEqual(requests(), []);
+		server.hold(held);
+		await submitted;
+		await open.durable.waitForIdle(context);
+		assert.deepEqual(requests()[0]?.tools, ["bash", "edit", "read", "write"]);
+	});
+
+	it("gives a running subagent no new message once Use is withheld (ERNDL-1171, test 2)", async () => {
+		const tool = (when: string, name: string, args: object): Step => ({
+			when,
+			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
+		});
+		const script: Step[] = [
+			tool("@spawn", "subagent_spawn", { name: "reader", message: "child-start" }),
+			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo first done"),
+			says("Started reader.", "ok"),
+			tool("@send", "subagent_send", { name: "reader", message: "a new message" }),
+			says("", "ok"),
+		];
+		const held = [login("login", "faux", script), coding(), subagents()];
+		const server = await start(held);
+		const open = await harness();
+		try {
+			await open.submit(undefined, { text: "@spawn", requestId: "spawn" }, context);
+			await eventually(() => existsSync(join(folder, "started")), Boolean);
+			server.hold([held[0]!, held[1]!, subagents(false)]);
+			await ask("@send");
+			const offered = requests().find(({ last }) => last === "@send")?.tools ?? [];
+			assert.ok(!offered.includes("subagent_send"), offered.join());
+		} finally {
+			await writeFile(join(folder, "gate"), "");
+		}
+		await open.durable.waitForIdle(context);
+		// The running subagent finished its step; it never got the new message.
+		assert.ok(!requests().some(({ last }) => last.includes("a new message")));
 	});
 });

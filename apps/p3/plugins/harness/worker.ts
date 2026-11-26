@@ -20,6 +20,7 @@ import {
 	reportError,
 	SessionFacts,
 	type SessionState,
+	until,
 	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import {
@@ -43,6 +44,9 @@ import { SUBAGENT_TASKS, subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
 const SessionAgent = local("harness.agent", { version: 1, params: {}, members: {} });
+
+/** How long open, resume and submit wait for the holding to be ready before they go on without it. */
+const READY_MS = 10_000;
 
 /** The owner name of Durable's tables and documents in the session's store. */
 const STORAGE_OWNER = "harness";
@@ -75,7 +79,29 @@ export default defineFacet((host, facet) => {
 			const row = facts.session.value;
 			if (row !== null && row.state !== now) await facts.report({ state: now }, context);
 		};
-		const apply = (): void => opened.value.things.apply(held.value, parts.value);
+		/** Applies what the agent holds; not ready yet: what was given stays. */
+		const apply = (): void => {
+			const now = held.value;
+			if (now !== undefined) opened.value.things.apply(now, parts.value);
+		};
+		/**
+		 * Waits until the holding is ready (bounded: a holding that never gets ready must not stop the agent), then
+		 * applies; past the bound it goes on with what was given and reports.
+		 */
+		const ready = async (context: Context): Promise<void> => {
+			try {
+				await until(held, (value) => value !== undefined, withAbortSignal(AbortSignal.timeout(READY_MS), context));
+			} catch (error) {
+				// The caller's own cancellation goes on as one; the bound is reported.
+				if (context.abortSignal?.aborted === true) throw error;
+				reportError(
+					`p3 harness: session ${runtime.value.session}: the things held not ready in ${READY_MS} ms`,
+					error,
+					BACKGROUND_CONTEXT,
+				);
+			}
+			apply();
+		};
 		self.contribute(
 			WorkerBusy,
 			self.derive([state], ([now]) => (now === "working" ? 1 : 0)),
@@ -84,9 +110,9 @@ export default defineFacet((host, facet) => {
 		self.on(held, () => apply());
 		self.on(parts, () => apply());
 		// The work a previous worker left runs once the registry has what the agent holds, never for an archived session.
-		self.on(archived, ({ value }) => {
+		self.on(archived, async ({ value }, ctx) => {
 			if (value) return;
-			apply();
+			await ready(ctx);
 			opened.value.durable.resume();
 		});
 		const harness: OpenHarness = {
@@ -96,7 +122,7 @@ export default defineFacet((host, facet) => {
 			submit: async (conversation, { text, requestId }, context) => {
 				if (archived.value) throw forbidden("harness: the session is archived");
 				const { durable, things } = opened.value;
-				apply();
+				await ready(context);
 				const target =
 					conversation === undefined
 						? await durable.root(context)
@@ -128,7 +154,7 @@ type Sources = {
 	readonly runtime: WorkerRuntime;
 	readonly facts: Reference<typeof SessionFacts>;
 	readonly parts: RegistryValue<Parts>;
-	readonly held: RegistryValue<Held>;
+	readonly held: RegistryValue<Held | undefined>;
 	readonly environments: RegistryValue<EnvironmentResolver>;
 };
 
@@ -150,7 +176,8 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 	});
 	// The subagents' tasks, whatever the agent holds: a reporter under way finishes when Use is withheld.
 	things.registry.install(SUBAGENT_TASKS);
-	things.apply(held.value, parts.value);
+	// Not ready yet: nothing to give before the first submit or resume waits for it.
+	if (held.value !== undefined) things.apply(held.value, parts.value);
 	const durable = await openHarness(
 		store,
 		{
@@ -162,7 +189,10 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 			env: (_target, context) => {
 				const at = location();
 				if (at === undefined) return undefined;
-				if (!things.givesEnv) return environments.value({ environment: at.machine, folder: at.folder }, context);
+				// Until a part that gives environments is registered at all (the machine kind; env4 removes this with
+				// ERNDL-1172): the environments plugin's resolver. From then on only parts: none withheld, none given.
+				const machines = [...parts.value.values()].some(({ value }) => value.givesEnv);
+				if (!machines) return environments.value({ environment: at.machine, folder: at.folder }, context);
 				return things.env(at, context);
 			},
 			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),

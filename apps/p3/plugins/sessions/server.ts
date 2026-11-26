@@ -1,9 +1,10 @@
 // The sessions plugin on the server: the store of the sessions, their members and things (`store.ts`), the access
 // answer every session object admits with (`access.ts`), the waker (`waker.ts`), what a session has, linked and from
 // whom it follows (`follow.ts`), a session's things as its writers manage them and a person's own things
-// (`things.ts`), a worker's facts (`facts.ts`), and the objects of its other audiences: the owner's `Sessions` (what
-// the owner adds is the owner's person's; a session they make follows them), a screen's `SessionsList` (the owner's
-// every session of an app, a person's their memberships'), and a page's `SessionInfo`.
+// (`things.ts`), a worker's facts (`facts.ts`) and its agent's things (`agent-things.ts`), and the objects of its
+// other audiences: the owner's `Sessions` (what the owner adds is the owner's person's; a session they make follows
+// them), a screen's `SessionsList` (the owner's every session of an app, a person's their memberships'), and a page's
+// `SessionInfo`.
 
 import {
 	type Admission,
@@ -28,6 +29,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore, ThingKinds } from "@earendil-works/p3/v1/server";
 import { serveAccess } from "./access.ts";
+import { serveAgentThings } from "./agent-things.ts";
 import { serveFacts } from "./facts.ts";
 import { SessionHas, serveHas } from "./follow.ts";
 import { currentOptions, type StoredOptions, unset } from "./options.ts";
@@ -51,6 +53,7 @@ export default defineFacet((host) => {
 	serveHas(host);
 	serveThings(host);
 	serveFacts(host);
+	serveAgentThings(host);
 
 	host.serve(ThingKinds, {
 		compose: (table, { report }) => keyedEntries(table, (entry) => ({ [entry.kind.name]: entry }), report),
