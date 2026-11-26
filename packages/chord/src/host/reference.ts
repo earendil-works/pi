@@ -1087,15 +1087,26 @@ export class Binding implements Holder, UnboundRequest {
 		const granted = this.#state.kind === "bound" ? this.#state.target.granted : NO_GRANTS;
 		if (this.#projection?.from !== granted) {
 			const { grants } = currentVersion(this.contract);
-			// Most bindings are of the target's version: every name is theirs, and no list is made to find that out.
-			let all = true;
+			// One pass, each name tested once. Most bindings are of the target's version: every name is theirs, the
+			// target's set is handed on and no list is made; an older one's set starts at its first missing name.
+			let kept: Set<string> | undefined;
+			let seen = 0;
 			for (const name of granted) {
-				if (grants.includes(name)) continue;
-				all = false;
-				break;
+				if (grants.includes(name)) {
+					if (kept !== undefined) kept.add(name);
+					else seen++;
+					continue;
+				}
+				if (kept !== undefined) continue;
+				kept = new Set();
+				// The names before the first missing one were all kept.
+				let at = 0;
+				for (const before of granted) {
+					if (at++ === seen) break;
+					kept.add(before);
+				}
 			}
-			const to = all ? granted : new Set([...granted].filter((name) => grants.includes(name)));
-			this.#projection = { from: granted, to };
+			this.#projection = { from: granted, to: kept ?? granted };
 		}
 		this.#wasLive = this.#decided = true;
 	}
