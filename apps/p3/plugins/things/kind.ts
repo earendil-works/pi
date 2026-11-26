@@ -1,8 +1,9 @@
-// Kinds of things: `defineThing` declares a kind (its members and ticks, flag ticks among them, who makes its things, where they may be
-// linked, how several reaching one workspace combine, what a new link starts with, how older ticks read) and makes its remote contract,
-// params `{ workspace, thing }`, on the server: a member no tick gives is there for everyone admitted, the others are
-// grantable. `expand` turns tick names into the members and flags they give. `ThingKinds` is the registry of every
-// kind's data, which the things plugin's index and (later) the page read. Data only: kinds' contract files import it.
+// Kinds of things: `defineThing` declares a kind (its members and ticks, flag ticks among them, who makes its things,
+// where they may be linked, how several reaching one workspace combine, what a new link starts with, how older ticks
+// read) and makes its remote contract, params `{ workspace, thing }`, on the server: a member no tick gives is there
+// for everyone admitted, the others are grantable. `expand` turns tick names into the members and flags they give.
+// `ThingKinds` is the registry of every kind's data, which the things plugin's index and (later) the page read. Data
+// only: kinds' contract files import it.
 
 import {
 	type Contract,
@@ -19,7 +20,10 @@ import {
 } from "@earendil-works/p3/v1";
 import { RESERVED, THING_PARAMS, ThingAdmission } from "./contract.ts";
 
-/** Whom a tick can be given: the agents (the agents party, one session's agent), people (everyone, groups, persons), or both. */
+/**
+ * Whom a tick can be given: the agents (the agents party, one session's agent), people (everyone, groups, persons), or
+ * both.
+ */
 export type TickFor = "agents" | "people" | "all";
 
 /**

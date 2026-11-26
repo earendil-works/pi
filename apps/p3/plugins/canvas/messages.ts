@@ -1,5 +1,5 @@
-// The canvas plugin's texts people see: its ticks' labels (flag ticks among them) (decision 65), as the things plugin's Settings
-// view shows them. Imported by the contract and by every facet that renders.
+// The canvas plugin's texts people see: its ticks' labels (flag ticks among them) (decision 65), as the things plugin's
+// Settings view shows them. Imported by the contract and by every facet that renders.
 
 import { defineMessages } from "@earendil-works/p3/v1";
 

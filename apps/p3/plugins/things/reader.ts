@@ -88,7 +88,10 @@ async function readAll<T, A>(named: NamedQuery<T, A>, args: A, context: Context)
 /** A grant as a read item. */
 type GrantItem = Awaited<ReturnType<Read["grants"]["here"]["page"]>>["items"][number];
 
-/** A grant row as the rules read it (see `ticksNow`): its tick now, perhaps several or none; none when its kind cannot read it, reported once. */
+/**
+ * A grant row as the rules read it (see `ticksNow`): its tick now, perhaps several or none; none when its kind cannot
+ * read it, reported once.
+ */
 function grantEntry(grant: GrantItem, kinds: Kinds, reported: Set<string>, context: Context): GrantEntry[] {
 	const { thing, party, gives, kind, tick, ticksVersion } = grant;
 	const now = ticksNow(grant, kinds.info(kind));

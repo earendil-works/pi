@@ -57,7 +57,9 @@ export type WorkspaceEntries = {
 export type ThingHere = {
 	readonly kind: string;
 	readonly ticks: ReadonlyMap<PartyKey, ReadonlySet<string>>;
-	/** The ticks rows at or below the link withhold from a person by every route (item 106); `OPEN` among them: denied. */
+	/**
+	 * The ticks rows at or below the link withhold from a person by every route (item 106); `OPEN` among them: denied.
+	 */
 	readonly takenFromPersons: ReadonlyMap<PartyKey, ReadonlySet<string>>;
 };
 
@@ -261,7 +263,10 @@ export function answerOf(given: ThingHere, counted: Counted): Answer | undefined
 	return { ticks: kept.sort() };
 }
 
-/** Rule 5 for an owner (items 78, 99): every tick of the kind meant for people (`people` or `all`), none for agents only. */
+/**
+ * Rule 5 for an owner (items 78, 99): every tick of the kind meant for people (`people` or `all`), none for agents
+ * only.
+ */
 export function ownerAnswer(kind: string, kinds: KindsLookup): Answer {
 	return {
 		ticks: kinds

@@ -7,13 +7,10 @@ import {
 	type Admission,
 	type AdmitSelf,
 	allow,
-	type Contract,
 	callerKey,
 	constant,
 	deny,
 	type FacetHost,
-	type GrantableName,
-	type JsonValue,
 	type P3Principal,
 	until,
 	type Watchable,
@@ -25,54 +22,44 @@ import { expand, type ThingKind } from "./kind.ts";
 import { messages } from "./messages.ts";
 import type { Answer } from "./rules.ts";
 
-/** What a thing's object is admitted with: who calls, and the members and flags granted. */
-export type ThingAdmitted<C extends Contract> = { granted: GrantableName<C>[]; caller: Caller };
+/** What a thing's object is admitted with: who calls, and the names of its kind's members and flags granted. */
+export type ThingAdmitted = { readonly granted: string[]; readonly caller: Caller };
+
+/** One decision of the admission: `allow` of an admitted value, or a denial. */
+type Decision = Admission<ThingAdmitted>;
 
 /**
  * The admission of `Kind`'s object: the server is granted everything; anyone else what their answer for the thing in
  * the workspace gives (through `Gives`, live), or denied with `notGiven` when they get nothing there. Each answer's
  * decision is made once and kept while the answer object lives (the index hands out a new one on every change).
  */
-export function admitThing<C extends Contract>(Kind: ThingKind<C>) {
+export function admitThing(Kind: ThingKind) {
 	const decisions = new WeakMap<Answer, Decision>();
 	return (
 		{ workspace, thing }: { readonly workspace: string; readonly thing: string },
 		principal: P3Principal,
 		self: AdmitSelf,
-	): Watchable<Admission<ThingAdmitted<C>>> => {
-		if (principal.kind === "server") return typed(constant(allowed({ granted: [...Kind.all], caller: SERVER })));
+	): Watchable<Decision> => {
+		// The kind's names are its contract's; of any kind (`ThingKind`'s default contract) they are plain strings.
+		if (principal.kind === "server")
+			return constant(allow({ granted: [...(Kind.all as readonly string[])], caller: SERVER }));
 		const caller = callerOf(principal);
 		const gives = self.get(Gives, { workspace, caller: callerKey(principal) }).answers;
-		return typed(
-			self.derive([gives], ([answers]) => {
-				const mine = answers[thing];
-				if (mine === undefined) return DENIED;
-				let decision = decisions.get(mine);
-				if (decision === undefined) {
-					decision = allowed({ granted: expand(Kind, mine.ticks), caller });
-					decisions.set(mine, decision);
-				}
-				return decision;
-			}),
-		);
+		return self.derive([gives], ([answers]) => {
+			const mine = answers[thing];
+			if (mine === undefined) return DENIED;
+			let decision = decisions.get(mine);
+			if (decision === undefined) {
+				decision = allow({ granted: expand(Kind, mine.ticks) as string[], caller });
+				decisions.set(mine, decision);
+			}
+			return decision;
+		});
 	};
-
-	/** The decisions as `Kind`'s admission: they are `allow({ granted, caller })` of its names, or a denial. */
-	function typed(decisions: Watchable<Decision>): Watchable<Admission<ThingAdmitted<C>>> {
-		return decisions as unknown as Watchable<Admission<ThingAdmitted<C>>>;
-	}
-}
-
-/** A decision as plain JSON: `allow` of an admitted value, or a denial (Chord reads them as `Admission`). */
-type Decision = JsonValue;
-
-/** `allow(value)` as JSON: an admitted value is names and a caller, which TypeScript cannot see through a generic contract. */
-function allowed(value: { readonly granted: readonly unknown[]; readonly caller: Caller }): Decision {
-	return allow(value as unknown as JsonValue) as unknown as Decision;
 }
 
 /** The denial of a caller given nothing here: one value, so an unchanged denial is the same decision. */
-const DENIED = deny("things: nothing given here", messages.message("notGiven")) as unknown as Decision;
+const DENIED: Decision = deny("things: nothing given here", messages.message("notGiven"));
 
 /** The server as a caller. */
 const SERVER: Caller = { kind: "server" };

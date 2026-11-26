@@ -224,8 +224,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			attach: async (workspace, caller, observer, ctx) => index?.attach(workspace, caller, observer, ctx),
 		});
 		/**
-		 * One write: its transaction under `ctx`, one at a time with the index's work (`AccessIndex.commit`), which follows
-		 * it before the write answers; the things it removed then have their kind's delete hook run.
+		 * One write: its transaction under `ctx`, one at a time with the index's work (`AccessIndex.commit`), which
+		 * follows it before the write answers; the things it removed then have their kind's delete hook run.
 		 */
 		const write = async <R>(fn: (tx: Tx, changes: Changes) => Promise<R>, ctx: Context): Promise<R> => {
 			const retired: Retired[] = [];
@@ -241,7 +241,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			pending: (ctx) =>
 				self.tx(async (tx) => {
 					const rows = [];
-					// The whole table: what waits for a delete hook is few rows, read at the start and when the hooks change.
+					// The whole table: what waits for a delete hook is few rows, read at the start and when the hooks
+					// change.
 					for await (const row of tx.rows(pending, query(Pending))) rows.push(row);
 					return rows;
 				}, ctx),
@@ -259,8 +260,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			...q,
 			create: async (args, ctx) => {
 				const thing = crypto.randomUUID();
-				// The kind prepares what is in it first, under the new id (item 34): a hook that throws leaves nothing, as no
-				// row names the thing yet. A crash between the hook and the commit leaves the kind's content under an id
+				// The kind prepares what is in it first, under the new id (item 34): a hook that throws leaves nothing, as
+				// no row names the thing yet. A crash between the hook and the commit leaves the kind's content under an id
 				// nobody knows (accepted: nothing can reach it).
 				await hooks.value.get(args.kind)?.value.create?.(thing, args.input, ctx);
 				try {
@@ -461,7 +462,9 @@ function putWorkspace(
 	return workspace;
 }
 
-/** The party a maker's grant names (item 90): a person, or a session's agent; none for a thing, a provider, a plugin. */
+/**
+ * The party a maker's grant names (item 90): a person, or a session's agent; none for a thing, a provider, a plugin.
+ */
 function makerParty(by: Source): Party | undefined {
 	switch (by.kind) {
 		case "person":
@@ -473,7 +476,10 @@ function makerParty(by: Source): Party | undefined {
 	}
 }
 
-/** Deletes `table`'s rows matching `where`, each one's `column` (its workspace, its person: a text) added to `told` first. */
+/**
+ * Deletes `table`'s rows matching `where`, each one's `column` (its workspace, its person: a text) added to `told`
+ * first.
+ */
 async function deleteTold<C extends Columns, K extends readonly string[]>(
 	tx: Tx,
 	table: Table<C, K>,
@@ -499,7 +505,10 @@ class Writes {
 		this.#kinds = kinds;
 	}
 
-	/** Thing `thing` of `kind` linked in `workspace`: its row, the link with the default grants, every tick for its maker. */
+	/**
+	 * Thing `thing` of `kind` linked in `workspace`: its row, the link with the default grants, every tick for its
+	 * maker.
+	 */
 	async make(
 		tx: Tx,
 		touched: Touched,
@@ -526,7 +535,9 @@ class Writes {
 		return null;
 	}
 
-	/** Links `thing` into `workspace` with its kind's default grants (once; a kind of `workspaces: "one"` once at all). */
+	/**
+	 * Links `thing` into `workspace` with its kind's default grants (once; a kind of `workspaces: "one"` once at all).
+	 */
 	async link(tx: Tx, touched: Touched, { workspace, thing }: { workspace: string; thing: string }): Promise<null> {
 		const row = await tx.get(this.#t.things, { thing });
 		if (row === undefined) throw invalid("args", `things: no thing ${thing}`);
@@ -709,8 +720,8 @@ class Writes {
 	}
 
 	/**
-	 * Removes what the source with key `key` wrote (grants, group members, workspace members) and the groups it manages, with every
-	 * member of them, every workspace entry and grant naming them, whoever wrote it.
+	 * Removes what the source with key `key` wrote (grants, group members, workspace members) and the groups it manages,
+	 * with every member of them, every workspace entry and grant naming them, whoever wrote it.
 	 */
 	async deleteEverythingFrom(tx: Tx, touched: Touched, key: string): Promise<null> {
 		const t = this.#t;

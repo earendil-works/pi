@@ -15,8 +15,8 @@ export const RESERVED = "@";
 export const OPEN = "@open";
 
 /**
- * Who wrote something: a person by hand, a session's agent (a thing it made), a thing (a share, a bot: it goes with it),
- * a sign-in provider, a plugin.
+ * Who wrote something: a person by hand, a session's agent (a thing it made), a thing (a share, a bot: it goes with
+ * it), a sign-in provider, a plugin.
  */
 export const Source = union([
 	obj({ kind: lit("person"), person: str() }),
@@ -99,7 +99,10 @@ export function partyKey(party: Party): string {
 	}
 }
 
-/** The key of `source`; a thing's, a provider's and a plugin's are the same texts as `managedByKey` makes (the cleanup matches them). */
+/**
+ * The key of `source`; a thing's, a provider's and a plugin's are the same texts as `managedByKey` makes (the cleanup
+ * matches them).
+ */
 export function sourceKey(source: Source): string {
 	switch (source.kind) {
 		case "person":

@@ -1,10 +1,10 @@
 // The one admission and what it derives from (`admitThing`, `Gives`, the store's handle in `AccessHandles`): a thing
 // held by a person or an agent has exactly the members its ticks give; a changed grant rebuilds that caller's object
 // once and its reference rebinds on the same hold, nobody else's; a denial carries its message; holding 40 things in
-// one workspace opens one `Gives` and no live query; a hold over a link (a client host's) is admitted alike; the index's reads and computations are counted; the kinds
-// registry changing (a kind's plugin reloaded) updates answers live, migrating older ticks or refusing them; reloads
-// of the things plugin and of a kind's plugin while things are held lose nothing; and the caches and handles let go of
-// what they were keyed by.
+// one workspace opens one `Gives` and no live query; a hold over a link (a client host's) is admitted alike; the
+// index's reads and computations are counted; the kinds registry changing (a kind's plugin reloaded) updates answers
+// live, migrating older ticks or refusing them; reloads of the things plugin and of a kind's plugin while things are
+// held lose nothing; and the caches and handles let go of what they were keyed by.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";

@@ -88,9 +88,7 @@ export type Motion = Static<typeof Motion>;
  */
 export const CanvasKind = defineThing("canvas.board", {
 	version: 1,
-	workspaces: "many",
 	makers: "anyone",
-	stacking: "all",
 	state: { name: str(), shapes: obj({ rows: arr(PlacedShape), moreAfter: bool() }) },
 	methods: {
 		more: method(),
@@ -107,7 +105,7 @@ export const CanvasKind = defineThing("canvas.board", {
 	},
 	events: { motion: Motion },
 	ticks: {
-		draw: { label: messages.message("tickDraw"), for: "all", gives: ["add", "remove", "export"] },
+		draw: { label: messages.message("tickDraw"), gives: ["add", "remove", "export"] },
 		moderate: { label: messages.message("tickModerate"), for: "people", gives: ["clear", "removeAny"] },
 		// Flag ticks (decision 97): rights that are no member, given by the ticks above or on their own.
 		export: { label: messages.message("tickExport") },
