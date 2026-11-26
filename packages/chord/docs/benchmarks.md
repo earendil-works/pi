@@ -1327,9 +1327,9 @@ sampling heap profiler, garbage included; 7 runs):
 
 | Case | before | after |
 | --- | --- | --- |
-| hold and release | 75.7 µs, 64.5 KiB | 62.8 µs, 50.2 KiB |
+| hold and release | 70.0 µs, 64.5 KiB | 59.9 µs, 49.0 KiB |
 | re-read, the same decision | 1.4 µs, 2.8 KiB | 0.7 µs, 0.7 KiB |
-| rebuild, another grant | 38.1 µs, 41.6 KiB | 35.1 µs, 33.7 KiB |
+| rebuild, another grant | 36.7 µs, 41.6 KiB | 30.6 µs, 32.8 KiB |
 
 An admission compares what it reads with what it read last, field by field, its names as bits of the version's grant
 indexes: no canonical text, no sort, no key. With 43 grants an equal re-read takes 0.7 µs (7.0 before), a changed one
@@ -1413,7 +1413,7 @@ ending +31, −35 and −9 KiB; a round's work peaks at 11 MiB). Every cache of 
 | member positions (`host/members.ts`) | a version's map of members | each name's position | with the version |
 | a consumer's granted sets (`remote/remote-object.ts`) | the version, then the grants' bits | the set, weakly | with the last binding that has it |
 | a plan's shape (`store/read-plan.ts`) | the named query | its last shape, weakly | with the last read that has it |
-| the encoder's buffer (`link/binary.ts`) | one per process | bytes of the last message, no value | one grown past 16 KiB is dropped after its message |
+| the encoder's buffer (`link/binary.ts`) | one per process | bytes of the last message up to 16 KiB, no value | never: at most 16 KiB; a larger message gets a buffer of its own, which is the message's |
 | the id buffers (`host/uuid.ts`) | one per process | 16 bytes and 36 character codes, reused for every id | never: fixed size |
 
 **Differences a plain application can observe:**
@@ -1423,10 +1423,10 @@ ending +31, −35 and −9 KiB; a round's work peaks at 11 MiB). Every cache of 
 - A list with `undefined` in an admission's value (`[undefined]`) is another value than `[]` (the canonical text made
   them equal): one more rebuild for an admission that alternates between the two.
 - `chord.data.walks` counts no walk when an admission's source hands the same decision object again.
-- A remote object's re-hold after a reconnect makes its params' text again (linear in their size: a 32 KB param 91
-  against 31 µs).
-- Internal types the package's declarations show changed shape: the store's `Read` (its constructor, `latest`,
-  `probed`), `ReadResult` (`kept`, `ids`), `ReadPlan.equalities`, `DecodedRows`, `QuerySpec.shapes`; an object's
+- A remote object's re-hold (after a reconnect, or when a route admits it again on the same link) makes its params'
+  text again (linear in their size: a 32 KB param 91 against 31 µs).
+- Internal types the package's declarations show changed shape: the store's `Read` (its constructor, its `sink` of
+  two arguments, `latest`, `probed`), `ReadResult` (`kept`, `ids`), `ReadPlan.equalities`, `DecodedRows`, `QuerySpec.shapes`; an object's
   `holders` is an `Iterable`.
 
-Lines: `packages/chord/src` +2,542 −911.
+Lines: `packages/chord/src` +2,568 −921.
