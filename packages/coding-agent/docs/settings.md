@@ -168,8 +168,6 @@ The built-in extensions are named `builtin:mcp`, `builtin:llama.cpp`, `builtin:c
 
 ## Updates, telemetry, and warnings
 
-For what Pi sends and how to turn it off, see [Telemetry](telemetry.md).
-
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `collapseChangelog` | boolean | `false` | Show a condensed changelog after an update. Also condenses extension package changelogs to one line per package. |
