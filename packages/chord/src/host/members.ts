@@ -274,14 +274,14 @@ class MemberValues<V> implements ReadonlyMap<string, V> {
 }
 
 /**
- * The values `valueOf` gives the members of `members` in the order this check iterates them, over their positions:
+ * The values `valueFor` gives the members of `members` in the order this check iterates them, over their positions:
  * the version's (one map per kind, `memberIndexes`) while they are that order, else made from this iteration's and
  * kept in their place (a contract's members change while a kept `evolve` editor changes them: positions are never
  * those of another order). The values in a list of their exact length (a list's first push reserves 16 more).
  */
 function memberValues<D, V>(
 	members: ReadonlyMap<string, D>,
-	valueOf: (member: string, data: D) => V,
+	valueFor: (member: string, data: D) => V,
 ): ReadonlyMap<string, V> {
 	const cached = memberIndexes.get(members);
 	const values: V[] = new Array(members.size);
@@ -289,7 +289,7 @@ function memberValues<D, V>(
 	// The names as iterated, once they left the cached positions (or there are none).
 	let names: string[] | undefined;
 	for (const [member, data] of members) {
-		values[count] = valueOf(member, data);
+		values[count] = valueFor(member, data);
 		if (names !== undefined) names.push(member);
 		else if (cached?.get(member) !== count) names = [...namesBefore(cached, count), member];
 		count++;

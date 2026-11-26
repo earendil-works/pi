@@ -1434,7 +1434,9 @@ export class ChordObject implements Target {
 		if (!this.#allowed) {
 			// An admitted object's first allow, or its first since a denial: presence lists its holders from now on (§19).
 			this.#allowed = true;
-			this.#holders.forEach((holder) => this.host.referenced(this, holder, this.#context));
+			this.#holders.forEach((holder) => {
+				this.host.referenced(this, holder, this.#context);
+			});
 		}
 		const { contributions } = attempt;
 		// A restart's kept contributions leave in the batch the new ones enter (F-c), so no reader sees a gap.
@@ -1786,7 +1788,9 @@ export class ChordObject implements Target {
 		this.#hasFirstOutcome = true;
 		this.#extras?.firstOutcome?.resolve();
 		if (this.#extras !== undefined) this.#extras.firstOutcome = undefined;
-		this.#holders.forEach((holder) => holder.dependent?.dependencyMoved());
+		this.#holders.forEach((holder) => {
+			holder.dependent?.dependencyMoved();
+		});
 	}
 
 	/** The chain of waits from this activation to `target` (see `Target`), through its parked attempt's dependencies. */
