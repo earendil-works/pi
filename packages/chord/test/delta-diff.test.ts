@@ -257,7 +257,7 @@ describe("immutable revision diff", () => {
 
 	it("reads a shifted window's items about twice, not eight times (ERNDL-1176, step 4: issue test 9)", () => {
 		// Before the shift's own path: a permutation's map, the positional pass, the identity anchors and their matches
-		// read 8n + 10 items of a window of n; now finding the shift and confirming it read 2n + 8.
+		// read 8n + 10 items of a window of n; now finding the shift and confirming it read 2n + 9.
 		for (const length of [50, 500]) {
 			const rows = Array.from({ length }, (_, id) => ({ id }));
 			let reads = 0;
@@ -273,27 +273,45 @@ describe("immutable revision diff", () => {
 				{ rows: counted([{ id: -1 }, ...rows.slice(0, -1)]) },
 			);
 			expect(operations).toHaveLength(2);
-			expect(reads).toBeLessThanOrEqual(2 * length + 8);
+			expect(reads).toBeLessThanOrEqual(2 * length + 9);
 		}
 	});
 
-	it("diffs every shift, rotation and near-shift into ops that give the new value (ERNDL-1176, step 4)", () => {
+	it("diffs every shift, rotation and near-shift, both ways, into ops that give the new value (ERNDL-1176, step 4)", () => {
 		let seed = 7;
+		// The high bits of a linear congruential generator: its low bits repeat with a short period.
 		const random = (below: number): number => {
 			seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
-			return seed % below;
+			return Math.floor(seed / 65_536) % below;
 		};
-		for (let round = 0; round < 500; round++) {
-			const length = 2 + random(30);
-			const rows = Array.from({ length }, (_, id) => ({ id }));
-			const k = 1 + random(length - 1);
-			const fresh = Array.from({ length: k }, (_, id) => ({ id: 1_000 + id }));
-			// New rows, rows that left coming back, or one of them a copy (equal, not the same object).
-			const came = [fresh, rows.slice(length - k), [...fresh.slice(1), { ...rows[0]! }]][random(3)]!;
-			const after = random(2) === 0 ? [...came, ...rows.slice(0, length - k)] : [...rows.slice(k), ...came];
-			if (random(4) === 0) after[random(length)] = { id: -1 };
+		for (const direction of ["down", "up"] as const) {
+			for (let round = 0; round < 500; round++) {
+				const length = 2 + random(30);
+				const rows = Array.from({ length }, (_, id) => ({ id }));
+				const k = 1 + random(length - 1);
+				const fresh = Array.from({ length: k }, (_, id) => ({ id: 1_000 + id }));
+				const left = direction === "down" ? rows.slice(length - k) : rows.slice(0, k);
+				// New rows, the rows that left coming back, some of each, or a copy of one (equal, not the same object).
+				const came = [fresh, left, [left[0]!, ...fresh.slice(1)], [...fresh.slice(1), { ...rows[0]! }]][random(4)]!;
+				const after = direction === "down" ? [...came, ...rows.slice(0, length - k)] : [...rows.slice(k), ...came];
+				if (random(4) === 0) after[random(length)] = { id: -1 };
+				const operations = diffRevisions({ rows }, { rows: after });
+				expect(applyImmutable({ rows }, operations)).toEqual({ rows: after });
+			}
+		}
+	});
+
+	it("keeps an edited one-row rotation narrow: no shift taken from the wrong end (ERNDL-1176, step 4 review, Astra)", () => {
+		const rows = Array.from({ length: 500 }, (_, id) => ({ id, label: "x".repeat(1024) }));
+		for (const after of [
+			[...rows.slice(1), rows[0]!],
+			[rows[499]!, ...rows.slice(0, 499)],
+		]) {
+			after[250] = { ...after[250]!, id: 999 };
 			const operations = diffRevisions({ rows }, { rows: after });
 			expect(applyImmutable({ rows }, operations)).toEqual({ rows: after });
+			// One row moved and one leaf edit: none of the other 498 rows is sent again.
+			expect(JSON.stringify(operations).length).toBeLessThan(2_000);
 		}
 	});
 

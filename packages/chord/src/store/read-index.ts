@@ -28,11 +28,6 @@ type Filing = {
 	readonly identities: readonly unknown[];
 	/** `undefined`: no result to rule a write out by; the read is unindexed until it has one. */
 	kept: readonly ReadonlySet<unknown>[] | undefined;
-	/**
-	 * When it was filed by the keys it keeps, last: under a key several reads keep, they are candidates in this order
-	 * (the order filing each anew gave), so a key a read keeps again is not touched to keep it last.
-	 */
-	stamp: number;
 };
 
 /**
@@ -42,8 +37,6 @@ type Filing = {
 export class ReadIndex implements KeptKeysWatcher {
 	readonly #tables = new Map<string, TableIndex>();
 	readonly #filings = new Map<Read, Filing>();
-	/** Counts the filings by kept keys: each one's `stamp`. */
-	#stamps = 0;
 
 	/** Files `read` under every table it uses: by its bucket on its own table when it has one, else unindexed. */
 	add(read: Read): void {
@@ -58,7 +51,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		const group = index.group(bucket.columns);
 		for (const id of bucket.identities) addTo(group.byValues, id, read);
 		// Filed by no keys yet: `kept` files it by its result, or as a candidate of every write while it has none.
-		this.#filings.set(read, { index, group, identities: bucket.identities, kept: NO_KEYS, stamp: 0 });
+		this.#filings.set(read, { index, group, identities: bucket.identities, kept: NO_KEYS });
 		read.watchKept(this);
 		this.kept(read);
 	}
@@ -84,8 +77,8 @@ export class ReadIndex implements KeptKeysWatcher {
 	/**
 	 * Re-files `read` by the keys it keeps now, unless they are the same sets (a run adopted after its group's step).
 	 * Only the sets that changed are walked: a set it kept and keeps (the same object) is filed already, a key of a set
-	 * it no longer keeps leaves unless another set keeps it, a key of a new set is added. Its new stamp makes it the
-	 * last candidate under every key it keeps, as filing it anew did.
+	 * it no longer keeps leaves unless another set keeps it, a key of a new set is added. Under a key several reads
+	 * keep, they stay candidates in the order they came to keep it.
 	 */
 	kept(read: Read): void {
 		const filing = this.#filings.get(read)!;
@@ -93,7 +86,6 @@ export class ReadIndex implements KeptKeysWatcher {
 		const before = filing.kept;
 		if (kept?.length === before?.length && (kept ?? NO_KEYS).every((keys, at) => keys === before![at])) return;
 		filing.kept = kept;
-		filing.stamp = ++this.#stamps;
 		const { index } = filing;
 		if (kept === undefined) {
 			for (const keys of before ?? NO_KEYS) for (const key of keys) removeFrom(index.kept, key, read);
@@ -130,7 +122,7 @@ export class ReadIndex implements KeptKeysWatcher {
 		const after = new Map<unknown, RowValues | undefined>();
 		for (const change of changes) {
 			const id = identityOf(key.map((name) => change.key[name]!));
-			this.#addKept(into, index.kept.get(id), change);
+			addChanges(into, index.kept.get(id), change);
 			if (change.kind === "delete" || index.groups.size === 0) continue;
 			let row = after.get(id);
 			if (!after.has(id)) {
@@ -146,16 +138,6 @@ export class ReadIndex implements KeptKeysWatcher {
 				addChanges(into, group.byValues.get(identity(group.columns, row)), change);
 		}
 		return index.unindexed;
-	}
-
-	/** Adds `change` to each read `filed` holds, in the order they were last filed by their kept keys (`stamp`). */
-	#addKept(into: Map<Read, KeyedChange[]>, filed: Filed | undefined, change: KeyedChange): void {
-		if (!(filed instanceof Set) || filed.size === 1) {
-			addChanges(into, filed, change);
-			return;
-		}
-		const stamp = (read: Read): number => this.#filings.get(read)!.stamp;
-		for (const read of [...filed].sort((a, b) => stamp(a) - stamp(b))) addChange(into, read, change);
 	}
 
 	#unkeep(read: Read, filing: Filing): void {

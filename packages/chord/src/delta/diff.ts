@@ -424,42 +424,26 @@ const diffArray = (before: JsonValue[], after: JsonValue[], path: Path, operatio
 
 /**
  * Emits the two ops of `after` as `before` shifted by k items, its items the same objects (`===`): k new ones in front
- * and its last k gone, or its first k gone and k new ones behind. Whether it was such a shift; the ops are the ones
- * the region diff makes for it. The items that left being the ones that came (a rotation) is a permutation, left to
- * `permutation`.
+ * and its last k gone, or its first k gone and k new ones behind. Whether it was such a shift. The ops are the ones
+ * the region diff makes when the items that came are new, correct ones otherwise. The first item that came (the
+ * last, shifted up) being one that left is no such shift: a rotation goes to `permutation`, an edited one to the
+ * region diff, which keeps what it can.
  */
 const shifted = (before: JsonValue[], after: JsonValue[], path: Path, operations: Op[]): boolean => {
 	const length = before.length;
 	const down = after.indexOf(before[0]!, 1);
-	if (down > 0 && sameRun(before, 0, after, down, length - down)) {
-		const came = after.slice(0, down);
-		if (sameItems(came, before.slice(length - down))) return false;
-		emitOperation(operations, ["p", path, 0, 0, came]);
+	if (down > 0 && !before.includes(after[0]!, length - down) && sameRun(before, 0, after, down, length - down)) {
+		emitOperation(operations, ["p", path, 0, 0, after.slice(0, down)]);
 		emitOperation(operations, ["p", path, length, down, []]);
 		return true;
 	}
 	const up = before.indexOf(after[0]!, 1);
-	if (up > 0 && sameRun(before, up, after, 0, length - up)) {
-		const came = after.slice(length - up);
-		if (sameItems(came, before.slice(0, up))) return false;
+	if (up > 0 && before.lastIndexOf(after[length - 1]!, up - 1) < 0 && sameRun(before, up, after, 0, length - up)) {
 		emitOperation(operations, ["p", path, 0, up, []]);
-		emitOperation(operations, ["p", path, length - up, 0, came]);
+		emitOperation(operations, ["p", path, length - up, 0, after.slice(length - up)]);
 		return true;
 	}
 	return false;
-};
-
-/** Whether `a` and `b` hold the same items (`===`), each as often, in any order. */
-const sameItems = (a: readonly JsonValue[], b: readonly JsonValue[]): boolean => {
-	if (a.length === 1) return a[0] === b[0];
-	const counts = new Map<JsonValue, number>();
-	for (const item of a) counts.set(item, (counts.get(item) ?? 0) + 1);
-	for (const item of b) {
-		const count = counts.get(item);
-		if (count === undefined || count === 0) return false;
-		counts.set(item, count - 1);
-	}
-	return true;
 };
 
 /** Whether `count` items of `before` from `from` are the items of `after` from `to`, the same objects. */

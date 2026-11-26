@@ -3820,6 +3820,14 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   context). The owner's own window (`self.query`) is not shared. Lists come next (their pages shared while their
   bookmarks are equal).
 
+- **The commit index files only the keys that come or go (owner, 2026-11-26; ERNDL-1176 step 4 and its review by Opus,
+  Astra and Fable):** a read's run is filed by walking only its key sets that changed (a set kept again, the same
+  object, is not walked). Under a key several reads keep, they are candidates in the order they came to keep it (the
+  filed set's own order): a read run again keeps its place, where the old filing moved it behind the others at each
+  run (two reads of 500 keys: 6,000 set changes per commit, now 0). Nothing observes the order otherwise (the oracle,
+  the list fuzz and the p3 suite pass); the one test pinning the old order states the new one. A per-filing stamp
+  that kept the old order was built and taken out: it sorted the reads of a shared key at every keyed change.
+
 - **A stall leaves no holder live and old (owner, 2026-11-24, decisions of that day item 5; spec `slice-15.md` §4,
   §8, built 2026-11-25):** reproduced across processes: a stalled host keeps its links (its late tick is no silence);
   its peers find it silent past `close` and close theirs, and their holders wait `loading` until a new link; none is
