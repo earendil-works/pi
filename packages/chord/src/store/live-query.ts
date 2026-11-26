@@ -203,20 +203,23 @@ export class DecodedRows {
 		return { columns, values: columns.map((column) => stored[column]!), row };
 	}
 
-	/** The columns of `stored` in its own order: the list of the row decoded last when it has the same. */
+	/**
+	 * The columns of `stored` as `for…in` enumerates them (its own and inherited enumerable ones, as the comparison of
+	 * two stored rows did): the list of the row decoded last when it has the same.
+	 */
 	#columnsOf(stored: StoredRead): readonly string[] {
 		const last = this.#columns;
 		let at = 0;
+		let same = true;
 		for (const column in stored) {
-			if (last[at] !== column) {
-				this.#columns = Object.keys(stored);
-				return this.#columns;
-			}
+			if (last[at] !== column) same = false;
 			at++;
 		}
-		if (at === last.length) return last;
-		this.#columns = Object.keys(stored);
-		return this.#columns;
+		if (same && at === last.length) return last;
+		const columns: string[] = [];
+		for (const column in stored) columns.push(column);
+		this.#columns = columns;
+		return columns;
 	}
 }
 

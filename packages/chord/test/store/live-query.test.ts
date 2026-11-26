@@ -11,9 +11,10 @@ import type { ChordError } from "../../src/data/index.ts";
 import { createHost, defineFacet, type FacetHost, type HostError, type StoreSelf } from "../../src/host/index.ts";
 import { eq } from "../../src/store/expression.ts";
 import { json } from "../../src/store/json-column.ts";
-import { LiveQuery } from "../../src/store/live-query.ts";
+import { DecodedRows, LiveQuery, type LiveTarget } from "../../src/store/live-query.ts";
 import { query } from "../../src/store/query.ts";
 import { Read } from "../../src/store/read.ts";
+import type { StoredRead } from "../../src/store/read-plan.ts";
 import { ReadRefresh, Reads } from "../../src/store/reads.ts";
 import type { Step } from "../../src/store/step.ts";
 import type { ChordStore } from "../../src/store/store.ts";
@@ -372,6 +373,23 @@ describe("memory", () => {
 		} finally {
 			Read.prototype.fetch = fetch;
 		}
+	});
+});
+
+describe("decoded rows", () => {
+	it("compares every column a stored row enumerates, inherited enumerable ones too (hot-path review)", () => {
+		// Astra, 4dae54b74: a backend's rows are any objects; one with an own `id` and an inherited `title`.
+		const Docs = defineTable("docs", { version: 1, columns: { id: str(), title: str() }, key: ["id"] });
+		const target: LiveTarget = {
+			spec: { query: query(Docs), table: "docs", projection: {}, owner: Docs },
+			decode: (stored) => ({ id: stored.id as string, title: stored.title as string }),
+		};
+		const stored = (title: string): StoredRead => Object.assign(Object.create({ title }), { id: "1" });
+		const rows = new DecodedRows();
+		expect(rows.decode([stored("one")], target, context)[0]).toEqual({ id: "1", title: "one" });
+		expect(rows.decode([stored("two")], target, context)[0]).toEqual({ id: "1", title: "two" });
+		const shown = rows.decode([stored("two")], target, context)[0];
+		expect(rows.decode([stored("two")], target, context)[0]).toBe(shown);
 	});
 });
 
