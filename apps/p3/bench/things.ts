@@ -1,16 +1,18 @@
 // The things plugin's numbers (ERNDL-1142) at the access bench's scenario S2 (RESULTS-6.md): Pi > Org > 5 teams > 20
-// projects > 2,000 sessions; 30 things in Pi, 3 per team, 2 per project, 3 per session; 50 persons, 10 groups, two
-// put into each team; each session's agent put into it. 100 sessions run: each agent holds every thing its session
-// gives it; 30 persons hold 15 things each. Every hold goes over an in-memory link from a client host of its own, as a
-// worker's and a page's do. Three variants, each in a process of its own, alternated:
-// - `plain`: the thing's object with no admission;
-// - `baseline`: the bench's variant 0: admitted by a derive over one shared local object per thing (Chord's
-//   admission, a reference and a derive per hold, no access model);
-// - `things`: the things admission (`admitThing` over `Gives` and the index).
-// Measured: the heap per held thing (after GC; server and clients together, one process), the index's reads while
-// the holds start, and in `things` a change at the root (one tick taken from the agents on one of Pi's things, then given
-// back: the commit with the index's work, and the last of its holders rebound), a leaf change, a new session.
-// Run from apps/p3 with Node 26: node --expose-gc --conditions=source --disable-warning=ExperimentalWarning bench/things.ts
+// projects > 2,000 sessions; 30 things in Pi, 3 per team, 2 per project, 3 per session; 50 persons, 10 groups, two put
+// into each team; each session's agent put into it. 100 sessions run: each agent holds every thing its session gives
+// it; 30 persons hold 15 things each. Every hold goes over an in-memory link from a client host of its own, as a
+// worker's and a page's do. Three variants, each in a process of its own, alternated: - `plain`: the thing's object
+// with no admission; - `baseline`: the bench's variant 0: admitted by a derive over one shared local object per thing
+// (Chord's admission, a reference and a derive per hold, no access model); - `things`: the things admission
+// (`admitThing` over `Gives` and the index). After the seed the things plugin is reloaded, so the holds start cold: its
+// index has nothing loaded. Measured: the heap per held thing (after GC; server and clients together, one process; in
+// `things` the index's loads included), the index's reads while the holds start (every workspace and person they need,
+// read once), and in `things` a change at the root (a tick given to the agents on one of Pi's things, then taken back:
+// the write as its caller waits for it, its transaction alone (`things.store.commit`) and the index's work after it
+// (`things.access.adopt`), and the last of its holders rebound), a change at a leaf (the same, and its holder rebound),
+// a new session. Run from apps/p3 with Node 26: node --expose-gc --conditions=source
+// --disable-warning=ExperimentalWarning bench/things.ts
 
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
@@ -35,7 +37,7 @@ import {
 	until,
 } from "@earendil-works/p3/v1";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
-import { Gives, ThingsStore } from "../plugins/things/contract.server.ts";
+import { Gives, type GrantInput, ThingsStore } from "../plugins/things/contract.server.ts";
 import { type Source, THING_PARAMS } from "../plugins/things/contract.ts";
 import { defineThing } from "../plugins/things/kind.ts";
 import thingsServer from "../plugins/things/server.ts";
@@ -120,7 +122,9 @@ const members = (thing: string) => ({
 /** The decision the baseline admits every caller with: every name of the kind. */
 const ALL = allow({ granted: [...Baseline.all], caller: { kind: "server" } });
 
-/** The plain object, and the baseline: admitted by a derive over one shared object per thing (the bench's variant 0). */
+/**
+ * The plain object, and the baseline: admitted by a derive over one shared object per thing (the bench's variant 0).
+ */
 const benchFacet = defineFacet((host) => {
 	host.serve(Plain, ({ thing }, _principal, _self) => members(thing));
 	host.serve(Shared, ({ thing }, _self) => ({ title: constant(thing) }));
@@ -155,12 +159,22 @@ async function measure(which: Variant): Promise<void> {
 		readyTimeout: 60_000,
 		onError: (error) => console.error(error),
 	});
-	await server.load(
-		[{ name: "@earendil-works/p3-things", facet: thingsServer }, BOARD, { name: "bench", facet: benchFacet }],
+	const plugins = [
+		{ name: "@earendil-works/p3-things", facet: thingsServer },
+		BOARD,
+		{ name: "bench", facet: benchFacet },
+	];
+	await server.load(plugins, context);
+	const { holders, piThings, sessions } = await seed(server, await server.get(ThingsStore, {}, context));
+	// The things plugin's next object: its index starts with nothing loaded (the seed loaded what the agents hold).
+	const report = await server.reload(
+		plugins.map((plugin) =>
+			plugin.name === "@earendil-works/p3-things" ? { ...plugin, facet: { ...plugin.facet } } : plugin,
+		),
 		context,
 	);
+	if (report.failed.length > 0) throw new Error("the reload failed", { cause: report.failed[0]!.error });
 	const things = await server.get(ThingsStore, {}, context);
-	const { holders, piThings, sessions } = await seed(server, things);
 	const clients: Host<P3Principal>[] = [];
 	for (const { principal } of holders) {
 		const [toServer, fromClient] = memoryLinkPair();
@@ -170,7 +184,6 @@ async function measure(which: Variant): Promise<void> {
 		await client.load([], context);
 		clients.push(client);
 	}
-	// The seed loaded the running sessions' workspaces (it asked what each agent is given); the persons load now.
 	const before = await heap();
 	const reads = counted("things.access.reads");
 	const start = performance.now();
@@ -190,7 +203,7 @@ async function measure(which: Variant): Promise<void> {
 	if (which === "things") {
 		result.coldReads = counted("things.access.reads") - reads;
 		result.queryRuns = counted("chord.query.runs");
-		Object.assign(result, await changes(things, held, piThings, sessions));
+		Object.assign(result, await changes(things, telemetry, held, piThings, sessions));
 	}
 	for (const { ref } of held) ref.release();
 	for (const client of clients) await client.close(context);
@@ -257,69 +270,118 @@ async function seed(server: Host<P3Principal>, things: Reference<typeof ThingsSt
 	return { holders, piThings, sessions };
 }
 
-/** The changes, timed: at the root (one of Pi's things, the agents' Draw taken and given back), a leaf, a new session. */
+/**
+ * The changes, timed: at the root (one of Pi's things, the agents' Draw given and taken back), a leaf, a new session.
+ */
 async function changes(
 	things: Reference<typeof ThingsStore>,
+	telemetry: InMemoryTelemetryContext,
 	held: readonly { principal: P3Principal; thing: string; ref: Reference<typeof Board.contract> }[],
 	piThings: readonly string[],
 	sessions: readonly { id: string; things: string[] }[],
 ): Promise<Record<string, number>> {
 	const plugin: Source = { kind: "plugin", plugin: "p3-test-board" };
+	const bench: Source = { kind: "plugin", plugin: "bench" };
 	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+	/** The last value histogram `name` recorded since the write that began at measurement `since`. */
+	const recorded = (name: string, since: number) =>
+		telemetry
+			.getMetrics()
+			.slice(since)
+			.filter((metric) => metric.name === name)
+			.at(-1)!.value;
+	/** One write of `grant` by `source`, timed, then `holders` waited for until `done` says each rebound. */
+	const timed = async (
+		source: Source,
+		grant: GrantInput,
+		holders: readonly Reference<typeof Board.contract>[],
+		done: (ref: Reference<typeof Board.contract>) => boolean,
+	) => {
+		const since = telemetry.getMetrics().length;
+		const t0 = performance.now();
+		await things.setGrants({ source, grants: [grant] }, context);
+		const write = performance.now() - t0;
+		for (const ref of holders) await until(ref.state, (state) => state.kind === "live" && done(ref), context);
+		return {
+			write,
+			commit: recorded("things.store.commit", since),
+			adopt: recorded("things.access.adopt", since),
+			last: performance.now() - t0,
+		};
+	};
+	const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!;
+	/** The medians of `runs`, each key prefixed by `prefix`. */
+	const medians = (prefix: string, runs: readonly Record<string, number>[]) =>
+		Object.fromEntries(
+			Object.keys(runs[0]!).map((key) => [
+				`${prefix}${key[0]!.toUpperCase()}${key.slice(1)}Ms`,
+				median(runs.map((run) => run[key]!)),
+			]),
+		);
 	const target = piThings[0]!;
 	const affected = held.filter(({ principal, thing }) => principal.kind === "worker" && thing === target);
-	const commits: number[] = [];
-	const lasts: number[] = [];
+	const roots: Record<string, number>[] = [];
 	for (let round = 0; round < 10; round++) {
-		const ticks = round % 2 === 0 ? ["read", "write"] : ["read", "write", "draw"];
-		const t0 = performance.now();
+		// The kind's row of Draw for the agents written, then removed.
+		const wanted = round % 2 === 0;
 		const grant = {
 			workspace: pi,
 			thing: target,
 			party: { kind: "agents" } as const,
-			gives: true,
-			ticks,
-			takenAway: [],
+			tick: "draw",
+			...(wanted ? { gives: true } : {}),
 		};
-		await things.setGrants({ source: plugin, grants: [grant] }, context);
-		commits.push(performance.now() - t0);
-		const wanted = ticks.includes("draw");
-		for (const { ref } of affected) {
-			await until(ref.state, (state) => state.kind === "live" && (ref.draw !== undefined) === wanted, context);
-		}
-		lasts.push(performance.now() - t0);
+		roots.push(
+			await timed(
+				plugin,
+				grant,
+				affected.map(({ ref }) => ref),
+				(ref) => (ref.draw !== undefined) === wanted,
+			),
+		);
 	}
 	const leaf = sessions[0]!;
-	const leaves: number[] = [];
+	const leafHolder = held.find(
+		({ principal, thing }) =>
+			principal.kind === "worker" && principal.session === leaf.id && thing === leaf.things[0],
+	);
+	const leaves: Record<string, number>[] = [];
 	for (let round = 0; round < 10; round++) {
-		const t0 = performance.now();
+		// The kind's Read withheld from the agents by the bench (they stay in, with no tick), then the row removed.
+		const wanted = round % 2 === 1;
 		const grant = {
 			workspace: leaf.id,
 			thing: leaf.things[0]!,
 			party: { kind: "agents" } as const,
-			gives: true,
-			ticks: round % 2 === 0 ? [] : ["read"],
-			takenAway: [],
+			tick: "read",
+			...(wanted ? {} : { gives: false }),
 		};
-		await things.setGrants({ source: plugin, grants: [grant] }, context);
-		leaves.push(performance.now() - t0);
+		leaves.push(
+			await timed(
+				bench,
+				grant,
+				leafHolder === undefined ? [] : [leafHolder.ref],
+				(ref) => (ref.read !== undefined) === wanted,
+			),
+		);
 	}
 	const project = (await things.workspaces.one.page({ workspace: leaf.id }, 1, context)).items[0]!.parent;
 	const news: number[] = [];
-	const by: Source = { kind: "plugin", plugin: "bench" };
 	for (let round = 0; round < 10; round++) {
 		const t0 = performance.now();
-		const id = await things.createWorkspace({ kind: "things.workspace", name: "new", parent: project, by }, context);
-		await things.putParty({ workspace: id, party: { kind: "agent", session: id }, source: by }, context);
-		for (let i = 0; i < 3; i++) await things.create({ kind: Board.name, name: "t", workspace: id, by }, context);
+		const id = await things.createWorkspace(
+			{ kind: "things.workspace", name: "new", parent: project, by: bench },
+			context,
+		);
+		await things.putParty({ workspace: id, party: { kind: "agent", session: id }, source: bench }, context);
+		for (let i = 0; i < 3; i++)
+			await things.create({ kind: Board.name, name: "t", workspace: id, by: bench }, context);
 		news.push(performance.now() - t0);
 	}
-	const median = (values: number[]) => values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)]!;
 	return {
 		rootHolders: affected.length,
-		rootCommitMs: median(commits),
-		rootLastHolderMs: median(lasts),
-		leafChangeMs: median(leaves),
+		...medians("root", roots),
+		...medians("leaf", leaves),
 		newSessionMs: median(news),
 	};
 }
