@@ -32,7 +32,7 @@ export default defineFacet((host, self) => {
 			if (by.kind === "agent") throw invalid("args", "providers: a login is made by a person, never an agent");
 			// Only its maker's own finished sign-in: a person's from their page, the server's for its own logins.
 			const flows = await ctx.get(SignIns, { owner: ownerOf(by) });
-			await flows.adopt({ attempt: attemptOf(input), thing }, ctx);
+			await flows.adopt({ attempt: input.attempt, thing }, ctx);
 		},
 		delete: async (thing, ctx) => {
 			await (await ctx.get(LoginStore, {})).remove({ thing }, ctx);
@@ -55,13 +55,6 @@ export default defineFacet((host, self) => {
 		},
 	});
 });
-
-/** The attempt id of a create step's input: wire input from the person's page, checked here. */
-function attemptOf(input: unknown): string {
-	const attempt = typeof input === "object" && input !== null ? (input as { attempt?: unknown }).attempt : undefined;
-	if (typeof attempt !== "string") throw invalid("args", "providers: a login needs a finished sign-in");
-	return attempt;
-}
 
 /** A login as everyone admitted sees it, live: its row, and its provider's name and its account's models. */
 function loginOf(

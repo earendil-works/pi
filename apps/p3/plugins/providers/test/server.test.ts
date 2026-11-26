@@ -542,7 +542,7 @@ describe("who gets the request auth", () => {
 		const first = await session("s1");
 		const second = await session("s2");
 		const thing = await serverLogin(first.workspace, FAUX_PROVIDER, { type: "api_key", key: keyOf(SCRIPT) });
-		await things.link({ workspace: second.workspace, thing, by: BY }, context);
+		await things.link({ workspace: second.workspace, thing }, context);
 		await things.setGrants(
 			{
 				source: BY,

@@ -84,6 +84,7 @@ export const LoginKind = defineThing("providers.login", {
 	methods: { authorize: method(obj({}), RequestAuth) },
 	ticks: { use: { label: messages.message("tickUse"), for: "agents", gives: ["authorize", "catalog"] } },
 	defaultGrants: { agents: ["use"] },
+	create: { input: obj({ attempt: str() }) },
 });
 
 /** One login held in a workspace: `LoginKind`'s contract. */
