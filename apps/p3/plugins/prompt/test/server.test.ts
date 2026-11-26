@@ -7,7 +7,7 @@
 // message; the setting dropped with the thing.
 
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -254,5 +254,49 @@ describe("a set of skills", () => {
 			(count) => count === 0,
 		);
 		await store.clearSkills({ thing }, context);
+	});
+
+	it("follows a configured folder after its first creation (Astra, round 1)", async () => {
+		await writeSkill("existing", "old", "before");
+		const thing = await setIn("existing");
+		const set = await t.host.get(SkillSet, { thing }, context);
+		await until(set.skills, (list) => list.length === 1, within("loaded", context));
+		await store.configureSkills({ thing, folder: "later" }, context);
+		await until(set.skills, (list) => list.length === 0, within("new path initially empty", context));
+		await writeSkill("later", "new", "after");
+		await until(set.skills, (list) => list.length === 1, within("first skill in created folder", context));
+		set.release();
+	});
+
+	it("has no skills and no watcher without a folder (Opus, round 1)", async () => {
+		await writeSkill("", "root-level", "at the root");
+		const thing = await things.create({ kind: SkillsKind.name, name: "none", workspace: pi, by: BY }, context);
+		const before = watchers();
+		const set = await t.host.get(SkillSet, { thing }, context);
+		assert.deepEqual(set.skills.value, []);
+		assert.equal(watchers(), before);
+		await refused(set.read({ name: "root-level" }, context), "invalid");
+		set.release();
+	});
+
+	it("reads only files inside its own folder, links resolved (Astra, round 1)", async () => {
+		await writeSkill("coding", "release", "Cut a release");
+		await writeSkill("other", "secret", "Another set's");
+		await mkdir(join(root, "..", "outside", "escape"), { recursive: true });
+		await writeFile(join(root, "..", "outside", "escape", "SKILL.md"), "---\ndescription: outside\n---\n");
+		// A skill folder linked to another set's skill, and one linked out of the root; a SKILL.md linked out.
+		await symlink(join(root, "other", "secret"), join(root, "coding", "borrowed"));
+		await symlink(join(root, "..", "outside", "escape"), join(root, "coding", "escaped"));
+		await mkdir(join(root, "coding", "linked"));
+		await symlink(join(root, "..", "outside", "escape", "SKILL.md"), join(root, "coding", "linked", "SKILL.md"));
+		const thing = await setIn("coding");
+		await holding(Skills, thing, async (skills, ctx) => {
+			await until(skills.skills, (list) => list.length > 0, within("the folder's skills", ctx));
+			assert.deepEqual(
+				skills.skills.value.map(({ name }) => name),
+				["release"],
+			);
+			for (const name of ["borrowed", "escaped", "linked"]) await refused(skills.read!({ name }, ctx), "invalid");
+		});
 	});
 });

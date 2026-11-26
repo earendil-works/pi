@@ -150,4 +150,20 @@ describe("the agent's skills", () => {
 		delete (pi.ref as { read?: unknown }).read;
 		await assert.rejects(read(extension, "release"), (error) => isChordError(error) && error.code === "forbidden");
 	});
+
+	it("reuses an unchanged 100-skill section, reading no skill again (Astra, round 1)", async () => {
+		let descriptions = 0;
+		const many = Array.from({ length: 100 }, (_, i) => ({
+			name: `skill${i}`,
+			get description() {
+				descriptions++;
+				return "example";
+			},
+		}));
+		const extension = skills(set("pi", { value: many }));
+		const text = await section(extension);
+		descriptions = 0;
+		assert.equal(await section(extension), text);
+		assert.equal(descriptions, 0);
+	});
 });

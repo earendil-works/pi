@@ -53,28 +53,63 @@ function skillsPart(things: readonly HeldSet[]) {
 	// Use gives `read`: a set the agent is let in to without it lists nothing.
 	const usable = things.filter(({ ref }) => ref.granted.has("read"));
 	if (usable.length === 0) return {};
-	return { extension: { tools: [readTool(usable)], sections: [{ key: "skills", render: () => listed(usable) }] } };
+	const index = new SkillsIndex(usable);
+	return {
+		extension: { tools: [readTool(index)], sections: [{ key: "skills", render: () => index.section() }] },
+	};
 }
 
-/** The skills of `sets` by name, each from the closest set that has it (held last), the closest set's first. */
-function skillsOf(sets: readonly HeldSet[]): Map<string, { readonly set: HeldSet; readonly skill: Skill }> {
-	const named = new Map<string, { readonly set: HeldSet; readonly skill: Skill }>();
-	for (const set of sets.toReversed()) {
-		for (const skill of set.ref.skills.value) if (!named.has(skill.name)) named.set(skill.name, { set, skill });
+/** A skill and the set that owns its name. */
+type Owned = { readonly set: HeldSet; readonly skill: Skill };
+
+/**
+ * The skills of a part's sets by name, each from the closest set that has it (held last), and the section listing
+ * them: built again only when one of the sets' lists is a new array (a list unchanged keeps its identity), so an
+ * unchanged prompt reads no skill again.
+ */
+class SkillsIndex {
+	readonly #sets: readonly HeldSet[];
+	#lists: readonly (readonly Skill[])[] = [];
+	#named: ReadonlyMap<string, Owned> = new Map();
+	#section: string | undefined;
+
+	/** The index of `sets`, built at first use. */
+	constructor(sets: readonly HeldSet[]) {
+		this.#sets = sets;
 	}
-	return named;
-}
 
-/** The skills section: the skills by name and description; none: no section. */
-function listed(sets: readonly HeldSet[]): string | undefined {
-	const skills = [...skillsOf(sets).values()];
-	if (skills.length === 0) return undefined;
-	const lines = skills.map(({ skill }) => `- ${skill.name}: ${skill.description}`);
-	return `Skills you can read with skills_read when a task matches one:\n${lines.join("\n")}`;
+	/** The owner of skill `name`, or `undefined`. */
+	get(name: string): Owned | undefined {
+		this.#refresh();
+		return this.#named.get(name);
+	}
+
+	/** The skills section: the skills by name and description; none: no section. */
+	section(): string | undefined {
+		this.#refresh();
+		return this.#section;
+	}
+
+	/** Builds the index again when a set's list changed since. */
+	#refresh(): void {
+		const lists = this.#sets.map(({ ref }) => ref.skills.value);
+		if (lists.length === this.#lists.length && lists.every((list, at) => list === this.#lists[at])) return;
+		this.#lists = lists;
+		const named = new Map<string, Owned>();
+		for (const set of this.#sets.toReversed()) {
+			for (const skill of set.ref.skills.value) if (!named.has(skill.name)) named.set(skill.name, { set, skill });
+		}
+		this.#named = named;
+		const lines = [...named.values()].map(({ skill }) => `- ${skill.name}: ${skill.description}`);
+		this.#section =
+			lines.length === 0
+				? undefined
+				: `Skills you can read with skills_read when a task matches one:\n${lines.join("\n")}`;
+	}
 }
 
 /** The tool `skills_read`: one skill's text and files as JSON, from the set that owns its name. */
-function readTool(sets: readonly HeldSet[]) {
+function readTool(index: SkillsIndex) {
 	return defineTool({
 		name: "skills_read",
 		description:
@@ -83,7 +118,7 @@ function readTool(sets: readonly HeldSet[]) {
 		parameters: obj({ name: str() }),
 		replay: "safe",
 		execute: async ({ name }, _api, context) => {
-			const owner = skillsOf(sets).get(name);
+			const owner = index.get(name);
 			if (owner === undefined)
 				throw invalid("args", `prompt: no skill ${JSON.stringify(name)} (see the skills list)`);
 			// The held reference's `read` is there while Use is granted: withheld since, it is gone.

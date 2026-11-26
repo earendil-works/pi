@@ -65,7 +65,9 @@ describe("the agent's tools for the boards it holds", () => {
 	it("draws through the held reference", async () => {
 		const drawn: Shape[][] = [];
 		const extension = given(board("b1", "Plan", true, drawn));
-		assert.equal(await run(extension, "canvas_draw", { canvas: "b1", shapes: [RECT] }), "drew 1 shape(s): b1-0");
+		assert.deepEqual(JSON.parse(await run(extension, "canvas_draw", { canvas: "b1", shapes: [RECT] })), {
+			ids: ["b1-0"],
+		});
 		assert.deepEqual(drawn, [[RECT]]);
 	});
 
