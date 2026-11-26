@@ -756,7 +756,7 @@ describe("the binary codec", () => {
 		expect((process.memoryUsage().arrayBuffers - before) / 4).toBeLessThan(1.6 * length);
 	});
 
-	it("allocates under two frames for a state of 256 failed members with 1 KiB errors (review of 98a93c706)", () => {
+	it("allocates no more than the base for a state of 256 failed members with 1 KiB errors (review of 98a93c706)", () => {
 		const gc = runInNewContext("gc") as () => void;
 		const failed = Array.from({ length: 256 }, (_, member) => ({
 			member,
@@ -772,8 +772,33 @@ describe("the binary codec", () => {
 		gc();
 		const before = process.memoryUsage().arrayBuffers;
 		for (let index = 0; index < 4; index++) binaryCodec.encode(frame);
-		// Grown by exactly each error once sized, the frame so far was copied 256 times: 31 frames.
-		expect((process.memoryUsage().arrayBuffers - before) / 4).toBeLessThan(2 * length);
+		// Grown by exactly each error once sized, the frame so far was copied 256 times: 31 frames (the base 4.4; the
+		// errors are not estimated, so a shortfall doubles).
+		expect((process.memoryUsage().arrayBuffers - before) / 4).toBeLessThan(4.5 * length);
+	});
+
+	it("encodes a failure whose error is null or missing as the base did: the estimate reads no error (review of 46f7f5f2e)", () => {
+		const state = (error: unknown, ops: string): Message => ({
+			kind: "state",
+			// Any JSON may come from a peer there (the schema's unknown), decoded by the text codec as it is.
+			holds: [
+				{
+					hold: 1,
+					members: ops === "" ? [] : [{ member: 1, ops }],
+					retired: [],
+					failed: [{ member: 0, error: error as never }],
+				},
+			],
+		});
+		const nullError = [6, 1, 1, 0, 2, 0, 29, ...new TextEncoder().encode('{"kind":"chord","error":null}')];
+		expect([...binaryCodec.encode(state({ kind: "chord", error: null }, ""))]).toEqual(nullError);
+		expect(binaryCodec.decode(binaryCodec.encode(state({ kind: "chord" }, "")))).toEqual(
+			state({ kind: "chord" }, ""),
+		);
+		// Past the kept buffer too (a buffer of its own, estimated).
+		const large = state({ kind: "chord", error: null }, JSON.stringify("x".repeat(20_000)));
+		const decoded = binaryCodec.decode(binaryCodec.encode(large)) as Extract<Message, { kind: "state" }>;
+		expect(decoded.holds[0]!.failed).toEqual([{ member: 0, error: { kind: "chord", error: null } }]);
 	});
 
 	it("refuses invalid UTF-8 in strings", () => {
