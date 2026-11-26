@@ -31,8 +31,10 @@ import {
 	takesNoArgs,
 } from "../../src/contracts/internal.ts";
 import { bindProvider, checkParams } from "../../src/data/internal.ts";
-import type { Watchable } from "../../src/state/index.ts";
-import { expectCollected, Server } from "../support.ts";
+import { allow, createHost, defineFacet } from "../../src/host/index.ts";
+import { binaryCodec, type Codec, memoryLinkPair } from "../../src/link/index.ts";
+import { constant, type Watchable } from "../../src/state/index.ts";
+import { expectCollected, Server, type TestPrincipal } from "../support.ts";
 
 const Notes = remote("notes", {
 	version: 1,
@@ -104,7 +106,9 @@ describe("granted members and indexes", () => {
 		expect([...grantedMembers(version, new Set(["clear"])).methods.keys()]).toEqual(["clear"]);
 		const indexes = grantIndexes(version, granted);
 		expect(indexes).toEqual([0, 1]);
-		expect(grantIndexes(version, granted)).toBe(indexes);
+		// A list of the caller's own each time: a message's codec may write it.
+		const again = grantIndexes(version, granted);
+		expect([again, again === indexes]).toEqual([[0, 1], false]);
 		expect(grantIndexes(version, new Set(["clear", "add"]))).toEqual([0, 1]);
 		expect(grantIndexes(version, new Set(["clear", "other"]))).toEqual([1]);
 	});
@@ -213,5 +217,60 @@ describe("derived types", () => {
 
 	it("ParamsOf: the params object", () => {
 		expectTypeOf<ParamsOf<typeof Notes>>().toEqualTypeOf<{ readonly session: string; readonly page: number }>();
+	});
+});
+
+// Found by the review of the hot-path pass (2026-11-26): grantIndexes handed every bind of a set one shared list.
+describe("granted indexes in bound messages", () => {
+	it("a codec that clears the lists it sent does not change what later binds grant", async () => {
+		const Thing = remote("codec.granted", {
+			version: 1,
+			params: { n: int() },
+			hostAddress: () => Server(),
+			state: { name: str() },
+			flags: { export: "Export" },
+		});
+		const lists: unknown[] = [];
+		const clearing: Codec = {
+			name: binaryCodec.name,
+			encode(message) {
+				const bytes = binaryCodec.encode(message);
+				if (message.kind === "bound") {
+					for (const entry of message.holds) {
+						lists.push(entry.granted);
+						(entry.granted as number[]).length = 0;
+					}
+				}
+				return bytes;
+			},
+			decode: (bytes) => binaryCodec.decode(bytes),
+		};
+		const server = createHost<TestPrincipal>({ address: Server(), principal: { kind: "server" }, onError: () => {} });
+		await server.load(
+			[
+				{
+					name: "@test/codec",
+					facet: defineFacet<TestPrincipal>((host) =>
+						host.serve(Thing, () => ({ name: constant("n") }), {
+							admit: () => constant(allow({ granted: ["export"] })),
+						}),
+					),
+				},
+			],
+			BACKGROUND_CONTEXT,
+		);
+		const client = createHost<TestPrincipal>({ onError: () => {} });
+		await client.load([], BACKGROUND_CONTEXT);
+		const links = memoryLinkPair();
+		server.accept(links[0], { principal: { kind: "owner" }, codec: clearing }, BACKGROUND_CONTEXT);
+		client.connect(links[1], { principal: { kind: "server" }, codec: binaryCodec }, BACKGROUND_CONTEXT);
+		const first = await client.get(Thing, { n: 1 }, BACKGROUND_CONTEXT);
+		const second = await client.get(Thing, { n: 2 }, BACKGROUND_CONTEXT);
+		expect([...first.granted]).toEqual(["export"]);
+		expect([...second.granted]).toEqual(["export"]);
+		expect(lists.length).toBeGreaterThanOrEqual(2);
+		expect(lists[0]).not.toBe(lists[1]);
+		await client.close(BACKGROUND_CONTEXT);
+		await server.close(BACKGROUND_CONTEXT);
 	});
 });
