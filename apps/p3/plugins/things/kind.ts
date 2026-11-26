@@ -21,6 +21,7 @@ import {
 	nul,
 	num,
 	obj,
+	oneOf,
 	opt,
 	remote,
 	type Schema,
@@ -37,7 +38,13 @@ import { messages } from "./messages.ts";
  * Whom a tick can be given: the agents (the agents party, one session's agent), people (everyone, groups, persons), or
  * both.
  */
-export type TickFor = "agents" | "people" | "all";
+export const TickFor = oneOf("agents", "people", "all");
+
+/**
+ * Whom a tick can be given: the agents (the agents party, one session's agent), people (everyone, groups, persons), or
+ * both.
+ */
+export type TickFor = Static<typeof TickFor>;
 
 /**
  * A tick as a kind declares it: its label, whom it is for, and the members and flag ticks it gives; without `gives` it
@@ -135,7 +142,7 @@ export const KindView = obj({
 			name: str(),
 			// A message as data (Chord's `MessageSchema`, which `/v1` does not export).
 			label: obj({ namespace: str(), key: str(), params: arr(union([str(), num(), bool(), nul()])) }),
-			for: union([lit("agents"), lit("people"), lit("all")]),
+			for: TickFor,
 		}),
 	),
 	defaultGrants: obj({ everyone: opt(arr(str())), agents: opt(arr(str())), guests: opt(arr(str())) }),
