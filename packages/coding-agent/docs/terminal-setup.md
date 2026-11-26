@@ -267,14 +267,20 @@ The command is the one Pi prints when you quit, such as `pi --session <id>`, run
 
 Pi updates the command when you start, resume, or fork a session, and once a new session has its first message. It removes the command while a new session has no messages, when you quit (`Ctrl+D`, `Ctrl+C` twice, `/quit`), and, if Pi was started with flags, when you open a session from another directory, because relative paths in the flags would point elsewhere. When the terminal closes or restarts, Pi keeps it.
 
-The terminal resumes a command only if a rule trusts it, so each command shape needs its own rule, with flags in the order you type them. For Rex:
+The terminal resumes a command only if a rule trusts it. Rex rules with a `flags` table do not work for Pi yet (Node overwrites the command line Rex checks them against), so add one rule per flag combination you use, with the flags in the order you type them. In Rex's `init.lua`:
 
 ```lua
-rex.set("resume.trust.pi_readonly", {
-	command = { "pi", "--session", rex.match.uuid, "-t", "read,grep,find,ls" },
-})
+local function trust_pi(name, ...)
+	rex.set("resume.trust.pi_" .. name, {
+		command = { "pi", "--session", rex.match.uuid, ... },
+	})
+end
+
+trust_pi("plain")
+trust_pi("readonly", "-t", "read,grep,find,ls")
+trust_pi("readonly_noext", "-t", "read,grep,find,ls", "--no-extensions")
 ```
 
-Rex rules with a `flags` table do not work for Pi yet: Node overwrites the command line Rex checks them against.
+A Pi started with a combination no rule lists comes back as a plain shell, not without its flags. With `--agent-dir` or `--session-dir`, put them before `--session` in `command`, as Pi reports them.
 
 Pi removes `OSC7577_TOKEN` from its own environment at startup, so shells, editors, and extension processes it starts cannot replace its command or register commands of their own. Whether and when the terminal resumes a command is up to the terminal.
