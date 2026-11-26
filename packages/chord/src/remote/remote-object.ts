@@ -86,19 +86,19 @@ function eventNodes(members: readonly string[]): (member: string) => EventNode |
 const NO_EVENT_NODES = (): undefined => undefined;
 
 /**
- * The set of `names` (`version`'s grants at `indexes`): one per version and grant while a binding has it, shared by
+ * The set of `version`'s grants at `indexes`: one per version and grant while a binding has it, shared by
  * every remote object of the version granted the same, so the members granted it are found by the set's identity
  * (`grantedMembers`), not rebuilt per binding; its references' `granted` is that one set, read-only by convention (as
  * the provider's sets are shared per decision). Kept weakly: gone once no binding has it, its slot with it, all of
  * them with the version. Indexes as the provider sends them, ascending, into at most 30 grants (a bit set in a small integer);
  * others get a set of their own in their order, as before.
  */
-function grantedSet(version: VersionData, indexes: readonly number[], names: readonly string[]): ReadonlySet<string> {
-	if (version.grants.length > 30) return new Set(names);
+function grantedSet(version: VersionData, indexes: readonly number[]): ReadonlySet<string> {
+	if (version.grants.length > 30) return namedSet(version, indexes);
 	let bits = 0;
 	for (let at = 0; at < indexes.length; at++) {
 		const index = indexes[at]!;
-		if (at > 0 && index <= indexes[at - 1]!) return new Set(names);
+		if (at > 0 && index <= indexes[at - 1]!) return namedSet(version, indexes);
 		bits |= 1 << index;
 	}
 	let sets = grantedSets.get(version);
@@ -108,12 +108,17 @@ function grantedSet(version: VersionData, indexes: readonly number[], names: rea
 	}
 	let set = sets.get(bits)?.deref();
 	if (set === undefined) {
-		set = new Set(names);
+		set = namedSet(version, indexes);
 		const ref = new WeakRef(set);
 		sets.set(bits, ref);
 		collectedSets.register(set, { sets, bits, ref });
 	}
 	return set;
+}
+
+/** A new set of `version`'s grants at `indexes`, in their order (the caller checked that each names a grant). */
+function namedSet(version: VersionData, indexes: readonly number[]): Set<string> {
+	return new Set(indexes.map((index) => version.grants[index]!));
 }
 
 /** A version's granted sets by their indexes' bits, each while a binding has it. */
@@ -587,20 +592,22 @@ export class RemoteObject implements Target {
 		// The snapshot by member index, applied in the entry's order (values, then failures); a list and no map of
 		// names, which cost 0.5 KiB per binding with its iteration.
 		const snapshots: (MemberSnapshot | undefined)[] = new Array(names.state.length);
-		const order: number[] = [];
+		// Exactly one per member once complete (a list grown by push reserves 17 slots).
+		const order: number[] = new Array(names.state.length);
+		let added = 0;
 		const add = (index: number, state: MemberSnapshot): void => {
 			if (names.state[index] === undefined || snapshots[index] !== undefined) {
 				throw new Error(`hold ${entry.hold}: member ${index} in bound`);
 			}
 			snapshots[index] = state;
-			order.push(index);
+			order[added++] = index;
 		};
 		// Fresh JSON from the link: state is JSON and never validated (§30).
 		for (const { member, value } of entry.members) {
 			add(member, { kind: "value", value: parsePart(link.openPart(value, link.limits, link.context)) as JsonValue });
 		}
 		for (const { member, error } of entry.failed) add(member, { kind: "failed", error: errorFromWire(error) });
-		if (order.length !== names.state.length) throw new Error(`hold ${entry.hold}: the snapshot misses a member`);
+		if (added !== names.state.length) throw new Error(`hold ${entry.hold}: the snapshot misses a member`);
 		return () => this.#adoptBound(granted, data.methods, names, snapshots, order);
 	}
 
@@ -645,17 +652,20 @@ export class RemoteObject implements Target {
 	 * last binding's set when equal, so a re-hold granted the same changes nothing a UI compares (`useLive`).
 	 */
 	#grantedFrom(entry: BoundEntry): ReadonlySet<string> {
-		if (entry.granted.length === 0) return NO_GRANTS;
+		const indexes = entry.granted;
+		if (indexes.length === 0) return NO_GRANTS;
 		const version = currentVersion(this.contract);
 		const { grants } = version;
-		const names = entry.granted.map((index) => {
-			const name = grants[index];
-			if (name === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
-			return name;
-		});
+		for (const index of indexes) {
+			if (grants[index] === undefined) throw new Error(`hold ${entry.hold}: no grant ${index} in bound`);
+		}
 		const last = this.#bound?.granted;
-		if (last !== undefined && last.size === names.length && names.every((name) => last.has(name))) return last;
-		return grantedSet(version, entry.granted, names);
+		if (last !== undefined && last.size === indexes.length) {
+			let same = true;
+			for (const index of indexes) same &&= last.has(grants[index]!);
+			if (same) return last;
+		}
+		return grantedSet(version, indexes);
 	}
 
 	/** After a `bound` message's batch: the reference goes live (its parked calls are sent, a parked dependent goes on). */
