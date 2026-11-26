@@ -615,3 +615,35 @@ describe("a named query's shape, shared (hot-path pass)", () => {
 		await expectCollected(shape);
 	});
 });
+
+describe("a plan's statement texts (hot-path review)", () => {
+	it("finds a probe's text about as fast among thousands of shapes as among a few", () => {
+		// astra2, ccd99ec5c: every probe scanned every text rendered so far (4,960 three-column probe shapes: 15 times
+		// slower). Past a few the texts are found in a map; the guard is a ratio of two timings in one process.
+		const names = Array.from({ length: 32 }, (_, at) => `v${at}`);
+		const Readings = defineTable("readings", {
+			version: 1,
+			columns: Object.fromEntries(names.map((name) => [name, int()])),
+			key: ["v0"],
+		});
+		const triples = names.flatMap((a, i) =>
+			names.slice(i + 1).flatMap((b, j) => names.slice(i + j + 2).map((c) => [a, b, c])),
+		);
+		const timed = (shapes: readonly string[][]): number => {
+			const plan = new ReadPlan(query(Readings), "readings", {}, "rows", new Map());
+			for (const columns of shapes) plan.probe({ limit: 1 }, columns, [1, 1, 1]);
+			const last = shapes.at(-1)!;
+			let best = Number.POSITIVE_INFINITY;
+			for (let round = 0; round < 5; round++) {
+				const started = performance.now();
+				for (let call = 0; call < 20_000; call++) plan.probe({ limit: 1 }, last, [1, 1, 1]);
+				best = Math.min(best, performance.now() - started);
+			}
+			return best;
+		};
+		expect(triples).toHaveLength(4_960);
+		const few = timed(triples.slice(0, 4));
+		const many = timed(triples);
+		expect(many / few).toBeLessThan(5);
+	});
+});

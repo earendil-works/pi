@@ -200,6 +200,12 @@ export class ReadPlan {
 const NO_TEXTS: readonly Rendered[] = [];
 
 /**
+ * How many statement texts besides the first a shape finds by comparing fields; past them a map by text key. A scan
+ * of 8 costs about what building the key does (measured with probes of 4 to 4,960 shapes, \`read-plan.test.ts\`).
+ */
+const SCANNED = 8;
+
+/**
  * What the plans of one named query share when their products are equal (`sameAs`): the uses, the order, the select
  * list, the tables read and the condition's text, and the statement texts rendered from them. Only strings are
  * cached: nothing of a read, its parameters or its bindings.
@@ -218,6 +224,8 @@ class PlanShape {
 	/** The statement rendered first (a read's one `select`, mostly), and the others, by what they were rendered for. */
 	#first: Rendered | undefined;
 	#texts: Rendered[] | undefined;
+	/** The texts past the first `SCANNED` others, by a text key of what they were rendered for. */
+	#byKey: Map<string, string> | undefined;
 
 	constructor(
 		table: string,
@@ -262,18 +270,28 @@ class PlanShape {
 	 * columns a probe is limited by): a probe runs per written key and read, so only its parameters are built per call.
 	 */
 	text(kind: string, range: Range, columns: readonly string[], render: (filter: string) => string): string {
-		// Found field by field, not by a text key built per call (a probe runs per written key and read).
+		// Found field by field among the first few, not by a text key built per call (a probe runs per written key and
+		// read); past them by a text key in a map: a plan of hundreds of probe shapes would scan them all per probe.
 		const after = range.after?.length ?? -1;
 		const through = range.through?.length ?? -1;
 		const first = this.#first;
 		if (first !== undefined && renders(first, kind, after, through, columns)) return first.text;
-		for (const each of this.#texts ?? NO_TEXTS) if (renders(each, kind, after, through, columns)) return each.text;
-		// The columns copied: the shape keeps strings, never a caller's list.
-		const rendered = { kind, after, through, columns: columns.slice(), text: render(this.#filter(range)) };
+		const texts = this.#texts ?? NO_TEXTS;
+		for (const each of texts) if (renders(each, kind, after, through, columns)) return each.text;
+		const key = texts.length < SCANNED ? undefined : `${kind}|${after}|${through}|${columns.join(",")}`;
+		const found = key === undefined ? undefined : this.#byKey?.get(key);
+		if (found !== undefined) return found;
+		const text = render(this.#filter(range));
+		if (key !== undefined) {
+			this.#byKey ??= new Map();
+			this.#byKey.set(key, text);
+			return text;
+		}
+		const rendered = { kind, after, through, columns: columns.slice(), text };
 		if (first === undefined) this.#first = rendered;
 		else if (this.#texts === undefined) this.#texts = [rendered];
 		else this.#texts.push(rendered);
-		return rendered.text;
+		return text;
 	}
 
 	/** ` WHERE …` of the condition and the range's bounds (row-value comparisons over the leading order columns). */
