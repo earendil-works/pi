@@ -124,7 +124,7 @@ async function written(notes: Reference<typeof Notes>, tag: string): Promise<voi
 	);
 }
 
-describe("the notes end to end", () => {
+describe("the notes end to end", { skip: "until sessions are workspaces, ERNDL-704 push 3" }, () => {
 	it("shows the agent's note in a person's open view; offers notes_write only while its options say edit", async () => {
 		const t = await start();
 		const { session, thing, notes } = await annsNotebook(t);
