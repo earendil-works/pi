@@ -816,6 +816,16 @@ for (const block of result.output) {
 }
 ```
 
+The third argument takes the usual request options plus `aspectRatio` (e.g. `'16:9'`) and `size` (e.g. `'1K'`, `'2K'`, `'4K'`). `openrouter-images` sends them to OpenRouter's `image_config` unchanged. Which values work depends on the model, and OpenRouter may reject the ones a model does not support:
+
+```typescript
+const wide = await models.generateImages(
+  model,
+  { input: [{ type: 'text', text: 'A mountain lake at dawn.' }] },
+  { aspectRatio: '16:9', size: '2K' }
+);
+```
+
 `generateImages()` accepts only `ImageModel` values. If an upstream model supports both chat and image generation, the catalog contains separate entries with the same provider and ID: `getModel()` returns its chat operation and `getModelOfType('image', ...)` returns its image operation. Failures never reject; they return an `AssistantImages` with `stopReason: "error"`, including unknown providers, unconfigured auth, and providers without an image implementation.
 
 A provider declares image support with the `images` option of [`createProvider()`](#createprovider): a map from `model.api` to an implementation with `generateImages()`. Image models go into the same `models` list as chat models. `api` becomes optional when `images` is present, so an image-only provider is just a provider without chat models:

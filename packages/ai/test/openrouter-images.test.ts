@@ -141,5 +141,34 @@ describe("openrouter images", () => {
 		expect(output.output.some((item) => item.type === "image")).toBe(true);
 		// Image-only models must not request text output.
 		expect((mockState.lastParams as { modalities?: string[] }).modalities).toEqual(["image"]);
+		expect((mockState.lastParams as { image_config?: unknown }).image_config).toBeUndefined();
+	});
+
+	it("maps aspectRatio and size options to OpenRouter image_config", async () => {
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
+			id: "google/gemini-2.5-flash-image",
+			name: "Gemini 2.5 Flash Image",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image", "text"],
+			cost: { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.083333 },
+		};
+		const context: ImagesContext = {
+			input: [{ type: "text", text: "A landscape" }],
+		};
+
+		const output = await generateImages(model, context, {
+			apiKey: "test",
+			aspectRatio: "16:9",
+			size: "2K",
+		});
+		expect(output.stopReason).toBe("stop");
+		expect((mockState.lastParams as { image_config?: unknown }).image_config).toEqual({
+			aspect_ratio: "16:9",
+			image_size: "2K",
+		});
 	});
 });

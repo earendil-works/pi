@@ -793,6 +793,8 @@ describe("codemode models", () => {
 		baseUrl: string;
 		apiKey: string | undefined;
 		input: ImagesContext["input"];
+		aspectRatio?: string;
+		size?: string;
 	}
 
 	async function setup() {
@@ -811,7 +813,13 @@ describe("codemode models", () => {
 			images: {
 				"test-images": {
 					generateImages: async (model, context, options): Promise<AssistantImages> => {
-						imageRequests.push({ baseUrl: model.baseUrl, apiKey: options?.apiKey, input: context.input });
+						imageRequests.push({
+							baseUrl: model.baseUrl,
+							apiKey: options?.apiKey,
+							input: context.input,
+							aspectRatio: options?.aspectRatio,
+							size: options?.size,
+						});
 						const prompt = context.input.find((block) => block.type === "text")?.text;
 						const base = { api: model.api, provider: model.provider, model: model.id, timestamp: 0 };
 						if (prompt === "explode") {
@@ -949,6 +957,7 @@ describe("codemode models", () => {
 			const generated = await models.generateImages(
 				{ ...model, baseUrl: "https://evil.test" },
 				{ input: [{ type: "text", text: "a fox" }, reference] },
+				{ aspectRatio: "16:9", size: "2K" },
 			);
 			for (const block of generated.output) {
 				if (block.type === "image") image(block);
@@ -983,10 +992,16 @@ describe("codemode models", () => {
 			["https://images.test/v1", "secret-key"],
 			["https://images.test/v1", "secret-key"],
 		]);
-		expect(imageRequests[0].input).toEqual([
-			{ type: "text", text: "a fox" },
-			{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" },
-		]);
+		expect(imageRequests[0]).toMatchObject({
+			baseUrl: "https://images.test/v1",
+			apiKey: "secret-key",
+			aspectRatio: "16:9",
+			size: "2K",
+			input: [
+				{ type: "text", text: "a fox" },
+				{ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" },
+			],
+		});
 		const details = result.details as unknown as CodemodeToolDetails;
 		expect(details.calls.map((call) => [call.name, call.args, call.status, call.cost, call.error])).toEqual([
 			["models.generateImages", "scorer/painter", "ok", 0.04, undefined],
@@ -1058,6 +1073,25 @@ describe("codemode models", () => {
 				badImageBlock: await attempt(() =>
 					models.generateImages({ provider: "scorer", id: "painter" }, { input: [{ type: "text", text: "a fox" }, { type: "image", data: "aW1hZ2U=" }] }),
 				),
+				badImageOptions: await attempt(() =>
+					models.generateImages({ provider: "scorer", id: "painter" }, { input: [{ type: "text", text: "a fox" }] }, "16:9"),
+				),
+				arrayImageOptions: await attempt(() =>
+					models.generateImages({ provider: "scorer", id: "painter" }, { input: [{ type: "text", text: "a fox" }] }, []),
+				),
+				badAspectRatio: await attempt(() =>
+					models.generateImages({ provider: "scorer", id: "painter" }, { input: [{ type: "text", text: "a fox" }] }, { aspectRatio: "   " }),
+				),
+				badSize: await attempt(() =>
+					models.generateImages({ provider: "scorer", id: "painter" }, { input: [{ type: "text", text: "a fox" }] }, { size: 1024 }),
+				),
+				apiKeyOption: await attempt(() =>
+					models.generateImages({ provider: "scorer", id: "painter" }, { input: [{ type: "text", text: "a fox" }] }, { apiKey: "evil-key" }),
+				),
+				snakeCaseOption: await attempt(() =>
+					models.generateImages({ provider: "scorer", id: "painter" }, { input: [{ type: "text", text: "a fox" }] }, { aspect_ratio: "16:9" }),
+				),
+				badModelAndOptions: await attempt(() => models.generateImages(undefined, { input: [] }, "16:9")),
 				badSplit: await attempt(() => models.getModelOfType("classifier", "scorer/judge")),
 			};
 		`,
@@ -1111,6 +1145,21 @@ describe("codemode models", () => {
 		);
 		expect(value.badImageBlock).toContain(
 			"models.generateImages() context.input[1] must be a text or image block, got { type, data }.",
+		);
+		expect(value.badImageOptions).toContain(
+			"models.generateImages() expects an options object as its third argument, got a string.",
+		);
+		expect(value.arrayImageOptions).toContain(
+			"models.generateImages() expects an options object as its third argument, got an empty array.",
+		);
+		expect(value.badAspectRatio).toContain(
+			"models.generateImages() options.aspectRatio must be a non-empty string, got a string.",
+		);
+		expect(value.badSize).toContain("models.generateImages() options.size must be a non-empty string, got a number.");
+		expect(value.apiKeyOption).toContain("models.generateImages() does not accept options.apiKey.");
+		expect(value.snakeCaseOption).toContain("models.generateImages() does not accept options.aspect_ratio.");
+		expect(value.badModelAndOptions).toContain(
+			"models.generateImages() expects an image model as its first argument, got null.",
 		);
 		const details = result.details as unknown as CodemodeToolDetails;
 		expect(details.calls.map((call) => [call.name, call.status, call.error])).toEqual([
