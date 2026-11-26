@@ -1,7 +1,9 @@
-// Benchmark of what a list keeps (the hot-path pass, 2026-11-26): the heap one list object adds with 20 pages of 50
-// rows loaded (a session's subagents by last touch, two columns read; `test/bench/slice-14.ts`'s list), measured over
-// 30 lists after a warm-up of 5, on a SQLite `:memory:` store. node:sqlite's rows are dictionary-mode objects a list's
-// pages keep; what the decoded rows keep beside them is the part this measures for the store.
+// Benchmark of what a list keeps and what a commit costs it (the hot-path pass, 2026-11-26): the heap one list object
+// adds with 20 pages of 50 rows loaded (a session's subagents by last touch, two columns read; `test/bench/slice-14.ts`'s
+// list), measured over 30 lists after a warm-up of 5; then the median time of a message that moves the 500th loaded
+// child to the top with all 35 lists open (in each the page it left and the first page run; every loaded row is
+// decoded or reused in the frame),
+// without slice-14's in-memory telemetry. On a SQLite `:memory:` store.
 // Run by hand from packages/chord (not in CI):
 //   node --conditions=source --experimental-strip-types --expose-gc test/bench/list-heap.ts
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
@@ -20,7 +22,11 @@ const Child = obj({ id: int(), lastTouch: int() });
 const Children = local("bench.children", {
 	version: 1,
 	params: {},
-	members: { children: queries(Child, { ofSession: obj({ session: str() }) }), spawn: method(int()) },
+	members: {
+		children: queries(Child, { ofSession: obj({ session: str() }) }),
+		spawn: method(int()),
+		message: method(obj({ id: int(), at: int() })),
+	},
 });
 const Subagents = local("bench.subagents", {
 	version: 1,
@@ -41,6 +47,10 @@ const facet = defineFacet((h) => {
 							.orderBy((c) => c.lastTouch, "desc"),
 				},
 			),
+			message: async ({ id, at }, ctx) => {
+				await self.tx(async (tx) => tx.update(rows, { id }, { lastTouch: at }), ctx);
+				return null;
+			},
 			spawn: async (count, ctx) => {
 				await self.tx(async (tx) => {
 					for (let id = 1; id <= count; id++) tx.put(rows, { id, session: "s", lastTouch: id });
@@ -80,4 +90,15 @@ await open(0, 5);
 const before = await heap();
 await open(5, 30);
 console.log(`a list of 20 pages of 50 rows (2 columns): ${(((await heap()) - before) / 30 / 1024).toFixed(1)} KiB`);
+const screen = kept[0] as { list: { value: { rows: { id: number }[] } } };
+let at = 10_000;
+const times: number[] = [];
+for (let message = -100; message < 1_000; message++) {
+	const id = screen.list.value.rows[500]!.id;
+	const start = performance.now();
+	await children.message({ id, at: ++at }, context);
+	if (message >= 0) times.push(performance.now() - start);
+}
+times.sort((a, b) => a - b);
+console.log(`a message, 35 lists of 20 pages open: ${(times[times.length >> 1]! * 1000).toFixed(0)} us median`);
 await host.close(context);
