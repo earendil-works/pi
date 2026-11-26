@@ -13,7 +13,7 @@
 // (`P3_SHOTS` names another directory).
 
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -520,6 +520,35 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await eventually(reported, (count) => count === before + 1);
 	});
 
+	it("tries a view that threw again once an apply brings its fix, at the same address", async () => {
+		// A person view that throws, then the same plugin fixed (Astra, review round 1).
+		const file = join(t.userRoot, "broken.web.tsx");
+		const source = (body: string) =>
+			[
+				'import { defineFacet } from "@earendil-works/p3/v1";',
+				'import { Views } from "@earendil-works/p3/v1/web";',
+				`function Person() { ${body} }`,
+				"export default defineFacet((_host, self) =>",
+				'	self.contribute(Views, [{ view: "broken.person", title: { namespace: "broken", key: "person", params: [] }, area: "main", for: { kind: "person" }, View: Person }]),',
+				");",
+			].join("\n");
+		await rm(join(t.userRoot, "skew.web.tsx"));
+		await writeFile(file, source('throw new Error("broken on purpose");'));
+		await until(t.plugins, (state) => state.dirty.length > 0, within("the plugin seen", context, 10_000));
+		await t.apply(context);
+		await browser.open(`${origin}/w/${pi}/p/${ownerId}`);
+		await browser.wait(`document.querySelector("[data-view-error]")?.textContent.includes("broken on purpose")`);
+		const at = await browser.evaluate<string>("location.pathname");
+		await writeFile(file, source('return <p data-fixed="">fixed</p>;'));
+		await until(t.plugins, (state) => state.dirty.length > 0, within("the fix seen", context, 10_000));
+		await t.apply(context);
+		await browser.wait(`document.querySelector("[data-fixed]") !== null`);
+		assert.equal(await browser.evaluate("location.pathname"), at);
+		await rm(file);
+		await until(t.plugins, (state) => state.dirty.length > 0, within("the removal seen", context, 10_000));
+		await t.apply(context);
+	});
+
 	it("leaves nothing reported on the server, and no error in the page but the component the base lacks", async () => {
 		assert.deepEqual(t.errors, []);
 		// A web facet that does not build is left out of the page without a word at the start; only an apply's report
@@ -530,7 +559,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		assert.deepEqual(failed, []);
 		assert.deepEqual(
-			browser.console.filter((line) => !line.includes(MISSING_COMPONENT)),
+			browser.console.filter((line) => !line.includes(MISSING_COMPONENT) && !line.includes("broken on purpose")),
 			[],
 		);
 	});

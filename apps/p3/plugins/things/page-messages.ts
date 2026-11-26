@@ -18,6 +18,7 @@ export const page = defineMessages("things.page", {
 		fromUnnamed: "from above",
 		linkedHere: "linked here",
 		denied: "You have no access to this here.",
+		unavailable: "This is not available here.",
 		settings: "Settings",
 		settingsOf: (name: string) => `Settings of ${name}`,
 		workspaceIn: (parent: string) => `workspace in ${parent}`,

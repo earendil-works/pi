@@ -9,7 +9,6 @@ import {
 	useComponent,
 	useHold,
 	useLive,
-	useMessages,
 	useRefState,
 	useRegistry,
 	useWatch,
@@ -21,14 +20,12 @@ import {
 	Settings,
 	type Shown,
 	type ThingViewProps,
-	useMessageText,
 	type ViewFor,
 	Views,
 	viewsKey,
 } from "./contract.web.tsx";
-import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { messageOf } from "./use-page.ts";
+import { useUnavailable } from "./use-page.ts";
 import { ThingInfo, Workspace } from "./workspace.ts";
 
 /** What `TargetView` takes (the token's props). */
@@ -75,14 +72,12 @@ function Held(
 		readonly state: RefState | undefined;
 	},
 ) {
-	const { t } = useMessages(page);
-	const text = useMessageText();
 	const { info, state } = props;
-	if (state?.kind === "failed" && state.cause.kind === "denied") {
-		const message = messageOf(state.cause.error);
+	const unavailable = useUnavailable(state);
+	if (unavailable !== undefined) {
 		return (
 			<p className={styles.note} data-denied="">
-				{message === undefined ? t("denied") : text(message)}
+				{unavailable}
 			</p>
 		);
 	}

@@ -10,6 +10,7 @@ import { IconButton } from "@earendil-works/elanor-react";
 import { type ConnectionState, Me } from "@earendil-works/p3/v1";
 import {
 	ArrowBackIcon,
+	Components,
 	navigate,
 	PageConnection,
 	type Route,
@@ -29,7 +30,7 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
 // its page started with, whose `/v1/web` may not have a newer contract yet (a component token would be `undefined`).
-import { Navigator, Settings, type Shown, TargetView, useScreenId } from "../things/contract.web.tsx";
+import { Navigator, Settings, type Shown, TargetView, useScreenId, Views } from "../things/contract.web.tsx";
 import { Roots } from "../things/workspace.ts";
 import { CornerMenu } from "./corner-menu.tsx";
 import styles from "./frame.module.css";
@@ -101,6 +102,9 @@ function TargetFrame(props: {
 	const { route } = props;
 	const { t } = useMessages(messages);
 	const View = useComponent(TargetView);
+	// What draws the view: an apply gives these new values, and the boundary tries the view again with them.
+	const views = useRegistry(Views);
+	const components = useRegistry(Components);
 	const SettingsView = useComponent(Settings);
 	const [shown, setShown] = useState<Shown | undefined>(undefined);
 	const at = targetPath(route.target, { view: route.view });
@@ -112,7 +116,7 @@ function TargetFrame(props: {
 		<View onShown={setShown} target={route.target} view={route.view} />
 	);
 	const framed = (
-		<ViewBoundary at={route.settings ? `${at}/settings` : at} title={t("stopped")}>
+		<ViewBoundary at={route.settings ? `${at}/settings` : at} code={[views, components]} title={t("stopped")}>
 			{main}
 		</ViewBoundary>
 	);

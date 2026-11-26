@@ -16,12 +16,14 @@ import {
 	useLive,
 	useMessages,
 	usePageState,
+	useRefState,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
+import { useState } from "react";
 import { Invite, useNames } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useFromText } from "./use-page.ts";
+import { useErrorText, useFromText, useUnavailable } from "./use-page.ts";
 import { WhatIsHere } from "./what-is-here.tsx";
 import { WhoIsHere } from "./who-is-here.tsx";
 import { WhoMayTable } from "./who-may.tsx";
@@ -115,17 +117,31 @@ function WorkspaceSettings(props: { readonly workspace: string }) {
 /** A thing's Settings view: name, kind and where it is linked; who may; its kind's form; remove from here. */
 function ThingSettings(props: { readonly workspace: string; readonly thing: string }) {
 	const { t } = useMessages(page);
-	const info = useWatch(useLive(useHold(ThingInfo, props))?.info);
+	const ref = useHold(ThingInfo, props);
+	const info = useWatch(useLive(ref)?.info);
+	const unavailable = useUnavailable(useRefState(ref));
 	const workspace = useLive(useHold(Workspace, { workspace: props.workspace }));
 	const fromText = useFromText();
 	const names = useNames();
+	const errorText = useErrorText();
+	const [failure, setFailure] = useState<string | undefined>(undefined);
+	// Gone (unlinked elsewhere, its last link removed) or no longer given: say so, never whether it exists.
+	if (unavailable !== undefined) {
+		return (
+			<p className={styles.note} data-denied="">
+				{unavailable}
+			</p>
+		);
+	}
 	if (info === undefined || info.kind === "") return null;
 	const linker = info.from.kind === "here" ? withGranted(workspace, "unlink") : undefined;
-	const remove = () =>
+	const remove = () => {
+		setFailure(undefined);
 		linker?.unlink({ thing: props.thing }, BACKGROUND_CONTEXT).then(
 			() => navigate(targetPath({ kind: "workspace", workspace: props.workspace }, { settings: true })),
-			() => undefined,
+			(error: unknown) => setFailure(errorText(error)),
 		);
+	};
 	return (
 		<div className={styles.settings} data-settings={props.thing}>
 			<PageHeader.Root>
@@ -145,6 +161,7 @@ function ThingSettings(props: { readonly workspace: string; readonly thing: stri
 					{t("thingIn", names.kind(info.kind), fromText(info.from) ?? t("linkedHere"))}
 				</PageHeader.Description>
 			</PageHeader.Root>
+			{failure === undefined ? null : <p className={styles.error}>{t("failed", failure)}</p>}
 			<WhoMayTable name={names.thing(info.kind, info.name)} thing={props.thing} workspace={props.workspace} />
 		</div>
 	);

@@ -1,7 +1,7 @@
 // What the things plugin's page parts share: every registered kind by name, a message of any plugin as text, how a
-// "from" reads, what a party opens, how a party, a kind and a thing are named, and what a failed call or a denial says.
+// "from" reads, what a party opens, how a party is named, and what a failed call, a denial or a gone target says.
 
-import type { MessageData } from "@earendil-works/p3/v1";
+import type { MessageData, RefState } from "@earendil-works/p3/v1";
 import { type Target, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
 import { useMemo } from "react";
 import type { Party } from "./contract.ts";
@@ -83,4 +83,27 @@ export function messageOf(error: unknown): MessageData | undefined {
 	return typeof message === "object" && message !== null && "namespace" in message && "key" in message
 		? (message as MessageData)
 		: undefined;
+}
+
+/**
+ * What the page says of a reference that cannot show its target: its denial's message (or a plain "no access"), or,
+ * ended or broken, "not available" (never whether the target exists); `undefined` while it can.
+ */
+export function useUnavailable(state: RefState | undefined): string | undefined {
+	const { t } = useMessages(page);
+	const text = useMessageText();
+	switch (state?.kind) {
+		case undefined:
+		case "loading":
+		case "live":
+			return undefined;
+		case "ended":
+			return t("unavailable");
+		case "failed": {
+			if (state.cause.kind === "broken") return t("unavailable");
+			if (state.cause.kind !== "denied") return undefined;
+			const message = messageOf(state.cause.error);
+			return message === undefined ? t("denied") : text(message);
+		}
+	}
 }
