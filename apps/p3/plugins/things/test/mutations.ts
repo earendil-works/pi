@@ -372,7 +372,7 @@ const MUTATIONS: readonly Mutation[] = [
 		name: "a caller given nothing is let in with nothing",
 		file: "admission.ts",
 		find: "if (mine === undefined) return DENIED;",
-		put: "if (mine === undefined) return allowed({ granted: [], caller });",
+		put: "if (mine === undefined) return allow({ granted: [], caller });",
 	},
 ];
 

@@ -72,7 +72,10 @@ async function ticks(workspace: string, thing: string, caller: string): Promise<
 	}
 }
 
-/** Makes a board `name` in `workspace`, by a plugin (no maker's grant), with the kind's default grants replaced by `ticks`. */
+/**
+ * Makes a board `name` in `workspace`, by a plugin (no maker's grant), with the kind's default grants replaced by
+ * `ticks`.
+ */
 async function board(workspace: string, name: string, ticksOf: { everyone: string[]; agents: string[] }) {
 	const thing = await store.create(
 		{ kind: Board.name, name, workspace, by: { kind: "plugin", plugin: "test" } },

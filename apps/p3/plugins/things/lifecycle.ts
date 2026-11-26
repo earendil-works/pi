@@ -62,7 +62,9 @@ export class Lifecycle {
 		await untilAborted(ctx);
 	}
 
-	/** `thing`, removed in a commit that wrote its pending row: its kind's delete hook runs (again, until it succeeds). */
+	/**
+	 * `thing`, removed in a commit that wrote its pending row: its kind's delete hook runs (again, until it succeeds).
+	 */
 	retire(thing: string, kind: string): void {
 		void this.#retire(thing, kind);
 	}

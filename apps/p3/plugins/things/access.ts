@@ -331,8 +331,9 @@ export class AccessIndex {
 	}
 
 	/**
-	 * The view's answers now (rule 5): an owner every tick for people of each available thing (item 99), anyone else
-	 * the answer of their counted parties. The last answers when nothing differs, and each unchanged thing's answer object kept.
+	 * The view's answers now (rule 5): an owner every tick for people of each available thing (item 99), anyone else the
+	 * answer of their counted parties. The last answers when nothing differs, and each unchanged thing's answer object
+	 * kept.
 	 */
 	#answers(view: View, context: Context): Answers {
 		const access = this.#accessOf(view.workspace, context);

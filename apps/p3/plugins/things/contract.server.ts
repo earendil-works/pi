@@ -116,8 +116,8 @@ export const ThingsStore = local("things.store", {
 		setSwitch: method(obj({ workspace: str(), item: Item, shown: opt(bool()) })),
 		setDefaults: method(obj({ workspace: str(), showsThings: opt(bool()), showsPeople: opt(bool()) })),
 		/**
-		 * Writes `source`'s grant rows (a source rewrites only its own), all or none: a giving one only where the thing is
-		 * linked, a tick only to whom it is for.
+		 * Writes `source`'s grant rows (a source rewrites only its own), all or none: a giving one only where the thing
+		 * is linked, a tick only to whom it is for.
 		 */
 		setGrants: method(obj({ source: Source, grants: arr(GrantInput) })),
 		putParty: method(obj({ workspace: str(), party: Party, source: Source })),
@@ -128,7 +128,10 @@ export const ThingsStore = local("things.store", {
 		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool() }), str()),
 		addToGroup: method(obj({ group: str(), person: str(), source: Source })),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
-		/** Removes what `source` wrote (grants, group members, workspace members) and the groups it manages, with all naming them. */
+		/**
+		 * Removes what `source` wrote (grants, group members, workspace members) and the groups it manages, with all
+		 * naming them.
+		 */
 		deleteEverythingFrom: method(obj({ source: Source })),
 	},
 });
@@ -170,7 +173,9 @@ export const AccessHandles = defineRegistry<AccessHandle, AccessHandle | undefin
 /** A kind's hooks on the server: what is in a new thing (`create`), and clearing it when it goes (`delete`). */
 export type ThingHook = {
 	readonly kind: string;
-	/** Prepares what is in a new thing from `input`, before the commit that makes it (item 34): a throw makes nothing. */
+	/**
+	 * Prepares what is in a new thing from `input`, before the commit that makes it (item 34): a throw makes nothing.
+	 */
 	readonly create?: (thing: string, input: unknown, ctx: Ctx<P3Principal>) => Promise<void>;
 	/**
 	 * Clears what is in a deleted thing, or in one whose commit failed after `create`; for a deleted thing tried again,
