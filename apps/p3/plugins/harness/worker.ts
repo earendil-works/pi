@@ -113,6 +113,8 @@ export default defineFacet((host, facet) => {
 		self.on(archived, async ({ value }, ctx) => {
 			if (value) return;
 			await ready(ctx);
+			// An archive seen while the holding got ready (Astra, round 1): nothing resumes.
+			if (archived.value) return;
 			opened.value.durable.resume();
 		});
 		const harness: OpenHarness = {
@@ -130,6 +132,9 @@ export default defineFacet((host, facet) => {
 				if (target === undefined) throw invalid("args", `harness: no conversation ${conversation}`);
 				await offerModel(target, things, context);
 				await serial(async () => {
+					// An archive seen during the waits above takes nothing (Astra, round 1); the server refuses `working` for an
+					// archived session besides, so a worker that sees it later still starts no run the waker would wake.
+					if (archived.value) throw forbidden("harness: the session is archived");
 					// Working before Durable takes the input: a crash in between leaves a `working` row, which the waker starts.
 					await push("working", context);
 					try {

@@ -13,7 +13,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
+import {
+	BACKGROUND_CONTEXT as context,
+	isChordError,
+	type P3Principal,
+	SessionFacts,
+	until,
+} from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import {
 	LiveDoc,
@@ -503,5 +509,32 @@ describe("the harness plugin on a worker", () => {
 		await open.durable.waitForIdle(context);
 		// The running subagent finished its step; it never got the new message.
 		assert.ok(!requests().some(({ last }) => last.includes("a new message")));
+	});
+
+	// Astra, round 1 (should 5).
+	it("starts no pending submit when the session is archived while the holding gets ready", async () => {
+		const held = [login("login", "faux", [says("", "ok")])];
+		const server = await start(held, {}, [], { ready: false });
+		const open = await harness();
+		const pending = open.submit(undefined, { text: "hello", requestId: "hi" }, context);
+		server.row({ archivedAt: 5 });
+		const facts = await tested().host.get(SessionFacts, {}, context);
+		await until(facts.session, (row) => row?.archivedAt === 5, within("the archive on the worker", context));
+		server.hold(held);
+		await assert.rejects(pending, (error) => isChordError(error) && error.code === "forbidden");
+		assert.equal((await open.durable.inspect(context)).scheduling, "paused");
+	});
+
+	// Astra, round 1 (should 5).
+	it("resumes nothing when the session is archived while the holding gets ready", async () => {
+		const server = await start([], {}, [], { ready: false });
+		const open = await harness();
+		server.row({ archivedAt: 5 });
+		const facts = await tested().host.get(SessionFacts, {}, context);
+		await until(facts.session, (row) => row?.archivedAt === 5, within("the archive on the worker", context));
+		server.hold([]);
+		// The worker has seen the holding and run its routines.
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal((await open.durable.inspect(context)).scheduling, "paused");
 	});
 });
