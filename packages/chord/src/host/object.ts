@@ -31,7 +31,7 @@ import type { TableDefinition } from "../store/table.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
 import { type AdmitSelf, type AdmittedValue, type Allowed, revoked, type Verdict } from "./admission.ts";
-import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
+import { type Activation, Attempt, type PinnedKey, type Self } from "./attempt.ts";
 import type { Caller } from "./ctx.ts";
 import type { Dependency } from "./dependencies.ts";
 import type { AnyHost } from "./host.ts";
@@ -1362,8 +1362,14 @@ export class ChordObject implements Target {
 	}
 
 	/** Runs `attempt`'s activation once `ending` (its predecessors' teardowns, if any) finished; takes its outcome. */
-	async #run(attempt: Attempt, ending: Promise<void> | undefined): Promise<void> {
-		const outcome = await attempt.activate(ending);
+	#run(attempt: Attempt, ending: Promise<void> | undefined): Promise<void> {
+		// A reaction to the activation in place of awaiting it in an async function: the same turn, without the async
+		// frame (about 0.45 KiB per attempt).
+		return attempt.activate(ending).then((outcome) => this.#ran(attempt, outcome));
+	}
+
+	/** Takes `attempt`'s activation outcome. */
+	#ran(attempt: Attempt, outcome: Activation): void {
 		this.#trigger = attempt.activationSpan ?? this.#trigger;
 		// The object may have ended after the activation's last step.
 		if (this.#state.kind !== "activating" || this.#state.attempt !== attempt) {

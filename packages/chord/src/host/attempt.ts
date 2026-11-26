@@ -343,7 +343,7 @@ type RegistryDeclarations = {
 };
 
 /** How an attempt's activation ended. */
-type Activation =
+export type Activation =
 	| { readonly kind: "live" }
 	| { readonly kind: "failed"; readonly cause: FailureCause }
 	| { readonly kind: "ended"; readonly error: ChordError };
@@ -1424,7 +1424,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	 * The drain at its end, bounded by `closeTimeout`: its running calls (unless a restart's `drainCalls` waited for them
 	 * already), routine calls and job invocations.
 	 */
-	#drained(): Promise<"settled" | "timeout"> {
+	#drained(): "settled" | Promise<"settled" | "timeout"> {
 		const { close } = this.#object.host.timeouts;
 		const running = this.#reloaded?.callsDrained === true ? NO_WORK : (this.#running ?? NO_WORK);
 		const runs = this.#runs;

@@ -179,11 +179,19 @@ export async function within(promise: Promise<unknown>, ms: number): Promise<"se
 	}
 }
 
-/** Whether the `size` pieces of work in `drain` settled within `ms` (at once when there is none). */
-export async function drained(
+/**
+ * Whether the `size` pieces of work in `drain` settled within `ms`: at once when there is none, an answer its callers
+ * await in the one turn an async function's took (whose frame they paid for every teardown).
+ */
+export function drained(
 	drain: Iterable<Promise<unknown>>,
 	size: number,
 	ms: number,
-): Promise<"settled" | "timeout"> {
-	return size === 0 ? "settled" : within(Promise.allSettled(drain), ms);
+): "settled" | Promise<"settled" | "timeout"> {
+	return size === 0 ? "settled" : drainedWithin(drain, ms);
+}
+
+/** `drained` with work: from an async function, as before (its callers take the turns they took). */
+async function drainedWithin(drain: Iterable<Promise<unknown>>, ms: number): Promise<"settled" | "timeout"> {
+	return within(Promise.allSettled(drain), ms);
 }
