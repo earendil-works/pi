@@ -78,6 +78,7 @@ export const binaryCodec: Codec = {
 	name: "binary",
 	encode(message) {
 		try {
+			WRITER.expect(partsLength(message));
 			encodeMessage(message, WRITER);
 			return WRITER.finish();
 		} finally {
@@ -408,8 +409,6 @@ class Writer {
 	/** The buffer it keeps across messages, grown up to `KEPT`; a message past it gets a buffer of its own. */
 	#kept = this.#buffer;
 	#length = 0;
-	/** The length of the last message past `KEPT`: the next one like it gets its buffer at once, no regrowth. */
-	#large = 0;
 
 	byte(byte: number): void {
 		this.#reserve(1);
@@ -626,7 +625,6 @@ class Writer {
 		const buffer = this.#buffer;
 		const length = this.#length;
 		if (buffer === this.#kept) return buffer.slice(0, length);
-		this.#large = length;
 		return buffer.byteLength - length <= SPARE ? buffer.subarray(0, length) : buffer.slice(0, length);
 	}
 
@@ -636,24 +634,68 @@ class Writer {
 		this.#buffer = this.#kept;
 	}
 
+	/**
+	 * A message whose parts take `bytes` (their lengths: a text's in units, its UTF-8 may be longer) starts in a buffer
+	 * of its own of that size and room for its other fields when it cannot fit the kept one: a frame of many parts
+	 * past `KEPT` allocates one buffer, never regrowing by doublings, whatever frame came before it.
+	 */
+	expect(bytes: number): void {
+		if (bytes + SPARE > KEPT) this.#buffer = new Uint8Array(bytes + SPARE);
+	}
+
 	/** Grows the buffer to fit `bytes` more: doubled, or for a large chunk to its end plus room for the small fields after it. */
 	#reserve(bytes: number): void {
 		const needed = this.#length + bytes;
 		if (needed <= this.#buffer.byteLength) return;
 		const kept = this.#buffer === this.#kept;
 		let size = Math.max(this.#buffer.byteLength * 2, needed + SPARE);
-		if (kept && size > KEPT) {
-			// Leaving the kept buffer: room for the last message past it, or what this one needs, and for small fields
-			// after it: a stream of frames of one size allocates one buffer each and never regrows from the kept one (a
-			// smaller frame after a larger one is copied out of it once, then sets the size).
-			size = Math.max(needed, this.#large) + SPARE;
-		}
+		// Leaving the kept buffer: what it needs and room for its small fields (`expect` sized a frame of large parts).
+		if (kept && size > KEPT) size = needed + SPARE;
 		const grown = new Uint8Array(size);
 		grown.set(this.#buffer.subarray(0, this.#length));
 		this.#buffer = grown;
 		if (kept && size <= KEPT) this.#kept = grown;
 	}
 }
+
+/** What the parts of `message` take, by their lengths (`Writer.expect`); 0 for a kind without parts. */
+function partsLength(message: Message): number {
+	let bytes = 0;
+	switch (message.kind) {
+		case "bound":
+			for (const { members } of message.holds) for (const { value } of members) bytes += partLength(value);
+			return bytes;
+		case "state":
+			for (const { members } of message.holds) for (const { ops } of members) bytes += partLength(ops);
+			return bytes;
+		case "event":
+			for (const { value } of message.events) bytes += partLength(value);
+			return bytes;
+		case "call":
+			return partLength(message.args) + segmentsLength(message.segments);
+		case "result":
+			return partLength(message.value) + segmentsLength(message.segments);
+		default:
+			return 0;
+	}
+}
+
+function partLength(part: Part | undefined): number {
+	if (part === undefined) return 0;
+	return typeof part === "string"
+		? part.length
+		: part instanceof DeflatedPart
+			? part.bytes.byteLength
+			: part.byteLength;
+}
+
+function segmentsLength(segments: readonly Uint8Array[] | undefined): number {
+	let bytes = 0;
+	for (const segment of segments ?? NO_SEGMENTS) bytes += segment.byteLength;
+	return bytes;
+}
+
+const NO_SEGMENTS: readonly Uint8Array[] = [];
 
 /** How many bytes the varint of `value` takes. */
 function varintBytes(value: number): number {
