@@ -142,6 +142,12 @@ export class ConsumerSide {
 	#greeted: { readonly calls: number | undefined } | undefined;
 	/** The `event` messages consumed since the last event `ack` (one goes in a microtask after the first). */
 	#consumed = 0;
+	/** Acknowledges the `event` messages consumed since the last event `ack`: one function, no closure per turn. */
+	readonly #ackEvents = (): void => {
+		const events = this.#consumed;
+		this.#consumed = 0;
+		this.#link.send({ kind: "ack", events });
+	};
 	#nextHold = 0;
 	#nextCall = 0;
 	/** What its calls need of it. */
@@ -406,11 +412,7 @@ export class ConsumerSide {
 	#events(events: readonly WireEvent[]): void {
 		for (const { hold, member, at, value } of events) this.#entries.get(hold)?.event(member, at, value, this.#link);
 		if (this.#consumed++ > 0) return;
-		queueMicrotask(() => {
-			const events = this.#consumed;
-			this.#consumed = 0;
-			this.#link.send({ kind: "ack", events });
-		});
+		queueMicrotask(this.#ackEvents);
 	}
 
 	/**
