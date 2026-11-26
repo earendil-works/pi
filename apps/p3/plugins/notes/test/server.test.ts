@@ -5,8 +5,9 @@
 // or a caller removed, is denied), notes keyed by the notebook (the same in every workspace it is linked in), authors
 // as the admission says with persons' names read by id (any number of them), edits and removals, refusals, each
 // caller's pages (its own Chord list: the newest 50, 50 more with Older, older ones reachable after removals, new and
-// edited notes on top, kept across a reload), a page read now (`page`), and the counted cost of a note. Authors' names
-// following a rename wait for people's names to be editable (the things store cannot rename a person yet).
+// edited notes on top, kept across a reload), its order (newest first by default; `configure` flips it for a holder
+// already holding it; it goes with the notebook), a page read now (`page`), and the counted cost of a note. Authors'
+// names following a rename wait for people's names to be editable (the things store cannot rename a person yet).
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -88,7 +89,11 @@ describe("the kind", () => {
 		await n.holding(ann, n.pi, other, (notes, ctx) => notes.add!({ text: "kept" }, ctx));
 		await n.things.unlink({ workspace: n.pi, thing: notebook }, context);
 		const stored = async (of: string) =>
-			(await (await n.host.get(NotesStore, {}, context)).notes.of.page({ notebook: of }, 10, context)).items;
+			(
+				await (
+					await n.host.get(NotesStore, {}, context)
+				).notes.of.page({ notebook: of, order: "newest" }, 10, context)
+			).items;
 		await eventually(
 			() => stored(notebook),
 			(rows) => rows.length === 0,
@@ -192,7 +197,7 @@ describe("a notebook's notes", () => {
 		const ann = await n.person("Ann", s1);
 		await n.things.putParty({ workspace: s2, party: { kind: "person", person: ann.id }, source: BY }, context);
 		const shared = await n.thingIn(s1, "Plan");
-		await n.things.link({ workspace: s2, thing: shared, by: BY }, context);
+		await n.things.link({ workspace: s2, thing: shared }, context);
 		await n.tick(s2, shared, { kind: "person", person: ann.id }, "write", false);
 		const id = await n.holding(ann, s1, shared, (notes, ctx) => notes.add!({ text: "linked twice" }, ctx));
 		await n.holding(ann, s2, shared, async (notes) => {
@@ -370,6 +375,52 @@ describe("a notebook's pages", () => {
 			assert.deepEqual(first.rows[0]?.author, { kind: "person", person: ann.id, name: "Ann" });
 			assert.equal(notes.list.value.rows.length, 50);
 		});
+	});
+});
+
+describe("a notebook's order", () => {
+	it("is newest first by default; configure flips it for a holder already holding it, and back", async () => {
+		const [ann, ben] = [await n.person("Ann"), await n.person("Ben")];
+		const notebook = await n.thingIn(n.pi);
+		await fill(ann, notebook, 120);
+		const configure = (await n.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.configure;
+		assert.ok(configure !== undefined);
+		await n.holding(ben, n.pi, notebook, async (notes, ctx) => {
+			assert.deepEqual([notes.order.value, texts(notes)], ["newest", newestFirst(120).slice(0, 50)]);
+			await notes.more(ctx);
+			await n.host.root((call) => configure(notebook, { order: "oldest" }, call), context);
+			// A new order starts the list again at its first page.
+			await until(notes.list, (list) => list.rows[0]?.text === "n0", within("oldest first", ctx));
+			assert.deepEqual([notes.order.value, texts(notes)], ["oldest", newestFirst(120).reverse().slice(0, 50)]);
+			// The agent's page read follows it.
+			assert.deepEqual(
+				(await notes.page({}, ctx)).rows.slice(0, 2).map(({ text }) => text),
+				["n0", "n1"],
+			);
+			await notes.more(ctx);
+			assert.equal(notes.list.value.rows.at(-1)?.text, "n99");
+			// A new note is the newest: last in this order, once the list reaches it.
+			await notes.add!({ text: "latest" }, ctx);
+			await n.host.root((call) => configure(notebook, { order: "newest" }, call), context);
+			await until(notes.list, (list) => list.rows[0]?.text === "latest", within("newest first again", ctx));
+			assert.equal(notes.order.value, "newest");
+		});
+	});
+
+	it("goes with the notebook: one made after it starts newest first again", async () => {
+		const ann = await n.person("Ann");
+		const notebook = await n.thingIn(n.pi);
+		const configure = (await n.host.registry(ThingHooks, context)).value.get(NotesKind.name)?.value.configure;
+		await n.host.root((call) => configure!(notebook, { order: "oldest" }, call), context);
+		await n.things.unlink({ workspace: n.pi, thing: notebook }, context);
+		const store = await n.host.get(NotesStore, {}, context);
+		await eventually(
+			async () => (await store.orders.of.page({ notebook }, 1, context)).items,
+			(rows) => rows.length === 0,
+			2000,
+		);
+		const other = await n.thingIn(n.pi);
+		assert.equal(await n.holding(ann, n.pi, other, async (notes) => notes.order.value), "newest");
 	});
 });
 

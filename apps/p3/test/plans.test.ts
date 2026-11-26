@@ -93,6 +93,7 @@ describe("the plans of the stores' queries", () => {
 				for (let i = 0; i < 3; i++)
 					await notes.add({ notebook, text: `n${i}`, author: { kind: "person", person: "owner" } }, context);
 			}
+			await notes.setOrder({ notebook: "n1", order: "oldest" }, context);
 			const checklists = await host.get(ChecklistStore, {}, context);
 			for (const checklist of ["c1", "c2"]) {
 				for (let i = 0; i < 3; i++) await checklists.add({ checklist, text: `i${i}` }, context);
@@ -229,7 +230,13 @@ describe("the plans of the stores' queries", () => {
 				["members.of (people)", pages(people.members.of, { group: coaches }), { sorts: true }],
 				["environments.all", pages(environments.environments.all, {}), { index: `${E}.rows:by_name` }],
 				["environments.one", pages(environments.environments.one, { id: THIS_DEVICE }), {}],
-				["notes.of", pages(notes.notes.of, { notebook: "n1" }), { index: `${N}.rows:by_time` }],
+				["notes.of", pages(notes.notes.of, { notebook: "n1", order: "newest" }), { index: `${N}.rows:by_time` }],
+				[
+					"notes.of (oldest first)",
+					pages(notes.notes.of, { notebook: "n1", order: "oldest" }),
+					{ index: `${N}.rows:by_time` },
+				],
+				["orders.of", pages(notes.orders.of, { notebook: "n1" }), {}],
 				["shapes.of", pages(canvas.shapes.of, { canvas: "b1" }), { index: `${C}.shapes:by_order` }],
 				["items.of", pages(checklists.items.of, { checklist: "c1" }), { index: `${K}.items:by_order` }],
 			];

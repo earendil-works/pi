@@ -32,7 +32,7 @@ describe("the notes store", () => {
 				context,
 			);
 			await store.add({ notebook: "b", text: "other", author: ANN }, context);
-			const { items } = await store.notes.of.page({ notebook: "a" }, 10, context);
+			const { items } = await store.notes.of.page({ notebook: "a", order: "newest" }, 10, context);
 			assert.deepEqual(
 				items.map(({ text, at }) => [text, at - now]),
 				[
@@ -43,8 +43,8 @@ describe("the notes store", () => {
 			);
 			assert.deepEqual(items[0]?.author, { kind: "agent", session: "s1" });
 			await store.clear({ notebook: "a" }, context);
-			assert.deepEqual((await store.notes.of.page({ notebook: "a" }, 10, context)).items, []);
-			assert.equal((await store.notes.of.page({ notebook: "b" }, 10, context)).items.length, 1);
+			assert.deepEqual((await store.notes.of.page({ notebook: "a", order: "newest" }, 10, context)).items, []);
+			assert.equal((await store.notes.of.page({ notebook: "b", order: "newest" }, 10, context)).items.length, 1);
 		} finally {
 			await n.close();
 		}

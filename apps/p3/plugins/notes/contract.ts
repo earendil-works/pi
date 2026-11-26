@@ -4,7 +4,7 @@
 // Who may do what is the things plugin's grants: reading is for everyone let in, the one tick Write adds, edits and
 // removes notes.
 
-import { arr, bool, int, lit, method, obj, opt, type Static, str, union } from "@earendil-works/p3/v1";
+import { arr, bool, int, lit, method, obj, oneOf, opt, type Static, str, union } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";
 
@@ -39,23 +39,29 @@ export const NotesPage = obj({ rows: arr(Note), moreAfter: bool() });
 /** Notes in the order of a notebook (see `NotesPage`). */
 export type NotesPage = Static<typeof NotesPage>;
 
+/** The order a notebook shows its notes in: the last written first (the default), or the first written first. */
+export const NotesOrder = oneOf("newest", "oldest");
+
+/** The order a notebook shows its notes in (see `NotesOrder`). */
+export type NotesOrder = Static<typeof NotesOrder>;
+
 /** What Write gives: the members a writer of a notebook is granted. */
 export const NOTES_WRITES = ["add", "edit", "remove"] as const;
 
 /**
- * A notebook (`notes.notes`): its name (its thing's, "" while it has none) and its notes loaded so far, both for
- * everyone let in. Write gives `add`, `edit` and `remove`. A new link starts with Write for everyone there and the
- * agents; a Read share's guests read.
+ * A notebook (`notes.notes`): its name (its thing's, "" while it has none), its order (its one setting) and its notes
+ * loaded so far in that order, all for everyone let in. Write gives `add`, `edit` and `remove`. A new link starts with
+ * Write for everyone there and the agents; a Read share's guests read.
  */
 export const NotesKind = defineThing("notes.notes", {
 	version: 1,
 	makers: "anyone",
-	state: { name: str(), list: NotesPage },
+	state: { name: str(), order: NotesOrder, list: NotesPage },
 	methods: {
 		/** Loads the next page of older notes into `list`. */
 		more: method(),
 		/**
-		 * A page of notes, the last written first, from the start or `after` (an earlier page's `next`), read now and
+		 * A page of notes in the notebook's order, from the start or `after` (an earlier page's `next`), read now and
 		 * not followed: what a reader that keeps no list (an agent's tool) pages through.
 		 */
 		page: method(obj({ after: opt(str()) }), obj({ rows: arr(Note), next: opt(str()) })),
@@ -67,10 +73,13 @@ export const NotesKind = defineThing("notes.notes", {
 		remove: method(obj({ id: str() })),
 	},
 	ticks: {
-		// The one tick. Members no tick gives (`name`, `list`, `more`, `page`) are there for everyone let in: reading.
+		// The one tick. Members no tick gives (`name`, `order`, `list`, `more`, `page`) are there for everyone let in:
+		// reading.
 		write: { label: messages.message("tickWrite"), gives: NOTES_WRITES },
 	},
 	defaultGrants: { everyone: ["write"], agents: ["write"], guests: [] },
+	// Set where the notebook is linked, through the things plugin's Workspace.configure (the `configure` hook).
+	settings: ["order"],
 });
 
 /** One notebook held in a workspace: `NotesKind`'s contract. */

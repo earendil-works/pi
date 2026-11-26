@@ -187,7 +187,7 @@ describe("a checklist's items", () => {
 		const [s1, s2] = [await c.workspace("s1"), await c.workspace("s2")];
 		const [ann, ben] = [await c.person("Ann", s1), await c.person("Ben", s2)];
 		const shared = await c.thingIn(s1, "Plan");
-		await c.things.link({ workspace: s2, thing: shared, by: BY }, context);
+		await c.things.link({ workspace: s2, thing: shared }, context);
 		await c.tick(s2, shared, { kind: "person", person: ben.id }, "add", false);
 		await c.holding(ben, s2, shared, async (watching, outer) => {
 			assert.equal(watching.addItem, undefined);
