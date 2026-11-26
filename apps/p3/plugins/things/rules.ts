@@ -136,6 +136,11 @@ export type Answer = {
 	readonly kind: string;
 	readonly ticksVersion: number;
 	readonly ticks: string[];
+	/**
+	 * How far above the asked workspace the thing is linked (0: here, 1: the parent, ...; its nearest link): what a
+	 * kind that stacks `all` orders its things by where nearer wins a clash.
+	 */
+	readonly depth: number;
 	readonly makes?: string[];
 	/**
 	 * Only on a workspace's own thing: the workspaces above it the caller is present in, nearest first (item 96: the
@@ -378,7 +383,7 @@ export function agentCounts(access: WorkspaceAccess, agent: PartyKey): Counted {
  * Rule 5 (not for an owner): the union of the ticks of every counted party let in here, less what is withheld from
  * the caller's named party; `undefined` when no counted party is let in, or `OPEN` is withheld from their named party.
  */
-export function answerOf(given: ThingHere, counted: Counted, kinds: KindsLookup): Answer | undefined {
+export function answerOf(given: ThingHere, counted: Counted, kinds: KindsLookup, depth: number): Answer | undefined {
 	const taken = counted.named === undefined ? undefined : given.takenFromNamed.get(counted.named);
 	if (taken?.has(OPEN) === true) return undefined;
 	let union: Set<string> | undefined;
@@ -390,7 +395,7 @@ export function answerOf(given: ThingHere, counted: Counted, kinds: KindsLookup)
 	}
 	if (union === undefined) return undefined;
 	const kept = taken === undefined ? [...union] : [...union].filter((tick) => !taken.has(tick));
-	return { kind: given.kind, ticksVersion: kinds.ticksVersionOf(given.kind), ticks: kept.sort() };
+	return { kind: given.kind, ticksVersion: kinds.ticksVersionOf(given.kind), ticks: kept.sort(), depth };
 }
 
 /** Whom a caller is, for the Make ceiling (item 114): a person or an agent. */
@@ -429,6 +434,7 @@ export function ownAnswerOf(own: OwnHere, counted: Counted, maker: Maker, kinds:
 		kind: own.kind,
 		ticksVersion: kinds.ticksVersionOf(own.kind),
 		ticks: [...ticks].sort(),
+		depth: 0,
 		makes: [...makes].filter((kind) => makeable(kind, own.kind, maker, kinds)).sort(),
 	};
 }
@@ -438,7 +444,7 @@ export function ownAnswerOf(own: OwnHere, counted: Counted, maker: Maker, kinds:
  * make there.
  */
 export function ownerOwnAnswer(kind: string, kinds: KindsLookup): Answer {
-	const answer = ownerAnswer(kind, kinds);
+	const answer = ownerAnswer(kind, kinds, 0);
 	return { ...answer, makes: kinds.kinds().filter((each) => makeable(each, kind, "person", kinds)) };
 }
 
@@ -464,9 +470,10 @@ export function makeable(kind: string, workspace: string, maker: Maker, kinds: K
  * Rule 5 for an owner (items 78, 99): every tick of the kind meant for people (`people` or `all`), none for agents
  * only.
  */
-export function ownerAnswer(kind: string, kinds: KindsLookup): Answer {
+export function ownerAnswer(kind: string, kinds: KindsLookup, depth: number): Answer {
 	return {
 		kind,
+		depth,
 		ticksVersion: kinds.ticksVersionOf(kind),
 		ticks: kinds
 			.ticksOf(kind)
@@ -479,6 +486,7 @@ export function ownerAnswer(kind: string, kinds: KindsLookup): Answer {
 export function sameAnswer(a: Answer | undefined, b: Answer | undefined): boolean {
 	if (a === b) return true;
 	if (a === undefined || b === undefined || a.kind !== b.kind || a.ticksVersion !== b.ticksVersion) return false;
+	if (a.depth !== b.depth) return false;
 	return (
 		sameNames(a.ticks, b.ticks) &&
 		(a.makes === undefined) === (b.makes === undefined) &&

@@ -13,8 +13,8 @@ import {
 	type Self,
 } from "@earendil-works/p3/v1";
 import { admitThing } from "./admission.ts";
-import { type CreateAnswer, type ThingHook, ThingHooks } from "./contract.server.ts";
-import type { Caller, Source } from "./contract.ts";
+import { type CreateAnswer, type Made, type ThingHook, ThingHooks } from "./contract.server.ts";
+import type { Caller } from "./contract.ts";
 import { type ThingKind, ThingKinds } from "./kind.ts";
 
 /** What `implement` gets about its caller: who calls, and the members and flags granted. */
@@ -35,10 +35,10 @@ export type ThingImplementation<C extends Contract, St extends string = string, 
 		self: Self<P3Principal>,
 	) => Implementation<C, Ctx<P3Principal>>;
 	/**
-	 * Prepares what is in a new thing from `input` before the commit that makes it; a workspace kind's may answer the
-	 * new workspace's default grants and people default (`CreateAnswer`).
+	 * Prepares what is in a new thing (its id, its input, who makes it, where: `Made`) before the commit that makes it;
+	 * may answer its own default view and, for a workspace kind, its default grants and people default (`CreateAnswer`).
 	 */
-	readonly create?: (thing: string, input: I, by: Source, ctx: Ctx<P3Principal>) => Promise<CreateAnswer | undefined>;
+	readonly create?: (made: Made<I>, ctx: Ctx<P3Principal>) => Promise<CreateAnswer | undefined>;
 	readonly configure?: (
 		thing: string,
 		settings: { readonly [K in St]?: unknown },

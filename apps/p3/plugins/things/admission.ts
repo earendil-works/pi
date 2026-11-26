@@ -99,7 +99,7 @@ export function serveGives(host: FacetHost<P3Principal>): void {
 					const attached = await handle!.attach(workspace, callerOfKey(caller), observer, ctx);
 					if (attached !== undefined) return attached;
 				}
-			}) as Watchable<Record<string, { kind: string; ticksVersion: number; ticks: string[] }>>,
+			}) as Watchable<Record<string, { kind: string; ticksVersion: number; ticks: string[]; depth: number }>>,
 		};
 	});
 }

@@ -8,16 +8,23 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
+	arr,
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
+	createHost,
 	defineFacet,
+	local,
+	memoryLinkPair,
 	type P3Principal,
+	type PluginFacet,
 	type Reference,
+	str,
 	until,
 } from "@earendil-works/p3/v1";
-import { eventually, within } from "../../../test/until.ts";
+import { collected, eventually, within } from "../../../test/until.ts";
 import { Gives, ThingsStore } from "../contract.server.ts";
 import { MAKE_ANY, makeTick, type Party, type Source } from "../contract.ts";
+import { make, thingsOfKind } from "../kind-server.ts";
 import {
 	Linkable,
 	Roots,
@@ -34,17 +41,28 @@ import { type World, world } from "./world.ts";
 
 const BY: Source = { kind: "plugin", plugin: "test" };
 
+/** Server code following the boards available in a workspace (`thingsOfKind`). */
+const Follower = local("test.follower", { version: 1, params: { workspace: str() }, members: { things: arr(str()) } });
+const FOLLOWER: PluginFacet<P3Principal> = {
+	name: "test-follower",
+	facet: defineFacet((host) =>
+		host.serve(Follower, ({ workspace }, self) => ({ things: thingsOfKind(Board, workspace, self) })),
+	),
+};
+
 let w: World;
 let store: Reference<typeof ThingsStore>;
 let pi: string;
 
 beforeEach(async () => {
-	w = await world(context, [SPACES]);
+	w = await world(context, [SPACES, FOLLOWER]);
 	store = await w.host.get(ThingsStore, {}, context);
 	pi = (await store.workspaces.children.page({ parent: "" }, 10, context)).items[0]!.workspace;
 	SESSION.answer = undefined;
 	SESSION.made.length = 0;
+	SESSION.told.length = 0;
 	SESSION.gone.length = 0;
+	SESSION.goneFails = 0;
 });
 
 afterEach(() => w.close(context));
@@ -241,6 +259,17 @@ describe("who may change who may (scenario 6)", () => {
 		// The cell set again by another source replaces the row; reset removes it.
 		await holding(anna, fam, (ref, ctx) => ref.setTick!({ thing: comic, party: party(kim), tick: "moderate" }, ctx));
 		assert.deepEqual((await answers(fam, `person:${kim.id}`))[comic]?.ticks, ["read"]);
+		// A cell with a row of another source (the kind's default for everyone) is replaced by the caller's one row.
+		await holding(anna, fam, (ref, ctx) =>
+			ref.setTick!({ thing: comic, party: { kind: "everyone" }, tick: "read", gives: false }, ctx),
+		);
+		const everyoneRead = w
+			.rows("grants")
+			.filter((row) => row.thing === comic && row.tick === "read" && String(row.party).includes("everyone"));
+		assert.deepEqual(
+			everyoneRead.map((row) => [row.gives, JSON.parse(String(row.source)).kind]),
+			[[0, "person"]],
+		);
 	});
 });
 
@@ -266,8 +295,18 @@ describe("unlinking and removing (scenario 7, test 9)", () => {
 		const owner = await person("Mario");
 		await store.setOwner({ person: owner.id, owner: true }, context);
 		await holding(owner, pi, (ref, ctx) => ref.unlink!({ thing: fam }, ctx));
-		// At once the subtree gives nothing.
+		// At once the subtree gives nothing, also to those put in below (Leo in his robot, its agent).
 		assert.deepEqual(await answers(robot, `person:${anna.id}`), {});
+		const { leo } = { leo: (await store.workspaceMembers.here.page({ workspace: robot }, 10, context)).items };
+		for (const { party: member } of leo) {
+			const caller =
+				member.kind === "person"
+					? `person:${member.person}`
+					: member.kind === "agent"
+						? `worker:${member.session}`
+						: "";
+			if (caller !== "") assert.deepEqual(await answers(robot, caller), {}, caller);
+		}
 		await eventually(
 			() => w.rows("workspaces").length + w.rows("removing").length,
 			(left) => left === 1,
@@ -567,7 +606,7 @@ describe("the lists (R34 to R38)", () => {
 	});
 
 	it("contents: what is here with where it is linked as the caller may see it (96), and what is hidden here", async () => {
-		const { anna, fam } = await family();
+		const { anna, leo, fam } = await family();
 		const tools = await store.create({ kind: Board.name, name: "tools", workspace: pi, by: BY }, context);
 		const sketch = await store.create({ kind: Board.name, name: "sketch", workspace: fam, by: BY }, context);
 		await own(fam, party(anna), ["hide"]);
@@ -585,6 +624,15 @@ describe("the lists (R34 to R38)", () => {
 			await (await ctx.get(Workspace, { workspace: fam })).hide!({ thing: tools, shown: false }, ctx);
 			await until(contents.list, (list) => list.rows.some((row) => row.hidden), within("hidden", context));
 			assert.equal(rows().tools?.hidden, true);
+			// Hidden things are listed only for whoever may show them again (Hide here).
+			const leos = await as(
+				leo,
+				async (lctx) => (await lctx.get(WorkspaceContents, { workspace: fam, view: "v" })).list.value.rows,
+			);
+			assert.equal(
+				leos.some((row) => row.thing === tools),
+				false,
+			);
 			await store.rename({ thing: sketch, name: "Sketch" }, context);
 			await until(
 				contents.list,
@@ -703,3 +751,191 @@ function partyKeyOf(party: Party): string {
 				? `group/${party.group}`
 				: `agent/${party.session}`;
 }
+
+describe("kinds as tokens (slice 1's carry-over)", () => {
+	it("make types its input and makes a workspace kind's through createWorkspace; thingsOfKind follows what is available", async () => {
+		const { fam, robot } = await family();
+		const b = await w.host.root((ctx) => make(Board, { name: "b", workspace: fam, by: BY }, ctx), context);
+		const s = await w.host.root((ctx) => make(TestSession, { name: "s", workspace: fam, by: BY }, ctx), context);
+		assert.equal((await store.workspaces.one.page({ workspace: s }, 1, context)).items[0]?.parent, fam);
+		const follower = await w.host.get(Follower, { workspace: robot }, context);
+		assert.deepEqual(follower.things.value, [b]);
+		const c = await store.create({ kind: Board.name, name: "c", workspace: robot, by: BY }, context);
+		await until(follower.things, (things) => things.length === 2, within("a board linked in the robot", context));
+		assert.deepEqual(follower.things.value, [b, c].toSorted());
+	});
+});
+
+describe("reloads, failures and caches", () => {
+	it("a held Workspace and list keep working across a reload of the things plugin and of a kind's plugin", async () => {
+		const { anna, fam } = await family();
+		await own(fam, party(anna), ["hide", makeTick(Board)]);
+		await as(anna, async (ctx) => {
+			const ref = await ctx.get(Workspace, { workspace: fam });
+			const contents = await ctx.get(WorkspaceContents, { workspace: fam, view: "v" });
+			await w.reload("@earendil-works/p3-things", context);
+			const made = await ref.make!({ kind: Board.name, name: "after" }, ctx);
+			await until(contents.list, (list) => list.rows.some((row) => row.thing === made), within("listed", context));
+			await w.reload(BOARD_PLUGIN, context);
+			await until(ref.state, (state) => state.kind === "live", within("live again", context));
+			assert.deepEqual(ref.makes!.value.includes(Board.name), true);
+			assert.ok(contents.list.value.rows.some((row) => row.thing === made));
+		});
+		assert.deepEqual(w.errors, []);
+	});
+
+	it("a removal cut short by a reload is finished by the store's next object", async () => {
+		const { fam, robot } = await family();
+		await store.create({ kind: Board.name, name: "b", workspace: robot, by: BY }, context);
+		await store.removeWorkspace({ workspace: fam }, context);
+		await w.reload("@earendil-works/p3-things", context);
+		await eventually(
+			() => w.rows("removing").length + w.rows("gone").length,
+			(left) => left === 0,
+		);
+		assert.deepEqual(
+			w.rows("workspaces").map((row) => row.workspace),
+			[pi],
+		);
+	});
+
+	it("a workspaceGone hook that fails is tried again until it succeeds; an archive tells the kinds too", async () => {
+		const { robot } = await family();
+		SESSION.goneFails = 1;
+		await store.workspaceGone({ workspace: robot }, context);
+		await eventually(
+			() => SESSION.gone,
+			(gone) => gone.includes(robot),
+			5000,
+		);
+		await eventually(
+			() => w.rows("gone").length,
+			(left) => left === 0,
+		);
+		// The workspace stays (an archive).
+		assert.equal((await store.workspaces.one.page({ workspace: robot }, 1, context)).items.length, 1);
+	});
+
+	it("a Workspace admission's decision goes with its answer", async () => {
+		const { anna, fam } = await family();
+		const gone = await holding(anna, fam, async (ref) => {
+			const gives = await w.host.get(Gives, { workspace: fam, caller: `person:${anna.id}` }, context);
+			const answer = new WeakRef(gives.answers.value[fam]!);
+			gives.release();
+			await own(fam, party(anna), ["link"]);
+			await until(ref.state, () => ref.link !== undefined, within("the rebind", context));
+			return answer;
+		});
+		assert.ok(await collected([gone]));
+	});
+
+	it("a released list keeps no probe: the index drops it", async () => {
+		const { anna, fam } = await family();
+		const ref = await as(anna, async (ctx) => {
+			const contents = await ctx.get(WorkspaceContents, { workspace: fam, view: "v" });
+			const value = new WeakRef(contents.list.value);
+			return value;
+		});
+		assert.ok(await collected([ref]));
+	});
+});
+
+describe("the create hook (sessions' push 3)", () => {
+	it("is told the thing, its maker and where it is made (a workspace kind: its parent)", async () => {
+		const { leo, fam, robot } = await family();
+		assert.deepEqual(SESSION.told.at(-1), { thing: robot, workspace: fam, by: source(leo) });
+		const d = await store.create({ kind: Defaults.name, name: "d", workspace: robot, by: BY }, context);
+		assert.deepEqual(SESSION.told.at(-1), { thing: d, workspace: robot, by: BY });
+	});
+
+	it("may answer the new thing's own default view, written in the commit that makes it", async () => {
+		const { fam } = await family();
+		SESSION.answer = { view: "sessions.transcript" };
+		const s = await store.createWorkspace({ kind: TestSession.name, name: "s", parent: fam, by: BY }, context);
+		const d = await store.create({ kind: Defaults.name, name: "d", workspace: fam, by: BY }, context);
+		for (const thing of [s, d]) {
+			assert.equal((await store.things.one.page({ thing }, 1, context)).items[0]?.view, "sessions.transcript");
+		}
+		SESSION.answer = undefined;
+		const plain = await store.create({ kind: Defaults.name, name: "p", workspace: fam, by: BY }, context);
+		assert.equal((await store.things.one.page({ thing: plain }, 1, context)).items[0]?.view, "");
+	});
+});
+
+describe("depth: how far above a thing is linked", () => {
+	it("each answer says it (nearest link), a nearer link is a changed answer, told live; the own thing is 0", async () => {
+		const { leo, fam, robot } = await family();
+		const owner = await person("Mario");
+		await store.setOwner({ person: owner.id, owner: true }, context);
+		const board = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
+		const gives = await w.host.get(Gives, { workspace: robot, caller: `person:${leo.id}` }, context);
+		const before = gives.answers.value[board]!;
+		assert.equal(before.depth, 2);
+		assert.equal(gives.answers.value[robot]?.depth, 0);
+		assert.equal((await answers(robot, `person:${owner.id}`))[board]?.depth, 2);
+		assert.equal((await answers(robot, `worker:${robot}`))[board]?.depth, 2);
+		await store.link({ workspace: fam, thing: board }, context);
+		await until(gives.answers, (given) => given[board]?.depth === 1, within("the nearer link", context));
+		assert.notEqual(gives.answers.value[board], before);
+		assert.equal((await answers(pi, "server"))[board]?.depth, 0);
+		gives.release();
+	});
+});
+
+describe("setTick resets a cell (page builder's repro)", () => {
+	it("a kind's default row for everyone goes when its cell is reset, live in WhoMay and in a fresh hold", async () => {
+		const { anna, fam } = await family();
+		await own(fam, party(anna), ["manageAccess", makeTick(Board)]);
+		await as(anna, async (ctx) => {
+			const ref = await ctx.get(Workspace, { workspace: fam });
+			const made = await ref.make!({ kind: Board.name, name: "Plans" }, ctx);
+			const who = await ctx.get(WhoMay, { workspace: fam, thing: made });
+			const everyone = (table: typeof who.table.value) =>
+				table.rows.find((row) => row.party.kind === "everyone")!.ticks.read;
+			assert.equal(everyone(who.table.value)?.here.length, 1);
+			await ref.setTick!({ thing: made, party: { kind: "everyone" }, tick: "read" }, ctx);
+			assert.equal(
+				w.rows("grants").filter((row) => row.thing === made && String(row.party).includes("everyone")).length,
+				0,
+			);
+			await until(who.table, (table) => everyone(table)?.here.length === 0, within("the row gone, live", context));
+			const fresh = await ctx.get(WhoMay, { workspace: fam, thing: made });
+			assert.deepEqual(everyone(fresh.table.value), { here: [], has: false });
+		});
+	});
+});
+
+describe("lists held over a link (the page's)", () => {
+	it("a reset cell and a hidden thing reach a holder on another host (a probe's change is sent, not only kept)", async () => {
+		const { anna, fam } = await family();
+		await own(fam, party(anna), ["manageAccess", "hide"]);
+		const board = await store.create({ kind: Board.name, name: "b", workspace: fam, by: BY }, context);
+		const tools = await store.create({ kind: Board.name, name: "tools", workspace: pi, by: BY }, context);
+		const [toServer, fromClient] = memoryLinkPair();
+		const client = createHost<P3Principal>({ onError: (error) => assert.fail(`client error ${error.kind}`) });
+		w.host.accept(fromClient, { principal: anna }, context);
+		client.connect(toServer, { principal: { kind: "server" } }, context);
+		await client.load([], context);
+		try {
+			const who = client.hold(WhoMay, { workspace: fam, thing: board }, context);
+			const contents = client.hold(WorkspaceContents, { workspace: fam, view: "v" }, context);
+			const ref = client.hold(Workspace, { workspace: fam }, context);
+			for (const each of [who, contents, ref])
+				await until(each.state, (state) => state.kind === "live", within("live", context));
+			const everyone = () =>
+				who.table.value.rows.find((row) => row.party.kind === "everyone")?.ticks.read?.here.length;
+			assert.equal(everyone(), 1);
+			await ref.setTick!({ thing: board, party: { kind: "everyone" }, tick: "read" }, context);
+			await until(who.table, () => everyone() === 0, within("the reset over the link", context));
+			await ref.hide!({ thing: tools, shown: false }, context);
+			await until(
+				contents.list,
+				(list) => list.rows.some((row) => row.thing === tools && row.hidden),
+				within("hidden over the link", context),
+			);
+			for (const each of [who, contents, ref]) each.release();
+		} finally {
+			await client.close(context);
+		}
+	});
+});

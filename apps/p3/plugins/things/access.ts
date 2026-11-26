@@ -10,7 +10,7 @@
 // and what a commit changed is read again before anything else is asked. A re-read that fails publishes nothing of
 // it: the index forgets everything and ends its watchers, which attach again and load what is on disk.
 
-import { ChordError, type Context, type FollowObserver, reportError } from "@earendil-works/p3/v1";
+import { ChordError, type Context, type FollowObserver, type JsonValue, reportError } from "@earendil-works/p3/v1";
 import { type Caller, partyKey } from "./contract.ts";
 import {
 	ABOVE_THE_ROOT,
@@ -328,7 +328,11 @@ export class AccessIndex {
 			if (view.probe.same(view.last, value)) continue;
 			view.last = value;
 			try {
-				view.observer.advance({ kind: "value", value, ops: [], retired: false }, this.#context);
+				// The whole value replaced: a holder over a link applies the ops, so an empty list would change nothing there.
+				view.observer.advance(
+					{ kind: "value", value, ops: [["r", value as JsonValue]], retired: false },
+					this.#context,
+				);
 			} catch (error) {
 				reportError("things: a probe's watcher of the access index failed", error, this.#context);
 			}
@@ -459,7 +463,17 @@ export class AccessIndex {
 		const given = access.things.get(thing);
 		if (given === undefined) return undefined;
 		const kinds = this.#kinds();
-		return everything ? ownerAnswer(given.kind, kinds) : answerOf(given, counted, kinds);
+		const depth = this.#depths(workspace).get(given.at) ?? 0;
+		return everything ? ownerAnswer(given.kind, kinds, depth) : answerOf(given, counted, kinds, depth);
+	}
+
+	/** How far above `workspace` (loaded, with its ancestors) each of them is: itself 0, its parent 1, ... */
+	#depths(workspace: string): ReadonlyMap<string, number> {
+		const depths = new Map<string, number>();
+		for (let at = workspace, depth = 0; at !== ""; at = this.#workspaces.get(at)?.entries?.parent ?? "", depth++) {
+			depths.set(at, depth);
+		}
+		return depths;
 	}
 
 	/**
@@ -475,13 +489,16 @@ export class AccessIndex {
 		const kinds = this.#kinds();
 		const last = view.last;
 		const answers: Record<string, Answer> = {};
-		// An owner's answer is the same for every thing of a kind: made once per kind.
-		const ownerAnswers = new Map<string, Answer>();
-		const ownerOf = (kind: string) => {
-			const made = ownerAnswers.get(kind);
+		const depths = this.#depths(view.workspace);
+		// An owner's answer is the same for every thing of a kind linked at one depth: made once per depth and kind.
+		const ownerAnswers = new Map<number, Map<string, Answer>>();
+		const ownerOf = (kind: string, depth: number) => {
+			const atDepth = ownerAnswers.get(depth) ?? new Map<string, Answer>();
+			ownerAnswers.set(depth, atDepth);
+			const made = atDepth.get(kind);
 			if (made !== undefined) return made;
-			const answer = ownerAnswer(kind, kinds);
-			ownerAnswers.set(kind, answer);
+			const answer = ownerAnswer(kind, kinds, depth);
+			atDepth.set(kind, answer);
 			return answer;
 		};
 		let same = true;
@@ -496,8 +513,10 @@ export class AccessIndex {
 			}
 			size++;
 		};
-		for (const [thing, given] of access.things)
-			put(thing, owner ? ownerOf(given.kind) : answerOf(given, counted, kinds));
+		for (const [thing, given] of access.things) {
+			const depth = depths.get(given.at) ?? 0;
+			put(thing, owner ? ownerOf(given.kind, depth) : answerOf(given, counted, kinds, depth));
+		}
 		if (access.own !== undefined)
 			put(access.own.id, this.#ownAnswer(view.workspace, access.own, caller, counted, context));
 		return same && size === Object.keys(last).length ? last : answers;

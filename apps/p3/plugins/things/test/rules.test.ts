@@ -423,10 +423,11 @@ describe("the rules alone", () => {
 		);
 		const below = accessHere(top, entries({ grants: [grantOf({ tick: "draw" })] }), lookup);
 		const ada = personCounts(below, "person/ada", { owner: false, groups: [] });
-		assert.deepEqual(answerOf(below.things.get("sketch")!, ada, lookup), {
+		assert.deepEqual(answerOf(below.things.get("sketch")!, ada, lookup, 1), {
 			kind: "k",
 			ticksVersion: 1,
 			ticks: ["read"],
+			depth: 1,
 		});
 	});
 
@@ -439,7 +440,7 @@ describe("the rules alone", () => {
 				onlyRead,
 			);
 			const ada = personCounts(here, "person/ada", { owner: false, groups: [] });
-			return answerOf(here.things.get("sketch")!, ada, onlyRead)?.ticks;
+			return answerOf(here.things.get("sketch")!, ada, onlyRead, 0)?.ticks;
 		};
 		assert.equal(answer(grantOf({ party: "person/ada", tick: "fly" })), undefined);
 		assert.deepEqual(answer(grantOf({ party: "person/ada", tick: "read" })), ["read"]);

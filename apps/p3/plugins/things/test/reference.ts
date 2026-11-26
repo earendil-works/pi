@@ -20,6 +20,7 @@ export type Answer =
 			readonly kind: string;
 			readonly ticksVersion: number;
 			readonly ticks: string[];
+			readonly depth: number;
 			readonly makes?: string[];
 			readonly above?: string[];
 	  }
@@ -183,6 +184,7 @@ export function ownFrom(all: Everything, kinds: KindTicks, workspace: string, ca
 				.filter(([, forWhom]) => forWhom !== "agents")
 				.map(([tick]) => tick)
 				.sort(),
+			depth: 0,
 			makes: [...kinds.keys()].filter(makeable).sort(),
 			above,
 		};
@@ -222,7 +224,14 @@ export function ownFrom(all: Everything, kinds: KindTicks, workspace: string, ca
 		ticks.delete(g.tick);
 		if (g.tick.startsWith("@make:")) for (const made of madeWith(kinds, g.tick)) makes.delete(made);
 	}
-	return { kind, ticksVersion: 1, ticks: [...ticks].sort(), makes: [...makes].filter(makeable).sort(), above };
+	return {
+		kind,
+		ticksVersion: 1,
+		ticks: [...ticks].sort(),
+		depth: 0,
+		makes: [...makes].filter(makeable).sort(),
+		above,
+	};
 }
 
 /** Rule 5 for one thing. */
@@ -238,7 +247,7 @@ export function answerFrom(
 	if (state.kind === undefined) return undefined;
 	if (isOwner(all, caller)) {
 		const forPeople = [...(kinds.get(state.kind)?.ticks ?? [])].filter(([, forWhom]) => forWhom !== "agents");
-		return { kind: state.kind, ticksVersion: 1, ticks: forPeople.map(([tick]) => tick).sort() };
+		return { kind: state.kind, ticksVersion: 1, ticks: forPeople.map(([tick]) => tick).sort(), depth: state.depth };
 	}
 	// A tick withheld from the caller's person or session agent applies whatever route they count by (item 106);
 	// `@open`: denied.
@@ -252,7 +261,12 @@ export function answerFrom(
 		if (own !== undefined) ticks = [...(ticks ?? []), ...own.filter((tick) => !(ticks ?? []).includes(tick))];
 	}
 	if (ticks === undefined) return undefined;
-	return { kind: state.kind, ticksVersion: 1, ticks: ticks.filter((tick) => !taken.includes(tick)).sort() };
+	return {
+		kind: state.kind,
+		ticksVersion: 1,
+		ticks: ticks.filter((tick) => !taken.includes(tick)).sort(),
+		depth: state.depth,
+	};
 }
 
 /**
@@ -261,6 +275,8 @@ export function answerFrom(
  */
 type State = {
 	kind: string | undefined;
+	/** How many steps above the asked workspace its nearest link is. */
+	depth: number;
 	ticks: Map<string, string[]>;
 	taken: Map<string, string[]>;
 	present: string[];
@@ -276,13 +292,14 @@ function walk(all: Everything, kinds: KindTicks, workspace: string, thing: strin
 		at = all.workspaces.find((w) => w.id === at?.parent)
 	)
 		way.unshift(at);
-	const state: State = { kind: undefined, ticks: new Map(), taken: new Map(), present: [], hidden: [] };
-	for (const here of way) {
+	const state: State = { kind: undefined, depth: 0, ticks: new Map(), taken: new Map(), present: [], hidden: [] };
+	for (const [step, here] of way.entries()) {
 		const switchFor = (item: string) => all.switches.find((s) => s.workspace === here.id && s.item === item)?.shown;
 		const grantsHere = all.grants.filter((g) => g.workspace === here.id && g.thing === thing);
 		const link = all.links.find((l) => l.workspace === here.id && l.thing === thing);
 		if (link !== undefined) {
 			state.kind = link.of;
+			state.depth = way.length - 1 - step;
 			state.ticks = new Map();
 			state.taken = new Map();
 			for (const grant of grantsHere.filter((g) => g.gives)) {

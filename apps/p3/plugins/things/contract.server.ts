@@ -10,6 +10,7 @@ import {
 	type Ctx,
 	defineRegistry,
 	type FollowObserver,
+	int,
 	local,
 	map,
 	method,
@@ -116,6 +117,7 @@ export const Answer = obj({
 	kind: str(),
 	ticksVersion: num(),
 	ticks: arr(str()),
+	depth: int(),
 	makes: opt(arr(str())),
 	above: opt(arr(str())),
 });
@@ -293,15 +295,12 @@ export const AccessHandles = defineRegistry<AccessHandle, AccessHandle | undefin
 export type ThingHook = {
 	readonly kind: string;
 	/**
-	 * Prepares what is in a new thing from `input`, made by `by`, before the commit that makes it (item 34): a throw
-	 * makes nothing (a kind refuses there what its maker may not use, as a login another person's sign-in).
+	 * Prepares what is in a new thing from `input`, made by `by` in `workspace` (for a workspace kind: its parent),
+	 * before the commit that makes it (item 34): a throw makes nothing (a kind refuses there what its maker may not
+	 * use, as a login another person's sign-in). It may answer the new thing's own default view and, for a workspace
+	 * kind, its default grants and people default (`CreateAnswer`).
 	 */
-	readonly create?: (
-		thing: string,
-		input: unknown,
-		by: Source,
-		ctx: Ctx<P3Principal>,
-	) => Promise<CreateAnswer | undefined>;
+	readonly create?: (made: Made<unknown>, ctx: Ctx<P3Principal>) => Promise<CreateAnswer | undefined>;
 	/**
 	 * Sets `settings`, some of the kind's settings (`KindInfo.settings`: state members), on `thing`;
 	 * `Workspace.configure` calls it (slice 2) with values checked against their state members' schemas.
@@ -330,11 +329,22 @@ export type ThingHook = {
 };
 
 /**
- * What a workspace kind's `create` hook may answer for the new workspace (a private session, decisions 17, 93): its
- * default grants instead of the kind's (the person's `defaults` choice applies within them), and whether people from
- * above are shown in it.
+ * What a kind's `create` hook may answer: the new thing's own default view; for a workspace kind also the new
+ * workspace's default grants instead of the kind's (a private session, decisions 17, 93; the person's `defaults`
+ * choice applies within them), and whether people from above are shown in it.
  */
-export type CreateAnswer = { readonly defaultGrants?: DefaultGrants; readonly showsPeople?: boolean };
+export type CreateAnswer = {
+	readonly defaultGrants?: DefaultGrants;
+	readonly showsPeople?: boolean;
+	/** The new thing's own default view (item 74; `ThingRow.view`), written in the commit that makes it. */
+	readonly view?: string;
+};
+
+/**
+ * What a kind's `create` hook is told about a new thing: its id, its input (checked against the kind's `create.input`),
+ * who makes it, and the workspace it is made in (for a workspace kind: its parent).
+ */
+export type Made<I> = { readonly thing: string; readonly input: I; readonly by: Source; readonly workspace: string };
 
 /** The kinds' hooks, by kind name (the first by plugin name wins a kind). */
 export const ThingHooks = defineRegistry<ThingHook, ReadonlyMap<string, TableItem<ThingHook>>>("things.hooks", {

@@ -47,6 +47,9 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 		({ workspace }, principal, admitted, self) => {
 			const store = self.get(ThingsStore, {});
 			const gives = self.get(Gives, { workspace, caller: callerKey(principal) }).answers;
+			// The caller's own answer here: the index keeps its object while it is unchanged, so the info is not computed
+			// again when another thing's answer changes.
+			const own = self.derive([gives], ([answers]) => answers[workspace] ?? null);
 			const line = self.liveQuery(store.workspaces.one, { workspace }, { first: 1 });
 			const thing = self.liveQuery(store.things.one, { thing: workspace }, { first: 1 });
 			const parentArgs = self.derive([line], ([{ rows }]) => ({ workspace: rows[0]?.parent ?? "" }));
@@ -54,8 +57,8 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 			const by = sourceOf(principal);
 			const kinds = self.registry(ThingKinds);
 			return {
-				info: self.derive([line, thing, parent, gives], ([lines, things, parents, answers]) =>
-					infoOf(workspace, lines.rows[0], things.rows[0]?.view ?? "", parents.rows[0], answers[workspace]),
+				info: self.derive([line, thing, parent, own], ([lines, things, parents, answer]) =>
+					infoOf(workspace, lines.rows[0], things.rows[0]?.view ?? "", parents.rows[0], answer ?? undefined),
 				),
 				makes: () => constant(admitted.makes),
 				make: async ({ kind, name, input, defaults }, ctx) => {
