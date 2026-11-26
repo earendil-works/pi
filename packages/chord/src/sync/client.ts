@@ -45,7 +45,8 @@ export const APPLY_BYTES = 4 * 1024 * 1024;
  * remote's head; one with commits finds out by uploading.
  */
 export type SyncState = {
-	readonly syncedHead: Seq | undefined;
+	/** Absent before the copy shared anything with the remote. */
+	readonly syncedHead?: Seq;
 	/**
 	 * Set while a pull applies a batch or snapshot ending here: a local head up to it holds the remote's commits, not
 	 * the copy's own, even when the pull stopped partway.
@@ -59,9 +60,12 @@ function sharedHead(state: SyncState | undefined, local: Seq): Seq {
 	return state?.syncedHead ?? LOG_START;
 }
 
+/** Where a host keeps each copy's `SyncState`, by session. */
 export interface SyncStateStore {
 	get(sessionId: string, context: Context): Promise<SyncState | undefined>;
 	set(sessionId: string, state: SyncState, context: Context): Promise<void>;
+	/** Forget a session's state: its next upload starts from the beginning (after `remote_empty`, or a deleted copy). */
+	delete(sessionId: string, context: Context): Promise<void>;
 }
 
 /** A store's head as a sequence: `lastSeq`, 0 for a store without commits. */
@@ -98,9 +102,9 @@ export type UploadResult =
 	/** Nothing was committed since the last upload. */
 	| { readonly type: "idle" }
 	/**
-	 * Another device continued the session from `at` first. This copy's commits after `at` are a different history:
-	 * the host renames the copy to a new session (forked from this one at `at`) and uploads it there, and the session
-	 * itself restores into a fresh store.
+	 * Another device continued the session from `at` first. This copy's commits after `at` are a different history,
+	 * which must not go into this session's: the host backs the copy up whole under a new remote id (a conflicted copy,
+	 * named for where it came from), and the local session keeps its id.
 	 */
 	| { readonly type: "diverged"; readonly at: Seq }
 	/**
@@ -128,8 +132,9 @@ export type UploadResult =
  *
  * Where the outbox does not reach back to what the copy shares with the remote, the next slot is an archive slot: the
  * store's `export()` at its head. For a session the remote does not have yet, that is its first slot (the outbox was
- * turned on later, or trimmed, as for a copy renamed after it diverged); for one it has, the slot after its head (the
- * outbox was turned off, dropping commits not uploaded yet, and on again), so the history goes on from a full state.
+ * turned on later, or trimmed, as for a copy backed up under a new id after it diverged); for one it has, the slot
+ * after its head (the outbox was turned off, dropping commits not uploaded yet, and on again), so the history goes on
+ * from a full state.
  *
  * A slot this device created already is an upload whose response was lost: the remote has the history up to its end,
  * and the upload goes on from there.
@@ -466,6 +471,9 @@ class ScratchState implements SyncStateStore {
 	}
 	async set(_sessionId: string, state: SyncState): Promise<void> {
 		this.#state = state;
+	}
+	async delete(): Promise<void> {
+		this.#state = undefined;
 	}
 }
 

@@ -23,7 +23,7 @@ export class FileSyncStateStore implements SyncStateStore {
 		if (isNotFound(result)) return undefined;
 		const stored = JSON.parse(unwrap(result)) as { syncedHead?: Seq; pulling?: Seq };
 		return {
-			syncedHead: stored.syncedHead,
+			...(stored.syncedHead === undefined ? {} : { syncedHead: stored.syncedHead }),
 			...(stored.pulling === undefined ? {} : { pulling: stored.pulling }),
 		};
 	}
@@ -36,7 +36,7 @@ export class FileSyncStateStore implements SyncStateStore {
 		unwrap(await this.#fs.renameFile(temporary, path, context));
 	}
 
-	/** Forget a session, as when its copy is renamed or deleted. */
+	/** Forget a session, as when the remote lost it (`remote_empty`) or its copy is deleted. */
 	async delete(sessionId: string, context: Context): Promise<void> {
 		unwrap(await this.#fs.remove(await this.#path(sessionId, ".json", context), { force: true }, context));
 	}
