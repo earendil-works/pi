@@ -33,6 +33,9 @@ type Compiled =
 	| { readonly kind: "compiled"; readonly plan: ReadPlan }
 	| { readonly kind: "failed"; readonly error: unknown };
 
+const NO_WATCHES: (() => void)[] = [];
+const NO_READS: readonly OpenRead[] = [];
+
 /** A query compiled for the bindings as they are, with its open reads. */
 export class OpenQuery {
 	readonly spec: QuerySpec;
@@ -41,7 +44,12 @@ export class OpenQuery {
 	readonly context: Context;
 	readonly #shape: "rows" | "count";
 	readonly #rebound: () => void;
-	readonly #reads = new Set<OpenRead>();
+	/**
+	 * Its open reads: without a set while there is at most one (a live query's one read; a set of one costs 152 B),
+	 * in a set from the second on (a list's pages), kept once made.
+	 */
+	#read: OpenRead | undefined;
+	#reads: Set<OpenRead> | undefined;
 	/** The releases of its binding watches; `undefined` once closed. */
 	#watches: (() => void)[] | undefined;
 	#compiled: Compiled;
@@ -57,7 +65,9 @@ export class OpenQuery {
 		this.#shape = shape;
 		this.#rebound = rebound;
 		const reads = site.store.reads;
-		this.#watches = [...setsOf(spec.query)].map((set) => reads.watch(set, () => this.#recompile()));
+		const sets = setsOf(spec.query);
+		// No set besides its own table (most queries): the shared empty list, none made per query.
+		this.#watches = sets.size === 0 ? NO_WATCHES : [...sets].map((set) => reads.watch(set, () => this.#recompile()));
 		reads.opened(this);
 		this.#compiled = this.#compile();
 	}
@@ -79,7 +89,13 @@ export class OpenQuery {
 	 */
 	read(what: ReadKind, sink: ReadSink): OpenRead {
 		const read = new OpenRead(this, what, sink);
-		if (!this.closed) this.#reads.add(read);
+		if (this.closed) return read;
+		if (this.#reads !== undefined) this.#reads.add(read);
+		else if (this.#read === undefined) this.#read = read;
+		else {
+			this.#reads = new Set([this.#read, read]);
+			this.#read = undefined;
+		}
 		return read;
 	}
 
@@ -95,7 +111,8 @@ export class OpenQuery {
 
 	/** `read` was closed: the query keeps nothing of it. */
 	forget(read: OpenRead): void {
-		this.#reads.delete(read);
+		if (this.#reads !== undefined) this.#reads.delete(read);
+		else if (this.#read === read) this.#read = undefined;
 	}
 
 	/** Its reads leave the index and it stops following bindings: no commit runs them again. */
@@ -104,7 +121,13 @@ export class OpenQuery {
 		for (const release of this.#watches) release();
 		this.#watches = undefined;
 		this.site.store.reads.closed(this);
-		for (const read of [...this.#reads]) read.close();
+		for (const read of this.#opened()) read.close();
+	}
+
+	/** Its open reads now, in the order they were opened: a copy, which what is done with them may change. */
+	#opened(): readonly OpenRead[] {
+		if (this.#reads !== undefined) return [...this.#reads];
+		return this.#read === undefined ? NO_READS : [this.#read];
 	}
 
 	#compile(): Compiled {
@@ -121,7 +144,7 @@ export class OpenQuery {
 	#recompile(): void {
 		if (this.#watches === undefined) return;
 		this.#compiled = this.#compile();
-		for (const read of [...this.#reads]) read.register();
+		for (const read of this.#opened()) read.register();
 		this.#rebound();
 	}
 }
