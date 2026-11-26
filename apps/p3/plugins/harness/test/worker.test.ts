@@ -80,8 +80,9 @@ describe("the harness plugin on a worker", () => {
 		held: Holding[],
 		change: Partial<ReturnType<typeof sessionRow>> = {},
 		extras: Extra[] = [],
+		options: { readonly ready?: boolean } = {},
 	): Promise<Server> {
-		const { stubs, server, control } = standIns({ ...sessionRow(SESSION, folder), ...change }, held, extras);
+		const { stubs, server, control } = standIns({ ...sessionRow(SESSION, folder), ...change }, held, extras, options);
 		harnessControl = control;
 		t = await testPlugin(
 			fileURLToPath(new URL("../", import.meta.url)),
@@ -458,5 +459,19 @@ describe("the harness plugin on a worker", () => {
 		assert.ok(requests().some(({ last }) => last === "No subagents."));
 		// Each answer reported once.
 		assert.equal(requests().filter(({ last }) => last.startsWith("[subagent reader answered]")).length, 2);
+	});
+
+	it("waits with the first submit until the holding is ready, which then gives the agent its tools", async () => {
+		const held = [login("login", "faux", [says("", "ok")]), coding()];
+		const server = await start([], {}, [], { ready: false });
+		const open = await harness();
+		const submitted = open.submit(undefined, { text: "hi", requestId: "hi" }, context);
+		// The holding is slow: nothing reached the model while it was not ready.
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.deepEqual(requests(), []);
+		server.hold(held);
+		await submitted;
+		await open.durable.waitForIdle(context);
+		assert.deepEqual(requests()[0]?.tools, ["bash", "edit", "read", "write"]);
 	});
 });

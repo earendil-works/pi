@@ -106,7 +106,12 @@ export function thingHarnessPart<C extends Contract>(
 /**
  * What the session's worker holds as its agent, by kind name: one entry per thing available to the agent, in a stable
  * order (nearest last once the holding knows depth; open), only of kinds with a part in `ThingHarnessParts` here. A
- * new map whenever a list changes; a kind whose list did not change keeps the same array, so the harness gives only kinds whose array is new
- * (a reference granted anew makes its kind's array new). One contributor, the holding (slice 5); read by the harness.
+ * new map whenever a list changes; a kind whose list did not change keeps the same array, so the harness gives only
+ * kinds whose array is new (a reference granted anew makes its kind's array new). `undefined`: not ready yet (no
+ * contribution, or the holding still waits for a wanted reference to be live or failed once); the harness keeps what
+ * it gave meanwhile, and its open, resume and submit wait for a value. One contributor, the holding (slice 5).
  */
-export const HeldThings: Registry<Held, Held> = defineRegistry<Held, Held>("things.held", { version: 1 });
+export const HeldThings: Registry<Held | undefined, Held | undefined> = defineRegistry<
+	Held | undefined,
+	Held | undefined
+>("things.held", { version: 1 });

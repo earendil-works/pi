@@ -97,7 +97,10 @@ export type Server = {
 	readonly given: Map<string, number>;
 	/** Sets the session's row (as the server's store would change it). */
 	row(change: Partial<SessionRow>): void;
-	/** Sets what the agent holds; a kind whose entries are the same objects in the same order keeps its list. */
+	/**
+	 * Sets what the agent holds (and makes the holding ready); a kind whose entries are the same objects in the same
+	 * order keeps its list.
+	 */
 	hold(things: readonly Holding[]): void;
 	/** Sets the access of callers by key (`owner`, `person:<id>`); unset: `none`. */
 	access(caller: string, access: "none" | "read" | "write"): void;
@@ -155,12 +158,15 @@ export function standIns(
 	row: SessionRow,
 	held: readonly Holding[],
 	extras: readonly Extra[] = [],
+	{ ready = true }: { readonly ready?: boolean } = {},
 ): { stubs: PluginFacet<P3Principal>[]; server: PluginFacet<P3Principal>[]; control: Server } {
 	let rowValue = row;
-	let heldValue = group(held, new Map());
+	let grouped = group(held, new Map());
+	// Not ready: the holding contributes `undefined` until the test holds something.
+	let heldValue: Held | undefined = ready ? grouped : undefined;
 	let release: Promise<void> = Promise.resolve();
 	const rows = new Set<Writable<SessionRow>>();
-	const holdings = new Set<Writable<Held>>();
+	const holdings = new Set<Writable<Held | undefined>>();
 	const accesses = new Map<string, "none" | "read" | "write">([["person:owner", "write"]]);
 	const answers = new Set<{ caller: string; access: Writable<"none" | "read" | "write"> }>();
 	const control: Server = {
@@ -172,7 +178,8 @@ export function standIns(
 			for (const writable of rows) writable.set(rowValue);
 		},
 		hold: (next) => {
-			heldValue = group(next, heldValue);
+			grouped = group(next, grouped);
+			heldValue = grouped;
 			for (const writable of holdings) writable.set(heldValue);
 		},
 		access: (caller, access) => {
@@ -212,7 +219,7 @@ export function standIns(
 	});
 	const holding = defineFacet((host) => {
 		contribute(host, "test.holding", (self) => {
-			const writable = self.writable(heldValue);
+			const writable = self.writable<Held | undefined>(heldValue);
 			holdings.add(writable);
 			self.contribute(HeldThings, writable);
 		});
