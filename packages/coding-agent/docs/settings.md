@@ -168,7 +168,7 @@ The built-in extensions are named `builtin:mcp`, `builtin:llama.cpp`, `builtin:c
 
 ## Updates, telemetry, and warnings
 
-For every request Pi makes and what it sends, see [Telemetry and Network Requests](telemetry.md).
+For what Pi sends and how to turn it off, see [Telemetry](telemetry.md).
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
