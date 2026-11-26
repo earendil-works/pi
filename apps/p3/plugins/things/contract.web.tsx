@@ -1,26 +1,29 @@
 // The things plugin's contract for web facets (decisions 60, 64 to 66, 70, 72, 74): the views a plugin offers for a
-// target (`Views`: things of a kind, persons, groups; 0 to n each), what a kind has once (`ThingParts`: its icon,
-// create step, settings form, default view), and the components the page places: `TargetView`, which draws a target
+// target (`Views`: things of a kind, persons, groups; 0 to n each), what a kind has once (`ThingParts`: its title,
+// icon, create step and settings form), and the components the page places: `TargetView`, which draws a target
 // in its chosen view, the Settings view, the navigator, the add-thing picker and the invite dialog; the plugins'
-// titles for the picker's headings and the sections of `/me`; and `useScreenId`, the id every list a view holds
-// takes. Tokens and data only (the base bundle carries this file, so no component lives here); `/v1/web` re-exports
-// it.
+// titles for the picker's headings and the sections of `/me`; and three hooks every view plugin may use: `useScreenId`
+// (the id every list a page holds takes), `useMessageText` (a message of any plugin as text) and `useNames` (a kind
+// and a thing as the page names them). Tokens, data and hooks only (the base bundle carries this file, so no
+// component lives here); `/v1/web` re-exports it.
 
-import { defineRegistry, type JsonValue, type MessageData, type TableItem } from "@earendil-works/p3/v1";
-import { defineComponent, type Target } from "@earendil-works/p3/v1/web";
+import { defineRegistry, type JsonValue, type MessageData, type TableItem, Translations } from "@earendil-works/p3/v1";
+import { defineComponent, type Target, useMessages, usePageState, useRegistry } from "@earendil-works/p3/v1/web";
 import { type ComponentType, useState } from "react";
+import { page } from "./page-messages.ts";
 
 export type { Target } from "@earendil-works/p3/v1/web";
 
 /**
- * A fresh id for one mounted list (a list contract's `view`: `Roots`, `WorkspaceContents`, ...), kept while it stays
- * mounted: two pages of one person never share a list. `getRandomValues` works on a page served over plain HTTP too.
+ * The page's id for the lists it holds (a list contract's `view`: `Roots`, `WorkspaceContents`, ...): one per page, so
+ * the navigator, the Settings view and a session's panes holding one list hold one object; two pages of one person never
+ * share one. Kept in page state: a reload of a plugin keeps it. `getRandomValues` works on a page served over plain HTTP.
  */
 export function useScreenId(): string {
-	const [id] = useState(() =>
+	const [fresh] = useState(() =>
 		Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join(""),
 	);
-	return id;
+	return usePageState("things.screen-id", fresh)[0];
 }
 
 /** A thing as its view gets it, seen from a workspace; a workspace's own view gets `thing === workspace`. */
@@ -54,10 +57,14 @@ export type ViewEntry =
 	| (ViewBase & { readonly for: { readonly kind: "person" }; readonly View: ComponentType<PersonViewProps> })
 	| (ViewBase & { readonly for: { readonly kind: "group" }; readonly View: ComponentType<GroupViewProps> });
 
-/** Every view by the key of what it is for (`viewsKey`), each list in plugin order; any plugin may contribute. */
-export const Views = defineRegistry<ViewEntry, ReadonlyMap<string, readonly TableItem<ViewEntry>[]>>("things.views", {
-	version: 1,
-});
+/**
+ * Every view by the key of what it is for (`viewsKey`), each list in plugin order; any plugin contributes a list of
+ * its views.
+ */
+export const Views = defineRegistry<readonly ViewEntry[], ReadonlyMap<string, readonly TableItem<ViewEntry>[]>>(
+	"things.views",
+	{ version: 1 },
+);
 
 /** The key `Views` groups its entries by: `thing/<kind>`, `person` or `group`. */
 export function viewsKey(target: ViewFor): string {
@@ -68,19 +75,34 @@ export function viewsKey(target: ViewFor): string {
 export type ThingCreateProps = { readonly workspace: string; readonly onReady: (input: JsonValue) => void };
 
 /**
- * What a kind has once, from its own plugin: its icon (none: a page icon), its create step (a sign-in, a token), its
- * form in the Settings view, and its default view (an id among its `Views`).
+ * What a kind's settings form gets (ERNDL-1141 §9, R40): the thing as it is linked in `workspace`, its settings'
+ * current values and `save`, which sets some of them (`Workspace.configure`). Never the thing's own reference: the form
+ * is workspace management, open to whoever has Configure there.
+ */
+export type ThingSettingsProps = {
+	readonly workspace: string;
+	readonly thing: string;
+	readonly value: JsonValue;
+	readonly save: (settings: JsonValue) => Promise<void>;
+};
+
+/**
+ * What a kind has once, from its own plugin: its title (a message: the page never shows a kind's name), its icon
+ * (none: a page icon), its create step (a sign-in, a token), and its form in the Settings view.
  */
 export type ThingPartsEntry = {
 	readonly kind: string;
+	readonly title: MessageData;
 	readonly Icon?: ComponentType;
 	readonly Create?: ComponentType<ThingCreateProps>;
-	readonly Settings?: ComponentType<ThingViewProps>;
-	readonly defaultView?: string;
+	readonly Settings?: ComponentType<ThingSettingsProps>;
 };
 
-/** The kinds' parts by kind name: the first by plugin name wins a kind, a second is reported. */
-export const ThingParts = defineRegistry<ThingPartsEntry, ReadonlyMap<string, TableItem<ThingPartsEntry>>>(
+/**
+ * The kinds' parts by kind name, from lists their plugins contribute: the first by plugin name wins a kind, a second
+ * is reported.
+ */
+export const ThingParts = defineRegistry<readonly ThingPartsEntry[], ReadonlyMap<string, TableItem<ThingPartsEntry>>>(
 	"things.parts",
 	{ version: 1 },
 );
@@ -90,7 +112,8 @@ export type Shown = "main" | "page" | "settings";
 
 /**
  * A target in a view (decision 70): `view` if it is one of the target's, else its default (the thing's own `view`,
- * its kind's `defaultView`, the first by plugin name; an id no plugin has is skipped); with none, the Settings view.
+ * the first by plugin name; an id no plugin has is skipped); with none, the Settings view. A kind's own default view
+ * comes with "Open with…" (carry-over).
  * `onShown` hears how it shows, so the chrome can give a whole-page view the page.
  */
 export const TargetView = defineComponent<{
@@ -139,3 +162,38 @@ export type MeSection = { readonly id: string; readonly title: MessageData; read
 export const MeSections = defineRegistry<MeSection, readonly TableItem<MeSection>[]>("things.me-sections", {
 	version: 1,
 });
+
+/**
+ * A message of any plugin (a tick's label, a view's title) as text in the page's language, from the catalogs plugins
+ * contribute to `Translations`; a message no catalog has shows its key.
+ */
+export function useMessageText(): (message: MessageData) => string {
+	const index = useRegistry(Translations);
+	const { locale } = useMessages(page);
+	return ({ namespace, key, params }) => {
+		const catalogs = index?.catalogs.get(namespace);
+		const catalog = (locale === undefined ? undefined : catalogs?.get(locale)) ?? catalogs?.values().next().value;
+		const value = catalog?.value.messages[key];
+		if (value === undefined) return key;
+		// A catalog's value is a text or a function of the message's params (`defineMessages`).
+		return typeof value === "string" ? value : (value as (...args: readonly unknown[]) => string)(...params);
+	};
+}
+
+/**
+ * How the page names a kind (its title, `ThingParts`) and a thing (its name, else its kind's title): never a kind's
+ * id (decision 65). A kind no plugin gives parts reads "A thing".
+ */
+export function useNames(): {
+	readonly kind: (kind: string) => string;
+	readonly thing: (kind: string, name: string | undefined) => string;
+} {
+	const { t } = useMessages(page);
+	const text = useMessageText();
+	const parts = useRegistry(ThingParts);
+	const kind = (name: string) => {
+		const title = parts?.get(name)?.value.title;
+		return title === undefined ? t("aThing") : text(title);
+	};
+	return { kind, thing: (of, name) => (name === undefined || name === "" ? kind(of) : name) };
+}

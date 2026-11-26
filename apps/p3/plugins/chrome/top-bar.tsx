@@ -16,6 +16,7 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 // Other plugins' web contracts by path, never through `/v1/web` (see `frame.tsx`).
+import { useNames } from "../things/contract.web.tsx";
 import { ThingInfo, Workspace } from "../things/workspace.ts";
 import { ConnectionStatus } from "./connection.tsx";
 import styles from "./frame.module.css";
@@ -43,6 +44,7 @@ function Crumbs(props: { readonly target: Target; readonly settings: boolean }) 
 	const { t } = useMessages(messages);
 	const { target } = props;
 	const workspace = useWatch(useLive(useHold(Workspace, { workspace: target.workspace }))?.info);
+	const names = useNames();
 	return (
 		<nav className={styles.crumbs} data-crumbs="">
 			<Button
@@ -50,7 +52,7 @@ function Crumbs(props: { readonly target: Target; readonly settings: boolean }) 
 				hierarchy="tertiary"
 				onClick={() => navigate(targetPath({ kind: "workspace", workspace: target.workspace }))}
 			>
-				{workspace?.name ?? ""}
+				{workspace === undefined ? "" : names.thing(workspace.kind, workspace.name)}
 			</Button>
 			{target.kind === "thing" ? <ThingCrumb thing={target.thing} workspace={target.workspace} /> : null}
 			{props.settings ? (
@@ -66,10 +68,11 @@ function Crumbs(props: { readonly target: Target; readonly settings: boolean }) 
 /** The thing's name in the crumbs. */
 function ThingCrumb(props: { readonly workspace: string; readonly thing: string }) {
 	const info = useWatch(useLive(useHold(ThingInfo, props))?.info);
+	const names = useNames();
 	return (
 		<>
 			<ChevronRightIcon />
-			<span className={styles.crumb}>{info?.name ?? ""}</span>
+			<span className={styles.crumb}>{info === undefined ? "" : names.thing(info.kind, info.name)}</span>
 		</>
 	);
 }

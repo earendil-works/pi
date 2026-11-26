@@ -11,14 +11,16 @@ import { CanvasKind } from "./contract.ts";
 import { messages } from "./messages.ts";
 
 export default defineFacet((_host, self) => {
-	self.contribute(Views, {
-		view: "canvas.board",
-		title: messages.message("viewBoard"),
-		area: "main",
-		for: { kind: "thing", thingKind: CanvasKind.name },
-		View: BoardView,
-	});
-	self.contribute(ThingParts, { kind: CanvasKind.name, Icon: EditIcon });
+	self.contribute(Views, [
+		{
+			view: "canvas.board",
+			title: messages.message("viewBoard"),
+			area: "main",
+			for: { kind: "thing", thingKind: CanvasKind.name },
+			View: BoardView,
+		},
+	]);
+	self.contribute(ThingParts, [{ kind: CanvasKind.name, title: messages.message("untitled"), Icon: EditIcon }]);
 	self.contribute(PluginTitles, { title: messages.message("plugin"), Icon: EditIcon });
 	self.contribute(Translations, messages.translations);
 });

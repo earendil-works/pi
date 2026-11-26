@@ -21,6 +21,7 @@ import {
 	useHold,
 	useLive,
 	useMessages,
+	usePageState,
 	useRegistry,
 	useRoute,
 	useWatch,
@@ -43,18 +44,33 @@ export type ChromeProps = {
 	readonly settings: boolean;
 	readonly connection: ConnectionState;
 	readonly person: string | undefined;
+	readonly phone: Phone;
+};
+
+/** Which screen a phone shows for one address, when the person chose it (Back, or an entry of the navigator). */
+type PhoneScreen = { readonly at: string; readonly screen: "navigator" | "main" };
+
+/** What `Shell` needs to let a phone switch between the navigator and the main area. */
+type Phone = {
+	/** The address the page is at (path and query): a choice holds for it only. */
+	readonly at: string;
+	readonly chosen: PhoneScreen | null;
+	readonly choose: (chosen: PhoneScreen) => void;
 };
 
 /** The frame: the chrome around the route. */
 export function Frame() {
 	const route = useRoute();
+	// Kept as page state: a reload of this plugin keeps the phone's screen.
+	const [chosen, choose] = usePageState<PhoneScreen | null>("chrome.phone-screen", null);
+	const phone: Phone = { at: location.pathname + location.search, chosen, choose };
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	// A page is never a session's worker: `Me` answers it a person.
 	const person = me?.kind === "person" ? me.name : undefined;
 	const connection = useRegistry(PageConnection) ?? "connecting";
 	const target = route.kind === "target" ? route.target : undefined;
 	const settings = route.kind === "target" && route.settings;
-	const chrome: ChromeProps = { target, settings, connection, person };
+	const chrome: ChromeProps = { target, settings, connection, person, phone };
 	switch (route.kind) {
 		case "landing":
 			return <Shell chrome={chrome} main={<Landing />} screen="main" />;
@@ -116,25 +132,32 @@ function Shell(props: {
 	readonly screen: "navigator" | "main" | "page";
 }) {
 	const NavigatorView = useComponent(Navigator);
-	const { target, settings } = props.chrome;
+	const { target, settings, phone } = props.chrome;
 	const page = props.screen === "page";
+	// What the person chose for this address wins over the default (a phone shows one of the two; a desktop both).
+	const screen = page || phone.chosen?.at !== phone.at ? props.screen : phone.chosen.screen;
+	/** Opens `path` in the main area: on a phone the main area comes forward, also for the address it is at. */
+	const open = (path: string) => {
+		phone.choose({ at: path, screen: "main" });
+		if (path !== phone.at) navigate(path);
+	};
 	return (
-		<div className={styles.frame} data-area={page ? "page" : "main"} data-screen={props.screen}>
+		<div className={styles.frame} data-area={page ? "page" : "main"} data-screen={screen}>
 			{page ? null : <TopBar {...props.chrome} />}
 			<div className={styles.body}>
 				{page ? null : (
 					<aside className={styles.navigator}>
 						{NavigatorView === undefined ? null : (
 							<NavigatorView
-								onMe={() => navigate("/me")}
-								onOpen={(next) => navigate(targetPath(next))}
+								onMe={() => open("/me")}
+								onOpen={(next) => open(targetPath(next))}
 								target={target}
 							/>
 						)}
 					</aside>
 				)}
 				<main className={styles.main}>
-					{page ? null : <MainHead settings={settings} target={target} />}
+					{page ? null : <MainHead phone={phone} settings={settings} target={target} />}
 					{props.main}
 				</main>
 			</div>
@@ -143,20 +166,28 @@ function Shell(props: {
 	);
 }
 
-/** Above the main area: on a phone the way back; the gear to the target's Settings view (or back from it). */
-function MainHead(props: { readonly target: Target | undefined; readonly settings: boolean }) {
+/**
+ * Above the main area: on a phone the way back (from a Settings view to the target, from a thing, person or group to
+ * its workspace, from a workspace's own view to the navigator, from anywhere else to `/`); the gear to the target's
+ * Settings view.
+ */
+function MainHead(props: { readonly target: Target | undefined; readonly settings: boolean; readonly phone: Phone }) {
 	const { t } = useMessages(messages);
-	const { target, settings } = props;
-	if (target === undefined) return null;
-	const workspace: Target = { kind: "workspace", workspace: target.workspace };
-	const back = settings ? targetPath(target) : targetPath(workspace);
+	const { target, settings, phone } = props;
+	const back = () => {
+		if (target === undefined) return navigate("/");
+		if (settings) return navigate(targetPath(target));
+		if (target.kind !== "workspace") return navigate(targetPath({ kind: "workspace", workspace: target.workspace }));
+		// A workspace's own view: its navigator is the screen before it, at the same address.
+		phone.choose({ at: phone.at, screen: "navigator" });
+	};
 	return (
 		<div className={styles.mainHead}>
-			<IconButton aria-label={t("back")} className={styles.back} data-back="" onClick={() => navigate(back)}>
+			<IconButton aria-label={t("back")} className={styles.back} data-back="" onClick={back}>
 				<ArrowBackIcon />
 			</IconButton>
 			<span className={styles.grow} />
-			{settings ? null : (
+			{settings || target === undefined ? null : (
 				<IconButton
 					aria-label={t("settings")}
 					data-gear=""

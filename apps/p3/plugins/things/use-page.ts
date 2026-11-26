@@ -1,10 +1,11 @@
 // What the things plugin's page parts share: every registered kind by name, a message of any plugin as text, how a
-// "from" reads, what a party opens, how a party is named, and what a failed call or a denial says.
+// "from" reads, what a party opens, how a party, a kind and a thing are named, and what a failed call or a denial says.
 
 import { type MessageData, Translations } from "@earendil-works/p3/v1";
 import { type Target, useHold, useLive, useMessages, useRegistry, useWatch } from "@earendil-works/p3/v1/web";
 import { useMemo } from "react";
 import type { Party } from "./contract.ts";
+import { useMessageText } from "./contract.web.tsx";
 import { type KindView, ThingKindsView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import type { Origin } from "./workspace.ts";
@@ -40,23 +41,6 @@ export function partyTarget(workspace: string, party: Party): Target | undefined
 		default:
 			return undefined;
 	}
-}
-
-/**
- * A message of any plugin (a tick's label, a view's title) as text in the page's language, from the catalogs plugins
- * contribute to `Translations`; a message no catalog has shows its key.
- */
-export function useMessageText(): (message: MessageData) => string {
-	const index = useRegistry(Translations);
-	const { locale } = useMessages(page);
-	return ({ namespace, key, params }) => {
-		const catalogs = index?.catalogs.get(namespace);
-		const catalog = (locale === undefined ? undefined : catalogs?.get(locale)) ?? catalogs?.values().next().value;
-		const value = catalog?.value.messages[key];
-		if (value === undefined) return key;
-		// A catalog's value is a text or a function of the message's params (`defineMessages`).
-		return typeof value === "string" ? value : (value as (...args: readonly unknown[]) => string)(...params);
-	};
 }
 
 /** How the page names a party: its name, else (everyone here, the agents, one session's agent have none) its kind. */

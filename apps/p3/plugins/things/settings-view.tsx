@@ -19,7 +19,7 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { Invite, ThingParts } from "./contract.web.tsx";
+import { Invite, useNames } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
 import { useFromText } from "./use-page.ts";
@@ -52,6 +52,7 @@ function WorkspaceSettings(props: { readonly workspace: string }) {
 	const [part, setPart] = useState<Part>("may");
 	const [inviting, setInviting] = useState(false);
 	const InviteDialog = useComponent(Invite);
+	const names = useNames();
 	const mayInvite = withGranted(ref, "putParty") !== undefined || withGranted(ref, "inviteLink") !== undefined;
 	if (info === undefined) return null;
 	const place = info.parent === undefined ? t("workspace") : t("workspaceIn", info.parent.name);
@@ -60,7 +61,7 @@ function WorkspaceSettings(props: { readonly workspace: string }) {
 			<PageHeader.Root>
 				<PageHeader.Row>
 					<PageHeader.Title data-settings-title="" level={1}>
-						{info.name}
+						{names.thing(info.kind, info.name)}
 					</PageHeader.Title>
 					{mayInvite ? (
 						<PageHeader.Actions>
@@ -97,7 +98,11 @@ function WorkspaceSettings(props: { readonly workspace: string }) {
 					<WhatIsHere workspace={props.workspace} />
 				</Tabs.Panel>
 				<Tabs.Panel value="may">
-					<WhoMayTable name={info.name} thing={props.workspace} workspace={props.workspace} />
+					<WhoMayTable
+						name={names.thing(info.kind, info.name)}
+						thing={props.workspace}
+						workspace={props.workspace}
+					/>
 				</Tabs.Panel>
 			</Tabs.Root>
 			{inviting && InviteDialog !== undefined ? (
@@ -112,8 +117,8 @@ function ThingSettings(props: { readonly workspace: string; readonly thing: stri
 	const { t } = useMessages(page);
 	const info = useWatch(useLive(useHold(ThingInfo, props))?.info);
 	const workspace = useLive(useHold(Workspace, { workspace: props.workspace }));
-	const Form = useRegistry(ThingParts)?.get(info?.kind ?? "")?.value.Settings;
 	const fromText = useFromText();
+	const names = useNames();
 	if (info === undefined || info.kind === "") return null;
 	const linker = info.from.kind === "here" ? withGranted(workspace, "unlink") : undefined;
 	const remove = () =>
@@ -126,7 +131,7 @@ function ThingSettings(props: { readonly workspace: string; readonly thing: stri
 			<PageHeader.Root>
 				<PageHeader.Row>
 					<PageHeader.Title data-settings-title="" level={1}>
-						{info.name}
+						{names.thing(info.kind, info.name)}
 					</PageHeader.Title>
 					{linker === undefined ? null : (
 						<PageHeader.Actions>
@@ -137,11 +142,10 @@ function ThingSettings(props: { readonly workspace: string; readonly thing: stri
 					)}
 				</PageHeader.Row>
 				<PageHeader.Description>
-					{t("thingIn", info.kind, fromText(info.from) ?? t("linkedHere"))}
+					{t("thingIn", names.kind(info.kind), fromText(info.from) ?? t("linkedHere"))}
 				</PageHeader.Description>
 			</PageHeader.Root>
-			<WhoMayTable name={info.name} thing={props.thing} workspace={props.workspace} />
-			{Form === undefined ? null : <Form thing={props.thing} workspace={props.workspace} />}
+			<WhoMayTable name={names.thing(info.kind, info.name)} thing={props.thing} workspace={props.workspace} />
 		</div>
 	);
 }

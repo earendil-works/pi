@@ -12,14 +12,16 @@ import { ChecklistKind } from "./kind.ts";
 import { messages } from "./messages.ts";
 
 export default defineFacet((_host, self) => {
-	self.contribute(Views, {
-		view: ChecklistKind.name,
-		title: messages.message("view"),
-		area: "main",
-		for: { kind: "thing", thingKind: ChecklistKind.name },
-		View: ChecklistView,
-	});
-	self.contribute(ThingParts, { kind: ChecklistKind.name, Icon: CheckIcon });
+	self.contribute(Views, [
+		{
+			view: ChecklistKind.name,
+			title: messages.message("view"),
+			area: "main",
+			for: { kind: "thing", thingKind: ChecklistKind.name },
+			View: ChecklistView,
+		},
+	]);
+	self.contribute(ThingParts, [{ kind: ChecklistKind.name, title: messages.message("untitled"), Icon: CheckIcon }]);
 	self.contribute(PluginTitles, { title: messages.message("plugin"), Icon: CheckIcon });
 	self.contribute(Translations, messages.translations);
 });

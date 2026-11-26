@@ -7,6 +7,8 @@ import { defineMessages } from "@earendil-works/p3/v1";
 export const page = defineMessages("things.page", {
 	en: {
 		workspaces: "Workspaces",
+		kindWorkspace: "Workspace",
+		aThing: "A thing",
 		sessions: "Sessions",
 		here: "Here",
 		fromAbove: "From above",

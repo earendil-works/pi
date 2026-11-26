@@ -19,9 +19,9 @@ import {
 	useRegistry,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
-import { type ComponentType, type MouseEvent, type ReactNode, useEffect, useState } from "react";
+import { type ComponentType, type MouseEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 import { type Party, partyKey } from "./contract.ts";
-import { ThingParts, useScreenId } from "./contract.web.tsx";
+import { ThingParts, useNames, useScreenId } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
 import { partyTarget, useFromText } from "./use-page.ts";
@@ -39,11 +39,14 @@ export function NavigatorTree(props: NavigatorProps) {
 	const { t } = useMessages(page);
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const roots = useWatch(useLive(useHold(Roots, { view: useScreenId() }))?.list);
-	const [path, setPath] = useState<readonly string[]>([]);
+	const [path, setPath] = useState<readonly string[]>(NO_PATH);
+	// The path is published again whenever a workspace on it changes: only a real change may render the tree again,
+	// or the walk below starts over with every render, endlessly.
+	const publish = useCallback((next: readonly string[]) => setPath((old) => (samePath(old, next) ? old : next)), []);
 	const open = props.target?.workspace;
 	return (
 		<SideNavigation.Root className={styles.navigator} data-navigator="">
-			{open === undefined ? null : <Path at={open} below={[]} key={open} onDone={setPath} />}
+			{open === undefined ? null : <Path at={open} below={NO_PATH} key={open} onDone={publish} />}
 			<SideNavigation.Group>
 				<SideNavigation.List>
 					<SideNavigation.Item>
@@ -70,11 +73,19 @@ export function NavigatorTree(props: NavigatorProps) {
 	);
 }
 
+/** No path: the open workspace is not known yet. One array, so it is the same value every render. */
+const NO_PATH: readonly string[] = [];
+
+/** Whether two paths name the same workspaces in the same order. */
+function samePath(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((workspace, index) => workspace === b[index]);
+}
+
 /** Collects the open workspace's path, its topmost workspace first, holding each `Workspace` up to a root. */
 function Path(props: {
 	readonly at: string;
 	readonly below: readonly string[];
-	readonly onDone: (path: string[]) => void;
+	readonly onDone: (path: readonly string[]) => void;
 }) {
 	const info = useWatch(useLive(useHold(Workspace, { workspace: props.at }))?.info);
 	const parent = info?.parent?.workspace;
@@ -93,6 +104,7 @@ function WorkspaceEntry(
 	},
 ) {
 	const { row } = props;
+	const names = useNames();
 	const target: Target = { kind: "workspace", workspace: row.workspace };
 	const isOpen = props.target?.workspace === row.workspace;
 	const onPath = props.path.includes(row.workspace);
@@ -105,7 +117,7 @@ function WorkspaceEntry(
 				onOpen={props.onOpen}
 				target={target}
 			>
-				{row.name}
+				{names.thing(row.kind, row.name)}
 			</EntryLink>
 			{isOpen ? (
 				<OpenGroups {...props} workspace={row.workspace} />
@@ -223,6 +235,7 @@ function ThingEntry(
 	},
 ) {
 	const target: Target = { kind: "thing", workspace: props.workspace, thing: props.row.thing };
+	const names = useNames();
 	return (
 		<SideNavigation.Item className={props.from === undefined ? undefined : styles.faded}>
 			<EntryLink
@@ -233,7 +246,7 @@ function ThingEntry(
 				onOpen={props.onOpen}
 				target={target}
 			>
-				{props.row.name}
+				{names.thing(props.row.kind, props.row.name)}
 			</EntryLink>
 		</SideNavigation.Item>
 	);

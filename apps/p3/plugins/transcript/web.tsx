@@ -14,12 +14,14 @@ import { SessionView } from "./session-view.tsx";
 const SESSION_KIND = "sessions.session";
 
 export default defineFacet((_host, self) => {
-	self.contribute(Views, {
-		view: "transcript.session",
-		title: messages.message("view"),
-		area: "main",
-		for: { kind: "thing", thingKind: SESSION_KIND },
-		View: SessionView,
-	});
+	self.contribute(Views, [
+		{
+			view: "transcript.session",
+			title: messages.message("view"),
+			area: "main",
+			for: { kind: "thing", thingKind: SESSION_KIND },
+			View: SessionView,
+		},
+	]);
 	self.contribute(Translations, messages.translations);
 });

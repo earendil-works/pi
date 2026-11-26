@@ -26,11 +26,11 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { type ComponentType, useState } from "react";
 import { kindOfMakeTick, MAKE_ANY } from "./contract.ts";
-import { PluginTitles, ThingParts, useScreenId } from "./contract.web.tsx";
+import { PluginTitles, ThingParts, useMessageText, useNames, useScreenId } from "./contract.web.tsx";
 import type { KindView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useErrorText, useKinds, useMessageText } from "./use-page.ts";
+import { useErrorText, useKinds } from "./use-page.ts";
 import { type DefaultsChoice, Linkable, Workspace } from "./workspace.ts";
 
 /** What the picker offers: a kind to make, or an existing thing to link. */
@@ -86,12 +86,13 @@ function Choices(props: { readonly workspace: string; readonly onChoose: (offer:
 		useLive(useHold(Linkable, { workspace: props.workspace, query: query.trim(), view: useScreenId() }))?.list,
 	);
 	const titles = useRegistry(PluginTitles);
+	const names = useNames();
 	const text = useMessageText();
 	if (kinds === undefined) return null;
 	const offers: Offer[] = [];
 	for (const name of makes ?? []) {
 		const thingKind = kinds.get(name);
-		if (thingKind !== undefined && name.includes(query.trim().toLowerCase()))
+		if (thingKind !== undefined && names.kind(name).toLowerCase().includes(query.trim().toLowerCase()))
 			offers.push({ kind: "make", thingKind });
 	}
 	for (const row of linkable?.rows ?? []) {
@@ -113,7 +114,9 @@ function Choices(props: { readonly workspace: string; readonly onChoose: (offer:
 				return (
 					<section className={styles.pickerGroup} data-add-plugin={plugin} key={plugin}>
 						{list.length > 1 ? (
-							<h3 className={styles.pickerTitle}>{title === undefined ? plugin : text(title.title)}</h3>
+							<h3 className={styles.pickerTitle}>
+								{title === undefined ? names.kind(list[0]!.thingKind.name) : text(title.title)}
+							</h3>
 						) : null}
 						{list.map((offer) => (
 							<OfferRow key={offerKey(offer)} offer={offer} onChoose={props.onChoose} />
@@ -128,6 +131,7 @@ function Choices(props: { readonly workspace: string; readonly onChoose: (offer:
 /** One offer: "New <kind>" or an existing thing's name, with its kind's icon. */
 function OfferRow(props: { readonly offer: Offer; readonly onChoose: (offer: Offer) => void }) {
 	const { t } = useMessages(page);
+	const names = useNames();
 	const { offer } = props;
 	const Icon: ComponentType = useRegistry(ThingParts)?.get(offer.thingKind.name)?.value.Icon ?? DescriptionIcon;
 	return (
@@ -139,7 +143,9 @@ function OfferRow(props: { readonly offer: Offer; readonly onChoose: (offer: Off
 			iconStart={<Icon />}
 			onClick={() => props.onChoose(offer)}
 		>
-			{offer.kind === "make" ? t("makeNew", offer.thingKind.name) : offer.name}
+			{offer.kind === "make"
+				? t("makeNew", names.kind(offer.thingKind.name))
+				: names.thing(offer.thingKind.name, offer.name)}
 		</Button>
 	);
 }
@@ -163,6 +169,7 @@ function Confirm(props: {
 	const linker = withGranted(ref, "link");
 	const Create = useRegistry(ThingParts)?.get(offer.thingKind.name)?.value.Create;
 	const text = useMessageText();
+	const names = useNames();
 	const [name, setName] = useState("");
 	const [input, setInput] = useState<JsonValue | undefined>(undefined);
 	const grants = offer.thingKind.defaultGrants;
@@ -179,7 +186,7 @@ function Confirm(props: {
 	const labelOf = (tick: string) => {
 		if (tick === MAKE_ANY) return t("makeAnything");
 		const made = kindOfMakeTick(tick);
-		if (made !== undefined) return t("makeKind", made);
+		if (made !== undefined) return t("makeKind", names.kind(made));
 		const found = offer.thingKind.ticks.find((each) => each.name === tick);
 		return found === undefined ? tick : text(found.label);
 	};

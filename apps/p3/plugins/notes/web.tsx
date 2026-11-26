@@ -12,14 +12,16 @@ import { messages } from "./messages.ts";
 import { NotesView } from "./notes-view.tsx";
 
 export default defineFacet((_host, self) => {
-	self.contribute(Views, {
-		view: NotesKind.name,
-		title: messages.message("view"),
-		area: "main",
-		for: { kind: "thing", thingKind: NotesKind.name },
-		View: NotesView,
-	});
-	self.contribute(ThingParts, { kind: NotesKind.name, Icon: DescriptionIcon });
+	self.contribute(Views, [
+		{
+			view: NotesKind.name,
+			title: messages.message("view"),
+			area: "main",
+			for: { kind: "thing", thingKind: NotesKind.name },
+			View: NotesView,
+		},
+	]);
+	self.contribute(ThingParts, [{ kind: NotesKind.name, title: messages.message("untitled"), Icon: DescriptionIcon }]);
 	self.contribute(PluginTitles, { title: messages.message("plugin"), Icon: DescriptionIcon });
 	self.contribute(Translations, messages.translations);
 });

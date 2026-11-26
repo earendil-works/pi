@@ -19,11 +19,12 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { kindOfMakeTick, MAKE_ANY, makeTick, OPEN, type Party, partyKey } from "./contract.ts";
+import { useMessageText, useNames } from "./contract.web.tsx";
 import type { KindView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import { audienceOf, isFor, makeTickFor } from "./rules.ts";
 import styles from "./things.module.css";
-import { useErrorText, useKinds, useMessageText, usePartyName } from "./use-page.ts";
+import { useErrorText, useKinds, usePartyName } from "./use-page.ts";
 import { type Cell, WhoMay, Workspace } from "./workspace.ts";
 
 /** What one checkbox shows (item 112). */
@@ -142,7 +143,9 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 								) : null}
 								{table.ticks.map((tick) => (
 									<Table.Cell align="center" key={tick.name}>
-										{fits(tick, row) ? <TickBox {...cellProps(row)} tick={tick.name} /> : null}
+										{fits(tick, row) ? (
+											<TickBox {...cellProps(row)} label={text(tick.label)} shows="box" tick={tick.name} />
+										) : null}
 									</Table.Cell>
 								))}
 							</Table.Row>
@@ -158,7 +161,13 @@ export function WhoMayTable(props: { readonly workspace: string; readonly thing:
 						{isWorkspace ? <MakeChoice {...cellProps(row)} kinds={kinds} /> : null}
 						{table.ticks.map((tick) =>
 							fits(tick, row) ? (
-								<TickBox {...cellProps(row)} key={tick.name} label={text(tick.label)} tick={tick.name} />
+								<TickBox
+									{...cellProps(row)}
+									key={tick.name}
+									label={text(tick.label)}
+									shows="label"
+									tick={tick.name}
+								/>
 							) : null,
 						)}
 					</li>
@@ -176,15 +185,20 @@ type CellProps = {
 	readonly onSet: ((tick: string, gives: boolean | undefined) => void) | undefined;
 };
 
-/** One tick's checkbox, in one of its four looks; `label` beside it on a phone's card. */
-function TickBox(props: CellProps & { readonly tick: string; readonly label?: string }) {
+/**
+ * One tick's checkbox, in one of its four looks, named `label`: shown beside it (`shows: "label"`, a phone's card, the
+ * Make popup) or only read out (`"box"`, a table cell under its column's heading).
+ */
+function TickBox(
+	props: CellProps & { readonly tick: string; readonly label: string; readonly shows: "label" | "box" },
+) {
 	const { t } = useMessages(page);
 	const look = lookOf(props.row.ticks[props.tick]);
 	const disabled = props.onSet === undefined || (look === "empty" && !props.linkedHere);
 	const title = look === "empty" && !props.linkedHere ? props.belowLink : t(LOOK_TEXT[look]);
 	const box = (
 		<Checkbox.Root
-			aria-label={props.label ?? `${props.row.name}: ${props.tick}`}
+			aria-label={`${props.row.name}: ${props.label}`}
 			checked={look === "given" || look === "inherited"}
 			disabled={disabled}
 			onCheckedChange={() => props.onSet?.(props.tick, nextGives(look))}
@@ -194,7 +208,7 @@ function TickBox(props: CellProps & { readonly tick: string; readonly label?: st
 	);
 	return (
 		<span className={styles.tick} data-look={look} data-tick={props.tick} title={title}>
-			{props.label === undefined ? (
+			{props.shows === "box" ? (
 				box
 			) : (
 				<SelectionControlAndLabel control={box}>{props.label}</SelectionControlAndLabel>
@@ -255,6 +269,7 @@ function AccessChoice(props: CellProps) {
  */
 function MakeChoice(props: CellProps & { readonly kinds: ReadonlyMap<string, KindView> }) {
 	const { t } = useMessages(page);
+	const names = useNames();
 	const audience = audienceOf(props.row.party.kind);
 	const makersOf = (kind: string) => props.kinds.get(kind)?.makers;
 	const has = (tick: string) => {
@@ -273,7 +288,7 @@ function MakeChoice(props: CellProps & { readonly kinds: ReadonlyMap<string, Kin
 		? t("makeAll")
 		: offered
 				.filter((kind) => has(makeTick(kind)))
-				.map((kind) => kind.name)
+				.map((kind) => names.kind(kind.name))
 				.join(", ") || t("makeNothing");
 	return (
 		<Popover.Root>
@@ -287,19 +302,30 @@ function MakeChoice(props: CellProps & { readonly kinds: ReadonlyMap<string, Kin
 				<Popover.Positioner align="start" sideOffset={4}>
 					<Popover.Popup className={styles.makePopup} data-make-popup="">
 						<Popover.Title>{t("makeFor", props.row.name)}</Popover.Title>
-						<TickBox {...props} label={t("makeAllKinds")} tick={MAKE_ANY} />
+						<TickBox {...props} label={t("makeAllKinds")} shows="label" tick={MAKE_ANY} />
 						{offered.map((kind) => (
-							<TickBox {...props} key={kind.name} label={kind.name} tick={makeTick(kind)} />
+							<TickBox
+								{...props}
+								key={kind.name}
+								label={names.kind(kind.name)}
+								shows="label"
+								tick={makeTick(kind)}
+							/>
 						))}
 						{unknown.map((tick) => (
 							<span className={styles.faded} key={tick}>
-								<TickBox {...props} label={t("unknownKind", kindOfMakeTick(tick) ?? tick)} tick={tick} />
+								<TickBox
+									{...props}
+									label={t("unknownKind", kindOfMakeTick(tick) ?? tick)}
+									shows="label"
+									tick={tick}
+								/>
 							</span>
 						))}
 						{peopleOnly.length === 0 ? null : (
 							<p
 								className={styles.hint}
-							>{`${t("peopleOnly")} ${peopleOnly.map((kind) => kind.name).join(", ")}`}</p>
+							>{`${t("peopleOnly")} ${peopleOnly.map((kind) => names.kind(kind.name)).join(", ")}`}</p>
 						)}
 					</Popover.Popup>
 				</Popover.Positioner>

@@ -17,7 +17,7 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { AddThing, ThingParts, useScreenId } from "./contract.web.tsx";
+import { AddThing, ThingParts, useNames, useScreenId } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
 import { useErrorText, useFromText } from "./use-page.ts";
@@ -34,6 +34,7 @@ export function WhatIsHere(props: { readonly workspace: string }) {
 	const mayAdd = withGranted(ref, "make") !== undefined || withGranted(ref, "link") !== undefined;
 	const parts = useRegistry(ThingParts);
 	const fromText = useFromText();
+	const names = useNames();
 	const errorText = useErrorText();
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const Picker = useComponent(AddThing);
@@ -60,7 +61,9 @@ export function WhatIsHere(props: { readonly workspace: string }) {
 					return (
 						<li className={styles.row} data-here-thing={row.thing} data-hidden={row.hidden} key={row.thing}>
 							<Icon />
-							<span className={row.hidden ? styles.struck : styles.rowName}>{row.name}</span>
+							<span className={row.hidden ? styles.struck : styles.rowName}>
+								{names.thing(row.kind, row.name)}
+							</span>
 							<span className={styles.from}>{from ?? t("linkedHere")}</span>
 							{from === undefined ? null : (
 								<SelectionControlAndLabel
@@ -83,7 +86,7 @@ export function WhatIsHere(props: { readonly workspace: string }) {
 								</SelectionControlAndLabel>
 							)}
 							<Button
-								aria-label={t("settingsOf", row.name)}
+								aria-label={t("settingsOf", names.thing(row.kind, row.name))}
 								density="compact"
 								hierarchy="tertiary"
 								iconStart={<ChevronRightIcon />}

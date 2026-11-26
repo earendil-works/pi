@@ -25,11 +25,13 @@ import { NavigatorTree } from "./navigator.tsx";
 import { page } from "./page-messages.ts";
 import { SettingsView } from "./settings-view.tsx";
 import { TargetView as TargetViewImpl } from "./target-view.tsx";
+import { WorkspaceKind } from "./workspaces.ts";
 
 export default defineFacet((host, self) => {
 	host.serve(Views, { compose: (table) => groupViews(table) });
 	host.serve(ThingParts, {
-		compose: (table, { report }) => keyedEntries(table, (entry) => ({ [entry.kind]: entry }), report),
+		compose: (table, { report }) =>
+			keyedEntries(table, (entries) => Object.fromEntries(entries.map((entry) => [entry.kind, entry])), report),
 	});
 	host.serve(PluginTitles, {
 		compose: (table) => new Map([...table].reverse().map((item) => [item.plugin, item])),
@@ -42,19 +44,23 @@ export default defineFacet((host, self) => {
 		componentOf(AddThing, AddThingDialog),
 		componentOf(Invite, InviteDialog),
 	]);
-	self.contribute(ThingParts, { kind: "things.workspace", Icon: FolderIcon });
+	self.contribute(ThingParts, [{ kind: WorkspaceKind.name, title: page.message("kindWorkspace"), Icon: FolderIcon }]);
 	self.contribute(PluginTitles, { title: page.message("workspaces"), Icon: FolderIcon });
 	self.contribute(Translations, [...page.translations, ...messages.translations]);
 });
 
 /** The views by the key of what they are for, each list in plugin order (every entry kept: a kind has 0 to n). */
-function groupViews(table: readonly TableItem<ViewEntry>[]): ReadonlyMap<string, readonly TableItem<ViewEntry>[]> {
+function groupViews(
+	table: readonly TableItem<readonly ViewEntry[]>[],
+): ReadonlyMap<string, readonly TableItem<ViewEntry>[]> {
 	const grouped = new Map<string, TableItem<ViewEntry>[]>();
-	for (const item of table) {
-		const key = viewsKey(item.value.for);
-		const list = grouped.get(key);
-		if (list === undefined) grouped.set(key, [item]);
-		else list.push(item);
+	for (const { plugin, value } of table) {
+		for (const entry of value) {
+			const key = viewsKey(entry.for);
+			const list = grouped.get(key) ?? [];
+			list.push({ plugin, value: entry });
+			grouped.set(key, list);
+		}
 	}
 	return grouped;
 }

@@ -414,7 +414,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 				'	return <main><p data-skew="">Still here</p>{Missing === undefined ? <p data-skew-missing="">none</p> : <Missing />}</main>;',
 				"}",
 				"export default defineFacet((_host, self) =>",
-				'	self.contribute(Views, { view: "skew.person", title: { namespace: "skew", key: "person", params: [] }, area: "main", for: { kind: "person" }, View: Person }),',
+				'	self.contribute(Views, [{ view: "skew.person", title: { namespace: "skew", key: "person", params: [] }, area: "main", for: { kind: "person" }, View: Person }]),',
 				");",
 			].join("\n"),
 		);

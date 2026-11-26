@@ -20,15 +20,15 @@ import {
 	type PersonViewProps,
 	Settings,
 	type Shown,
-	ThingParts,
 	type ThingViewProps,
+	useMessageText,
 	type ViewFor,
 	Views,
 	viewsKey,
 } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { messageOf, useMessageText } from "./use-page.ts";
+import { messageOf } from "./use-page.ts";
 import { ThingInfo, Workspace } from "./workspace.ts";
 
 /** What `TargetView` takes (the token's props). */
@@ -104,17 +104,14 @@ function Chosen(
 	},
 ) {
 	const views = useRegistry(Views);
-	const parts = useRegistry(ThingParts);
 	const SettingsView = useComponent(Settings);
 	const { onShown } = props;
 	const offered = views?.get(viewsKey(props.for)) ?? [];
-	const kindDefault = props.for.kind === "thing" ? parts?.get(props.for.thingKind)?.value.defaultView : undefined;
-	const chosen = [props.view, props.own, kindDefault]
+	const chosen = [props.view, props.own]
 		.map((id) => offered.find((item) => item.value.view === id))
 		.find((item) => item !== undefined);
 	const entry = (chosen ?? offered[0])?.value;
-	const shown: Shown | undefined =
-		views === undefined || parts === undefined ? undefined : (entry?.area ?? "settings");
+	const shown: Shown | undefined = views === undefined ? undefined : (entry?.area ?? "settings");
 	useEffect(() => {
 		if (shown !== undefined) onShown?.(shown);
 	}, [shown, onShown]);

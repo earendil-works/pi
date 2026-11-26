@@ -5,7 +5,7 @@ import { defineMessages, defineThing } from "@earendil-works/p3/v1";
 
 /** The kinds' texts: their ticks' labels, the wall's title and the plugin's. */
 export const messages = defineMessages("page-kinds", {
-	en: { read: "Read", write: "Write", wall: "Wall", plugin: "Page kinds" },
+	en: { read: "Read", write: "Write", note: "Note", wall: "Wall", plugin: "Page kinds" },
 });
 
 /** A note: no view; Read and Write as ticks, given at a new link to everyone (Read) and the agents (Write). */
