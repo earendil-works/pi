@@ -73,6 +73,8 @@ export type ServerOptions = {
 	readonly worker: { readonly entry: string; readonly execArgv: readonly string[] };
 	/** How long a worker idles before it stops itself: 5 minutes by default. */
 	readonly workerIdleMs?: number;
+	/** Where the providers' types request their model catalogs; left out: nowhere. */
+	readonly catalogBaseUrl?: string;
 	/** p3's version, for the command's `status`. */
 	readonly version: string;
 	/** Facets of the server's own besides the base's, loaded with them (the memory test's telemetry ingest). */
@@ -221,6 +223,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 			sessions,
 			worker: options.worker,
 			workerIdleMs: options.workerIdleMs ?? IDLE_MS,
+			catalogBaseUrl: options.catalogBaseUrl,
 			workerScripts: async (ctx) => plugins.current("worker") ?? (await plugins.scripts("worker", ctx)),
 			listening: () => listening,
 			// One build and rollout at a time (Chord's `Plugins.apply`): the server, the workers, then the page.

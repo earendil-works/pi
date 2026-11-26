@@ -159,6 +159,8 @@ function serverStubs(host: Host<P3Principal>, store: ChordStore, dataDir: string
 		sessions,
 		worker: { entry: "", execArgv: [] },
 		workerIdleMs: IDLE_MS,
+		// No catalog request leaves a plugin's test.
+		catalogBaseUrl: undefined,
 		workerScripts: async () => [],
 		listening: () => undefined,
 		apply: () => Promise.reject(new Error("testPlugin: the plugin tier applies nothing")),
