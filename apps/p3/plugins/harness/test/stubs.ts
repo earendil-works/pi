@@ -50,6 +50,7 @@ import { defineThing } from "../../things/kind.ts";
 import things from "../../things/worker.ts";
 import { CodingToolsKind } from "../../tools/contract.ts";
 import tools from "../../tools/worker.ts";
+import { SubagentsKind } from "../contract.ts";
 
 /** One part of a scripted answer: text, or a tool call (its arguments as JSON text). */
 const Reply = union([obj({ kind: lit("text"), text: str() }), obj({ kind: lit("tool"), name: str(), args: str() })]);
@@ -126,6 +127,13 @@ export function coding(thing = "tools", granted = ["read", "write", "edit", "bas
 	// A stand-in for the holding's reference: the coding tools' part reads only `granted`.
 	const ref = { granted: new Set(granted) } as unknown as HeldThing["ref"];
 	return { kind: CodingToolsKind.name, held: { thing, workspace: "w", ref } };
+}
+
+/** A held subagents thing, with the flag `use` unless withheld. */
+export function subagents(use = true): Holding {
+	// A stand-in for the holding's reference: the subagents' part reads only `granted`.
+	const ref = { granted: new Set(use ? ["use"] : []) } as unknown as HeldThing["ref"];
+	return { kind: SubagentsKind.name, held: { thing: "subagents", workspace: "w", ref } };
 }
 
 /** A held thing of `kind`, whose part (`extra`) gives what the case needs. */

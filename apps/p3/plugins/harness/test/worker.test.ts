@@ -34,6 +34,7 @@ import {
 	type Step,
 	sessionRow,
 	standIns,
+	subagents,
 } from "./stubs.ts";
 
 const SESSION = "s1";
@@ -299,5 +300,47 @@ describe("the harness plugin on a worker", () => {
 			results.map(({ last }) => last.trim()),
 			[elsewhere, folder],
 		);
+	});
+
+	it("starts a subagent, a copy without the subagent tools, whose answer comes back; Use withheld: no tools", async () => {
+		const tool = (name: string, args: object): Step => ({
+			when: "",
+			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
+		});
+		const script: Step[] = [
+			{ ...tool("subagent_spawn", { name: "reader", message: "Summarize the plan" }), when: "@spawn" },
+			says("Started reader.", "started"),
+			says("Summarize the plan", "the summary"),
+			says("[subagent reader answered] the summary", "noted"),
+			{ ...tool("subagent_list", {}), when: "@list" },
+			says("reader: idle", "listed"),
+			says("", "ok"),
+		];
+		const held = [login("login", "faux", script), coding(), subagents()];
+		const server = await start(held);
+		await ask("@spawn");
+		await eventually(
+			() => requests().map(({ last }) => last),
+			(lasts) => lasts.includes("[subagent reader answered] the summary"),
+			5000,
+		);
+		await (await harness()).durable.waitForIdle(context);
+		const child = requests().find(({ last }) => last === "Summarize the plan");
+		assert.deepEqual(child?.tools, ["bash", "edit", "read", "write"], "the subagent has no subagent tools");
+		assert.deepEqual(requests()[0]?.tools, [
+			"bash",
+			"edit",
+			"read",
+			"subagent_archive",
+			"subagent_list",
+			"subagent_send",
+			"subagent_spawn",
+			"write",
+		]);
+		await ask("@list");
+		assert.ok(requests().some(({ last }) => last === "reader: idle"));
+		server.hold([held[0]!, held[1]!, subagents(false)]);
+		await ask("after");
+		assert.deepEqual(requests().at(-1)?.tools, ["bash", "edit", "read", "write"]);
 	});
 });

@@ -36,7 +36,7 @@ type Given = {
 
 /** The agent's registry, models and environment over the things it holds. */
 export class AgentThings {
-	/** The Durable registry the harness opens with: the held things' extensions, nothing else. */
+	/** The Durable registry the harness opens with: the held things' extensions, beside the harness's own tasks. */
 	readonly registry: Registry = createRegistry();
 	readonly #session: HarnessSession;
 	#models: Models = createModels();

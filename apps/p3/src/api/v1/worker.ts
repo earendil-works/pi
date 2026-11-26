@@ -34,11 +34,15 @@ export {
 // Until real provider logins (ERNDL-705): a deployment's own login plugin builds on it. Outside v1's promise.
 export { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 export {
+	AssistantEntry,
 	type Conversation,
 	type ConversationId,
 	type ConversationView,
+	configure,
 	createRegistry,
+	defineDoc,
 	defineExtension,
+	defineTask,
 	defineTool,
 	type EntryId,
 	type Extension,
@@ -51,6 +55,8 @@ export {
 	ROOT_CONVERSATION_ID,
 	section,
 	type TaskGraph,
+	type TaskRuntime,
+	type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
 export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";

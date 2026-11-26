@@ -5,6 +5,7 @@
 // tools run at the session's location. It resumes the work left only for a session that is not archived. It
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
+// It contributes the subagents' part (`subagents.ts`), whose tasks it installs always.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -38,6 +39,7 @@ import {
 import { type Held, HeldThings, ThingHarnessParts } from "../things/contract.worker.ts";
 import { activityOf, serialized } from "./activity.ts";
 import { AgentThings, type Parts } from "./agent-things.ts";
+import { SUBAGENT_TASKS, subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
 const SessionAgent = local("harness.agent", { version: 1, params: {}, members: {} });
@@ -45,7 +47,8 @@ const SessionAgent = local("harness.agent", { version: 1, params: {}, members: {
 /** The owner name of Durable's tables and documents in the session's store. */
 const STORAGE_OWNER = "harness";
 
-export default defineFacet((host) => {
+export default defineFacet((host, self) => {
+	self.contribute(ThingHarnessParts, subagentsPart);
 	// Only this plugin contributes: the first is the one.
 	host.serve(SessionHarness, { compose: (table) => table[0]?.value });
 	host.serve(SessionAgent, (_params, self) => {
@@ -135,6 +138,8 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 	const { session, host: worker, store } = runtime;
 	// The session's workspace has the session's id (slice 5); the parts take it from here, never assume it.
 	const things = new AgentThings({ session, workspace: session, call: (fn, context) => worker.root(fn, context) });
+	// The subagents' tasks, whatever the agent holds: a reporter under way finishes when Use is withheld.
+	things.registry.install(SUBAGENT_TASKS);
 	things.apply(held.value, parts.value);
 	const durable = await openHarness(
 		store,
