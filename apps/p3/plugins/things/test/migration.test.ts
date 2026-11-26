@@ -507,3 +507,23 @@ describe("a kind's new ticks version while it loads", () => {
 		gives.release();
 	});
 });
+
+describe("round 1: Astra's migration case", () => {
+	it("setTick resets all sources of a cell using its current migrated tick name", async () => {
+		const ada = await personIn("Ada");
+		const thing = await store.create({ kind: Board.name, workspace: pi, by: BY, name: "board" }, context);
+		await write(thing, ada.party, ["draw"], true);
+		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
+		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
+		await until(gives.answers, (v) => v[thing]?.ticks.includes("paint") === true, within("v2", context));
+		await store.setTick(
+			{ workspace: pi, thing, party: ada.party, tick: "paint", source: { kind: "plugin", plugin: "editor" } },
+			context,
+		);
+		assert.equal(
+			(await store.answerOf({ workspace: pi, thing, caller: `person:${ada.id}` }, context))?.ticks.includes("paint"),
+			false,
+		);
+		gives.release();
+	});
+});

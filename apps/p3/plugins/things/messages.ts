@@ -22,7 +22,7 @@ export const messages = defineMessages("things", {
 		mayNotLink: "To link this here you need Link here and where it is linked now.",
 		notLinkedHere: "This is not linked here.",
 		fromAboveOnly: "Only what comes from above can be hidden here; unlink what is linked here.",
-		leafHoldsNoWorkspaces: "A session holds no workspaces.",
+		leafHoldsNoWorkspaces: "This holds no workspaces.",
 		notYet: "This comes later.",
 	},
 });

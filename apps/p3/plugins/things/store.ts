@@ -431,7 +431,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 							...args,
 							thing,
 							parent,
-							showsPeople: answer?.showsPeople ?? showsPeople ?? true,
+							// Private wins (main session, round 1): the maker's private choice or the hook's.
+							showsPeople: showsPeople !== false && answer?.showsPeople !== false,
 							view: answer?.view ?? "",
 							defaultGrants: answer?.defaultGrants,
 							defaults,
@@ -860,9 +861,13 @@ class Writes {
 		if (item.value.workspace === "no") throw invalid("args", `things: a ${kind} is no workspace kind`);
 		const above = await tx.get(this.#t.workspaces, { workspace: parent });
 		if (above === undefined) throw invalid("args", `things: no workspace ${parent}`);
+		// Only a plain workspace holds workspaces; one whose kind no plugin registers now (a session's while its plugin
+		// reloads) may be a leaf, so it holds none either.
 		const aboveKind = (await tx.get(this.#t.things, { thing: parent }))?.kind;
-		if (aboveKind !== undefined && this.#kinds().get(aboveKind)?.value.workspace === "leaf") {
-			throw invalid("args", `things: ${parent} is a leaf`, { message: messages.message("leafHoldsNoWorkspaces") });
+		if (aboveKind === undefined || this.#kinds().get(aboveKind)?.value.workspace !== "plain") {
+			throw invalid("args", `things: ${parent} holds no workspaces (a leaf, or of a kind not registered)`, {
+				message: messages.message("leafHoldsNoWorkspaces"),
+			});
 		}
 		putWorkspace(tx, this.#t, { workspace: thing, kind, name, by, showsPeople, view: args.view }, above);
 		const maker = makerParty(by);
@@ -1201,6 +1206,20 @@ class Writes {
 	): Promise<null> {
 		const { workspace, thing, party, tick, gives, source } = args;
 		const key = partyKey(party);
+		// Every source's rows of the party written back at the kind's ticks version first (item 105): a row written at
+		// an older version under another name (`draw`, read now as `paint`) is the same cell, and goes with it.
+		const kind =
+			(await tx.get(this.#t.links, { workspace, thing }))?.of ?? (await tx.get(this.#t.things, { thing }))?.kind;
+		const info = kind === undefined ? undefined : this.#kinds().get(kind)?.value;
+		if (info !== undefined) {
+			const theirs = query(Grants).where((g) =>
+				and(eq(g.workspace, workspace), eq(g.thing, thing), eq(g.partyKey, key)),
+			);
+			const sources = new Set<string>();
+			for await (const row of tx.rows(this.#t.grants, theirs))
+				if (row.ticksVersion !== info.ticksVersion) sources.add(row.sourceKey);
+			for (const sourceKey of sources) await this.#upgrade(tx, { workspace, thing, partyKey: key, sourceKey }, info);
+		}
 		tx.deleteWhere(this.#t.grants, (g) =>
 			and(eq(g.workspace, workspace), eq(g.thing, thing), eq(g.partyKey, key), eq(g.tick, tick)),
 		);

@@ -313,8 +313,10 @@ export class AccessIndex {
 	}
 
 	/**
-	 * Asks each of `views` again and tells its observer a changed value; a computation that fails recovers (nothing
-	 * half read is told), an observer that throws is reported.
+	 * Asks each of `views` again and tells its observer a changed value. A computation that fails (a list past its
+	 * bound fails closed, a read failed) ends that probe alone, `failed` (its list's object retries and attaches again):
+	 * the index and every other watcher stay as they are (decision 109: only a storage failure fails the store). An
+	 * observer that throws is reported.
 	 */
 	async #askProbes(views: ReadonlySet<ProbeView>): Promise<void> {
 		for (const view of views) {
@@ -323,8 +325,13 @@ export class AccessIndex {
 			try {
 				value = await this.#compute(view, this.#context);
 			} catch (error) {
-				this.#recover(error);
-				return;
+				this.#probes.delete(view);
+				reportError("things: a list over the access index failed; it attaches again", error, this.#context);
+				view.observer.end({
+					kind: "failed",
+					error: new ChordError({ code: "unavailable", message: "things: a list over the access index failed" }),
+				});
+				continue;
 			}
 			if (sameJson(view.last, value)) continue;
 			view.last = value;

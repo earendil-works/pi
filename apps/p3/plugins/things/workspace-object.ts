@@ -62,7 +62,7 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 					infoOf(workspace, lines.rows[0], things.rows[0]?.view ?? "", parents.rows[0], answer ?? undefined),
 				),
 				makes: () => constant(admitted.makes),
-				make: async ({ kind, name, input, defaults }, ctx) => {
+				make: async ({ kind, name, input, defaults, private: secret }, ctx) => {
 					if (!admitted.makes.includes(kind)) {
 						throw invalid("args", `things: ${kind} is not made here by this caller`, {
 							message: messages.message("mayNotMake", kind),
@@ -71,7 +71,7 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 					const args = { kind, name: name ?? "", by, input, defaults };
 					return kinds.value.get(kind)?.value.workspace === "no"
 						? store.create({ ...args, workspace }, ctx)
-						: store.createWorkspace({ ...args, parent: workspace }, ctx);
+						: store.createWorkspace({ ...args, parent: workspace, showsPeople: secret !== true }, ctx);
 				},
 				link: async ({ thing: linked, defaults }, ctx) => {
 					await mayLink(store, linked, principal, ctx);

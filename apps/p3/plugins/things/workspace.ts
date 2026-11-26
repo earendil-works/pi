@@ -74,8 +74,21 @@ export const Workspace = remote("things.workspace", {
 	admission: obj({ makes: arr(str()) }),
 	state: { info: WorkspaceInfo, makes: grantable(arr(str())) },
 	methods: {
+		/**
+		 * Make: a thing of `kind` here (`kind` one of `makes`). For a workspace kind, `private` makes it with people
+		 * from above hidden in the same commit (its maker is put in); private wins over its kind's create hook.
+		 */
 		make: grantable(
-			method(obj({ kind: str(), name: opt(str()), input: opt(unknown()), defaults: opt(DefaultsChoice) }), str()),
+			method(
+				obj({
+					kind: str(),
+					name: opt(str()),
+					input: opt(unknown()),
+					defaults: opt(DefaultsChoice),
+					private: opt(bool()),
+				}),
+				str(),
+			),
 		),
 		link: grantable(method(obj({ thing: str(), defaults: opt(DefaultsChoice) }))),
 		unlink: grantable(method(obj({ thing: str() }))),

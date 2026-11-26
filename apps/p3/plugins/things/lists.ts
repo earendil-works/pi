@@ -29,7 +29,7 @@ import { type Caller, kindOfMakeTick, MAKE_ANY, makeTick, OPEN, type Party, part
 import { type KindInfo, ThingKinds } from "./kind.ts";
 import { messages } from "./messages.ts";
 import { readAll, readWhole } from "./reader.ts";
-import type { ThingHere } from "./rules.ts";
+import type { OwnHere, ThingHere } from "./rules.ts";
 import {
 	type Cell,
 	Linkable,
@@ -389,16 +389,16 @@ function whoMayProbe(
 			const kinds = kindTable();
 			const access = look.access(workspace);
 			const entries = look.entries(workspace);
-			// The persons whose cells say "has": those present here and those a row here names, loaded so their answers
-			// can be computed.
-			for (const key of [...access.present, ...(entries?.grants ?? []).map((row) => row.party)]) {
-				const party = partyOf(key);
-				if (party.kind === "person") await load.person(party.person);
-			}
 			const own = thing === workspace;
 			const given: ThingHere | undefined = own ? access.own : access.things.get(thing);
 			const kind = given === undefined ? undefined : kinds.get(given.kind);
 			const rowsHere = (own ? entries?.ownGrants : entries?.grants.filter((g) => g.thing === thing)) ?? [];
+			// The persons whose cells say "has": those present here and those a row of this thing here names (present
+			// or not), loaded so their answers can be computed.
+			for (const key of [...access.present, ...rowsHere.map((row) => row.party)]) {
+				const party = partyOf(key);
+				if (party.kind === "person") await load.person(party.person);
+			}
 			const ticks = (kind?.value.ticks ?? []).map(({ name, label, for: forWhom }) => ({
 				name,
 				label: { namespace: label.namespace, key: label.key, params: [...label.params] },
@@ -427,7 +427,7 @@ function whoMayProbe(
 						// A giving row counts only where the thing is linked; a withholding one while the thing is here.
 						inEffect: given !== undefined && (!row.gives || given.at === workspace),
 					}));
-				return { here, has: hasTick(look, workspace, thing, given, key, tick) };
+				return { here, has: hasTick(look, workspace, thing, given, key, tick, kinds) };
 			};
 			const rows = [...parties].map(([key, party]) => ({
 				party,
@@ -445,8 +445,9 @@ function whoMayProbe(
 }
 
 /**
- * Whether party `key` has `tick` on `thing` here by every route: a person or a session's agent as their answer says
- * (when loaded), any other party as the thing's ticks for it say (a Make tick: given directly).
+ * Whether party `key` has `tick` on `thing` here by every route (`Cell.has`): a person or a session's agent as their
+ * answer says (a Make cell: the kinds in its `makes`; `MAKE_ANY`: every kind they could make here), any other party as
+ * the thing's ticks for it say (a Make cell: its row of that kind or of `MAKE_ANY`, less what is withheld from it).
  */
 function hasTick(
 	look: Look,
@@ -455,19 +456,48 @@ function hasTick(
 	given: ThingHere | undefined,
 	key: string,
 	tick: string,
+	kinds: ReadonlyMap<string, { readonly value: KindInfo }>,
 ): boolean {
 	if (given === undefined) return false;
+	const made = kindOfMakeTick(tick);
 	const party = partyOf(key);
 	if (party.kind === "person" || party.kind === "agent") {
 		const caller: Caller =
 			party.kind === "person" ? { kind: "person", person: party.person } : { kind: "agent", session: party.session };
 		const answer = look.answer(workspace, thing, caller);
 		if (tick === OPEN) return answer !== undefined;
-		if (kindOfMakeTick(tick) !== undefined) return given.ticks.get(key)?.has(tick) === true;
-		return answer?.ticks.includes(tick) === true;
+		if (made === undefined) return answer?.ticks.includes(tick) === true;
+		const makes = answer?.makes ?? [];
+		if (made !== "*") return makes.includes(made);
+		const could = [...kinds].filter(([, { value }]) => makerMay(value, party.kind === "agent" ? "agent" : "person"));
+		return (
+			could.length > 0 && could.every(([name]) => makes.includes(name) || !mayHoldHere(look, workspace, kinds, name))
+		);
 	}
 	if (tick === OPEN) return given.ticks.has(key);
-	return given.ticks.get(key)?.has(tick) === true;
+	const ticks = given.ticks.get(key);
+	if (made === undefined) return ticks?.has(tick) === true;
+	// A Make cell exists only on a workspace's own thing, which the index keeps as an `OwnHere` (with what is withheld).
+	const withheld = (given as Partial<OwnHere>).makesWithheld?.get(key);
+	const any = ticks?.has(MAKE_ANY) === true && withheld?.has(MAKE_ANY) !== true;
+	if (made === "*") return any;
+	return (ticks?.has(tick) === true || any) && withheld?.has(tick) !== true;
+}
+
+/** Whether a kind's `makers` lets `maker` make its things through a workspace (item 114). */
+function makerMay(kind: KindInfo, maker: "person" | "agent"): boolean {
+	return kind.makers === "anyone" || (kind.makers === "people" && maker === "person");
+}
+
+/** Whether a thing of kind `name` may be made in `workspace` at all: a leaf holds no workspace kinds (decision 13). */
+function mayHoldHere(
+	look: Look,
+	workspace: string,
+	kinds: ReadonlyMap<string, { readonly value: KindInfo }>,
+	name: string,
+): boolean {
+	const here = look.entries(workspace)?.kind;
+	return !(kinds.get(here ?? "")?.value.workspace === "leaf" && kinds.get(name)?.value.workspace !== "no");
 }
 
 /** `probe` with each row's thing named: the names are read at each computation (a rename asks every probe again). */
