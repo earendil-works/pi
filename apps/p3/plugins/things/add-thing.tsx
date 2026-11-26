@@ -175,6 +175,9 @@ function Confirm(props: {
 		everyone: [...(grants.everyone ?? [])],
 		agents: [...(grants.agents ?? [])],
 	});
+	// Whether the person changed the defaults: untouched, none are sent and the kind (or its create hook, which may
+	// answer other ones, a private workspace's) decides.
+	const [touched, setTouched] = useState(false);
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const errorText = useErrorText();
 	// A Make tick (item 114) reads as what it lets do; a kind's own tick by its label.
@@ -184,8 +187,11 @@ function Confirm(props: {
 		const found = offer.thingKind.ticks.find((each) => each.name === tick);
 		return found === undefined ? tick : text(found.label);
 	};
-	const toggle = (party: "everyone" | "agents", tick: string, on: boolean) =>
+	const toggle = (party: "everyone" | "agents", tick: string, on: boolean) => {
+		setTouched(true);
 		setKept({ ...kept, [party]: on ? [...kept[party], tick] : kept[party].filter((each) => each !== tick) });
+	};
+	const defaults = touched ? { defaults: kept } : {};
 	const ready = offer.kind === "link" || Create === undefined || input !== undefined;
 	const confirm = () => {
 		setFailure(undefined);
@@ -196,11 +202,11 @@ function Confirm(props: {
 							kind: offer.thingKind.name,
 							name: name.trim(),
 							...(input === undefined ? {} : { input }),
-							defaults: kept,
+							...defaults,
 						},
 						BACKGROUND_CONTEXT,
 					)
-				: linker?.link({ thing: offer.thing, defaults: kept }, BACKGROUND_CONTEXT).then(() => offer.thing);
+				: linker?.link({ thing: offer.thing, ...defaults }, BACKGROUND_CONTEXT).then(() => offer.thing);
 		done?.then(props.onAdded, (error: unknown) => setFailure(errorText(error)));
 	};
 	return (
