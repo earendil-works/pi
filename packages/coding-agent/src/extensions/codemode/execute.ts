@@ -27,6 +27,7 @@ import {
 } from "@earendil-works/pi-codemode";
 import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
+import { NESTED_CALL_LIMITS } from "../../core/nested-tool-calls.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
 import { formatSize, sliceHead, sliceTail } from "../../core/tools/truncate.ts";
 import { combineUsage } from "../../core/usage-totals.ts";
@@ -405,12 +406,13 @@ function joinAdjacentText(items: (TextContent | ImageContent)[]): (TextContent |
 	return joined;
 }
 
-function formatCallSummary(calls: readonly CodemodeNestedCall[]): string {
+function formatCallSummary({ calls, omittedCalls }: CodemodeToolDetails): string {
 	if (calls.length === 0) return "No tool calls were made.";
-	return `Tool calls made before the failure (they are not undone): ${calls.map((call) => `${call.name} (${call.status})`).join(", ")}`;
+	const omitted = omittedCalls ? `, and ${omittedCalls} later calls not listed` : "";
+	return `Tool calls made before the failure (they are not undone): ${calls.map((call) => `${call.name} (${call.status})`).join(", ")}${omitted}`;
 }
 
-function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: readonly CodemodeNestedCall[]): string {
+function formatError(result: Extract<CodemodeResult, { ok: false }>, details: CodemodeToolDetails): string {
 	const { error } = result;
 	const head =
 		error.kind === "script"
@@ -420,7 +422,7 @@ function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: read
 				: error.kind === "aborted"
 					? `Script aborted: ${error.message}`
 					: `Script sandbox failed: ${error.message}`;
-	return `${head}\n\n${formatCallSummary(calls)}`;
+	return `${head}\n\n${formatCallSummary(details)}`;
 }
 
 /** Write the full text output to a temp file, like bash does for truncated output. */
@@ -520,6 +522,57 @@ function toScriptValue(tool: AgentTool<any>, outcome: AgentToolCallOutcome): unk
 }
 
 /**
+ * The nested call rows of one script, published through `onUpdate` as they change. Each update
+ * copies every row, so a script that loops over calls would cost quadratic time and memory (in RPC
+ * mode, every update is queued as a JSON line). Like the session's nested-call record, it lists at
+ * most `NESTED_CALL_LIMITS.maxCalls` rows; later calls are only counted, with their cost.
+ */
+class CodemodeCallLog {
+	readonly calls: CodemodeNestedCall[] = [];
+	private omittedCalls = 0;
+	private omittedCost = 0;
+	private readonly onUpdate: ((result: AgentToolResult<CodemodeToolDetails>) => void) | undefined;
+
+	constructor(onUpdate: ((result: AgentToolResult<CodemodeToolDetails>) => void) | undefined) {
+		this.onUpdate = onUpdate;
+	}
+
+	/** Add the row of a starting call, or count the call once the list is full. */
+	start(record: CodemodeNestedCall): void {
+		if (this.calls.length >= NESTED_CALL_LIMITS.maxCalls) {
+			this.omittedCalls++;
+			// One update marks the list incomplete; omitted calls publish nothing else.
+			if (this.omittedCalls === 1) this.publish();
+			return;
+		}
+		this.calls.push(record);
+		this.publish();
+	}
+
+	/** Publish the finished row, or add the cost of an omitted call. */
+	finish(record: CodemodeNestedCall): void {
+		if (!this.calls.includes(record)) {
+			this.omittedCost += record.cost ?? 0;
+			return;
+		}
+		this.publish();
+	}
+
+	snapshot(): CodemodeToolDetails {
+		const details: CodemodeToolDetails = { calls: this.calls.map((call) => ({ ...call })) };
+		if (this.omittedCalls > 0) {
+			details.omittedCalls = this.omittedCalls;
+			details.omittedCost = this.omittedCost;
+		}
+		return details;
+	}
+
+	publish(): void {
+		this.onUpdate?.({ content: [], details: this.snapshot() });
+	}
+}
+
+/**
  * Run one script. Without a session context (a plain Agent or a direct call) scripts cannot call
  * tools, `store()` starts empty, and writes are dropped.
  */
@@ -533,7 +586,7 @@ export async function executeCodemode(
 ): Promise<AgentToolResult<CodemodeToolDetails>> {
 	const startedAt = performance.now();
 	const { code, options: sourceOptions } = parseCodemodeSource(input.code);
-	const calls: CodemodeNestedCall[] = [];
+	const log = new CodemodeCallLog(onUpdate);
 	// Usage of the script's `models.*` calls. Nested tool calls report theirs through the session.
 	let modelUsage: Usage | undefined;
 	// Images returned by `models.generateImages()`, to notice a script that never shows them.
@@ -545,10 +598,8 @@ export async function executeCodemode(
 		modelUsage = modelUsage ? combineUsage(modelUsage, usage) : usage;
 	};
 
-	const snapshot = (): CodemodeToolDetails => ({ calls: calls.map((call) => ({ ...call })) });
-	const publish = () => onUpdate?.({ content: [], details: snapshot() });
 	// Show the script as running before its first nested call, so the row's timer starts.
-	publish();
+	log.publish();
 
 	const callable = ctx ? getCodemodeCallableTools(ctx.tools) : [];
 	// ALL_TOOLS entries carry the declaration.
@@ -566,8 +617,7 @@ export async function executeCodemode(
 				args: previewArgs(args),
 				status: "running",
 			};
-			calls.push(record);
-			publish();
+			log.start(record);
 			const callStartedAt = performance.now();
 			// Only tools from ctx.tools are callable, so ctx is set here.
 			if (!ctx) throw new Error("Tool calls need a session");
@@ -580,7 +630,7 @@ export async function executeCodemode(
 			} else {
 				record.status = "ok";
 			}
-			publish();
+			log.finish(record);
 			return toScriptValue(tool, outcome);
 		},
 	}));
@@ -604,7 +654,7 @@ export async function executeCodemode(
 				{ type: "text", text: `Script failed\nWall time ${waited} seconds\nOutput:\n` },
 				{ type: "text", text: `Script error:\n${error}\n\nThe script did not start.` },
 			],
-			details: snapshot(),
+			details: log.snapshot(),
 			isError: true,
 		};
 	}
@@ -620,7 +670,7 @@ export async function executeCodemode(
 			globals: [
 				...createDiscoveryGlobals(callable, samples, options),
 				...(options.models && ctx
-					? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
+					? createModelGlobals(ctx.modelRegistry, toolCallId, log, addModelUsage, addGeneratedImages)
 					: []),
 			],
 			timeoutMs: Math.max(1, Math.round(deadline - waitedMs)),
@@ -644,7 +694,7 @@ export async function executeCodemode(
 		}
 	}
 	// Calls still marked running were cut off by the script ending, a timeout, or an abort.
-	for (const call of calls) {
+	for (const call of log.calls) {
 		if (call.status === "running") call.status = "cancelled";
 	}
 
@@ -658,7 +708,7 @@ export async function executeCodemode(
 		if (result.value !== undefined) scriptOutput.push({ type: "text", text: valueText(result.value) });
 	}
 	const items = formatOutput(scriptOutput);
-	if (!result.ok) items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
+	if (!result.ok) items.push({ type: "text", text: `Script error:\n${formatError(result, log.snapshot())}` });
 	if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
 		items.push({
 			type: "text",
@@ -675,7 +725,7 @@ export async function executeCodemode(
 	const output = joinAdjacentText(await saveImages(truncated.items));
 	const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
 	const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
-	const details = snapshot();
+	const details = log.snapshot();
 	if (truncated.fullOutputPath) details.fullOutputPath = truncated.fullOutputPath;
 	return {
 		content: [{ type: "text", text: header }, ...output],
@@ -776,8 +826,7 @@ function createDiscoveryGlobals(
 function createModelGlobals(
 	models: CodemodeModelRuntime,
 	toolCallId: string,
-	calls: CodemodeNestedCall[],
-	publish: () => void,
+	log: CodemodeCallLog,
 	addUsage: (usage: Usage) => void,
 	addGeneratedImages: (count: number) => void,
 ): CodemodeTool[] {
@@ -829,8 +878,7 @@ function createModelGlobals(
 			args: `${resolved.provider}/${resolved.id}`,
 			status: "running",
 		};
-		calls.push(record);
-		publish();
+		log.start(record);
 		const startedAt = performance.now();
 		const result = await limit(() => run(resolved, checked));
 		record.durationMs = performance.now() - startedAt;
@@ -840,7 +888,7 @@ function createModelGlobals(
 			record.cost = result.usage.cost.total;
 			addUsage(result.usage);
 		}
-		publish();
+		log.finish(record);
 		return result;
 	};
 	const implementations: Record<string, CodemodeTool["execute"]> = {

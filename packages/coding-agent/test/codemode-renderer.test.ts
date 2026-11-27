@@ -83,6 +83,23 @@ describe("codemode renderer", () => {
 		);
 	});
 
+	it("counts omitted calls and includes their cost in the total", () => {
+		const call = { name: "models.classify", args: "scorer/judge", status: "ok" as const, durationMs: 5 };
+		const text = render({
+			content: [{ type: "text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" }],
+			details: {
+				calls: [{ ...call, id: "call/models.classify/1", cost: 0.02 }],
+				omittedCalls: 3,
+				omittedCost: 0.03,
+			},
+		});
+		expect(text).toBe(
+			["✓ models.classify scorer/judge 5ms $0.02", "... (3 later calls not listed)", "Model calls: $0.05"].join(
+				"\n",
+			),
+		);
+	});
+
 	it("shows results without a header, such as rejected options", () => {
 		const text = render(
 			{

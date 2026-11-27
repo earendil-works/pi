@@ -105,7 +105,12 @@ export interface CodemodeNestedCall {
 }
 
 export interface CodemodeToolDetails {
+	/** The first `NESTED_CALL_LIMITS.maxCalls` calls; later calls are only counted. */
 	calls: CodemodeNestedCall[];
+	/** Calls made after `calls` reached its limit. Absent when every call is listed. */
+	omittedCalls?: number;
+	/** Summed `cost` of the omitted calls. Absent when every call is listed. */
+	omittedCost?: number;
 	/** Temp file with the full text output, when the output was truncated. */
 	fullOutputPath?: string;
 }

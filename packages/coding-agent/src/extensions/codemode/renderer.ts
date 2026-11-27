@@ -108,6 +108,8 @@ export const codemodeRenderers: Pick<
 		const component = (context.lastComponent as Container | undefined) ?? new Container();
 		component.clear();
 		const calls = result.details?.calls ?? [];
+		const omittedCalls = result.details?.omittedCalls ?? 0;
+		const omittedCost = result.details?.omittedCost ?? 0;
 		if (calls.length > 0) {
 			const shown = options.expanded ? calls : calls.slice(-CALL_PREVIEW_COUNT);
 			const lines = shown.map((call) => formatCall(call, theme, options.expanded));
@@ -116,10 +118,12 @@ export const codemodeRenderers: Pick<
 					`${theme.fg("muted", `... (${calls.length - shown.length} earlier calls,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,
 				);
 			}
-			// Collapsed rows hide earlier calls, so the total covers every call.
+			// Calls past the list's limit are only counted, so expanding does not show them.
+			if (omittedCalls > 0) lines.push(theme.fg("muted", `... (${omittedCalls} later calls not listed)`));
+			// Collapsed rows hide earlier calls and the list omits later ones, so the total covers every call.
 			const priced = calls.filter((call) => call.cost);
-			if (priced.length > 1) {
-				const total = priced.reduce((sum, call) => sum + (call.cost ?? 0), 0);
+			if (priced.length > 1 || omittedCost > 0) {
+				const total = priced.reduce((sum, call) => sum + (call.cost ?? 0), omittedCost);
 				lines.push(theme.fg("muted", `Model calls: ${formatCost(total)}`));
 			}
 			component.addChild(new Spacer(1));
