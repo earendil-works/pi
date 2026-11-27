@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **[Terminal session resume](docs/terminal-setup.md#program-resume):** Compatible terminals can reopen the current pi session after a restart with its original profile, tool restrictions, and instructions.
+- **[Image generation in codemode](docs/codemode.md#generate-images):** Generate images with Radius, or set the aspect ratio and size when using OpenRouter image models.
+- **GitHub Copilot prompt caching:** Changing the thinking level preserves the prompt cache on supported Claude 5.x and GPT-6 models. Supported Claude 5.x models also keep the cache when tools change, and Copilot Claude models support [cache warming](docs/settings.md#model-and-thinking).
+
 ### Breaking Changes
 
 - Removed telemetry reporting from pi for new installs and updates (`/api/report-install`), the `enableInstallTelemetry` setting (`SettingsManager.getEnableInstallTelemetry()` / `setEnableInstallTelemetry()`), and `PI_TELEMETRY`
