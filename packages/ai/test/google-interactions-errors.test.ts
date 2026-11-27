@@ -84,8 +84,14 @@ describe("classifyGoogleInteractionsError", () => {
 				code: "invalid_request",
 			},
 		});
-		expect(classify(400, body).message).toBe(
-			"400 Model gemini-4-argon is not supported for per-user quota requests. gemini-4-hydrogen is not available on the Google AI Ultra plan. Choose another model.",
+		const error = classifyGoogleInteractionsError({
+			status: 400,
+			headers: new Headers(),
+			body,
+			modelId: "gemini-4-argon",
+		});
+		expect(error.message).toBe(
+			"400 Model gemini-4-argon is not supported for per-user quota requests. gemini-4-argon is not available on the Google AI Ultra plan. Choose another model.",
 		);
 	});
 
