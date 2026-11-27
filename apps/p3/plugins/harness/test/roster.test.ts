@@ -2,12 +2,13 @@
 // stand-in of Durable's runtime (Astra, rounds 2 and 3 of the port). It aborts the subagent's current run only when a
 // message of an older generation started it, never work of the stop's own generation; it clears the subagent's mark
 // in the commit that ends it, only while the mark is its own; aborted itself, it clears the mark too. A message's
-// request id carries its generation.
+// request id carries its generation. Version 1's per-conversation documents are moved into the session's, once
+// (decision 125).
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
-import { requestOf, Stopper, Subagents } from "../roster.ts";
+import { adoptConversationRosters, requestOf, Stopper, Subagents } from "../roster.ts";
 
 /** The stopper's phase `name`, or its abort handler, as the scheduler calls them. */
 function phase(name: "decide" | "abort" | "clear" | "aborted") {
@@ -87,5 +88,57 @@ describe("a subagent's stopper", () => {
 		const agent = agentOf(5);
 		await phase("aborted")(stopperOf(5), runtimeOf(agent).runtime, context);
 		assert.equal(agent.stopping, undefined);
+	});
+});
+
+describe("the move of version 1's documents", () => {
+	/**
+	 * A stand-in harness whose conversations are `conversations` (owned by a task when `owner` is set), with version 1
+	 * documents `v1` by conversation and the session's document `session` (none yet: `undefined`).
+	 */
+	function durableOf(
+		conversations: { id: number; owner?: object }[],
+		v1: Record<number, object>,
+		session?: { agents: Record<string, object> },
+	) {
+		const written = { agents: {} as Record<string, unknown> };
+		const durable = {
+			snapshot: async (token: { definition: { scope: string } }, id?: number) =>
+				token.definition.scope === "session" ? session : v1[id ?? -1] && { agents: v1[id ?? -1] },
+			commit: async (change: (tx: unknown) => unknown) =>
+				change({
+					scanConversations: async () => ({ items: conversations }),
+					doc: async () => written,
+				}),
+			conversation: async () => ({
+				agent: async () => ({ model: { provider: "faux", modelId: "faux-model" }, thinkingLevel: "low" }),
+			}),
+		};
+		return { durable: durable as never, written };
+	}
+
+	it("moves each conversation's subagents into the session's document, a name taken twice made unique", async () => {
+		const { durable, written } = durableOf([{ id: 1 }, { id: 5, owner: { taskId: 2 } }, { id: 7 }], {
+			1: { reader: { conversationId: 5, reported: [3] } },
+			7: { reader: { conversationId: 9, reported: [] } },
+		});
+		await adoptConversationRosters(durable, context);
+		const common = { model: "faux/faux-model", thinkingLevel: "low", generation: 0, followUps: [] };
+		assert.deepEqual(written.agents, {
+			reader: { conversationId: 5, reported: [3], reportedTo: [{ answer: 3, to: 1 }], ...common },
+			"reader-9": { conversationId: 9, reported: [], reportedTo: [], ...common },
+		});
+	});
+
+	it("moves nothing once the session's document exists", async () => {
+		const { durable, written } = durableOf(
+			[{ id: 1 }],
+			{ 1: { reader: { conversationId: 5, reported: [] } } },
+			{
+				agents: {},
+			},
+		);
+		await adoptConversationRosters(durable, context);
+		assert.deepEqual(written.agents, {});
 	});
 });

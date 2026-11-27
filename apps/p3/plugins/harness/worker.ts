@@ -43,6 +43,7 @@ import { activityOf, serialized } from "./activity.ts";
 import { AgentParts, type Parts } from "./agent-parts.ts";
 import { SubagentsKind } from "./kind.ts";
 import { recordUse, SUBAGENT_TASKS } from "./reporter.ts";
+import { adoptConversationRosters } from "./roster.ts";
 import { subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
@@ -251,6 +252,8 @@ async function openHarness(
 	try {
 		// The root conversation exists from the first open on: the transcript and the activity follow it.
 		await durable.root(base);
+		// Before anything runs: the subagents' reporters read the session's document.
+		await adoptConversationRosters(durable, base);
 		return durable;
 	} catch (error) {
 		await durable.close(base);

@@ -2,9 +2,10 @@
 // messages): the document listing them by name (`Subagents`, the session's, so every top-level conversation sees the
 // same names), the task owning each one's conversation (`Anchor`), what a subagent gets from the agent when it is
 // configured (the agent's tools it may be given now, its thinking level clamped to its model), the request ids of its
-// messages (which carry the generation they were sent in), and the task that ends an older generation's work
-// (`Stopper`).
+// messages (which carry the generation they were sent in), the task that ends an older generation's work
+// (`Stopper`), and the move of version 1's per-conversation documents into the session's.
 
+import type { Context } from "@earendil-works/p3/v1";
 import {
 	type Agent,
 	type ConversationId,
@@ -12,6 +13,7 @@ import {
 	defineDoc,
 	defineTask,
 	type EntryId,
+	type Harness,
 	LiveDoc,
 	type Models,
 	type ModelThinkingLevel,
@@ -52,12 +54,68 @@ export type Subagent = {
 export const Subagents = defineDoc<{ agents: Record<string, Subagent>; withheld?: true; withholds?: number }>({
 	checkpointWhen: () => false,
 	kind: "harness.subagents",
-	// 2: the session's (1 was each conversation's).
+	// 2: the session's (1 was each conversation's, `SubagentsV1`, moved over by `adoptConversationRosters`).
 	version: 2,
 	// The session's: a top-level branch sees the same subagents; each answer goes to the conversation that asked.
 	scope: "session",
 	initial: () => ({ agents: {} }),
 });
+
+/** A subagent as version 1 of the document listed it: in the conversation that started it. */
+type SubagentV1 = { readonly conversationId: ConversationId; readonly reported: EntryId[] };
+
+/** Version 1 of the document: each conversation's subagents (read once by `adoptConversationRosters`). */
+const SubagentsV1 = defineDoc<{ agents: Record<string, SubagentV1> }>({
+	checkpointWhen: () => false,
+	kind: "harness.subagents",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	fork: "initial",
+	initial: () => ({ agents: {} }),
+});
+
+/** What adopting the old documents reads and writes: the harness's commits, snapshots and conversations' agents. */
+type Adopting = Pick<Harness, "commit" | "snapshot" | "conversation">;
+
+/**
+ * Moves the subagents version 1 listed per conversation into the session's document, once: when the session's does
+ * not exist yet (decision 125: stored data survives an update). Each keeps its conversation and reported answers
+ * (reported to the conversation that listed it), gets the model and thinking level its conversation's agent has, every
+ * tool the agent may give, generation 0; a name two conversations listed gets the conversation's id appended. Runs
+ * before the harness resumes, so no reporter reads the session's document before.
+ */
+export async function adoptConversationRosters(durable: Adopting, context: Context): Promise<void> {
+	if ((await durable.snapshot(Subagents, context)) !== undefined) return;
+	const owners = await durable.commit(async (tx) => {
+		const ownerless: ConversationId[] = [];
+		let cursor: Parameters<typeof tx.scanConversations>[2];
+		do {
+			const page = await tx.scanConversations({}, 200, cursor);
+			for (const record of page.items) if (record.owner === undefined) ownerless.push(record.id);
+			cursor = page.next;
+		} while (cursor !== undefined);
+		return ownerless;
+	}, context);
+	const adopted: { name: string; agent: Subagent }[] = [];
+	for (const owner of owners) {
+		const listed = (await durable.snapshot(SubagentsV1, owner, context))?.agents ?? {};
+		for (const [name, { conversationId, reported }] of Object.entries(listed)) {
+			const own = await (await durable.conversation(conversationId, context))?.agent(context);
+			const model = own?.model === undefined ? "" : modelText(own.model);
+			const reportedTo = reported.map((answer) => ({ answer, to: owner }));
+			const agent = { conversationId, reported: [...reported], reportedTo, model, generation: 0, followUps: [] };
+			adopted.push({ name, agent: { ...agent, thinkingLevel: own?.thinkingLevel ?? "off" } });
+		}
+	}
+	await durable.commit(async (tx) => {
+		const roster = await tx.doc(Subagents);
+		for (const { name, agent } of adopted) {
+			const free = subagentOf(roster.agents, name) === undefined ? name : `${name}-${agent.conversationId}`;
+			roster.agents[free] = agent;
+		}
+	}, context);
+}
 
 /** The subagent `name` of `agents` (`Object.hasOwn`: a name is the model's text); none: there is no such subagent. */
 export function subagentOf<T extends Subagent>(agents: Readonly<Record<string, T>>, name: string): T | undefined {

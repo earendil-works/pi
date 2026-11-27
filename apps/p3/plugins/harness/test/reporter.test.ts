@@ -277,4 +277,18 @@ describe("a subagent's reporter", () => {
 		await phase("deliver")(reporterOf(9, "task"), runtime, context);
 		assert.deepEqual([seen.checkpoints.at(-1), roster.agents], [{ phase: "report" }, {}]);
 	});
+
+	it("runs a reporter of version 1 on: generation 0, no withhold, its own request id (decision 125)", async () => {
+		const reporter = SUBAGENT_TASKS.tasks?.find((task) => task.definition.name === "harness.subagent-reporter");
+		const migrate = (reporter?.definition as { migrate?: (i: unknown, c: unknown, v: number) => unknown }).migrate;
+		const v1 = { name: "reader", conversationId: 2, message: "old", followUp: false };
+		const migrated = migrate?.(v1, { phase: "deliver" }, 1) as { input: object; checkpoint: object };
+		assert.deepEqual(migrated, {
+			input: { ...v1, generation: 0, withholds: 0, v1: true },
+			checkpoint: { phase: "deliver" },
+		});
+		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }));
+		await phase("deliver")({ id: 9, input: migrated.input }, runtime, context);
+		assert.equal((seen.admitted[0] as { requestId?: string }).requestId, "subagent:9");
+	});
 });

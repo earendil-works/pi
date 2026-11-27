@@ -25,7 +25,8 @@ import { Anchor, REQUEST, requestOf, Stopper, Subagents, subagentOf, toolsOf } f
 
 /**
  * What a reporter delivers: to which subagent (its name and conversation, and its generation when the message was
- * sent), how often Use was withheld by then (`withholds`), the message, and whether it waits for the current answer.
+ * sent), how often Use was withheld by then (`withholds`), the message, and whether it waits for the current answer;
+ * `v1`: a reporter of version 1, whose message's request id carries no generation (`subagent:<reporter>`).
  */
 export type ReporterInput = {
 	name: string;
@@ -34,6 +35,7 @@ export type ReporterInput = {
 	withholds: number;
 	message: string;
 	followUp: boolean;
+	v1?: true;
 };
 
 /** A reporter's phases: deliver the message and wait for the answer, then report it (none: nothing to report). */
@@ -59,8 +61,14 @@ const WITHDRAWN = "the message was withdrawn before it ran (Use was withheld, or
  */
 export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 	name: "harness.subagent-reporter",
-	version: 1,
+	// 2: the generation and the withholds a message was sent in (decision 125: a reporter of version 1 still runs).
+	version: 2,
 	initial: () => ({ phase: "deliver" }),
+	// Version 1 had the same phases; its messages were sent in generation 0, before any withhold.
+	migrate: (input, checkpoint) => ({
+		input: { ...(input as Omit<ReporterInput, "generation" | "withholds">), generation: 0, withholds: 0, v1: true },
+		checkpoint: checkpoint as ReporterState,
+	}),
 	phases: {
 		deliver: async (reporter, runtime, context) => {
 			const subagent = await runtime.conversation(reporter.input.conversationId, context);
@@ -110,7 +118,9 @@ type Reporting = { readonly id: TaskId; readonly input: ReporterInput };
 /** The reporter's message as a submission: a steer reaches a busy subagent at its next step, a follow-up after it. */
 function draftOf({ id, input }: Reporting) {
 	const whenBusy = input.followUp ? "followUp" : "steer";
-	return { type: "input", content: input.message, whenBusy, requestId: requestOf(id, input.generation) } as const;
+	// Version 1's request id, so a message it submitted is found again, not sent twice.
+	const requestId = input.v1 === true ? `${REQUEST}${id}` : requestOf(id, input.generation);
+	return { type: "input", content: input.message, whenBusy, requestId } as const;
 }
 
 /**
