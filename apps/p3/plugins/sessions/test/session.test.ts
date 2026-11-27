@@ -1,7 +1,8 @@
 // The session kind (`session.ts`) and the session defaults kind (`defaults.ts`) on the server, case by case of
 // ERNDL-704's tests: making a session needs Make sessions in the parent, the maker gets every tick, the agents only
-// Make (1); archiving with Manage, unlinking with Link in the parent (2); a private session (3); no app, no member
-// table (9); and the defaults: the nearest of two applies, shared gives everyone Read and Send, private hides people
+// Make (1); archiving with Manage, unlinking with Link in the parent (2); a private session (3); a conversation moved
+// only to a machine the agents have Work on, by Manage or by the session's worker (8); no app, no member table (9);
+// and the defaults: the nearest of two applies, shared gives everyone Read and Send, private hides people
 // from above, "opens with" becomes the session's own view, the model its row's. Every call goes through `Workspace` or
 // the session's object as its caller would make it, on the things plugin's world with the sessions plugin's server
 // facet, the environments plugin's (where a session works) and a stand-in of the base's runtime (its data directory).
@@ -17,6 +18,7 @@ import {
 	defineFacet,
 	type P3Principal,
 	type Reference,
+	SessionFacts,
 	until,
 	withGranted,
 } from "@earendil-works/p3/v1";
@@ -26,7 +28,7 @@ import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { seeded } from "../../environments/test/seeded.ts";
 import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
-import { makeTick, type Party, type Source } from "../../things/contract.ts";
+import { makeTick, OPEN, type Party, type Source } from "../../things/contract.ts";
 import { Board, SESSION, SPACES } from "../../things/test/kinds.ts";
 import { type World, world } from "../../things/test/world.ts";
 import { Workspace } from "../../things/workspace.ts";
@@ -164,10 +166,10 @@ describe("making a session (1)", () => {
 		const placed = (await store.workspaces.one.page({ workspace: session }, 1, context)).items[0];
 		assert.deepEqual([placed?.name, placed?.parent], ["one", fam]);
 		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
-		assert.deepEqual(row.location, { environment: machine, folder: join(dataDir, "work", session) });
+		assert.deepEqual(row.location, { machine, folder: join(dataDir, "work", session) });
 		assert.ok((await stat(row.location.folder)).isDirectory());
 		await assert.rejects(
-			makeSession(leo, fam, "two", { location: { environment: "nowhere", folder: "/tmp" } }),
+			makeSession(leo, fam, "two", { location: { machine: "nowhere", folder: "/tmp" } }),
 			/no machine nowhere/,
 		);
 	});
@@ -268,6 +270,120 @@ describe("the owner and a private session (3)", () => {
 					board
 				],
 			(answer) => answer === undefined,
+		);
+	});
+});
+
+/** Withholds `tick` on `thing` from `who` in `workspace` (a switch from below). */
+const withhold = (workspace: string, thing: string, who: Party, tick: string) =>
+	store.setGrants({ source: BY, grants: [{ workspace, thing, party: who, tick, gives: false }] }, context);
+
+/** Runs `fn` as `who` with session `session`'s object, with what Manage gives (`undefined`: not granted). */
+function managing<T>(
+	who: P3Principal,
+	session: string,
+	fn: (held: ManagedSession | undefined, ctx: Ctx<P3Principal>) => Promise<T>,
+): Promise<T> {
+	return as(who, async (ctx) => {
+		const held = await ctx.get(SessionObject, { workspace: session, thing: session });
+		return fn(withGranted(held, "moveLocation", "detail"), ctx);
+	});
+}
+
+/** A session's object with what Manage gives. */
+type ManagedSession = NonNullable<
+	ReturnType<typeof withGranted<Reference<typeof SessionObject>, "moveLocation" | "detail">>
+>;
+
+describe("a location per conversation (8)", () => {
+	it("moves a conversation with Manage; the detail and the session's worker see it, a second move replaces it", async () => {
+		const { leo, fam } = await family();
+		const session = await makeSession(leo, fam, "one");
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		const detail = await managing(leo, session, async (held, ctx) => {
+			await held!.moveLocation({ conversation: "2", location: { machine, folder: "/srv" } }, ctx);
+			return until(held!.detail, (value) => value.locations.length === 1, within("the detail", ctx));
+		});
+		assert.deepEqual(detail.locations, [{ conversation: "2", location: { machine, folder: "/srv" } }]);
+		const worker = { kind: "worker", session } as const;
+		await as(worker, async (ctx) => {
+			const facts = await ctx.get(SessionFacts, {});
+			await facts.moveLocation({ conversation: "2", location: { machine, folder: "/srv/pi" } }, ctx);
+			const moved = await until(
+				facts.locations,
+				(locations) => locations[0]?.location.folder === "/srv/pi",
+				within("the worker's move", ctx),
+			);
+			assert.equal(moved.length, 1);
+			// The session's own location is untouched: where every conversation not moved works.
+			assert.deepEqual(facts.session.value?.location, { machine, folder: join(dataDir, "work", session) });
+		});
+	});
+
+	it("refuses a move unless the folder is a full path, the thing a machine, and the agents have Work on it", async () => {
+		const { leo, fam } = await family();
+		const session = await makeSession(leo, fam, "one");
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		const board = await store.create({ kind: "test.board", name: "b", workspace: fam, by: BY }, context);
+		const move = (location: { machine: string; folder: string }) =>
+			managing(leo, session, (held, ctx) => held!.moveLocation({ conversation: "1", location }, ctx));
+		await assert.rejects(move({ machine, folder: "srv" }), /no full path/);
+		// A thing not here is not available to the person; one here that is no machine is no machine.
+		await assert.rejects(move({ machine: "nowhere", folder: "/srv" }), /nowhere is not available/);
+		await assert.rejects(move({ machine: board, folder: "/srv" }), new RegExp(`no machine ${board}`));
+		await withhold(session, machine, { kind: "agents" }, "work");
+		await assert.rejects(move({ machine, folder: "/srv" }), /have no Work/);
+		// The session's worker is refused the same: the check is the store's.
+		await as({ kind: "worker", session }, async (ctx) => {
+			const facts = await ctx.get(SessionFacts, {});
+			await assert.rejects(
+				facts.moveLocation({ conversation: "1", location: { machine, folder: "/srv" } }, ctx),
+				/have no Work/,
+			);
+		});
+		const sessions = await w.host.get(SessionsStore, {}, context);
+		assert.deepEqual((await sessions.locations.ofSession.page({ session }, 10, context)).items, []);
+	});
+
+	// env4's addition (R41): a person points the agent only at a machine they are let in on themselves.
+	it("refuses a person's move to a machine not available to them, though the agents have Work there", async () => {
+		const { leo, fam } = await family();
+		const session = await makeSession(leo, fam, "one");
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		await withhold(session, machine, party(leo), OPEN);
+		await assert.rejects(
+			managing(leo, session, (held, ctx) =>
+				held!.moveLocation({ conversation: "1", location: { machine, folder: "/srv" } }, ctx),
+			),
+			/not available to person/,
+		);
+	});
+
+	it("gives no move and no detail without Manage", async () => {
+		const { leo, fam } = await family();
+		const kim = await person("Kim");
+		await put(fam, kim);
+		const session = await makeSession(leo, fam, "one");
+		// The shared defaults: Kim reads and sends, nothing more.
+		await managing(kim, session, async (held) => assert.equal(held, undefined));
+		await as(kim, async (ctx) => {
+			const held = await ctx.get(SessionObject, { workspace: session, thing: session });
+			assert.equal(held.moveLocation, undefined);
+		});
+	});
+
+	it("drops a session's moved conversations with its row", async () => {
+		const { leo, fam } = await family();
+		const session = await makeSession(leo, fam, "one");
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		await managing(leo, session, (held, ctx) =>
+			held!.moveLocation({ conversation: "3", location: { machine, folder: "/srv" } }, ctx),
+		);
+		const sessions = await w.host.get(SessionsStore, {}, context);
+		await store.removeWorkspace({ workspace: session }, context);
+		await eventually(
+			async () => (await sessions.locations.ofSession.page({ session }, 10, context)).items.length,
+			(rows) => rows === 0,
 		);
 	});
 });

@@ -27,6 +27,7 @@ const SESSION = {
 	workspace: "w",
 	call: () => Promise.reject(new Error("no call")),
 	location: async () => undefined,
+	moveLocation: () => Promise.reject(new Error("no move")),
 };
 
 /** A value the case changes, as a reference's state member reads (`value`, the current one). */

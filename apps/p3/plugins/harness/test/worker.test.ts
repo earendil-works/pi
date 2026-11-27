@@ -316,11 +316,11 @@ describe("the harness plugin on a worker", () => {
 		// The machine part gives machine `m`'s environment only, in its own folder.
 		const machine = (location: { machine: string }) =>
 			location.machine === "m" ? new NodeExecutionEnv({ cwd: elsewhere }) : undefined;
-		const server = await start(held, { location: { environment: "m", folder } }, [
+		const server = await start(held, { location: { machine: "m", folder } }, [
 			{ kind: "test.machine", env: machine },
 		]);
 		await ask("where");
-		server.row({ location: { environment: "other", folder } });
+		server.row({ location: { machine: "other", folder } });
 		await ask("where then");
 		server.hold([held[0]!, held[1]!]);
 		await ask("where now");
@@ -342,7 +342,7 @@ describe("the harness plugin on a worker", () => {
 		});
 		const held = [login("login", "faux", script), coding(), machine(["work"])];
 		const { stubs, server, control } = standIns(
-			{ ...sessionRow(SESSION, folder), location: { environment: "m", folder } },
+			{ ...sessionRow(SESSION, folder), location: { machine: "m", folder } },
 			held,
 		);
 		harnessControl = control;
@@ -376,11 +376,68 @@ describe("the harness plugin on a worker", () => {
 		const [session] = sessions;
 		assert.ok(session !== undefined);
 		assert.deepEqual(await session.location(ROOT_CONVERSATION_ID, context), { machine: "this-device", folder });
-		server.row({ location: { environment: "m", folder: "/elsewhere" } });
+		server.row({ location: { machine: "m", folder: "/elsewhere" } });
 		await eventually(
 			() => session.location(ROOT_CONVERSATION_ID, context),
 			(at) => at?.machine === "m" && at.folder === "/elsewhere",
 		);
+	});
+
+	// ERNDL-704 test 8 (decision 24): a conversation moved works at its own location; a subagent's works where its
+	// caller works, following its moves, until it is moved itself.
+	it("runs each conversation's tools at its own location once moved, a subagent's at its caller's until moved", async () => {
+		const [moved, own] = [join(folder, "moved"), join(folder, "own")];
+		await mkdir(moved);
+		await mkdir(own);
+		const tool = (when: string, name: string, args: object): Step => ({
+			when,
+			reply: [{ kind: "tool", name, args: JSON.stringify(args) }],
+		});
+		const script: Step[] = [
+			tool("@spawn", "subagent_spawn", { name: "reader", message: "child-where" }),
+			tool("@again", "subagent_send", { name: "reader", message: "child-where" }),
+			runs("child-where", "pwd"),
+			runs("root-where", "pwd"),
+			says("", "ok"),
+		];
+		const sessions: HarnessSession[] = [];
+		const machine = (location: { machine: string; folder: string }) =>
+			location.machine === "m" ? new NodeExecutionEnv({ cwd: location.folder }) : undefined;
+		const held = [login("login", "faux", script), coding(), subagents(), other("test.machine", "m")];
+		const server = await start(held, { location: { machine: "m", folder } }, [
+			{ kind: "test.machine", env: machine, seen: (session) => sessions.push(session) },
+		]);
+		/** The folders the tools ran in so far (their `pwd` results), in order. */
+		const ran = () =>
+			requests()
+				.map(({ last }) => last.trim())
+				.filter((last) => last.startsWith(folder));
+		const ranIn = async (where: string, times: number) =>
+			eventually(ran, (folders) => folders.filter((at) => at === where).length >= times, 5000);
+		await ask("@spawn");
+		await ranIn(folder, 1);
+		const [session] = sessions;
+		assert.ok(session !== undefined);
+		// The root conversation moved: its subagent follows it.
+		await session.moveLocation(ROOT_CONVERSATION_ID, { machine: "m", folder: moved }, context);
+		assert.deepEqual(server.moved, [{ conversation: "1", location: { machine: "m", folder: moved } }]);
+		await ask("@again");
+		await ranIn(moved, 1);
+		// The subagent moved itself: it works there, its caller stays.
+		const open = await harness();
+		const owned = await open.durable.commit(
+			async (tx) => (await tx.scanConversations({ ownerConversationId: ROOT_CONVERSATION_ID }, 10)).items,
+			context,
+		);
+		const child = owned[0]!.id;
+		await session.moveLocation(child, { machine: "m", folder: own }, context);
+		// Another request id: Durable takes a request once.
+		await ask("@again, once more");
+		await ranIn(own, 1);
+		await ask("root-where");
+		await ranIn(moved, 2);
+		assert.deepEqual(await session.location(ROOT_CONVERSATION_ID, context), { machine: "m", folder: moved });
+		assert.deepEqual(await session.location(child, context), { machine: "m", folder: own });
 	});
 
 	it("starts a subagent, a copy without the subagent tools, whose answer comes back; Use withheld: no tools", async () => {

@@ -118,7 +118,7 @@ export async function startRun(client: Host<P3Principal>, session: string, conte
 }
 
 /** Where a test's session works: a folder, on this device's machine unless `environment` names another. */
-export type TestLocation = { readonly environment?: string; readonly folder: string };
+export type TestLocation = { readonly machine?: string; readonly folder: string };
 
 /**
  * A new session titled `title`, made in Pi by `client` (the owner: every tick of it) with `Workspace.make`, working at
@@ -139,7 +139,7 @@ export async function makeSession(ctx: Ctx<P3Principal>, title: string, location
 	const at: Location | undefined =
 		location === undefined
 			? undefined
-			: { environment: location.environment ?? (await thisDeviceIn(ctx)), folder: location.folder };
+			: { machine: location.machine ?? (await thisDeviceIn(ctx)), folder: location.folder };
 	return workspace.make({ kind: SessionKind.name, name: title, input: at === undefined ? {} : { location: at } }, ctx);
 }
 

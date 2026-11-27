@@ -40,15 +40,19 @@ export type HarnessLocation = { readonly machine: string; readonly folder: strin
  * What a kind's part has of the session's agent: the session's id, the workspace the agent holds its things in (the
  * session's workspace; a part never assumes it equals the session's id), `call`, which runs `fn` as the session's
  * worker (a tool reaches its plugin's objects with it, on the worker or the server), its references released when
- * `fn` settles (`context` is the tool's, Durable's, so cancelling the tool cancels the call), and `location`, where
- * conversation `conversation` (Durable's id, a tool's `api.conversationId`) works now; `undefined`: nowhere (an
- * unknown session).
+ * `fn` settles (`context` is the tool's, Durable's, so cancelling the tool cancels the call), `location`, where
+ * conversation `conversation` (Durable's id, a tool's `api.conversationId`) works now (its own location once moved,
+ * else its owner conversation's, a subagent's caller's, else the session's; `undefined`: nowhere, an unknown session),
+ * and `moveLocation`, which moves the conversation to `location`: the next tool call works there, a call under way
+ * keeps its environment; refused (`invalid`, with a message) unless the agents have Work here on its machine and the
+ * folder is a full path.
  */
 export type HarnessSession = {
 	readonly session: string;
 	readonly workspace: string;
 	call<T>(fn: (ctx: Ctx<P3Principal>) => Promise<T>, context: Context): Promise<T>;
 	location(conversation: ConversationId, context: Context): Promise<HarnessLocation | undefined>;
+	moveLocation(conversation: ConversationId, location: HarnessLocation, context: Context): Promise<void>;
 };
 
 /** A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. */

@@ -21,6 +21,7 @@ function session(location: HarnessLocation | undefined): HarnessSession {
 		workspace: "w",
 		call: () => Promise.reject(new Error("no call")),
 		location: async () => location,
+		moveLocation: () => Promise.reject(new Error("no move")),
 	};
 }
 

@@ -110,10 +110,7 @@ describe("the plans of the stores' queries", () => {
 			let one = "";
 			for (let i = 0; i < 6; i++) {
 				one = `s${i}`;
-				await sessions.insert(
-					{ id: one, location: { environment: machine, folder: "/tmp" }, model: null },
-					context,
-				);
+				await sessions.insert({ id: one, location: { machine, folder: "/tmp" }, model: null }, context);
 				if (i % 2 === 0) await sessions.archive({ session: one }, context);
 			}
 			const settings = await host.get(DefaultsSettings, {}, context);
@@ -160,6 +157,7 @@ describe("the plans of the stores' queries", () => {
 			const K = "checklist.store:checklist";
 			const cases: readonly (readonly [string, readonly Read[], Expected])[] = [
 				["sessions.one", pages(sessions.sessions.one, { id: one }), {}],
+				["locations.ofSession", pages(sessions.locations.ofSession, { session: one }), {}],
 				["settings.of", pages(settings.settings.of, { thing: "d1" }), {}],
 				["working", [() => sessions.working({}, context)], { index: `${S}.sessions:working` }],
 				["persons.owner", pages(people.persons.owner, {}), { index: `${P}.persons:by_owner` }],

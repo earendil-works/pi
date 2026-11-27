@@ -60,7 +60,7 @@ async function withSession(idleMs?: number) {
 	running = t;
 	const owner = await t.client(t.owner);
 	// Where the topology's sessions work: this device's machine, in /tmp.
-	const here = { environment: await thisDevice(owner, context), folder: "/tmp" };
+	const here = { machine: await thisDevice(owner, context), folder: "/tmp" };
 	const make = (title: string) => newSession(owner, title, context, here);
 	const archive = async (session: string) => {
 		const held = await owner.get(SessionObject, { workspace: session, thing: session }, context);
@@ -397,25 +397,24 @@ describe("counted work", () => {
 		await until(session.row, (row) => row.state === "working", within("the report", context));
 	});
 
-	// The route's admission and the worker objects' (`followSession`) read the access index, no query; the worker's
-	// facts read its session's row: one run; a second hold shares it.
-	it("a hold of a session's worker costs one read: its worker's row; a second hold none", async () => {
+	// The route's admission and the worker objects' (`followSession`) read the access index, no query. The worker's
+	// start reads its session's row and its moved conversations (decision 24; its facts), and its holding this device's
+	// machine's info, once: three runs until the worker holds what its agent may use (where the hold resolves in
+	// between depends on timing, so the count spans both). A second hold shares them all.
+	it("a hold of a session's worker costs three reads until it holds its things: its row, its moved conversations, its machine; a second hold none", async () => {
 		const { t, owner, id, pi } = await withSession();
 		await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		const first = counted();
 		await owner.get(SessionWorker, { session: id }, context);
-		const second = counted();
-		// The worker, once started, holds what its agent may use (this device's machine: its info is one read, once);
-		// that is the worker's start, not the second hold's.
 		const holding = await t.workers.get(id)!.host.registry(HeldThings, context);
 		await until(holding, (held) => held?.has(MACHINE_KIND) === true, within("the worker's holding", context));
 		const settled = counted();
 		await (await t.client(t.owner)).get(SessionWorker, { session: id }, context);
 		const after = counted();
 		assert.deepEqual(
-			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - settled[0]!, after[1]! - settled[1]!],
-			[1, 0, 0, 0],
+			[settled[0]! - first[0]!, settled[1]! - first[1]!, after[0]! - settled[0]!, after[1]! - settled[1]!],
+			[3, 0, 0, 0],
 		);
 	});
 });

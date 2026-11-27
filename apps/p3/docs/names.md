@@ -30,7 +30,7 @@ meaning from `packages/chord/docs/design.md` §2.
 | model | a language model | |
 | provider | who offers models (and signs the owner in to them) | |
 | environment | a machine the agent works on: this device, SSH, a sandbox | env, hands |
-| location | where a session works: an environment and a folder | place |
+| location | where a conversation works: a machine and a folder | place |
 | org | a company that manages its members' Pis | company |
 | view | one way to look at a target (a thing of a kind, a person, a group): an entry of the things plugin's `Views`; a kind has 0 to n | pane, panel, app |
 | component | a React component a plugin offers others to place (`defineComponent`, `Components`, `useComponent`): the pane layout, the navigator. Its token has no `View` suffix (`PaneLayout`, `Navigator`, `Settings`); `TargetView` is the decided name of the one that draws a target in its view | view |

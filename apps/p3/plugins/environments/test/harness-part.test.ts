@@ -18,6 +18,7 @@ function session(machine = "m1"): HarnessSession {
 		workspace: "w",
 		call: () => Promise.reject(new Error("no call")),
 		location: async () => ({ machine, folder: "/tmp" }),
+		moveLocation: () => Promise.reject(new Error("no move")),
 	};
 }
 

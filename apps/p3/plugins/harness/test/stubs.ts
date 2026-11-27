@@ -10,6 +10,7 @@
 import {
 	arr,
 	bool,
+	type ConversationLocation,
 	constant,
 	contribute,
 	defineFacet,
@@ -97,6 +98,10 @@ export type Server = {
 	readonly given: Map<string, number>;
 	/** Sets the session's row (as the server's store would change it). */
 	row(change: Partial<SessionRow>): void;
+	/** The conversations moved (`SessionFacts.locations`, as `moveLocation` or the server set them). */
+	readonly moved: ConversationLocation[];
+	/** Sets the moved conversations (as the server's store would change them). */
+	move(moved: readonly ConversationLocation[]): void;
 	/**
 	 * Sets what the agent holds (and makes the holding ready); a kind whose entries are the same objects in the same
 	 * order keeps its list.
@@ -118,7 +123,7 @@ const DEVICE: Holding = { kind: DeviceKind.name, held: heldThing("this-device", 
 export function sessionRow(id: string, folder: string): SessionRow {
 	return {
 		id,
-		location: { environment: "this-device", folder },
+		location: { machine: "this-device", folder },
 		createdAt: 1,
 		state: "settled",
 		lastTouch: 1,
@@ -170,6 +175,7 @@ export function standIns(
 	let heldValue: Held | undefined = ready ? grouped : undefined;
 	let release: Promise<void> = Promise.resolve();
 	const rows = new Set<Writable<SessionRow>>();
+	const movedLists = new Set<Writable<ConversationLocation[]>>();
 	const holdings = new Set<Writable<Held | undefined>>();
 	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
 	const answers = new Set<{ caller: string; answer: Writable<{ kind: string; ticks: string[] } | null> }>();
@@ -185,6 +191,11 @@ export function standIns(
 		row: (change) => {
 			rowValue = { ...rowValue, ...change };
 			for (const writable of rows) writable.set(rowValue);
+		},
+		moved: [],
+		move: (moved) => {
+			control.moved.splice(0, control.moved.length, ...moved);
+			for (const writable of movedLists) writable.set([...moved]);
 		},
 		hold: (next) => {
 			grouped = group([...next, DEVICE], grouped);
@@ -207,8 +218,15 @@ export function standIns(
 		host.serve(SessionFacts, (_params, _principal, self) => {
 			const session = self.writable(rowValue);
 			rows.add(session);
+			const moved = self.writable([...control.moved]);
+			movedLists.add(moved);
 			return {
 				session: self.derive([session], ([value]) => value),
+				locations: self.derive([moved], ([value]) => value),
+				moveLocation: async (move) => {
+					control.move([...control.moved.filter(({ conversation }) => conversation !== move.conversation), move]);
+					return null;
+				},
 				report: async ({ state }) => {
 					await release;
 					control.reports.push(state);

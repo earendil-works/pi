@@ -57,9 +57,11 @@ export { LoginProviders } from "../../../plugins/providers/login-providers.ts";
 // The sessions plugin's: what a session is as data, its kinds, the admission of a session's objects on its worker;
 // what only its own facets use (`AgentThings`, `SessionStart`) stays out.
 export {
+	ConversationLocation,
 	Location,
 	ModelChoice,
 	SessionDefaults,
+	SessionDetail,
 	SessionFacts,
 	SessionRow,
 	SessionState,

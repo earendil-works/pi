@@ -174,32 +174,33 @@ type Sources = {
 async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentParts }> {
 	const { runtime, facts, parts, held } = sources;
 	const { session, host: worker, store } = runtime;
-	// Every conversation works at the session's location until slice 5 gives each its own.
-	const location = (): HarnessLocation | undefined => {
-		const row = facts.session.value;
-		return row === null ? undefined : { machine: row.location.environment, folder: row.location.folder };
-	};
+	// Set once Durable is open, before anything asks a conversation's location (a tool, a prompt section).
+	let durable: Harness | undefined;
+	const location = locations(facts, (conversation, context) => ownerOf(durable!, conversation, context));
 	const things = new AgentParts({
 		session,
 		// The session's workspace has the session's id (slice 5); the parts take it from here, never assume it.
 		workspace: session,
 		call: (fn, context) => worker.root(fn, context),
-		location: async () => location(),
+		location,
+		moveLocation: async (conversation, { machine, folder }, context) => {
+			await facts.moveLocation({ conversation: String(conversation), location: { machine, folder } }, context);
+		},
 	});
 	// The subagents' tasks, whatever the agent holds: a reporter under way finishes when Use is withheld.
 	things.registry.install(SUBAGENT_TASKS);
 	// Not ready yet: nothing to give before the first submit or resume waits for it.
 	if (held.value !== undefined) things.apply(held.value, parts.value);
-	const durable = await openHarness(
+	durable = await openHarness(
 		store,
 		{
 			models: () => things.models,
 			registry: things.registry,
-			// The environment at the session's location (per conversation with slice 5), read at each use; it never
-			// changes while a tool call runs. Only kinds give environments (a machine's): a location on no machine the
-			// agent holds with what that machine asks (Work here) has none, and nothing falls back.
-			env: (_target, context) => {
-				const at = location();
+			// The environment at the conversation's location, read at each use; it never changes while a tool call runs.
+			// Only kinds give environments (a machine's): a location on no machine the agent holds with what that machine
+			// asks (Work here) has none, and nothing falls back.
+			env: async ({ conversationId }, context) => {
+				const at = await location(conversationId, context);
 				return at === undefined ? undefined : things.env(at, context);
 			},
 			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
@@ -207,6 +208,37 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 		opening,
 	);
 	return { durable, things };
+}
+
+/**
+ * Where each conversation works (decision 24), read at each use: its own location once moved (`SessionFacts`'
+ * `locations`), else its owner conversation's (a subagent works where its caller works, and follows its moves),
+ * else the session's (its row); `undefined` for an unknown session. A conversation's owner never changes: read once.
+ */
+function locations(
+	facts: Reference<typeof SessionFacts>,
+	owner: (conversation: ConversationId, context: Context) => Promise<ConversationId | undefined>,
+): (conversation: ConversationId, context: Context) => Promise<HarnessLocation | undefined> {
+	const owners = new Map<ConversationId, ConversationId | undefined>();
+	const at = async (conversation: ConversationId, context: Context): Promise<HarnessLocation | undefined> => {
+		const own = facts.locations.value.find((moved) => moved.conversation === String(conversation));
+		if (own !== undefined) return own.location;
+		if (!owners.has(conversation)) owners.set(conversation, await owner(conversation, context));
+		const above = owners.get(conversation);
+		if (above !== undefined) return at(above, context);
+		return facts.session.value?.location;
+	};
+	return at;
+}
+
+/** The conversation that owns `conversation` (a subagent's: its caller's), if any. */
+async function ownerOf(
+	durable: Harness,
+	conversation: ConversationId,
+	context: Context,
+): Promise<ConversationId | undefined> {
+	const record = await durable.commit((tx) => tx.conversation(conversation), context);
+	return record?.owner?.conversationId;
 }
 
 /**

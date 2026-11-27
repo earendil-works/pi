@@ -25,14 +25,14 @@ export function SessionCreate(props: ThingCreateProps) {
 	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
 	const last = locationOf(props.input);
 	const [folder, setFolder] = useState(last?.folder ?? "");
-	const [chosen, setChosen] = useState<string | null>(last?.environment ?? null);
+	const [chosen, setChosen] = useState<string | null>(last?.machine ?? null);
 	const items = (environments ?? []).map((environment) => ({ value: environment.id, label: environment.name }));
 	// This device's machine is the list's first.
 	const machine = chosen ?? items[0]?.value ?? null;
 	const { onReady } = props;
 	useEffect(() => {
 		const trimmed = folder.trim();
-		onReady(trimmed === "" || machine === null ? {} : { location: { environment: machine, folder: trimmed } });
+		onReady(trimmed === "" || machine === null ? {} : { location: { machine, folder: trimmed } });
 	}, [folder, machine, onReady]);
 	return (
 		<div className={styles.form} data-new-session="">
@@ -70,12 +70,10 @@ export function SessionCreate(props: ThingCreateProps) {
  * The location in an input this step handed before (`{ location }`), if any. The dialog keeps it as `JsonValue`, so
  * its shape is read again here.
  */
-function locationOf(
-	input: JsonValue | undefined,
-): { readonly environment: string; readonly folder: string } | undefined {
+function locationOf(input: JsonValue | undefined): { readonly machine: string; readonly folder: string } | undefined {
 	if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
 	const location = input.location;
 	if (typeof location !== "object" || location === null || Array.isArray(location)) return undefined;
-	const { environment, folder } = location;
-	return typeof environment === "string" && typeof folder === "string" ? { environment, folder } : undefined;
+	const { machine, folder } = location;
+	return typeof machine === "string" && typeof folder === "string" ? { machine, folder } : undefined;
 }
