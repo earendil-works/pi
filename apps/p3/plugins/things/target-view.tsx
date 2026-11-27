@@ -14,6 +14,7 @@ import {
 	useLive,
 	useRefState,
 	useRegistry,
+	useRoute,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { type ComponentType, useEffect } from "react";
@@ -78,15 +79,7 @@ function Held(
 	const { info, state } = props;
 	const unavailable = useUnavailable(state);
 	if (unavailable !== undefined) {
-		return (
-			<Unavailable
-				settings={false}
-				text={unavailable}
-				thing={props.of.thing}
-				view={props.view}
-				workspace={props.of.workspace}
-			/>
-		);
+		return <Unavailable settings={false} text={unavailable} thing={props.of.thing} workspace={props.of.workspace} />;
 	}
 	// Before its first value arrives a member holds its schema's empty one: a kind is never empty.
 	if (info === undefined || info.kind === "") return null;
@@ -127,17 +120,19 @@ function Chosen(
 
 /**
  * Why a thing is not shown here, or, for a workspace below `workspace` addressed as one of its things
- * (`/w/<parent>/t/<child>`), the workspace's own address: a workspace is placed by its parent, never linked, so no
- * answer names it there. Its `Workspace` is held only after a denial, and is given only to whoever is present in it.
+ * (`/w/<parent>/t/<child>`), the workspace's own address, keeping the route's `?view=`: a workspace is placed by its
+ * parent, never linked, so no answer names it there. Its `Workspace` is held only after a denial, and is given only
+ * to whoever is present in it.
  */
 export function Unavailable(props: {
 	readonly workspace: string;
 	readonly thing: string;
 	readonly settings: boolean;
-	readonly view: string | undefined;
 	readonly text: string;
 }) {
-	const { workspace, thing, settings, view } = props;
+	const { workspace, thing, settings } = props;
+	const route = useRoute();
+	const view = route.kind === "target" ? route.view : undefined;
 	const parent = useWatch(useLive(useHold(Workspace, { workspace: thing }))?.info)?.parent?.workspace;
 	const child = parent === workspace;
 	useEffect(() => {

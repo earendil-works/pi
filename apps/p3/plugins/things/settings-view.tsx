@@ -198,15 +198,7 @@ function ThingSettings(props: { readonly workspace: string; readonly thing: stri
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	// Gone (unlinked elsewhere, its last link removed) or no longer given: say so, never whether it exists.
 	if (unavailable !== undefined) {
-		return (
-			<Unavailable
-				settings={true}
-				text={unavailable}
-				thing={props.thing}
-				view={undefined}
-				workspace={props.workspace}
-			/>
-		);
+		return <Unavailable settings={true} text={unavailable} thing={props.thing} workspace={props.workspace} />;
 	}
 	if (info === undefined || info.kind === "") return null;
 	const linker = info.from.kind === "here" ? withGranted(workspace, "unlink") : undefined;

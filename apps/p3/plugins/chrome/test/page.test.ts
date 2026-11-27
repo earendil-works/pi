@@ -460,8 +460,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			context,
 		);
 		// A session is a workspace placed in Pi, not a thing linked there: its thing address goes to its own (video2).
-		await browser.open(`${origin}/w/${pi}/t/${made}/settings`);
-		await browser.wait(`location.pathname === "/w/${made}/settings"`);
+		// The chosen view goes along (Astra, follow-up): Back from its Settings shows that view.
+		await browser.open(`${origin}/w/${pi}/t/${made}?view=transcript.session`);
+		await browser.wait(`location.pathname === "/w/${made}" && location.search === "?view=transcript.session"`);
+		await browser.open(`${origin}/w/${pi}/t/${made}/settings?view=transcript.session`);
+		await browser.wait(
+			`location.pathname === "/w/${made}/settings" && location.search === "?view=transcript.session"`,
+		);
 		await press("[data-unlink]");
 		await press("[data-unlink-confirm]");
 		await browser.wait(`location.pathname === "/w/${pi}"`);
