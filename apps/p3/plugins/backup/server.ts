@@ -13,6 +13,7 @@ import {
 	defineState,
 	defineTable,
 	eq,
+	evolveTable,
 	forbidden,
 	host as hostColumn,
 	int,
@@ -38,26 +39,33 @@ const Settings = defineState("backup.settings", {
 });
 
 /**
+ * Version 1 (596540d43): each session's own choice, one row per session that has one: `on` or `off`. Kept as it was
+ * deployed: a history is never edited in place (decision 125).
+ */
+const SessionsV1 = defineTable("backup.sessions", {
+	version: 1,
+	columns: { session: hostColumn(Session), choice: str() },
+	key: ["session"],
+});
+
+/**
  * One row per session that has a choice of its own or reported a state. Keyed by the session, so a session's export
  * and delete carry it. A row that would hold neither (`default`, `none`) is deleted.
  * - `choice`: `default`, `on` or `off`.
  * - `state`: `BackupState`'s kind (`none` before the first report), with its `reason` and `error` (empty when it has
  *   none), and `since`, when it got this state. Written only when the state changes, never per report.
  * - By state, for the owner's list.
+ * Version 2 adds the state; a row of version 1 holds a choice only, so it gets `NO_STATE` and stored data survives the
+ * update (decision 125).
  */
-const Sessions = defineTable("backup.sessions", {
-	version: 1,
-	columns: {
-		session: hostColumn(Session),
-		choice: str(),
-		state: str(),
-		reason: str(),
-		error: str(),
-		since: int(),
-	},
-	key: ["session"],
-	indexes: { by_state: ["state", "since"] },
-});
+const Sessions = evolveTable(SessionsV1, (t) =>
+	t
+		.add("state", str({ default: "none" }))
+		.add("reason", str({ default: "" }))
+		.add("error", str({ default: "" }))
+		.add("since", int({ default: 0 }))
+		.index("by_state", ["state", "since"]),
+);
 
 /** A row's state before the session's first report. */
 const NO_STATE = { state: "none", reason: "", error: "", since: 0 };

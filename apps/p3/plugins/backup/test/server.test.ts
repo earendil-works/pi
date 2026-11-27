@@ -4,6 +4,9 @@
 //   state; only the owner may use `Backups` and `BackupsList`, and only a session's worker `SessionBackup`.
 // - End to end: the default is stored, so it survives a restart and a reload of the plugin while the owner holds
 //   `Backups`.
+// - A store version 1 wrote (596540d43) opened by this version (decision 125): the choices stay, a session has no
+//   state until it reports one, a state reported now is there after the next start. A two-version restart is not
+//   possible in-tree: a stand-in of the older plugin writes the old rows.
 
 import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -11,7 +14,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
+import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import {
+	BACKGROUND_CONTEXT as context,
+	createHost,
+	defineFacet,
+	defineTable,
+	host as hostColumn,
+	isChordError,
+	local,
+	method,
+	obj,
+	openStore,
+	type P3Principal,
+	type Reference,
+	Server,
+	Session,
+	sqliteBackend,
+	str,
+	until,
+} from "@earendil-works/p3/v1";
+import {
+	type ServerRuntime,
+	ServerRuntime as ServerRuntimeRegistry,
+	WorkerRunners,
+} from "@earendil-works/p3/v1/server";
 import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
 import environmentsServer from "../../environments/server.ts";
@@ -20,6 +47,7 @@ import sessionsServer from "../../sessions/server.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import { make } from "../../things/kind-server.ts";
 import thingsServer from "../../things/server.ts";
+import { world } from "../../things/test/world.ts";
 import { BackupStore } from "../contract.server.ts";
 import {
 	type BackupStatus,
@@ -29,6 +57,7 @@ import {
 	SessionBackup,
 	type SessionBackupRow,
 } from "../contract.ts";
+import backupServer from "../server.ts";
 
 /** The plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -338,3 +367,101 @@ describe("who may use what", () => {
 		});
 	});
 });
+
+/** The sessions' table as version 1 defined it (596540d43): a session's own choice, `on` or `off`. */
+const SessionsV1 = defineTable("backup.sessions", {
+	version: 1,
+	columns: { session: hostColumn(Session), choice: str() },
+	key: ["session"],
+});
+
+/** The stand-in of version 1's store: one write of a session's own choice. */
+const StoreV1 = local("backup.store", {
+	version: 1,
+	params: {},
+	members: { setSession: method(obj({ session: str(), choice: str() })) },
+});
+
+describe("a store version 1 wrote (decision 125)", () => {
+	// A store of 596540d43 was refused: version 1 had been edited in place (p3-base, 2026-11-27).
+	it("opens: the choices stay, no state until a report; a state reported now is there after the next start", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "p3-backup-v1-"));
+		try {
+			const path = join(dir, "v1.sqlite");
+			const old = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
+			const host = createHost<P3Principal>({
+				address: Server(),
+				principal: { kind: "server" },
+				store: old,
+				onError: (error) => assert.fail(error.kind),
+			});
+			const v1 = defineFacet((facetHost) =>
+				facetHost.serve(StoreV1, (_params, self) => {
+					const rows = self.table(SessionsV1);
+					return {
+						setSession: ({ session, choice }, ctx) =>
+							self.tx(async (tx) => {
+								tx.put(rows, { session: Session({ id: session }), choice });
+								return null;
+							}, ctx),
+					};
+				}),
+			);
+			await host.load([{ name: "@earendil-works/p3-backup", facet: v1 }], context);
+			const store = await host.get(StoreV1, {}, context);
+			await store.setSession({ session: "s1", choice: "on" }, context);
+			await store.setSession({ session: "s2", choice: "off" }, context);
+			await host.close(context);
+			await old.close(context);
+			const retrying = { session: "s1", state: { kind: "retrying", error: "offline" }, since: 4 } as const;
+			for (let start = 0; start < 2; start++) {
+				await opened(dir, path, async (backup) => {
+					const choice = async (session: string) =>
+						(await backup.choices.one.page({ session }, 1, context)).items[0]?.choice;
+					assert.deepEqual([await choice("s1"), await choice("s2")], ["on", "off"]);
+					const state = (await backup.states.one.page({ session: "s1" }, 1, context)).items[0];
+					if (start === 0) {
+						assert.equal(state, undefined);
+						await backup.report({ session: "s1", status: { state: retrying.state, at: 4 } }, context);
+					} else assert.deepEqual(state, retrying);
+					const inState = await backup.states.inState.page({ state: "retrying" }, 10, context);
+					assert.deepEqual(inState.items, [retrying]);
+				});
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+/** Runs `fn` on this version's backup store over the store file at `path` (`dir` its data dir), nothing reported. */
+async function opened(
+	dir: string,
+	path: string,
+	fn: (backup: Reference<typeof BackupStore>) => Promise<void>,
+): Promise<void> {
+	const runtime = { dataDir: dir, workRoot: join(dir, "work"), machine: { user: "test", hostname: "test" } };
+	const now = await world(
+		context,
+		[
+			{
+				name: "p3.server",
+				facet: defineFacet((facetHost) => {
+					// The sessions plugin reads its data dir, work root and machine only.
+					facetHost.serve(ServerRuntimeRegistry, { compose: () => runtime as ServerRuntime });
+					facetHost.serve(WorkerRunners, { compose: () => undefined });
+				}),
+			},
+			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+			{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
+			{ name: "@earendil-works/p3-backup", facet: backupServer },
+		],
+		path,
+	);
+	try {
+		await fn(await now.host.get(BackupStore, {}, context));
+		assert.deepEqual(now.errors, []);
+	} finally {
+		await now.close(context);
+	}
+}
