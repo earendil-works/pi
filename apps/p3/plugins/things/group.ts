@@ -14,12 +14,19 @@ import {
 	type GrantableName,
 	invalid,
 	type P3Principal,
+	type Reference,
 	type Watchable,
 } from "@earendil-works/p3/v1";
+import type { Probe } from "./access.ts";
+import { callerOf } from "./admission.ts";
 import { GroupPresence, ThingsStore } from "./contract.server.ts";
-import { Group, partyKey, type Source } from "./contract.ts";
+import { type Caller, Group, partyKey, type Source } from "./contract.ts";
+import { followProbe } from "./lists.ts";
 import { messages } from "./messages.ts";
 import { THINGS } from "./people.ts";
+import { whereFrom } from "./picker.ts";
+import { readAll } from "./reader.ts";
+import { NOBODY, personCounts } from "./rules.ts";
 
 /** The calls the group's own tick gives. */
 const CALLS = ["addMember", "removeMember", "rename", "setManagers", "remove"] as const;
@@ -66,17 +73,9 @@ export function serveGroup(host: FacetHost<P3Principal>): void {
 				more: (ctx) => members.more(ctx),
 				managers: self.derive([managers], ([{ rows }]) => rows.map(({ party }) => party)),
 				addMember: async ({ person }, ctx) => {
-					// The picker's rule (R18): a person present where the caller is present (the owner: anyone). Server
-					// code checks no caller.
-					if (principal.kind === "person") {
-						const party = { kind: "person", person } as const;
-						if (!(await store.offers({ person: principal.id, party }, ctx))) {
-							throw invalid("args", "things: this person is not present where you are", {
-								message: messages.message("notOffered"),
-							});
-						}
-					}
-					await store.addToGroup({ group, person, source: by }, ctx);
+					// The picker's rule (R18), checked with the write: a person present where the caller is present (the
+					// owner: anyone; server code checks no caller).
+					await store.addToGroup({ group, person, source: by, caller: callerOf(principal) }, ctx);
 					return null;
 				},
 				removeMember: ({ person }, ctx) => store.removeMember({ group, person }, ctx),
@@ -89,13 +88,36 @@ export function serveGroup(host: FacetHost<P3Principal>): void {
 	);
 	host.serve(GroupPresence, ({ group, person }, self) => {
 		const store = self.get(ThingsStore, {});
-		return {
-			present: self.follow<boolean>(async (_observer, ctx) => ({
-				value: await store.offers({ person, party: { kind: "group", group } }, ctx),
-				detach: () => {},
-			})),
-		};
+		return { present: followProbe(self, () => presenceProbe(store, group, person)) };
 	});
+}
+
+/**
+ * Whether group `group` is present where person `person` is present, followed over the index (a probe): asked again
+ * when a membership, an entry, a switch or a line it read changes, so a hold gains and loses the group live.
+ */
+function presenceProbe(store: Reference<typeof ThingsStore>, group: string, person: string): Probe<boolean> {
+	const caller: Caller = { kind: "person", person };
+	const target = partyKey({ kind: "group", group });
+	return {
+		workspace: "",
+		caller,
+		compute: async (look, load, ctx) => {
+			const groups = (await readAll(store.groupMembers.ofPerson, { person }, ctx)).map(({ group: of }) =>
+				partyKey({ kind: "group", group: of }),
+			);
+			load.parties([partyKey(caller), ...groups, target]);
+			const entries = look.person(person);
+			if (entries === undefined) return false;
+			for (const at of await whereFrom(store, caller, ctx)) {
+				await load.workspace(at);
+				const access = look.access(at);
+				const present = personCounts(access, partyKey(caller), entries) !== NOBODY;
+				if (present && access.present.has(target) && !access.hidden.has(target)) return true;
+			}
+			return false;
+		},
+	};
 }
 
 /**

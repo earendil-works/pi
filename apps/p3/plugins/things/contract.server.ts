@@ -29,7 +29,7 @@ import {
 	unknown,
 } from "@earendil-works/p3/v1";
 import type { Attachment, Probe, ProbeAttachment } from "./access.ts";
-import { type Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
+import { Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
 import type { DefaultGrants } from "./kind.ts";
 import type { Answer as Answered } from "./rules.ts";
 import { DefaultsChoice, PartyInfo } from "./workspace.ts";
@@ -269,7 +269,11 @@ export const ThingsStore = local("things.store", {
 		setTick: method(
 			obj({ workspace: str(), thing: str(), party: Party, tick: str(), gives: opt(bool()), source: Source }),
 		),
-		putParty: method(obj({ workspace: str(), party: Party, source: Source })),
+		/**
+		 * Puts a party into a workspace. With `caller` (a person or an agent, not the owner), only a party the picker
+		 * offers them there, checked in the same operation as the write (R18).
+		 */
+		putParty: method(obj({ workspace: str(), party: Party, source: Source, caller: opt(Caller) })),
 		removeParty: method(obj({ workspace: str(), party: Party })),
 		/** Makes a person (no owner flag), made by `madeBy` (the cleanup of that source takes them, step 3). */
 		createPerson: method(obj({ name: str({ min: 1, max: 200 }), madeBy: Source }), str()),
@@ -288,14 +292,15 @@ export const ThingsStore = local("things.store", {
 		setGroupManagers: method(obj({ group: str(), parties: arr(Party) })),
 		/** Removes a group: its members, managers, every entry, grant and switch naming it, whoever wrote them. */
 		removeGroup: method(obj({ group: str() })),
-		addToGroup: method(obj({ group: str(), person: str(), source: Source })),
+		/** Puts a person into a group; with `caller`, only one the picker offers them, checked as `putParty` does. */
+		addToGroup: method(obj({ group: str(), person: str(), source: Source, caller: opt(Caller) })),
 		/**
 		 * What Manage people's picker offers `person` in `workspace` (R18): the persons and groups present there and in
 		 * every workspace where they are present, whose name has `query` in it (any case).
 		 */
-		picker: method(obj({ workspace: opt(str()), person: str(), query: str() }), arr(PartyInfo)),
+		picker: method(obj({ workspace: opt(str()), caller: Caller, query: str() }), arr(PartyInfo)),
 		/** Whether the picker offers `person` the party `party` in `workspace` (what `putParty` and `addMember` check). */
-		offers: method(obj({ workspace: opt(str()), person: str(), party: Party }), bool()),
+		offers: method(obj({ workspace: opt(str()), caller: Caller, party: Party }), bool()),
 		/**
 		 * Writes an invite link; answers its secret (kept hashed only); `invalid` for a workspace or group that does not
 		 * exist.

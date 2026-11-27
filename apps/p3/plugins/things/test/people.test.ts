@@ -449,19 +449,36 @@ describe("the picker (R18)", () => {
 		);
 		const boss = await store.createPerson({ name: "Boss", madeBy: ADMIN }, context);
 		await store.putParty({ workspace: elsewhere, party: person(boss), source: ADMIN }, context);
-		const names = (await store.picker({ workspace: f.session, person: f.anna, query: "" }, context)).map(
-			({ name }) => name,
-		);
+		const names = (
+			await store.picker({ workspace: f.session, caller: { kind: "person", person: f.anna }, query: "" }, context)
+		).map(({ name }) => name);
 		// Leo is present only through kids and parents: the groups are offered, not him.
 		assert.deepEqual(names, ["Anna", "kids", "Kim", "parents"]);
 		assert.deepEqual(
-			(await store.picker({ workspace: f.session, person: f.anna, query: "KI" }, context)).map(({ name }) => name),
+			(
+				await store.picker(
+					{ workspace: f.session, caller: { kind: "person", person: f.anna }, query: "KI" },
+					context,
+				)
+			).map(({ name }) => name),
 			["kids", "Kim"],
 		);
-		assert.equal(await store.offers({ workspace: f.session, person: f.anna, party: person(boss) }, context), false);
+		assert.equal(
+			await store.offers(
+				{ workspace: f.session, caller: { kind: "person", person: f.anna }, party: person(boss) },
+				context,
+			),
+			false,
+		);
 		// Boss is offered to Anna once she is present in Work too.
 		await store.putParty({ workspace: elsewhere, party: person(f.anna), source: ADMIN }, context);
-		assert.equal(await store.offers({ workspace: f.session, person: f.anna, party: person(boss) }, context), true);
+		assert.equal(
+			await store.offers(
+				{ workspace: f.session, caller: { kind: "person", person: f.anna }, party: person(boss) },
+				context,
+			),
+			true,
+		);
 	});
 });
 
@@ -599,20 +616,41 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 		// Sub is put into the session only; Anna, put into Family, is present in the session from above.
 		const sub = await store.createPerson({ name: "Sub", madeBy: ADMIN }, context);
 		await store.putParty({ workspace: f.session, party: person(sub), source: ADMIN }, context);
-		assert.equal(await store.offers({ workspace: f.family, person: f.anna, party: person(sub) }, context), true);
+		assert.equal(
+			await store.offers(
+				{ workspace: f.family, caller: { kind: "person", person: f.anna }, party: person(sub) },
+				context,
+			),
+			true,
+		);
 		// Hidden in the session, Anna is present there no more: Sub is offered only where it is used.
 		await store.setSwitch(
 			{ workspace: f.session, item: { kind: "party", party: person(f.anna) }, shown: false },
 			context,
 		);
-		assert.equal(await store.offers({ workspace: f.family, person: f.anna, party: person(sub) }, context), false);
-		assert.equal(await store.offers({ workspace: f.session, person: f.anna, party: person(sub) }, context), true);
+		assert.equal(
+			await store.offers(
+				{ workspace: f.family, caller: { kind: "person", person: f.anna }, party: person(sub) },
+				context,
+			),
+			false,
+		);
+		assert.equal(
+			await store.offers(
+				{ workspace: f.session, caller: { kind: "person", person: f.anna }, party: person(sub) },
+				context,
+			),
+			true,
+		);
 	});
 
 	it("the owner's picker offers everyone (decision 78)", async () => {
 		const stranger = await store.createPerson({ name: "Stranger", madeBy: ADMIN }, context);
 		await store.setOwner({ person: f.kim, owner: true }, context);
-		assert.equal(await store.offers({ person: f.kim, party: person(stranger) }, context), true);
+		assert.equal(
+			await store.offers({ caller: { kind: "person", person: f.kim }, party: person(stranger) }, context),
+			true,
+		);
 	});
 
 	it("a person who made someone still present stays with the source's cleanup (Astra must 4)", async () => {

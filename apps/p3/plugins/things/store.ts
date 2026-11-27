@@ -31,6 +31,7 @@ import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
 import { AccessHandles, type CreateAnswer, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
 import {
+	type Caller,
 	type Item,
 	itemKey,
 	kindOfMakeTick,
@@ -59,7 +60,7 @@ import {
 	Persons,
 	SignOuts,
 } from "./people.ts";
-import { namesOf, offeredTo } from "./picker.ts";
+import { namesOf, offeredTo, offers } from "./picker.ts";
 import { type Kinds, lookupOf, readerOf } from "./reader.ts";
 import { Gone, Removal, Removing } from "./removal.ts";
 import { audienceOf, isFor, makeTickFor } from "./rules.ts";
@@ -78,6 +79,17 @@ import {
 } from "./tables.ts";
 import type { DefaultsChoice } from "./workspace.ts";
 import { THINGS_PLUGIN, WorkspaceKind } from "./workspaces.ts";
+
+/** A write the picker checks first, in the same operation (R18): whom it names, for whom, where. */
+type Checked = {
+	readonly args: { readonly workspace?: string; readonly caller: Caller; readonly party: Party };
+};
+
+/** The check of a write naming `party` for `caller` (none: server code, or no caller given, checks nothing). */
+function checkOf(caller: Caller | undefined, workspace: string | undefined, party: Party): Checked | undefined {
+	if (caller === undefined || caller.kind === "server") return undefined;
+	return { args: { ...(workspace === undefined ? {} : { workspace }), caller, party } };
+}
 
 /** Serves `ThingsStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
@@ -158,13 +170,27 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		 * follows it before the write answers; the things it removed then have their kind's delete hook run, and a
 		 * removed seeded thing is made again at once.
 		 */
-		const write = async <R>(fn: (tx: Tx, changes: Changes) => Promise<R>, ctx: Context): Promise<R> => {
+		const write = async <R>(
+			fn: (tx: Tx, changes: Changes) => Promise<R>,
+			ctx: Context,
+			checked?: Checked,
+		): Promise<R> => {
 			const retired: Retired[] = [];
 			const signedOut: string[] = [];
-			// The store is live while it writes, so its index opened.
-			const result = await index!.commit((touched) =>
-				self.tx((tx) => fn(tx, { ...touched, retired, signedOut }), ctx),
-			);
+			const transaction = (touched: Touched) => self.tx((tx) => fn(tx, { ...touched, retired, signedOut }), ctx);
+			// The store is live while it writes, so its index opened. A checked write is asked in the same operation.
+			const result =
+				checked === undefined
+					? await index!.commit(transaction)
+					: await index!.commitIf(
+							(offered) => offers(q, offered, checked.args, ctx),
+							transaction,
+							() => {
+								throw invalid("args", "things: this party is not present where you are", {
+									message: messages.message("notOffered"),
+								});
+							},
+						);
 			if (signedOut.length > 0 && live !== undefined) void signOut(signedOut, live);
 			for (const { thing, kind } of retired) {
 				lifecycle.retire(thing, kind);
@@ -406,7 +432,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			setSwitch: (args, ctx) => write((tx, touched) => writes.setSwitch(tx, touched, args), ctx),
 			setDefaults: (args, ctx) => write((tx, touched) => writes.setDefaults(tx, touched, args), ctx),
 			setGrants: (args, ctx) => write((tx, touched) => writes.setGrants(tx, touched, args), ctx),
-			putParty: (args, ctx) => write((tx, touched) => writes.putParty(tx, touched, args), ctx),
+			putParty: ({ caller, ...args }, ctx) =>
+				write(
+					(tx, touched) => writes.putParty(tx, touched, args),
+					ctx,
+					checkOf(caller, args.workspace, args.party),
+				),
 			removeParty: ({ workspace, party }, ctx) =>
 				write(async (tx, touched) => {
 					tx.delete(t.workspaceMembers, { workspace, partyKey: partyKey(party) });
@@ -423,7 +454,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			renameGroup: ({ group, name }, ctx) => write((tx) => people.renameGroup(tx, group, name), ctx),
 			setGroupManagers: ({ group, parties }, ctx) => write((tx) => people.setGroupManagers(tx, group, parties), ctx),
 			removeGroup: ({ group }, ctx) => write((tx, touched) => cleanup.removeGroup(tx, touched, group), ctx),
-			addToGroup: (args, ctx) => write((tx, touched) => people.addToGroup(tx, touched, args), ctx),
+			addToGroup: ({ caller, ...args }, ctx) =>
+				write(
+					(tx, touched) => people.addToGroup(tx, touched, args),
+					ctx,
+					checkOf(caller, undefined, { kind: "person", person: args.person }),
+				),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
 			adoptOwner: async (seed, ctx) => {
@@ -437,12 +473,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					ctx,
 				);
 			},
-			picker: async ({ workspace, person, query: text }, ctx) => {
-				const offered = await offeredTo(q, index!, { workspace, person }, ctx);
+			picker: async ({ workspace, caller, query: text }, ctx) => {
+				const at = workspace === undefined ? {} : { workspace };
+				const offered = await offeredTo(q, (...args) => index!.offered(...args), { ...at, caller }, ctx);
 				return namesOf(q, offered, text, ctx);
 			},
-			offers: async ({ workspace, person, party }, ctx) =>
-				(await offeredTo(q, index!, { workspace, person }, ctx)).has(partyKey(party)),
+			offers: async ({ workspace, caller, party }, ctx) => {
+				const at = workspace === undefined ? {} : { workspace };
+				return offers(q, (...args) => index!.offered(...args), { ...at, caller, party }, ctx);
+			},
 			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
 			redeemInvite: ({ secret, person }, ctx) =>
 				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx),
