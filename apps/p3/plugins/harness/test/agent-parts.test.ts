@@ -22,7 +22,7 @@ const parts: Parts = new Map([["test.sample", { plugin: "test", type: "test", va
 
 /** A held thing whose reference nothing reads. */
 function hold(): HeldThing {
-	return { workspace: "s", thing: "one", depth: 0, ref: {} as never };
+	return { workspace: "s", thing: "one", depth: 0, ref: {} as never, granted: new Set() };
 }
 
 describe("the agent's parts", () => {

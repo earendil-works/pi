@@ -37,6 +37,7 @@ export function held(thing: string, granted: readonly string[], members: object 
 		workspace: "w",
 		depth: 0,
 		ref: { ...members, granted: new Set(granted) } as unknown as HeldThing["ref"],
+		granted: new Set(granted),
 	};
 }
 

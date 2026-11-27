@@ -19,8 +19,8 @@ import type { ConversationId, ExecutionEnv, Extension, Provider } from "@earendi
 import type { ThingKind } from "./kind.ts";
 
 /**
- * One thing the agent holds: its id, the workspace it is held in, and the agent's reference to it (a reference has no
- * params, so a part names a thing to its tools by `thing`).
+ * One thing the agent holds: its id, the workspace it is held in, the agent's reference to it (a reference has no
+ * params, so a part names a thing to its tools by `thing`), and the ticks it had granted when this was published.
  */
 export type HeldThing<C extends Contract = Contract> = {
 	readonly thing: string;
@@ -28,6 +28,11 @@ export type HeldThing<C extends Contract = Contract> = {
 	/** How far above the session's workspace the thing is linked: 0 in it, 1 in its parent (a kind's list: nearest last). */
 	readonly depth: number;
 	readonly ref: Reference<C>;
+	/**
+	 * The grant as this value of `HeldThings` has it: what decides from a value seen earlier reads this, never
+	 * `ref.granted` (the reference's now, which may have changed since, or thrown once released).
+	 */
+	readonly granted: ReadonlySet<string>;
 };
 
 /** The things held, by kind name (`HeldThings`' contribution and value). */

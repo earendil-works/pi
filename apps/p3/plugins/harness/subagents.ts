@@ -44,9 +44,12 @@ export const subagentsPart = thingHarnessPart(SubagentsKind, (things) =>
 	hasUse(things) ? { extension: SUBAGENT_TOOLS } : {},
 );
 
-/** Whether the agent holding `things` (nearest last) has Use of the subagents: the kind stacks `nearest`. */
+/**
+ * Whether the agent holding `things` (nearest last) has Use of the subagents, as they were published (`granted`): the
+ * kind stacks `nearest`.
+ */
 export function hasUse(things: readonly HeldThing[]): boolean {
-	return things.at(-1)?.ref.granted.has("use") === true;
+	return things.at(-1)?.granted.has("use") === true;
 }
 
 /** The thinking levels a subagent may be given, clamped to its model (pi-ai's list; its index does not export it). */

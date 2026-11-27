@@ -151,7 +151,7 @@ function held(
 				};
 	// The part reads the reference's `login` and `authorize` only.
 	const ref = { login: { value: login }, authorize } as unknown as HeldThing<typeof Login>["ref"];
-	return { thing, workspace: "w1", depth: 0, ref };
+	return { thing, workspace: "w1", depth: 0, ref, granted: new Set(["use"]) };
 }
 
 describe("the providers of the logins the agent holds", () => {
