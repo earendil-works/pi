@@ -74,8 +74,8 @@ function attachSocket(url: string, headers: Record<string, string>) {
 /** The origin a page of this server has. */
 const origin = () => `http://127.0.0.1:${t.port}`;
 
-/** A person put into Pi (given Use on Terminals `use` when set), and their browser's sign-in: its id and cookie. */
-async function signedIn(use?: string): Promise<{ id: string; cookie: string }> {
+/** A person put into Pi (given Use on Terminals `use` when set) and their browser's sign-in: person, id and cookie. */
+async function signedIn(use?: string): Promise<{ person: string; id: string; cookie: string }> {
 	return t.host.root(async (ctx: Ctx<P3Principal>) => {
 		const things = await ctx.get(ThingsStore, {});
 		const by = { kind: "plugin", plugin: "test" } as const;
@@ -91,7 +91,7 @@ async function signedIn(use?: string): Promise<{ id: string; cookie: string }> {
 		}
 		const principal = { kind: "person", id, name: "Sam" } as const;
 		const issued = await (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind: "browser" }, ctx);
-		return { id: issued.id, cookie: issued.cookie.split(";")[0]! };
+		return { person: id, id: issued.id, cookie: issued.cookie.split(";")[0]! };
 	}, context);
 }
 
@@ -156,7 +156,10 @@ describe("a terminal on this device", () => {
 		const sam = await signedIn(thing);
 		const sams = attachSocket(url, { cookie: sam.cookie, origin: origin() });
 		await sams.checked;
-		await t.host.root(async (ctx) => (await ctx.get(SignIns, {})).revoke(sam.id, ctx), context);
+		await t.host.root(
+			async (ctx) => (await ctx.get(SignIns, {})).revoke({ person: sam.person, id: sam.id }, ctx),
+			context,
+		);
 		assert.equal(await sams.closed, SOCKET_REFUSED);
 		await terminals.close!({ terminal: id }, context);
 	});
