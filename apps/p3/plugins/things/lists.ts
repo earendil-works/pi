@@ -131,7 +131,7 @@ const HERE: Origin = { kind: "here" };
  * Follows the probe `make` builds over the store's index: one per attachment, attached again to each store attempt's
  * index (as `Gives` does).
  */
-function followProbe<T extends JsonValue>(self: Self<P3Principal>, make: () => Probe<T>): Watchable<T> {
+export function followProbe<T extends JsonValue>(self: Self<P3Principal>, make: () => Probe<T>): Watchable<T> {
 	const handles = self.registry(AccessHandles);
 	self.retryOn(handles);
 	return self.follow<T>(async (observer, ctx) => {

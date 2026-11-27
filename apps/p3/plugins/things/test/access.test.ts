@@ -575,6 +575,60 @@ describe("the index's own mechanics", () => {
 		assert.deepEqual(index.loaded().workspaces, 3);
 	});
 
+	it("a checked write and its check run as one operation: a withdrawal queued meanwhile runs after it (Astra M2)", async () => {
+		const available = new Set(["person/p", "person/item"]);
+		const workspace = async (id: string) => ({
+			id,
+			kind: "things.workspace",
+			name: id,
+			parent: "",
+			showsThings: true,
+			showsPeople: true,
+			ownGrants: [],
+			links: new Map(),
+			members: new Set(available),
+			switches: new Map(),
+			grants: [],
+		});
+		const index = new AccessIndex(
+			{ person: async () => ({ owner: false, groups: [] }), workspace },
+			() => LOOKUP,
+			context,
+		);
+		const checked = Promise.withResolvers<void>();
+		const go = Promise.withResolvers<void>();
+		const order: string[] = [];
+		const p = { kind: "person", person: "p" } as const;
+		const select = () =>
+			index.commitIf(
+				async (offered) => {
+					const yes = (await offered(undefined, ["w"], p, context)).has("person/item");
+					checked.resolve();
+					await go.promise;
+					return yes;
+				},
+				async () => {
+					order.push("selected");
+					assert.ok(available.has("person/item"));
+				},
+				() => {
+					throw new Error("no item");
+				},
+			);
+		const selected = select();
+		await checked.promise;
+		// The withdrawal, asked while the check waits: it runs after the checked write.
+		const withdrawn = index.commit(async (touched) => {
+			available.delete("person/item");
+			touched.workspaces.add("w");
+			order.push("withdrawn");
+		});
+		go.resolve();
+		await Promise.all([selected, withdrawn]);
+		assert.deepEqual(order, ["selected", "withdrawn"]);
+		await assert.rejects(select(), /no item/);
+	});
+
 	it("once closed it ends its watchers and attaches nothing", async () => {
 		const index = new AccessIndex(reader(new Map([["pi", { parent: "", members: [] }]])), () => LOOKUP, context);
 		const ended: string[] = [];
