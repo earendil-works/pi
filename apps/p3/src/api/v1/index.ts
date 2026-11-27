@@ -52,7 +52,6 @@ export type {
 // The contracts p3 promises to third-party plugins (Chord decision "The app kit, point 5"): the built-in plugins'
 // own files, re-exported; a plugin built against `/v1` keeps v1's contracts.
 export * from "../../../plugins/environments/contract.ts";
-export * from "../../../plugins/people/contract.ts";
 export { LoginProviders } from "../../../plugins/providers/login-providers.ts";
 // The sessions plugin's: what a session is as data, its kinds, the admission of a session's objects on its worker;
 // what only its own facets use (`AgentThings`, `SessionStart`) stays out.
@@ -72,16 +71,20 @@ export {
 export { followSession } from "../../../plugins/sessions/follow.ts";
 export { SessionDefaultsKind, SessionKind, SessionObject } from "../../../plugins/sessions/kind.ts";
 // The things plugin's: declaring a kind, whom a grant names, a caller's answer off the server, and what a page and an
-// agent hold of a workspace; its internals (the index's keys, the kinds' views) stay out. The people plugin's row
-// schema `Group` goes with that plugin (slice 3, push B): `/v1`'s `Group` is the things plugin's object.
+// agent hold of a workspace, who the caller is and the owners' admission; its internals (the index's keys, the kinds'
+// views) stay out.
 export {
+	admitOwner,
 	Caller,
 	Group,
 	Item,
 	MAKE_ANY,
+	Me,
 	MyAnswer,
 	makeTick,
 	OPEN,
+	OwnerAccess,
+	OwnerAdmission,
 	Party,
 	Source,
 } from "../../../plugins/things/contract.ts";

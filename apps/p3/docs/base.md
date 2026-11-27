@@ -199,10 +199,9 @@ packages of the `web` kind, so a third party's plugin type-checks against the ve
 
 | Plugin | Owns |
 | --- | --- |
-| `things` | the things core: things, workspaces, grants, the access index (`Gives`, `MyAnswer`), the kinds' registries, `Workspace` and the page's lists; the page's frame for workspaces |
+| `things` | the things core: things, workspaces, grants, the access index (`Gives`, `MyAnswer`), the kinds' registries, `Workspace` and the page's lists; persons, groups and invite links, `Me` and the owners' admission (`OwnerAccess`, `admitOwner`); the page's frame for workspaces |
 | `sessions` | the session kind (session workspaces), the session defaults kind, the sessions' store (where each works, its state, its model), the waker, a worker's facts, the holding |
-| `sign-in` | sign-ins; the owner link |
-| `people` | persons and groups; `Me`; invite links that make a person and sign them in |
+| `sign-in` | sign-ins; the owner link; the invite link's page, which redeems a things invite link and signs its new person in |
 | `environments` | machines; this device; `ExecutionEnvironments` |
 | `harness` | Durable in the worker over the kinds' harness parts, the activity report; the subagents kind (`harness.subagents`) |
 | `transcript` | a session's conversation as people see it, by the session's ticks; its view |

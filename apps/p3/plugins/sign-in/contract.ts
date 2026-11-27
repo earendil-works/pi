@@ -3,6 +3,9 @@
 
 import { arr, bool, local, method, nul, num, obj, oneOf, opt, P3Principal, str, union } from "@earendil-works/p3/v1";
 
+/** The invite link's page and post (`invite.ts`); `Workspace.inviteLink` answers links to it, `#<token>` after it. */
+export const INVITE_PATH = "/_p3/invite";
+
 /** The server's sign-ins (one per server): issue, verify, revoke, and the live list of them. */
 export const SignIns = local("p3.sign-ins", {
 	version: 1,

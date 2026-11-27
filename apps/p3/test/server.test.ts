@@ -26,9 +26,9 @@ import {
 	type HttpRequest,
 	LinkOpened,
 	type LinkOpenedHook,
-	PeopleStore,
 	ServerCommands,
 	type ServerRuntime,
+	ThingsStore,
 	type WorkerRunner,
 	WorkerRunners,
 	WorkerRunnerWraps,
@@ -170,7 +170,7 @@ async function server(t: TestContext, facets: Facets = [], plugins: Readonly<Rec
 async function startOne(running: RunningServer): Promise<string> {
 	const host = running.runtime.host;
 	const [owner] = (
-		await host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+		await host.root(async (ctx) => (await ctx.get(ThingsStore, {})).persons.owners.page({}, 1, ctx), context)
 	).items;
 	return host.root(
 		async (ctx) => {
@@ -179,7 +179,7 @@ async function startOne(running: RunningServer): Promise<string> {
 			return id;
 		},
 		context,
-		{ principal: { kind: "person", id: owner!.id, name: owner!.name } },
+		{ principal: { kind: "person", id: owner!.person, name: owner!.name } },
 	);
 }
 

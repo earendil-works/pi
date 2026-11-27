@@ -1,12 +1,12 @@
 // The owner's sign-in: a one-time owner link (single use, 10 minutes; its page posts the token from the URL's
-// fragment, never sent to a server, and gets a browser sign-in as the owner's person, read from the people plugin when
-// the link is used), made fresh for `p3` (the command `owner-link`, over the data directory's socket, which only the
-// owner's processes reach).
+// fragment, never sent to a server, and gets a browser sign-in as the machine's owner, read from the things store when
+// the link is used: `ThingsStore.machineOwner`), made fresh for `p3` (the command `owner-link`, over the data directory's
+// socket, which only the owner's processes reach).
 
 import { contribute, type FacetHost, type P3Principal } from "@earendil-works/p3/v1";
 import { Http, hashToken, matchesHash, newToken, ServerCommands, ServerRuntime } from "@earendil-works/p3/v1/server";
-import { PeopleStore } from "../people/contract.server.ts";
-import { SignIns } from "./contract.ts";
+import { ThingsStore } from "../things/contract.server.ts";
+import { answer, issue, linkPage } from "./link.ts";
 
 /** How long an owner link is valid: 10 minutes. */
 const OWNER_LINK_MS = 10 * 60_000;
@@ -23,7 +23,7 @@ export function serveOwner(host: FacetHost<P3Principal>): void {
 			routes: {
 				[`GET ${OWNER_PATH}`]: {
 					public: true,
-					handler: async (request) => ({ kind: "html", body: ownerPage(request.nonce) }),
+					handler: async (request) => ({ kind: "html", body: linkPage(OWNER_PATH, request.nonce) }),
 				},
 				[`POST ${OWNER_PATH}`]: {
 					public: true,
@@ -33,16 +33,9 @@ export function serveOwner(host: FacetHost<P3Principal>): void {
 						if (typeof body?.token !== "string" || !ownerLink.consume(body.token)) {
 							return { kind: "error", status: 403 };
 						}
-						const signIns = await ctx.get(SignIns, {});
-						const secure = request.provenance.kind !== "local";
-						// The owner's person as the people plugin has it now (a server-local read).
-						const people = await ctx.get(PeopleStore, {});
-						const [person] = (await people.persons.owner.page({}, 1, ctx)).items;
-						if (person === undefined) return { kind: "error", status: 503 };
-						const principal = { kind: "person", id: person.id, name: person.name } as const;
-						const owner = { principal, label: "owner browser", kind: "browser", secure } as const;
-						const issued = await signIns.issue(owner, ctx);
-						return { kind: "json", value: "signed in", headers: { "Set-Cookie": issued.cookie } };
+						// The machine's owner as the things store has them now (a server-local read).
+						const owner = await (await ctx.get(ThingsStore, {})).machineOwner({}, ctx);
+						return answer(await issue(owner, "owner browser", request, ctx), owner.person, ctx);
 					},
 				},
 			},
@@ -79,16 +72,4 @@ class OwnerLink {
 		this.#hash = undefined;
 		return Date.now() < this.#expires;
 	}
-}
-
-/** The owner link's page: its script (the response's nonce) posts the fragment's token, then opens p3. */
-function ownerPage(nonce: string): string {
-	return [
-		"<!doctype html><title>Sign in</title><p id=status>Signing in…</p>",
-		`<script nonce="${nonce}">`,
-		"const token = location.hash.slice(1); history.replaceState(null, '', location.pathname);",
-		`fetch(${JSON.stringify(OWNER_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) })`,
-		"  .then((r) => { if (r.ok) location.replace('/'); else document.getElementById('status').textContent = 'This link is used up or expired.'; });",
-		"</script>",
-	].join("\n");
 }
