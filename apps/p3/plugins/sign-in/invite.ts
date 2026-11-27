@@ -3,11 +3,19 @@
 // writes it). A browser signed in as a person puts that person in and keeps its sign-in; an anonymous one gets the new
 // person the link makes, signed in: their sign-in issued before the link is spent, so a signer that fails spends none.
 
-import { type Ctx, contribute, type FacetHost, type P3Principal, type Reference } from "@earendil-works/p3/v1";
+import {
+	type Ctx,
+	contribute,
+	type FacetHost,
+	isChordError,
+	type P3Principal,
+	type Reference,
+	reportError,
+} from "@earendil-works/p3/v1";
 import { Http } from "@earendil-works/p3/v1/server";
 import { ThingsStore } from "../things/contract.server.ts";
 import { INVITE_PATH } from "./contract.ts";
-import { answer, issue, linkPage, revoke } from "./link.ts";
+import { answer, type Issued, issue, linkPage, revoke, revokeEvery } from "./link.ts";
 
 /** Serves the invite link's page and post on `host`. */
 export function serveInvite(host: FacetHost<P3Principal>): void {
@@ -31,12 +39,20 @@ export function serveInvite(host: FacetHost<P3Principal>): void {
 							const invited = await things.redeemInvite({ secret: body.token, person: signedIn }, ctx);
 							return invited === null ? { kind: "error", status: 403 } : { kind: "json", value: "signed in" };
 						}
-						// Anonymous: the new person's sign-in is issued first, so a signer that fails spends no link; a link
+						// Anonymous: the new person's sign-in is issued first, so a signer that refuses spends no link; a link
 						// that does not redeem then has its sign-in revoked.
 						const invitation = await things.invitation({ secret: body.token }, ctx);
 						if (invitation === null) return { kind: "error", status: 403 };
 						const newPerson = crypto.randomUUID();
-						const issued = await issue({ person: newPerson, name: invitation.name }, "invite", request, ctx);
+						let issued: Issued;
+						try {
+							issued = await issue({ person: newPerson, name: invitation.name }, "invite", request, ctx);
+						} catch (error) {
+							// Only a refusal before issuing gives the link back; any other failure may have issued it: the link is
+							// spent, and the sign-in it may have left (for a person who never exists) is revoked.
+							if (!refusedBeforeIssuing(error)) await spentUnredeemed(things, body.token, newPerson, ctx);
+							throw error;
+						}
 						let invited: { readonly person: string } | null;
 						try {
 							invited = await things.redeemInvite({ secret: body.token, newPerson }, ctx);
@@ -54,6 +70,31 @@ export function serveInvite(host: FacetHost<P3Principal>): void {
 			},
 		});
 	});
+}
+
+/**
+ * Whether the signer's failure `error` is a refusal before it issued anything: a typed one (its arguments invalid, or
+ * the call forbidden). Anything else (a lost answer, a crash) may have issued the sign-in.
+ */
+function refusedBeforeIssuing(error: unknown): boolean {
+	return isChordError(error) && (error.code === "invalid" || error.code === "forbidden");
+}
+
+/**
+ * Spends link `secret` unredeemed and revokes every sign-in of `person` (the new person it would have made, who never
+ * exists): after a signer's failure that may have issued one. A revocation that fails is reported (the sign-in names
+ * nobody the store knows).
+ */
+async function spentUnredeemed(
+	things: Reference<typeof ThingsStore>,
+	secret: string,
+	person: string,
+	ctx: Ctx,
+): Promise<void> {
+	await things.spendInvite({ secret }, ctx);
+	await revokeEvery(person, ctx).catch((error: unknown) =>
+		reportError("sign-in: a sign-in the invite route may have issued could not be revoked", error, ctx),
+	);
 }
 
 /**

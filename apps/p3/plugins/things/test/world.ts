@@ -16,6 +16,7 @@ import {
 	type Facet,
 	type Host,
 	type HostError,
+	invalid,
 	openStore,
 	type P3Principal,
 	type PluginFacet,
@@ -143,15 +144,18 @@ export function signInsStub(): {
 	readonly revoked: string[];
 	/** While true, `revoke` throws (a sign-in plugin that fails). */
 	failing: boolean;
-	/** While true, `issue` throws before it issues anything (a signer that is down). */
-	failingIssue: boolean;
+	/**
+	 * How `issue` fails: `before` with a typed refusal before it issues anything (a definite failure), `after` once it
+	 * issued (its answer lost: an ambiguous one); `undefined`, never.
+	 */
+	issueFails: "before" | "after" | undefined;
 } {
 	const revoked: string[] = [];
 	const stub = {
 		plugin: undefined as unknown as PluginFacet<P3Principal>,
 		revoked,
 		failing: false,
-		failingIssue: false,
+		issueFails: undefined as "before" | "after" | undefined,
 	};
 	const plugin: PluginFacet<P3Principal> = {
 		name: "test.sign-in",
@@ -161,10 +165,11 @@ export function signInsStub(): {
 				return {
 					list: self.derive([list], ([value]) => value),
 					issue: async ({ principal, label }) => {
-						if (stub.failingIssue) throw new Error("the signer is down");
+						if (stub.issueFails === "before") throw invalid("args", "the signer refused");
 						const id = crypto.randomUUID();
 						const signIn: SignIn = { id, label, kind: "browser", principal, created: 0, lastUsed: 0 };
 						list.set([...list.value, signIn]);
+						if (stub.issueFails === "after") throw new Error("the signer's answer was lost");
 						return { id, token: id, cookie: "" };
 					},
 					verify: async () => null,

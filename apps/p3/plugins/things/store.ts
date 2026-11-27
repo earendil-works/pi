@@ -523,6 +523,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			},
 			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
 			invitation: async ({ secret }, ctx) => invites.invitation(secret, ctx),
+			spendInvite: ({ secret }, ctx) => write((tx) => invites.spend(tx, secret), ctx),
 			redeemInvite: ({ secret, person, newPerson }, ctx) => {
 				if (person !== undefined && newPerson !== undefined)
 					throw invalid("args", "things: a link is redeemed for a person or a new one, not both");

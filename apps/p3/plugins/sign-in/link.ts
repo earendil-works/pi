@@ -49,6 +49,14 @@ export async function answer(issued: Issued, person: string, ctx: Ctx): Promise<
 	return { kind: "json", value: "signed in", headers: { "Set-Cookie": issued.cookie } };
 }
 
+/** Revokes every sign-in of person `person` (one a signer may have issued without answering). */
+export async function revokeEvery(person: string, ctx: Ctx): Promise<void> {
+	const signIns = await ctx.get(SignIns, {});
+	for (const { id, principal } of signIns.list.value) {
+		if (principal.kind === "person" && principal.id === person) await signIns.revoke(id, ctx);
+	}
+}
+
 /** Revokes sign-in `issued`, never answered. */
 export async function revoke(issued: Issued, ctx: Ctx): Promise<void> {
 	await (await ctx.get(SignIns, {})).revoke(issued.id, ctx);

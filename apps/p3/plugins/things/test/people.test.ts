@@ -105,6 +105,17 @@ async function ticks(workspace: string, thing: string, id: string): Promise<stri
 	}
 }
 
+/**
+ * Makes an owner whose id sorts before every other person's (`0`; a UUID starts with a hex digit, after it), made
+ * through an invite link (the only way to choose a new person's id): the index's first owner from then on.
+ */
+async function ownerSortingFirst(): Promise<void> {
+	const secret = await store.createInvite({ workspace: f.family, name: "First", as: "member", by: ADMIN }, context);
+	await store.redeemInvite({ secret, newPerson: "0" }, context);
+	await store.setOwner({ person: "0", owner: true }, context);
+	assert.equal((await store.persons.owners.page({}, 1, context)).items[0]?.person, "0");
+}
+
 /** Runs `fn` as person `id`. */
 function as<T>(id: string, fn: (ctx: Ctx<P3Principal>) => Promise<T>): Promise<T> {
 	return w.host.root(fn, context, { principal: principal(id) });
@@ -145,11 +156,7 @@ describe("persons and the owner", () => {
 
 	it("the machine's owner is the marked person, never the first owner by key, also after a handover (Opus S1, S2)", async () => {
 		const [marked] = (await store.persons.owners.page({}, 1, context)).items;
-		// Other owners until one sorts before the marked person: the index's first owner is someone else.
-		for (let i = 0; (await store.persons.owners.page({}, 1, context)).items[0]!.person === marked!.person; i++) {
-			const other = await store.createPerson({ name: `Owner ${i}`, madeBy: ADMIN }, context);
-			await store.setOwner({ person: other, owner: true }, context);
-		}
+		await ownerSortingFirst();
 		assert.equal((await store.machineOwner({}, context)).person, marked!.person);
 		// The flag handed over: the machine's user is still themself.
 		await store.setOwner({ person: marked!.person, owner: false }, context);
@@ -165,10 +172,7 @@ describe("persons and the owner", () => {
 		const [first] = (await store.persons.owners.page({}, 10, context)).items.filter(({ name }) => name === "Ann");
 		await store.setOwner({ person: first!.person, owner: false }, context);
 		await store.removePerson({ person: first!.person }, context);
-		for (let i = 0; (await store.persons.owners.page({}, 1, context)).items[0]!.person === adopted; i++) {
-			const other = await store.createPerson({ name: `Owner ${i}`, madeBy: ADMIN }, context);
-			await store.setOwner({ person: other, owner: true }, context);
-		}
+		await ownerSortingFirst();
 		const owners = (await store.persons.owners.page({}, 100, context)).items.map(({ person: id }) => id);
 		const copy = `${w.path}.copy`;
 		const database = new DatabaseSync(w.path);

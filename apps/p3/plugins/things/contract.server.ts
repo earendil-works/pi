@@ -316,6 +316,11 @@ export const ThingsStore = local("things.store", {
 		 */
 		invitation: method(obj({ secret: str() }), union([obj({ name: str() }), nul()])),
 		/**
+		 * Spends an invite link's secret without redeeming it (a link for several uses stays): what the invite route does
+		 * when it cannot tell whether it issued the new person's sign-in.
+		 */
+		spendInvite: method(obj({ secret: str() })),
+		/**
 		 * Redeems an invite link's secret for `person` (signed in already) or, left out, a new person named as the link
 		 * says, made by its maker, with id `newPerson` if given (a sign-in was issued for it already); answers whom to
 		 * sign in, `null` for a secret used up, expired or unknown. `invalid` with both `person` and `newPerson`.

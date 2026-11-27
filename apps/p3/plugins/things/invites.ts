@@ -148,6 +148,16 @@ export class InviteWrites {
 		return { name: row.name };
 	}
 
+	/** Spends link `link` unredeemed: a link for one use goes (one for several stays); a link that is no link, none. */
+	async spend(tx: Tx, link: string): Promise<null> {
+		const invite = inviteOf(link);
+		if (invite === undefined) return null;
+		const row = await tx.get(this.#t.invites, { invite });
+		if (row !== undefined && !row.several && matchesHash(link.slice(invite.length + 1), row.hash))
+			tx.delete(this.#t.invites, { invite });
+		return null;
+	}
+
 	/**
 	 * Whether the maker of link `link` still has Manage people in the workspace it points into, as the index answers
 	 * now (`asks`, in the redeeming write's operation); server code (a plugin, a thing, a provider) always. A link

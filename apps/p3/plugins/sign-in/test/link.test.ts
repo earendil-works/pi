@@ -1,9 +1,12 @@
 // A link's sign-in (`link.ts`) against the person it signs in, and the invite route's order of issuing and redeeming,
 // on a host of their own with the HTTP component (no listener), the things plugin and a stand-in signer: a sign-in
 // issued for a person a removal took is revoked, so none outlives a removal however the two interleave; a signer that
-// fails spends no invite link.
+// refuses before issuing spends no invite link, one whose failure may have issued spends it.
 
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { createHttp } from "@earendil-works/chord/http";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
@@ -20,14 +23,16 @@ import {
 import { Http, type HttpRequest } from "@earendil-works/p3/v1/server";
 import { eventually } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
-import { RUNTIME, signInsStub, THINGS } from "../../things/test/world.ts";
+import { RUNTIME, signInsStub, storedRows, THINGS } from "../../things/test/world.ts";
 import { INVITE_PATH, SignIns } from "../contract.ts";
 import { serveInvite } from "../invite.ts";
 import { answer, issue } from "../link.ts";
 
 /** A host with the HTTP component, the things plugin, the stand-in signer and the invite route; close it after. */
 async function signInHost() {
-	const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(":memory:")), context);
+	const dir = await mkdtemp(join(tmpdir(), "p3-sign-in-"));
+	const path = join(dir, "store.sqlite");
+	const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 	const errors: HostError[] = [];
 	const host = createHost<P3Principal>({
 		address: Server(),
@@ -65,8 +70,14 @@ async function signInHost() {
 		return host.root((ctx) => match.handler(request, ctx), context, { principal: undefined });
 	};
 	const close = async () => {
+		// The sign-outs of the removed persons settle first (their rows go after their sign-ins ended).
+		await eventually(
+			() => storedRows(path, "sign-outs").length,
+			(n) => n === 0,
+		);
 		await host.close(context);
 		await store.close(context);
+		await rm(dir, { recursive: true, force: true });
 	};
 	return { host, things, by, signer, signedIn, post, errors, close };
 }
@@ -112,21 +123,43 @@ describe("a link's sign-in and removal", () => {
 });
 
 describe("the invite route and a signer that fails", () => {
-	it("spends no link when the signer fails before it issues; the link signs in once it is back (Astra)", async () => {
+	/** A link for one use into Pi, and how many persons there are. */
+	const linked = async (at: Awaited<ReturnType<typeof signInHost>>) => {
+		const pi = (await at.things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const token = await at.things.createInvite({ workspace: pi, name: "Guest", as: "member", by: at.by }, context);
+		const persons = async () => (await at.things.persons.all.page({}, 20, context)).items.length;
+		return { token, persons };
+	};
+
+	it("spends no link when the signer refuses before it issues; the link signs in once it is back (Astra)", async () => {
 		const at = await signInHost();
 		try {
-			const pi = (await at.things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
-			const token = await at.things.createInvite({ workspace: pi, name: "Guest", as: "member", by: at.by }, context);
-			const persons = async () => (await at.things.persons.all.page({}, 20, context)).items.length;
+			const { token, persons } = await linked(at);
 			const before = await persons();
-			at.signer.failingIssue = true;
-			await assert.rejects(at.post(token), /the signer is down/);
+			at.signer.issueFails = "before";
+			await assert.rejects(at.post(token), /the signer refused/);
 			assert.equal(await persons(), before, "no person made");
-			at.signer.failingIssue = false;
+			at.signer.issueFails = undefined;
 			const signed = await at.post(token);
 			assert.equal(signed.kind, "json");
 			assert.equal(await persons(), before + 1);
 			assert.deepEqual(await at.post(token), { kind: "error", status: 403 }, "used up");
+		} finally {
+			await at.close();
+		}
+	});
+
+	it("spends the link when the signer's failure may have issued; the sign-in it left is revoked (Astra, round 2)", async () => {
+		const at = await signInHost();
+		try {
+			const { token, persons } = await linked(at);
+			const before = await persons();
+			at.signer.issueFails = "after";
+			await assert.rejects(at.post(token), /answer was lost/);
+			at.signer.issueFails = undefined;
+			assert.equal(await at.things.invitation({ secret: token }, context), null, "spent");
+			assert.deepEqual(await at.post(token), { kind: "error", status: 403 });
+			assert.deepEqual([await persons(), await at.signedIn()], [before, []]);
 		} finally {
 			await at.close();
 		}
