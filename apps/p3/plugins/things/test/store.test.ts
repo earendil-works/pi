@@ -351,8 +351,11 @@ describe("a plugin's one thing", () => {
 		assert.deepEqual(at.errors, []);
 	});
 
-	it("a reload during the seed's lookup seeds with the new generation's input and hook (Astra)", async () => {
-		// The seed's first lookup of its kind's things held until the reload changed `one.input` from v1 to v2.
+	/**
+	 * A host on a store whose first lookup of the things of kind `test.seed` waits until `go`; `reached` resolves when
+	 * it starts waiting. `generation(name, input)` is the kind's plugin, its `one` named `name` with `input`.
+	 */
+	const gatedSeed = async () => {
 		const reached = Promise.withResolvers<void>();
 		const go = Promise.withResolvers<void>();
 		let held = false;
@@ -389,34 +392,87 @@ describe("a plugin's one thing", () => {
 			onError: (error) => assert.fail(error.kind),
 		});
 		const Seeded = defineThing("test.seed", { version: 1, ticks: { use: { label } }, create: { input: str() } });
-		const calls: string[][] = [];
-		const generation = (name: string) => ({
+		const calls: unknown[][] = [];
+		const generation = (name: string, input: unknown) => ({
 			name: "seed",
 			facet: defineFacet((h) =>
 				serveThing(h, Seeded, {
 					implement: () => ({}),
-					create: async ({ input }) => void calls.push([name, input]),
-					one: { name, input: name },
+					create: async ({ input: given }) => void calls.push([name, given]),
+					one: { name, input: input as string },
 				}),
 			),
 		});
-		try {
-			await host.load([THINGS, generation("v1")], context);
-			const things = await host.get(ThingsStore, {}, context);
+		/** Loads v1, waits for the held lookup, reloads to v2 and lets the lookup go once v2's hooks are in. */
+		const reloadDuringLookup = async (v1: unknown, v2: unknown) => {
+			await host.load([THINGS, generation("v1", v1)], context);
 			await reached.promise;
 			const hooks = await host.registry(ThingHooks, context);
-			const reloaded = host.reload([THINGS, generation("v2")], context);
+			const reloaded = host.reload([THINGS, generation("v2", v2)], context);
 			await until(hooks, (table) => table.get(Seeded.name)?.value.one?.name === "v2", within("v2", context));
 			go.resolve();
 			await reloaded;
-			const id = await things.ensure({ kind: Seeded.name }, context);
-			const row = (await things.things.one.page({ thing: id }, 1, context)).items[0];
-			assert.deepEqual([calls, row?.name], [[["v2", "v2"]], "v2"]);
-		} finally {
+			return host.get(ThingsStore, {}, context);
+		};
+		const close = async () => {
 			go.resolve();
 			await host.close(context);
 			await opened.close(context);
+		};
+		return { Seeded, calls, reloadDuringLookup, close };
+	};
+
+	it("a reload during the seed's lookup seeds with the new generation's input and hook (Astra)", async () => {
+		const at = await gatedSeed();
+		try {
+			const things = await at.reloadDuringLookup("v1", "v2");
+			const id = await things.ensure({ kind: at.Seeded.name }, context);
+			const row = (await things.things.one.page({ thing: id }, 1, context)).items[0];
+			assert.deepEqual([at.calls, row?.name], [[["v2", "v2"]], "v2"]);
+		} finally {
+			await at.close();
 		}
+	});
+
+	it("a reload to a bad input during the seed's lookup is reported once, for the new generation (Astra)", async (t) => {
+		const reports = t.mock.method(console, "error", () => {});
+		const at = await gatedSeed();
+		try {
+			const things = await at.reloadDuringLookup("v1", 22);
+			await assert.rejects(things.ensure({ kind: at.Seeded.name }, context), /input of test.seed/);
+			await new Promise((done) => setTimeout(done, 50));
+			assert.deepEqual([at.calls, reports.mock.callCount()], [[], 1]);
+		} finally {
+			await at.close();
+		}
+	});
+
+	it("a deleted seed whose input is now bad is reported once, also after another plugin reloads (Astra)", async (t) => {
+		const reports = t.mock.method(console, "error", () => {});
+		const Seeded = defineThing("test.seed", { version: 1, ticks: { use: { label } }, create: { input: str() } });
+		const facet = (input: unknown) =>
+			defineFacet((h) =>
+				serveThing(h, Seeded, { implement: () => ({}), one: { name: "seed", input: input as string } }),
+			);
+		const at = await world(context, [{ name: "seed", facet: facet("good") }]);
+		t.after(() => at.close(context));
+		const things = await at.host.get(ThingsStore, {}, context);
+		const root = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const id = await things.ensure({ kind: Seeded.name }, context);
+		// The plugin reloaded with a bad input: the seed there stands, nothing to report.
+		await at.reload("seed", context, facet(37));
+		assert.equal(await things.ensure({ kind: Seeded.name }, context), id);
+		assert.equal(reports.mock.callCount(), 0);
+		// Deleted, it is made again with the bad input: reported once, and not again when another plugin reloads.
+		await things.unlink({ workspace: root, thing: id }, context);
+		await eventually(
+			() => reports.mock.callCount(),
+			(n) => n > 0,
+		);
+		await at.reload(BOARD_PLUGIN, context);
+		await assert.rejects(things.ensure({ kind: Seeded.name }, context), /input of test.seed/);
+		await new Promise((done) => setTimeout(done, 50));
+		assert.equal(reports.mock.callCount(), 1);
 	});
 
 	it("a seed's bad input is reported once per generation; a corrected reload seeds, a later one keeps it (Astra)", async (t) => {

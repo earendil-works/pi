@@ -30,10 +30,10 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "",
 	},
 	{
-		name: "a seed's failure is reported at every pass",
+		name: "a seed's failure is reported by every attempt",
 		file: "store.ts",
-		find: "if (failedSeeds.has(value)) continue;",
-		put: "",
+		find: "if (!failedSeeds.has(entry.value)) {",
+		put: "if (true) {",
 	},
 	// ---- people, round 2 ----
 	{

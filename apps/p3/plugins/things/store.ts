@@ -216,11 +216,9 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			for (const { thing, kind } of retired) {
 				lifecycle.retire(thing, kind);
 				if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) {
-					// Made again under the store's own context; a failure is reported (the next start seeds it).
-					const own = live;
-					seedKind(kind, own).catch((error) =>
-						reportError(`things: the seeded thing of ${kind}, made again`, error, own),
-					);
+					// Made again under the store's own context; a failure is reported where it failed (the next start seeds
+					// it).
+					seedKind(kind, live).catch(() => {});
 				}
 			}
 			return result;
@@ -294,6 +292,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 		/** The seeded things being made, by kind: one at a time per kind, a second ask waits for the first. */
 		const seeding = new Map<string, Promise<string>>();
+		/** The kinds' hooks (one per generation) whose seeding failed and was reported: each is reported once. */
+		const failedSeeds = new WeakSet<ThingHook>();
 		/**
 		 * Kind `kind`'s seeded thing (`serveThing`'s `one`): the one its plugin made, else one made in Pi through the
 		 * create path, with the input of the generation whose hook runs; `invalid` for a kind that asks for none.
@@ -305,20 +305,30 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				for (;;) {
 					const entry = hooks.value.get(kind);
 					if (entry?.value.one === undefined) throw invalid("args", `things: ${kind} has no seeded thing`);
-					const by: Source = { kind: "plugin", plugin: entry.plugin };
-					const found = await self.tx((tx) => writes.one(tx, kind, by), ctx);
-					if (found !== undefined) return found;
-					const workspace = (await self.tx((tx) => rootOf(tx, t), ctx))!;
-					// Its plugin reloaded during the reads: asked again of the new generation, so the maker, the input, the
-					// schema and the hook `make` reads (at once, before its first wait) are one generation's.
-					if (hooks.value.get(kind)?.value !== entry.value) continue;
-					const { name, input } = entry.value.one;
-					const made = { kind, name, workspace, by };
-					return make(
-						{ ...made, input },
-						(tx, changes, thing) => writes.makeOne(tx, changes, { ...made, thing }),
-						ctx,
-					);
+					try {
+						const by: Source = { kind: "plugin", plugin: entry.plugin };
+						const found = await self.tx((tx) => writes.one(tx, kind, by), ctx);
+						if (found !== undefined) return found;
+						const workspace = (await self.tx((tx) => rootOf(tx, t), ctx))!;
+						// Its plugin reloaded during the reads: asked again of the new generation, so the maker, the input,
+						// the schema and the hook `make` reads (at once, before its first wait) are one generation's.
+						if (hooks.value.get(kind)?.value !== entry.value) continue;
+						const { name, input } = entry.value.one;
+						const made = { kind, name, workspace, by };
+						return await make(
+							{ ...made, input },
+							(tx, changes, thing) => writes.makeOne(tx, changes, { ...made, thing }),
+							ctx,
+						);
+					} catch (error) {
+						// Reported here only, once per generation of the hooks whose attempt failed; every waiter (a seeding
+						// pass, the re-seed after a delete, `ensure`) gets the rejection.
+						if (!failedSeeds.has(entry.value)) {
+							failedSeeds.add(entry.value);
+							reportError(`things: the seeded thing of ${kind}`, error, ctx);
+						}
+						throw error;
+					}
 				}
 			})();
 			seeding.set(kind, seeded);
@@ -328,8 +338,6 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			);
 			return seeded;
 		};
-		/** The kinds' hooks (one per generation) whose seeding failed and was reported: each is reported once. */
-		const failedSeeds = new WeakSet<ThingHook>();
 		/**
 		 * Every kind that asks for a seeded thing has it, once its kind is registered: at the start, and when the
 		 * registries change. A failure is reported once per generation of the kind's hooks; the next start, or the
@@ -338,13 +346,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const seed = async (ctx: Ctx<P3Principal>): Promise<void> => {
 			for (const [kind, { value }] of hooks.value) {
 				if (value.one === undefined || !kinds.value.has(kind)) continue;
-				try {
-					await seedKind(kind, ctx);
-				} catch (error) {
-					if (failedSeeds.has(value)) continue;
-					failedSeeds.add(value);
-					reportError(`things: the seeded thing of ${kind}`, error, ctx);
-				}
+				// A failure is reported where it failed (`seedKind`), once per generation.
+				await seedKind(kind, ctx).catch(() => {});
 			}
 		};
 		// The store's own context while it is live: what seeding after a registry change runs under.
