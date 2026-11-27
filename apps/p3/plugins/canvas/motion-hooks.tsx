@@ -17,6 +17,7 @@ export function useMotionSender(target: MotionTarget | undefined): {
 	const targetRef = useRef(target);
 	targetRef.current = target;
 	const [send] = useState(() => motionSender(() => targetRef.current));
+	// Unmounted: the pointer leaves the board; lost, it goes from the others' boards once it stood still.
 	useEffect(() => () => void targetRef.current?.leave(BACKGROUND_CONTEXT).catch(() => null), []);
 	return { point: (pointer) => send({ kind: "point", pointer }), leave: () => send({ kind: "leave" }) };
 }

@@ -1,7 +1,8 @@
 // A drawer's drawing on the page (`useDrawing`): the pointer's way over the board as a draft (a stroke with the pen, a
 // rectangle with the box, text placed with a tap), shown to the others as it grows, committed when the pointer goes
 // up, and the shapes sent but not yet among the board's rows, shown meanwhile so a stroke never blinks out between up
-// and commit. A viewer's pointer only travels.
+// and commit. A gesture the browser cancels (a touch taken over by a scroll or the system) is dropped, never committed.
+// A viewer's pointer only travels.
 
 import type { Context, Reference, With } from "@earendil-works/p3/v1";
 import { type PointerEvent, useEffect, useRef, useState } from "react";
@@ -14,34 +15,35 @@ import {
 	type PlacedShape,
 	type Shape,
 } from "./kind.ts";
-import { useMotionSender } from "./motion-hooks.ts";
+import { useMotionSender } from "./motion-hooks.tsx";
 
 /** The drawer's members, as the view calls them. */
 export type Drawer = With<Reference<typeof Canvas>, (typeof CANVAS_DRAWS)[number]>;
 
 /** What a drawer draws with. */
-export type Tool = "pen" | "rect" | "text";
+type Tool = "pen" | "rect" | "text";
+
+/** What a drawer picked: the tool, the colour and the text the text tool places. */
+export type Picked = { readonly tool: Tool; readonly color: string; readonly text: string };
 
 /** What the drawing needs: the board, its drawer's members (none: a viewer), the shapes shown, what is picked. */
-export type DrawingOf = {
+type DrawingOf = {
 	readonly live: Reference<typeof Canvas> | undefined;
 	readonly drawer: Drawer | undefined;
 	readonly shapes: readonly PlacedShape[];
-	readonly tool: Tool;
-	readonly color: string;
-	/** The text the text tool places. */
-	readonly text: string;
+	readonly picked: Picked;
 	/** Runs a change; its failure is the view's to show. */
 	readonly run: (call: (context: Context) => Promise<unknown>) => void;
 };
 
 /** The drawing's handlers for the board's surface, its own draft and the shapes still on their way. */
-export type Drawing = {
+type Drawing = {
 	readonly draft: Shape | null;
 	readonly sending: readonly Shape[];
 	readonly down: (event: PointerEvent<SVGSVGElement>) => void;
 	readonly move: (event: PointerEvent<SVGSVGElement>) => void;
 	readonly up: (event: PointerEvent<SVGSVGElement>) => void;
+	readonly cancel: (event: PointerEvent<SVGSVGElement>) => void;
 	readonly leave: (event: PointerEvent<SVGSVGElement>) => void;
 };
 
@@ -56,12 +58,12 @@ export function useDrawing(of: DrawingOf): Drawing {
 	const { drawer } = of;
 	const [draft, setDraft] = useState<Shape | null>(null);
 	const [sending, setSending] = useState<readonly Sending[]>([]);
-	// A sent shape is shown until its row is (the answer, with the id, may come before the row).
-	const shown = new Set(of.shapes.map((placed) => placed.id));
-	const pending = sending.filter((sent) => sent.id === undefined || !shown.has(sent.id));
+	// A sent shape is shown until its row is (the answer, with the id, may come before the row). Nothing in flight
+	// (every pointer event of the others renders the view): no walk of the board's shapes.
+	const pending = sending.length === 0 ? sending : inFlight(sending, of.shapes);
 	useEffect(() => {
 		if (pending.length < sending.length) setSending(pending);
-	}, [pending, sending]);
+	});
 	// Where the drawing pointer went down, and with which tool (a tool picked meanwhile changes nothing).
 	const start = useRef<{ readonly x: number; readonly y: number; readonly tool: Exclude<Tool, "text"> } | undefined>(
 		undefined,
@@ -102,14 +104,14 @@ export function useDrawing(of: DrawingOf): Drawing {
 		down: (event) => {
 			if (drawer === undefined) return;
 			const point = at(event);
-			if (of.tool === "text") {
-				const placed = of.text.trim();
-				if (placed !== "")
-					commit({ kind: "text", color: of.color, x: point.x, y: point.y, text: placed, size: TEXT_SIZE });
+			const { tool, color, text } = of.picked;
+			if (tool === "text") {
+				const placed = text.trim();
+				if (placed !== "") commit({ kind: "text", color, x: point.x, y: point.y, text: placed, size: TEXT_SIZE });
 				return;
 			}
 			event.currentTarget.setPointerCapture(event.pointerId);
-			begin(point, of.tool, of.color);
+			begin(point, tool, color);
 		},
 		move: (event) => {
 			const point = at(event);
@@ -136,6 +138,12 @@ export function useDrawing(of: DrawingOf): Drawing {
 			if (event.pointerType === "mouse") sender.point({ ...at(event), draft: null });
 			else sender.leave();
 		},
+		cancel: () => {
+			// The browser took the gesture over: what was drawn so far goes, here and on the others' boards.
+			start.current = undefined;
+			setDraft(null);
+			sender.leave();
+		},
 		leave: (event) => {
 			if (event.pointerType === "mouse" && start.current === undefined) sender.leave();
 		},
@@ -144,6 +152,12 @@ export function useDrawing(of: DrawingOf): Drawing {
 
 /** The least distance, in board units, between two points of a stroke: closer moves add nothing. */
 const STEP = 3;
+
+/** The shapes of `sending` not yet among `shapes` (by the id their add answered). */
+function inFlight(sending: readonly Sending[], shapes: readonly PlacedShape[]): readonly Sending[] {
+	const shown = new Set(shapes.map((placed) => placed.id));
+	return sending.filter((sent) => sent.id === undefined || !shown.has(sent.id));
+}
 
 /** How wide the pen draws, in board units. */
 const PEN_WIDTH = 8;

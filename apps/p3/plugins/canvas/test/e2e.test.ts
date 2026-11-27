@@ -2,8 +2,8 @@
 // signed in as persons): Ann and Ben are put into Pi, a board is made there, Ben's Draw withheld; both hold it open,
 // Ann draws and Ben sees her shape live, drawn by her, with no drawing members of his own, and her pointer named. A
 // reload of the canvas plugin (a real edit of its server facet, applied as `p3 apply` does, restarting both callers'
-// objects) while both hold it keeps the shapes and both holds: Ann draws again and Ben sees it. The agent's tools on a
-// session's boards come with sessions as session workspaces (ERNDL-704); their harness part is the worker test's.
+// objects) while both hold it keeps the shapes, both holds and Ben's motion subscription: Ann draws and points again
+// and Ben sees both. The agent's tools are the worker test's (their harness part, with real references).
 
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
@@ -44,7 +44,7 @@ describe("the canvas end to end", () => {
 		const board = { workspace: e.pi, thing };
 		const anns = await (await e.client(ann)).get(Canvas, board, context);
 		const bens = await (await e.client(ben)).get(Canvas, board, context);
-		assert.deepEqual([anns.name.value, [...anns.granted].sort()], ["Sketch", ["add", "export", "remove"]]);
+		assert.deepEqual([anns.name.value, [...anns.granted].sort()], ["Sketch", ["add", "remove"]]);
 		assert.deepEqual([bens.name.value, bens.add, bens.granted.size], ["Sketch", undefined, 0]);
 		const seen: Motion[] = [];
 		await bens.motion.on(({ value }) => seen.push(value), context);
@@ -66,6 +66,14 @@ describe("the canvas end to end", () => {
 		);
 		await anns.add!({ shapes: [BOX] }, context);
 		await shows(bens, 2, ann.id);
+		// Ben's motion subscription delivers after the reload too.
+		seen.length = 0;
+		await anns.point({ x: 7, y: 8, draft: null }, context);
+		await eventually(
+			async () => seen.some((motion) => motion.kind === "point" && motion.x === 7),
+			(found) => found,
+			10_000,
+		);
 		assert.deepEqual(e.t.errors, []);
 	});
 });

@@ -31,7 +31,6 @@ import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { SignIns } from "../../sign-in/contract.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
-import { OPEN } from "../../things/contract.ts";
 import { ThingKindsView } from "../../things/kind.ts";
 import { Workspace } from "../../things/workspace.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
@@ -243,80 +242,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Sketch").dataset.navThing`,
 		);
 		await press(`[data-nav-thing="${sketch}"]`);
-		// The owner draws a stroke with the mouse: it is committed, then undone (the canvas's drawing and toolbar).
-		await browser.wait(`document.querySelector('[data-canvas="drawer"] [data-canvas-tools]')`);
-		const surface = await browser.box("[data-canvas-surface]");
-		await browser.drag("[data-canvas-surface]", surface.x + surface.width * 0.7, surface.y + surface.height * 0.6);
-		await browser.wait(`document.querySelectorAll("[data-shape]").length === 1`);
-		await press("[data-canvas-undo]");
-		await browser.wait(`document.querySelectorAll("[data-shape]").length === 0`);
+		await browser.wait(`document.querySelector('[data-canvas="drawer"]')`);
 		await browser.wait(`document.querySelector("[data-gear]")`);
 		await shots("06-canvas-desktop");
 		await press("[data-gear]");
 		await browser.wait(`location.pathname.endsWith("/settings")`);
 		await browser.wait(`document.querySelector('[data-settings="${sketch}"]')`);
 		await browser.wait(`document.querySelector("[data-gear]") === null`);
-	});
-
-	it("shows a canvas to a person without Draw as a viewer: the drawer's shapes and named pointer live, desktop and phone", async () => {
-		const dee = await t.host.root(async (ctx) => {
-			const things = await ctx.get(ThingsStore, {});
-			const by = { kind: "plugin", plugin: "test" } as const;
-			const id = await things.createPerson({ name: "Dee", madeBy: by }, ctx);
-			const party = { kind: "person", person: id } as const;
-			await things.putParty({ workspace: pi, party, source: by }, ctx);
-			// Draw withheld from Dee: everyone's Draw does not reach her (item 106); she is let in by the rest.
-			await things.setGrants(
-				{
-					source: by,
-					grants: [
-						{ workspace: pi, thing: sketch, party, tick: "draw", gives: false },
-						{ workspace: pi, thing: sketch, party, tick: OPEN, gives: true },
-					],
-				},
-				ctx,
-			);
-			const principal = { kind: "person", id, name: "Dee" } as const;
-			const issued = await (await ctx.get(SignIns, {})).issue({ principal, kind: "browser", label: "test" }, ctx);
-			return issued.cookie.split(";")[0]!;
-		}, context);
-		await browser.open(`${origin}/w/${pi}/t/${sketch}`);
-		await browser.wait(`document.querySelector('[data-canvas="drawer"] [data-canvas-tools]')`);
-		const other = await Browser.start();
-		try {
-			await other.signIn(origin, dee);
-			await other.open(`${origin}/w/${pi}/t/${sketch}`);
-			await other.wait(
-				`document.querySelector('[data-canvas="viewer"]') && !document.querySelector("[data-canvas-tools]")`,
-			);
-			const surface = await browser.box("[data-canvas-surface]");
-			await browser.drag("[data-canvas-surface]", surface.x + surface.width * 0.3, surface.y + surface.height * 0.7);
-			await other.wait(`document.querySelectorAll("[data-shape]").length === 1`);
-			// The owner's mouse over the board: Dee sees the pointer with the owner's name, not a fallback.
-			for (const step of [0.4, 0.5]) {
-				const x = surface.x + surface.width * step;
-				await browser.call("Input.dispatchMouseEvent", {
-					type: "mouseMoved",
-					x,
-					y: surface.y + surface.height / 2,
-				});
-			}
-			const owner = await browser.evaluate<string>(`document.querySelector("[data-nav-me]").textContent`);
-			await other.wait(`document.querySelector("[data-cursor]")?.textContent === ${JSON.stringify(owner)}`);
-			await other.screenshot(join(SHOTS, "06-canvas-viewer-desktop.png"));
-			await other.size(PHONE);
-			await other.wait(`document.querySelector('[data-canvas="viewer"]')?.offsetParent !== null`);
-			await other.screenshot(join(SHOTS, "06-canvas-viewer-phone.png"));
-			await browser.size(PHONE);
-			await browser.wait(`document.querySelector('[data-canvas="drawer"]')?.offsetParent !== null`);
-			await shots("06-canvas-phone");
-			await browser.size(DESKTOP);
-			await press("[data-canvas-undo]");
-			await other.wait(`document.querySelectorAll("[data-shape]").length === 0`);
-		} finally {
-			await other.close();
-		}
-		await browser.open(`${origin}/w/${pi}`);
 	});
 
 	it("opens Pi's Files, Terminals and machine in their views, on a desktop and a phone (ERNDL-1172-1174)", async () => {

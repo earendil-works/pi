@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
 	arr,
@@ -25,9 +25,9 @@ import {
 	obj,
 	str,
 } from "@earendil-works/p3/v1";
-import { kindServer, refused } from "../../things/test/kind-server.ts";
+import { type KindServer, kindServer, refused } from "../../things/test/kind-server.ts";
 import { world } from "../../things/test/world.ts";
-import { CanvasKind, MAX_SHAPES, Shape } from "../kind.ts";
+import { type Canvas, CanvasKind, MAX_SHAPES, Shape } from "../kind.ts";
 import canvasServer from "../server.ts";
 import { CanvasStore } from "../store.ts";
 
@@ -41,70 +41,60 @@ const BOX: Shape = { kind: "rect", color: "#000000", x: 0, y: 0, w: 2, h: 2, fil
 const ANN = { kind: "person", person: "ann" } as const;
 
 describe("the canvas store", () => {
-	it("keeps the order shapes were added in, across a reload even if the wall clock went backwards", async (t) => {
+	let n: KindServer<typeof Canvas>;
+
+	beforeEach(async () => {
 		const root = fileURLToPath(new URL("../", import.meta.url));
-		const n = await kindServer({ name: PLUGIN, root, server: canvasServer }, CanvasKind, context);
-		try {
-			const now = Date.now();
-			const clock = t.mock.method(Date, "now", () => now);
-			const before = await n.host.get(CanvasStore, {}, context);
-			const [first] = await before.add({ canvas: "board", author: ANN, shapes: [BOX] }, context);
-			await n.reload();
-			const after = await n.host.get(CanvasStore, {}, context);
-			clock.mock.mockImplementation(() => now - 1);
-			const [second] = await after.add({ canvas: "board", author: ANN, shapes: [BOX] }, context);
-			const { items } = await after.shapes.of.page({ canvas: "board" }, 10, context);
-			assert.deepEqual(
-				items.map(({ id }) => id),
-				[first, second],
-			);
-		} finally {
-			await n.close();
-		}
+		n = await kindServer({ name: PLUGIN, root, server: canvasServer }, CanvasKind, context);
+	});
+
+	afterEach(() => n.close());
+
+	it("keeps the order shapes were added in, across a reload even if the wall clock went backwards", async (t) => {
+		const now = Date.now();
+		const clock = t.mock.method(Date, "now", () => now);
+		const before = await n.host.get(CanvasStore, {}, context);
+		const [first] = await before.add({ canvas: "board", author: ANN, shapes: [BOX] }, context);
+		await n.reload();
+		const after = await n.host.get(CanvasStore, {}, context);
+		clock.mock.mockImplementation(() => now - 1);
+		const [second] = await after.add({ canvas: "board", author: ANN, shapes: [BOX] }, context);
+		const { items } = await after.shapes.of.page({ canvas: "board" }, 10, context);
+		assert.deepEqual(
+			items.map(({ id }) => id),
+			[first, second],
+		);
 	});
 
 	it("drops one board's shapes and marks it gone: a later add is refused, other boards keep theirs", async () => {
-		const root = fileURLToPath(new URL("../", import.meta.url));
-		const n = await kindServer({ name: PLUGIN, root, server: canvasServer }, CanvasKind, context);
-		try {
-			const store = await n.host.get(CanvasStore, {}, context);
-			await store.add({ canvas: "a", author: ANN, shapes: [BOX, BOX] }, context);
-			await store.add({ canvas: "b", author: ANN, shapes: [BOX] }, context);
-			await store.drop({ canvas: "a" }, context);
-			await store.drop({ canvas: "a" }, context);
-			await assert.rejects(store.add({ canvas: "a", author: ANN, shapes: [BOX] }, context), /is gone/);
-			assert.deepEqual((await store.shapes.of.page({ canvas: "a" }, 10, context)).items, []);
-			assert.equal((await store.shapes.of.page({ canvas: "b" }, 10, context)).items.length, 1);
-			// A cleared board is not gone: it is drawn on again.
-			await store.clear({ canvas: "b" }, context);
-			await store.add({ canvas: "b", author: ANN, shapes: [BOX] }, context);
-			assert.equal((await store.shapes.of.page({ canvas: "b" }, 10, context)).items.length, 1);
-		} finally {
-			await n.close();
-		}
+		const store = await n.host.get(CanvasStore, {}, context);
+		await store.add({ canvas: "a", author: ANN, shapes: [BOX, BOX] }, context);
+		await store.add({ canvas: "b", author: ANN, shapes: [BOX] }, context);
+		await store.drop({ canvas: "a" }, context);
+		await store.drop({ canvas: "a" }, context);
+		await assert.rejects(store.add({ canvas: "a", author: ANN, shapes: [BOX] }, context), /is gone/);
+		assert.deepEqual((await store.shapes.of.page({ canvas: "a" }, 10, context)).items, []);
+		assert.equal((await store.shapes.of.page({ canvas: "b" }, 10, context)).items.length, 1);
+		// A cleared board is not gone: it is drawn on again.
+		await store.clear({ canvas: "b" }, context);
+		await store.add({ canvas: "b", author: ANN, shapes: [BOX] }, context);
+		assert.equal((await store.shapes.of.page({ canvas: "b" }, 10, context)).items.length, 1);
 	});
 
 	it("holds MAX_SHAPES at most: an add past it is refused; a removal or a clear makes room", async () => {
-		const root = fileURLToPath(new URL("../", import.meta.url));
-		const n = await kindServer({ name: PLUGIN, root, server: canvasServer }, CanvasKind, context);
-		try {
-			const store = await n.host.get(CanvasStore, {}, context);
-			const add = (count: number) =>
-				store.add({ canvas: "a", author: ANN, shapes: Array(count).fill(BOX) }, context);
-			for (let i = 0; i < MAX_SHAPES / 100 - 1; i++) await add(100);
-			await refused(add(101), "invalid", "full");
-			const [last] = await add(100);
-			await refused(add(1), "invalid", "full");
-			await store.remove({ canvas: "a", id: last! }, context);
-			await add(1);
-			await refused(add(1), "invalid", "full");
-			await store.clear({ canvas: "a" }, context);
-			assert.equal((await add(100)).length, 100);
-			// Another board's count is its own.
-			assert.equal((await store.add({ canvas: "b", author: ANN, shapes: [BOX] }, context)).length, 1);
-		} finally {
-			await n.close();
-		}
+		const store = await n.host.get(CanvasStore, {}, context);
+		const add = (count: number) => store.add({ canvas: "a", author: ANN, shapes: Array(count).fill(BOX) }, context);
+		for (let i = 0; i < MAX_SHAPES / 100 - 1; i++) await add(100);
+		await refused(add(101), "invalid", "full");
+		const [last] = await add(100);
+		await refused(add(1), "invalid", "full");
+		await store.remove({ canvas: "a", id: last! }, context);
+		await add(1);
+		await refused(add(1), "invalid", "full");
+		await store.clear({ canvas: "a" }, context);
+		assert.equal((await add(100)).length, 100);
+		// Another board's count is its own.
+		assert.equal((await store.add({ canvas: "b", author: ANN, shapes: [BOX] }, context)).length, 1);
 	});
 });
 

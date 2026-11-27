@@ -1,4 +1,4 @@
-// A board's motion on the page, as plain data and functions (the React hooks over them are `motion-hooks.ts`): the
+// A board's motion on the page, as plain data and functions (the React hooks over them are `motion-hooks.tsx`): the
 // caller's own pointer sent to the others (the newest only, at most one call in flight and one every `SEND_GAP_MS`,
 // so a slow link never queues stale positions), and the others' pointers and drafts as their events arrive, each gone
 // once it leaves or stays still for `STILL_MS` (a closed tab sends no leave). Callers are told apart by their fields

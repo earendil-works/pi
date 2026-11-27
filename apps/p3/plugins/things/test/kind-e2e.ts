@@ -1,6 +1,7 @@
 // A kind's end-to-end tests' server: p3's real server (`testServer`) on a copy of the built-in plugins, so a test can
 // edit a kind's facet and apply it as `p3 apply` does; people put into Pi, things of a kind made there, ticks given or
-// withheld, clients signed in as those people, and `reload`, a real edit of a kind's server facet and its rollout.
+// withheld, clients signed in as those people, and `reload`, a real edit of a kind's facet (its server facet by default)
+// and its rollout.
 
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,10 +29,12 @@ export type KindE2E = {
 	/** A client signed in as `principal`. */
 	client(principal: P3Principal): Promise<Host<P3Principal>>;
 	/**
-	 * Edits the server facet of the plugin in folder `folder` (named `plugin`) so its built script changes, and applies
-	 * it: what the apply did. A comment alone would build the same script, which reloads nothing.
+	 * Edits a facet of the plugin in folder `folder` (named `plugin`), its server facet unless `facet` names another
+	 * (`web.tsx`), so its built script changes, and applies it: what the apply did. A comment alone would build the same
+	 * script, which reloads nothing.
 	 */
-	reload(folder: string, plugin: string): Promise<RolloutResult>;
+	reload(folder: string, plugin: string, facet?: string): Promise<RolloutResult>;
+
 	close(): Promise<void>;
 };
 
@@ -65,8 +68,8 @@ export async function kindE2E(context: Context): Promise<KindE2E> {
 				context,
 			),
 		client: (principal) => t.client(context, principal),
-		reload: async (folder, plugin) => {
-			const file = join(root, folder, "server.ts");
+		reload: async (folder, plugin, facet = "server.ts") => {
+			const file = join(root, folder, facet);
 			// A new export each time: a second one of the same name would not build.
 			edits += 1;
 			await writeFile(file, `${await readFile(file, "utf8")}\nexport const RELOADED_${edits} = ${edits};\n`);

@@ -7,18 +7,30 @@
 // same in every workspace it is linked in), authors as the admission says (`Caller`), removing one's own shapes and,
 // with Moderate, anyone's and clearing, refusals with their messages; each caller's pages (500, `more`, kept across a
 // reload), a page read now; motion as events, per workspace, who moves as a tagged union; the counted cost of a shape;
-// and a released board collected.
+// a released board collected, its motion relay with its last holder; and a grant stored at ticks version 1 read
+// without the Export flag that version 2 took out (decision 125).
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, type P3Principal, type Reference, until } from "@earendil-works/p3/v1";
+import {
+	BACKGROUND_CONTEXT as context,
+	defineFacet,
+	method,
+	type P3Principal,
+	type Reference,
+	until,
+} from "@earendil-works/p3/v1";
 import { collected, eventually, within } from "../../../test/until.ts";
-import { ThingHooks } from "../../things/contract.server.ts";
+import { ThingHooks, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Party, type Source } from "../../things/contract.ts";
-import { ThingKinds } from "../../things/kind.ts";
+import { defineThing, ThingKinds } from "../../things/kind.ts";
+import { serveThing } from "../../things/serve.ts";
 import { BY, type KindServer, kindServer, refused } from "../../things/test/kind-server.ts";
-import { type Canvas, CanvasKind, type Motion, type Shape } from "../kind.ts";
+import { world } from "../../things/test/world.ts";
+import { Canvas, CanvasKind, type Motion, type Shape } from "../kind.ts";
+import { messages } from "../messages.ts";
+import { BoardMotion } from "../motion.ts";
 import canvasServer from "../server.ts";
 import { CanvasStore } from "../store.ts";
 
@@ -120,10 +132,10 @@ describe("who may do what on a board", () => {
 		const s1 = await n.workspace("s1");
 		const ann = await n.person("Ann", s1);
 		const board = await n.thingIn(s1);
-		assert.deepEqual(await n.granted(ann, s1, board), ["add", "export", "remove"]);
-		assert.deepEqual(await n.granted(AGENT, s1, board), ["add", "export", "remove"]);
+		assert.deepEqual(await n.granted(ann, s1, board), ["add", "remove"]);
+		assert.deepEqual(await n.granted(AGENT, s1, board), ["add", "remove"]);
 		await n.tick(s1, board, { kind: "person", person: ann.id }, "moderate", true);
-		assert.deepEqual(await n.granted(ann, s1, board), ["add", "clear", "export", "remove", "removeAny"]);
+		assert.deepEqual(await n.granted(ann, s1, board), ["add", "clear", "remove", "removeAny"]);
 		await refused(n.tick(s1, board, { kind: "agents" }, "moderate", true), "invalid");
 		await refused(n.granted({ kind: "worker", session: "s2" }, s1, board));
 		const dana = await n.things.createPerson({ name: "Dana", madeBy: BY }, context);
@@ -134,9 +146,8 @@ describe("who may do what on a board", () => {
 		const bo = await n.person("Bo");
 		const party: Party = { kind: "person", person: bo.id };
 		const alone: readonly (readonly [string, readonly string[]])[] = [
-			["draw", ["add", "export", "remove"]],
+			["draw", ["add", "remove"]],
 			["moderate", ["clear", "removeAny"]],
-			["export", ["export"]],
 			["removeAny", ["removeAny"]],
 		];
 		for (const [tick, members] of alone) {
@@ -180,7 +191,6 @@ describe("who may do what on a board", () => {
 		assert.deepEqual(await n.granted({ kind: "person", id, name: "Olga" }, n.pi, board), [
 			"add",
 			"clear",
-			"export",
 			"remove",
 			"removeAny",
 		]);
@@ -445,9 +455,74 @@ describe("a released board", () => {
 		const ann = await n.person("Ann");
 		const board = await n.thingIn(n.pi);
 		const refs: WeakRef<object>[] = [];
+		const relays = n.host.references(BoardMotion);
 		await n.holding(ann, n.pi, board, async (canvas: Reference<typeof Canvas>) => {
 			refs.push(new WeakRef(canvas), new WeakRef(canvas.shapes), new WeakRef(canvas.motion));
+			assert.equal(relays.value.length, 1, "the board's motion relay, held by the caller's object");
 		});
 		assert.ok(await collected(refs));
+		// The relay goes with its last holder.
+		await until(relays, (held) => held.length === 0, within("the relay released", context));
 	});
 });
+
+describe("a grant stored before Export went (ticks version 1)", () => {
+	it("reads without Export: its other ticks as they were", async () => {
+		const w = await world(context, [{ name: PLUGIN, facet: olderCanvas }]);
+		try {
+			const things = await w.host.get(ThingsStore, {}, context);
+			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+			const bo = await things.createPerson({ name: "Bo", madeBy: BY }, context);
+			const party = { kind: "person", person: bo } as const;
+			await things.putParty({ workspace: pi, party, source: BY }, context);
+			const board = await things.create({ kind: CanvasKind.name, name: "", workspace: pi, by: BY }, context);
+			await things.setGrants(
+				{ source: BY, grants: [{ workspace: pi, thing: board, party, tick: "export", gives: true }] },
+				context,
+			);
+			/** What Bo is granted on the board, held through `Contract` (the kind's version then). */
+			const granted = (Contract: typeof Canvas | typeof OlderKind.contract) =>
+				w.host.root(
+					async (ctx) => {
+						const ref = await ctx.get(Contract, { workspace: pi, thing: board }, { readyTimeout: 500 });
+						return [...ref.granted].sort();
+					},
+					context,
+					{ principal: { kind: "person", id: bo, name: "Bo" } },
+				);
+			assert.deepEqual(await granted(OlderKind.contract), ["add", "export", "remove"]);
+			await w.reload(PLUGIN, context, canvasServer);
+			await eventually(
+				() => granted(Canvas).catch(() => []),
+				(ticks) => ticks.join() === "add,remove",
+				2000,
+			);
+		} finally {
+			await w.close(context);
+		}
+	});
+});
+
+/** The canvas plugin's name. */
+const PLUGIN = "@earendil-works/p3-canvas";
+
+/** The canvas kind as ticks version 1 declared its ticks (Draw giving the flag Export), with stand-in members. */
+const OlderKind = defineThing(CanvasKind.name, {
+	version: 2,
+	makers: "anyone",
+	methods: { add: method(), remove: method(), clear: method() },
+	ticks: {
+		draw: { label: messages.message("tickDraw"), gives: ["add", "remove", "export"] },
+		moderate: { label: messages.message("tickModerate"), for: "people", gives: ["clear", "removeAny"] },
+		export: { label: messages.message("tickDraw") },
+		removeAny: { label: messages.message("tickRemoveAny"), for: "people" },
+	},
+	defaultGrants: { everyone: ["draw"], agents: ["draw"] },
+});
+
+/** The canvas plugin's server facet as a stand-in of ticks version 1: the kind, and members that do nothing. */
+const olderCanvas = defineFacet((host) =>
+	serveThing(host, OlderKind, {
+		implement: () => ({ add: async () => null, remove: async () => null, clear: async () => null }),
+	}),
+);

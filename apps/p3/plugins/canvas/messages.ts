@@ -1,6 +1,7 @@
-// The canvas plugin's texts people see (decision 65): its ticks' labels (flag ticks among them), as the things plugin's
-// Settings view shows them, its title in the add-thing picker, the board view's texts and the refusals a person can
-// cause. Imported by the kind, the store and every facet that renders.
+// The canvas plugin's texts people see (decision 65): its ticks' labels (a flag tick among them), as the things
+// plugin's Settings view shows them, its title (the plugin's and the kind's: `canvas`; `untitled` names a board without
+// a name), the board view's texts and the refusals a person can cause. Imported by the kind, the store and every facet
+// that renders.
 
 import { defineMessages } from "@earendil-works/p3/v1";
 
@@ -9,9 +10,7 @@ export const messages = defineMessages("canvas", {
 	en: {
 		tickDraw: "Draw",
 		tickModerate: "Moderate",
-		tickExport: "Export as an image",
 		tickRemoveAny: "Remove anyone's shapes",
-		plugin: "Canvas",
 		viewBoard: "Board",
 		untitled: "Canvas",
 		canvas: "Canvas",

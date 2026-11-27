@@ -20,7 +20,7 @@ export default defineFacet((_host, self) => {
 			View: BoardView,
 		},
 	]);
-	self.contribute(ThingParts, [{ kind: CanvasKind.name, title: messages.message("untitled"), Icon: EditIcon }]);
-	self.contribute(PluginTitles, { title: messages.message("plugin"), Icon: EditIcon });
+	self.contribute(ThingParts, [{ kind: CanvasKind.name, title: messages.message("canvas"), Icon: EditIcon }]);
+	self.contribute(PluginTitles, { title: messages.message("canvas"), Icon: EditIcon });
 	self.contribute(Translations, messages.translations);
 });

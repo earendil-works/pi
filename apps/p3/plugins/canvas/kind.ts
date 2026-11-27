@@ -1,9 +1,7 @@
-// The canvas kind (`canvas.board`): shared drawing boards. Anyone, people and agents, may make one; it may be linked in
-// any number of workspaces, its shapes, keyed by the thing's id, the same in each. Looking (the shapes, everyone's
-// pointers, one's own pointer shown) is for everyone let in. Draw adds shapes, removes one's own and gives the flag
-// Export; Moderate, for people, clears the board and gives the flag Remove anyone's. Committed shapes are rows on the
-// server; pointers and the shapes people are drawing travel as events, lossy and never stored. A new link starts with
-// Draw for everyone there and the agents; a Read share's guests look.
+// The canvas kind (`canvas.board`): shared drawing boards, with the shapes, pointers and who moves them. Anyone, people
+// and agents, may make one; it may be linked in any number of workspaces, its shapes, keyed by the thing's id, the
+// same in each. Committed shapes are rows on the server (at most `MAX_SHAPES` a board); pointers and the shapes people
+// are drawing travel as events, lossy and never stored. Who may do what: the two ticks on `CanvasKind`.
 
 import { arr, bool, lit, method, nul, num, obj, opt, type Static, str, union } from "@earendil-works/p3/v1";
 import { Caller } from "../things/contract.ts";
@@ -23,7 +21,7 @@ export const MAX_POINTS = 2000;
 const Coordinate = num({ min: -BOARD_WIDTH, max: 2 * BOARD_WIDTH });
 
 /** A colour: `#rrggbb`. */
-export const Color = str({ pattern: "^#[0-9a-fA-F]{6}$" });
+const Color = str({ pattern: "^#[0-9a-fA-F]{6}$" });
 
 /**
  * A shape on the board, tagged by `kind`:
@@ -71,7 +69,7 @@ export const PlacedShape = obj({ id: str(), author: Caller, shape: Shape });
 export type PlacedShape = Static<typeof PlacedShape>;
 
 /** A board's shapes loaded so far, oldest first, and whether more follow. */
-export const ShapesPage = obj({ rows: arr(PlacedShape), moreAfter: bool() });
+const ShapesPage = obj({ rows: arr(PlacedShape), moreAfter: bool() });
 
 /** Where a caller's pointer is on the board, and the shape they are drawing there (`null`: none). */
 export const Pointer = obj({ x: Coordinate, y: Coordinate, draft: union([Shape, nul()]) });
@@ -97,7 +95,7 @@ export type Mover = Static<typeof Mover>;
  * far), or one that left.
  */
 export const Motion = union([
-	obj({ kind: lit("point"), who: Mover, x: num(), y: num(), draft: union([Shape, nul()]) }),
+	obj({ kind: lit("point"), who: Mover, x: Coordinate, y: Coordinate, draft: union([Shape, nul()]) }),
 	obj({ kind: lit("leave"), who: Caller }),
 ]);
 
@@ -110,10 +108,11 @@ export const CANVAS_DRAWS = ["add", "remove"] as const;
 /**
  * A board (`canvas.board`): its name (its thing's, "" while it has none), its shapes loaded so far, oldest first, with
  * `more` for the next page, a page read now, and everyone's motion where it is held as events; `point` and `leave`
- * show the caller's own pointer to the others there. All of these are for everyone let in. Draw gives `add`, `remove`
- * (one's own shapes) and the flag `export` (exporting the board as an image, the page's); Moderate, for people, gives
- * `clear` and the flag `removeAny` (anyone's shapes). A new link starts with Draw for everyone there and the agents;
- * a Read share's guests look, their pointer shown without a draft.
+ * show the caller's own pointer to the others there. All of these are for everyone let in. Draw gives `add` and
+ * `remove` (one's own shapes); Moderate, for people, gives `clear` and the flag `removeAny` (anyone's shapes). A new
+ * link starts with Draw for everyone there and the agents; a Read share's guests look, their pointer shown without a
+ * draft. Ticks version 2: the flag tick Export (version 1, never read: there is no export yet) is gone, its stored
+ * grants read as nothing (decision 125); it comes back with an export.
  */
 export const CanvasKind = defineThing("canvas.board", {
 	version: 3,
@@ -142,13 +141,14 @@ export const CanvasKind = defineThing("canvas.board", {
 	ticks: {
 		// Members no tick gives (`name`, `shapes`, `more`, `page`, `point`, `leave`, `motion`) are there for everyone let
 		// in: looking, one's pointer shown.
-		draw: { label: messages.message("tickDraw"), gives: [...CANVAS_DRAWS, "export"] },
+		draw: { label: messages.message("tickDraw"), gives: CANVAS_DRAWS },
 		moderate: { label: messages.message("tickModerate"), for: "people", gives: ["clear", "removeAny"] },
-		// Flag ticks (decision 97): rights that are no member, given by the ticks above or on their own.
-		export: { label: messages.message("tickExport") },
+		// A flag tick (decision 97): a right that is no member, given by Moderate or on its own.
 		removeAny: { label: messages.message("tickRemoveAny"), for: "people" },
 	},
 	defaultGrants: { everyone: ["draw"], agents: ["draw"], guests: [] },
+	ticksVersion: 2,
+	migrateTicks: (ticks) => ticks.filter((tick) => tick !== "export"),
 });
 
 /** One board held in a workspace: `CanvasKind`'s contract. */

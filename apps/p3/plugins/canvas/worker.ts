@@ -6,7 +6,7 @@
 // (decision 120): a Draw withheld meanwhile refuses the draw, and a read is a page read now (`page`), so nothing stays
 // loaded after it. Reads and draws answer JSON.
 
-import { arr, type Context, defineFacet, forbidden, invalid, obj, opt, str } from "@earendil-works/p3/v1";
+import { arr, defineFacet, forbidden, invalid, obj, opt, str } from "@earendil-works/p3/v1";
 import { defineTool } from "@earendil-works/p3/v1/worker";
 import {
 	type HarnessExtension,
@@ -84,11 +84,12 @@ function drawTool(boards: readonly Board[]) {
 			`text, each with a colour \`#rrggbb\`. Answers JSON: the new shapes' \`ids\`, in order. A canvas holds ` +
 			`${MAX_SHAPES} shapes at most. ${UNITS}`,
 		parameters: obj({ canvas: str(), shapes: arr(Shape, { min: 1, max: 100 }) }),
-		execute: async ({ canvas: id, shapes }, _api, context: Context) => {
+		execute: async ({ canvas: id, shapes }, _api, context) => {
 			const board = boardOf(boards, id);
 			// The held reference's `add` is there while Draw is granted: withheld since, it is gone.
 			const add = board.ref.add;
 			if (add === undefined) throw forbidden(`canvas: you may not draw on ${described(board)}`);
+
 			const ids = await add({ shapes }, context);
 			return { output: [{ type: "text", text: JSON.stringify({ ids }) }] };
 		},
@@ -103,7 +104,8 @@ function boardOf(boards: readonly Board[], id: string): Board {
 	return found;
 }
 
-/** A board as an error names it: its name and id. */
+/** A board as an error names it: its name (unnamed: says so) and id. */
 function described({ thing, ref }: Board): string {
-	return `the canvas "${ref.name.value}" (${thing})`;
+	const name = ref.name.value;
+	return name === "" ? `an unnamed canvas (${thing})` : `the canvas "${name}" (${thing})`;
 }

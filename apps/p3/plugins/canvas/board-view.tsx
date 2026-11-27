@@ -1,26 +1,28 @@
 // The canvas kind's view of one board (`Views`): its name, the shapes, live, on a board of fixed units that scales to
 // the screen, with everyone else's pointer and name and what they are drawing as they draw it. A drawer (granted Draw)
-// draws with the pen (mouse, pen or finger), rectangles and text in a few colours (`toolbar.tsx`, `drawing.ts`) and
-// undoes their own last shape; with Moderate also clears the board; a viewer only looks, their pointer shown. The view
-// follows the admission live: Draw taken back turns it into the viewer's at once, on the same hold.
+// draws with the pen (mouse, pen or finger), rectangles and text in a few colours (`toolbar.tsx`, `drawing.tsx`) and
+// undoes their own last shape; Moderate clears the board, with or without Draw; a viewer only looks, their pointer
+// shown. What a drawer picked (the tool, the colour, a text not placed yet) is page state per person and board: a
+// reload of the plugin keeps it. The view follows the admission live: Draw taken back turns it into the viewer's (or
+// the moderator's) at once, on the same hold.
 
 import {
 	BACKGROUND_CONTEXT,
 	type Context,
-	Me,
 	type MessagesOf,
 	type Reference,
 	type Translator,
+	type With,
 	withGranted,
 } from "@earendil-works/p3/v1";
-import { useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
-import { useEffect, useState } from "react";
-import type { Caller } from "../things/contract.ts";
+import { useHold, useLive, useMessages, usePageState, useRefState, useWatch } from "@earendil-works/p3/v1/web";
+import { memo, useEffect, useState } from "react";
+import { type Caller, Me } from "../things/contract.ts";
 // Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
 // its page started with, whose `/v1/web` may not have a newer contract yet.
 import { type ThingViewProps, useErrorText } from "../things/contract.web.tsx";
 import styles from "./board-view.module.css";
-import { type Drawer, type Tool, useDrawing } from "./drawing.ts";
+import { type Drawer, type Picked, useDrawing } from "./drawing.tsx";
 import {
 	BOARD_HEIGHT,
 	BOARD_WIDTH,
@@ -32,7 +34,7 @@ import {
 	sameCaller,
 } from "./kind.ts";
 import { messages } from "./messages.ts";
-import { useOthers } from "./motion-hooks.ts";
+import { useOthers } from "./motion-hooks.tsx";
 import type { Other } from "./pointers.ts";
 import { COLORS, Toolbar } from "./toolbar.tsx";
 
@@ -44,6 +46,7 @@ export function BoardView(props: ThingViewProps) {
 	const ref = useHold(Canvas, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const drawer = withGranted(live, ...CANVAS_DRAWS);
+	const clearer = withGranted(live, "clear");
 	const state = useRefState(ref);
 	const shapes = useWatch(live?.shapes);
 	const name = useWatch(live?.name);
@@ -72,63 +75,90 @@ export function BoardView(props: ThingViewProps) {
 		<section
 			aria-label={t("canvas")}
 			className={styles.board}
-			data-canvas={live === undefined ? "loading" : drawer === undefined ? "viewer" : "drawer"}
+			data-canvas={
+				live === undefined
+					? "loading"
+					: drawer !== undefined
+						? "drawer"
+						: clearer !== undefined
+							? "moderator"
+							: "viewer"
+			}
 		>
 			<p className={styles.title} data-canvas-name="">
 				{name || t("untitled")}
 				{live === undefined ? (
 					<span className={styles.hint}>{t("loading")}</span>
-				) : drawer === undefined ? (
+				) : drawer === undefined && clearer === undefined ? (
 					<span className={styles.hint}>{t("viewOnly")}</span>
 				) : null}
 			</p>
-			<Board drawer={drawer} live={live} me={me} others={others} run={run} shapes={shapes?.rows ?? []} />
-			{failure === undefined ? null : <p className={styles.error}>{errorText(failure.error)}</p>}
+			<Board
+				clearer={clearer}
+				drawer={drawer}
+				live={live}
+				me={me}
+				others={others}
+				run={run}
+				shapes={shapes?.rows ?? []}
+				thing={props.thing}
+			/>
+			{failure === undefined ? null : (
+				<p className={styles.error} data-canvas-error="">
+					{errorText(failure.error)}
+				</p>
+			)}
 		</section>
 	);
 }
 
 /** The viewer as a caller, from `Me` (none while it is loading). */
-function callerOf(
-	me:
-		| { readonly kind: "person"; readonly id: string }
-		| { readonly kind: "agent"; readonly session: string }
-		| undefined,
-): Caller | undefined {
+function callerOf(me: Reference<typeof Me>["me"]["value"] | undefined): Caller | undefined {
 	if (me === undefined) return undefined;
 	return me.kind === "person" ? { kind: "person", person: me.id } : { kind: "agent", session: me.session };
 }
 
-/** The board itself: the toolbar for a drawer, the shapes, the drafts and the pointers. */
+/** What a drawer picks before they picked anything. */
+const FIRST_PICK: Picked = { tool: "pen", color: COLORS[0].value, text: "" };
+
+/** The board itself: the toolbar for a drawer or a moderator, the shapes, the drafts and the pointers. */
 function Board(props: {
+	readonly thing: string;
 	readonly live: Reference<typeof Canvas> | undefined;
 	readonly drawer: Drawer | undefined;
+	readonly clearer: With<Reference<typeof Canvas>, "clear"> | undefined;
 	readonly shapes: readonly PlacedShape[];
 	readonly others: readonly Other[];
 	readonly me: Caller | undefined;
 	readonly run: (call: (context: Context) => Promise<unknown>) => void;
 }) {
-	const { drawer, me } = props;
+	const { drawer, clearer, me } = props;
 	const { t } = useMessages(messages);
-	const [tool, setTool] = useState<Tool>("pen");
-	const [color, setColor] = useState<string>(COLORS[0].value);
-	const [text, setText] = useState("");
-	const drawing = useDrawing({ ...props, tool, color, text });
+	// Per person (one page may sign in as another) and board; a page state key is a text by Chord's API.
+	const [picked, setPicked] = usePageState<Picked>(
+		`canvas.picked.${me?.kind === "person" ? me.person : ""}.${props.thing}`,
+		FIRST_PICK,
+	);
+	const drawing = useDrawing({ ...props, picked });
 	const mine = me === undefined ? undefined : props.shapes.findLast((shape) => sameCaller(shape.author, me));
-	const clear = drawer?.clear;
 	return (
 		<>
-			{drawer === undefined ? null : (
+			{drawer === undefined && clearer === undefined ? null : (
 				<Toolbar
-					color={color}
 					empty={props.shapes.length === 0}
-					onClear={clear === undefined ? undefined : () => props.run((ctx) => clear(ctx))}
-					onColor={setColor}
-					onText={setText}
-					onTool={setTool}
-					onUndo={mine === undefined ? undefined : () => props.run((ctx) => drawer.remove({ id: mine.id }, ctx))}
-					text={text}
-					tool={tool}
+					onClear={clearer === undefined ? undefined : () => props.run((ctx) => clearer.clear(ctx))}
+					picking={
+						drawer === undefined
+							? undefined
+							: {
+									picked,
+									onPick: setPicked,
+									onUndo:
+										mine === undefined
+											? undefined
+											: () => props.run((ctx) => drawer.remove({ id: mine.id }, ctx)),
+								}
+					}
 				/>
 			)}
 			<div className={styles.paper}>
@@ -136,7 +166,7 @@ function Board(props: {
 					aria-label={t("drawing")}
 					className={drawer === undefined ? styles.surface : `${styles.surface} ${styles.drawing}`}
 					data-canvas-surface=""
-					onPointerCancel={drawing.up}
+					onPointerCancel={drawing.cancel}
 					onPointerDown={drawing.down}
 					onPointerLeave={drawing.leave}
 					onPointerMove={drawing.move}
@@ -144,9 +174,7 @@ function Board(props: {
 					role="img"
 					viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`}
 				>
-					{props.shapes.map((placed) => (
-						<ShapeSvg data-shape={placed.id} key={placed.id} shape={placed.shape} />
-					))}
+					<Committed shapes={props.shapes} />
 					{drawing.sending.map((shape, index) => (
 						// Shapes in flight may have no id yet; their order is stable while they are.
 						// biome-ignore lint/suspicious/noArrayIndexKey: see above
@@ -183,6 +211,14 @@ function moverName(who: Mover, t: Texts): string {
 			return t("byPi");
 	}
 }
+
+/**
+ * The board's committed shapes, drawn again only when they change: the others' pointers render the board about 25
+ * times a second each, and the whole board is loaded.
+ */
+const Committed = memo(function Committed(props: { readonly shapes: readonly PlacedShape[] }) {
+	return props.shapes.map((placed) => <ShapeSvg data-shape={placed.id} key={placed.id} shape={placed.shape} />);
+});
 
 /** How wide a rectangle's outline is drawn, in board units (a rectangle has no width of its own). */
 const OUTLINE = 4;
