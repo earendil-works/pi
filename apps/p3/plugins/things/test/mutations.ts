@@ -17,6 +17,207 @@ import { join, resolve } from "node:path";
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- workspaces, round 2 ----
+	{
+		name: "a maker put in tells no held list",
+		file: "store.ts",
+		find: "\t\ttouched.members.add(partyKey(party));\n\t\ttx.put(this.#t.workspaceMembers, {",
+		put: "\t\ttx.put(this.#t.workspaceMembers, {",
+	},
+	{
+		name: "No access leaves a person present",
+		file: "rules.ts",
+		find: "\tfor (const party of out) here.delete(party);\n",
+		put: "",
+	},
+	{
+		name: "a workspace may be made under a workspace of a kind not registered",
+		file: "rules.ts",
+		find: 'if (kinds.sortOf(kind) !== "no" && kinds.sortOf(workspace) !== "plain") return false;',
+		put: 'if (kinds.sortOf(kind) !== "no" && kinds.sortOf(workspace) === "leaf") return false;',
+	},
+	{
+		name: "WhoMay's aggregate Make cell ignores the ceiling",
+		file: "lists.ts",
+		find: "if (value === undefined || !makerMay(value, maker) || !mayHoldHere(look, workspace, kinds, made)) return false;",
+		put: "",
+	},
+	{
+		name: "an unknown kind's Make tick is refused",
+		file: "store.ts",
+		find: "forWhom === undefined && !this.#unknownMake(info, own, tick)) {",
+		put: "forWhom === undefined) {",
+	},
+	{
+		name: "No access for everyone is accepted",
+		file: "store.ts",
+		find: 'if (own && tick === OPEN && gives === false && (party.kind === "everyone" || party.kind === "agents")) {',
+		put: "if (false) {",
+	},
+	{
+		name: "a presence list is asked after any write",
+		file: "access.ts",
+		find: 'const workspaces = view.probe.reads === "presence" ? touched.presence : touched.workspaces;',
+		put: "const workspaces = touched.workspaces;",
+	},
+	// ---- workspaces, round 1 ----
+	{
+		name: "setTick leaves a migrated row of another source",
+		file: "store.ts",
+		find: "for (const sourceKey of sources) await this.#upgrade(",
+		put: "for (const sourceKey of sources.size > 99 ? sources : []) await this.#upgrade(",
+	},
+	{
+		name: "a child under a leaf of an unregistered kind",
+		file: "store.ts",
+		find: 'if (aboveKind === undefined || this.#kinds().get(aboveKind)?.value.workspace !== "plain") {',
+		put: 'if (aboveKind !== undefined && this.#kinds().get(aboveKind)?.value.workspace === "leaf") {',
+	},
+	{
+		name: "a failing list restarts the whole index",
+		file: "access.ts",
+		find: '\t\t\t\tthis.#probes.delete(view);\n\t\t\t\treportError("things: a list over the access index failed; it attaches again", error, this.#context);',
+		put: '\t\t\t\tthis.#recover(error);\n\t\t\t\treturn;\n\t\t\t\treportError("things: a list over the access index failed; it attaches again", error, this.#context);',
+	},
+	{
+		name: "the hook's people shown beats the maker's private",
+		file: "store.ts",
+		find: "showsPeople: showsPeople !== false && answer?.showsPeople !== false,",
+		put: "showsPeople: answer?.showsPeople ?? showsPeople ?? true,",
+	},
+	{
+		name: "No access on a workspace leaves the person in",
+		file: "rules.ts",
+		find: '\thides.push(...out.filter((party) => party.startsWith("person/")));\n',
+		put: "",
+	},
+	{
+		name: "a rename asks every list again",
+		file: "access.ts",
+		find: "for (const id of touched.things) if (view.things.has(id)) return true;",
+		put: "if (touched.things.size > 0) return true;",
+	},
+	{
+		name: "WhoMay's Make cell reads only the party's own row",
+		file: "lists.ts",
+		find: 'if (made !== "*") return makes.includes(made);',
+		put: 'if (made !== "*") return given.ticks.get(key)?.has(tick) === true;',
+	},
+	// ---- workspaces (ERNDL-1143) ----
+	{
+		name: "a workspace's own thing comes down to the workspaces below",
+		file: "rules.ts",
+		find: "\tconst out = takenOut(own);\n\treturn {",
+		put: "\tconst out = takenOut(own);\n\tif (above.own !== undefined) return { things: new Map([...thingsHere(above.things, own, kinds), [above.own.id, above.own]]), present: partiesHere(above.present, own, out), hidden: hiddenHere(above.hidden, own, out), own: ownHere(own, kinds) };\n\treturn {",
+	},
+	{
+		name: "a Make tick's kind's makers are no ceiling",
+		file: "rules.ts",
+		find: '\treturn makers === "anyone" || (makers === "people" && maker === "person");',
+		put: "\treturn makers !== undefined;",
+	},
+	{
+		name: "a leaf may hold workspaces",
+		file: "rules.ts",
+		find: '\tif (kinds.sortOf(kind) !== "no" && kinds.sortOf(workspace) !== "plain") return false;\n',
+		put: "",
+	},
+	{
+		name: "a Make tick withheld from a person leaves MAKE_ANY's kinds",
+		file: "rules.ts",
+		find: "\t\tif (kindOfMakeTick(tick) !== undefined) for (const kind of madeWith(tick, kinds)) makes.delete(kind);\n",
+		put: "",
+	},
+	{
+		name: "stacking nearest drops nothing",
+		file: "rules.ts",
+		find: "\tif (nearest.size === 0) return;",
+		put: "\treturn;",
+	},
+	{
+		name: "a removed ancestor's subtree still gives",
+		file: "rules.ts",
+		find: "\tif (above === GONE) return GONE;\n",
+		put: "",
+	},
+	{
+		name: "depth is always 0",
+		file: "access.ts",
+		find: "\t\t\tconst depth = depths.get(given.at) ?? 0;\n\t\t\tput(",
+		put: "\t\t\tconst depth = 0;\n\t\t\tput(",
+	},
+	{
+		name: "the maker of a workspace is not put in (115)",
+		file: "store.ts",
+		find: "\t\t\tthis.#member(tx, touched, thing, maker, by);\n",
+		put: "",
+	},
+	{
+		name: "a leaf's agent is not put in",
+		file: "store.ts",
+		find: '\t\tif (item.value.workspace === "leaf") {',
+		put: '\t\tif (item.value.workspace === "nothing") {',
+	},
+	{
+		name: "a removal clears no subtree",
+		file: "removal.ts",
+		find: "\t\t\t\tif (below === undefined) break;",
+		put: "\t\t\t\tbreak;",
+	},
+	{
+		name: "workspaceGone is never called",
+		file: "removal.ts",
+		find: "\t\t\t\t\tawait value.workspaceGone?.(workspace, ctx);",
+		put: "\t\t\t\t\tvoid value;",
+	},
+	{
+		name: "linking needs no Link where the thing is linked now (R9)",
+		file: "workspace-object.ts",
+		find: '\tif (principal.kind === "server") return;\n\tconst caller',
+		put: "\treturn;\n\tconst caller",
+	},
+	{
+		name: "hide accepts a thing linked here",
+		file: "workspace-object.ts",
+		find: "if ((await linkedIn(store, hidden, ctx)).includes(workspace)) {",
+		put: "if ((await linkedIn(store, hidden, ctx)).includes(workspace) && false) {",
+	},
+	{
+		name: "make does not check makes",
+		file: "workspace-object.ts",
+		find: "\t\t\t\t\tif (!admitted.makes.includes(kind)) {",
+		put: "\t\t\t\t\tif (false) {",
+	},
+	{
+		name: "setTick keeps other sources' rows of the cell",
+		file: "store.ts",
+		find: "\t\ttx.deleteWhere(this.#t.grants, (g) =>\n\t\t\tand(eq(g.workspace, workspace), eq(g.thing, thing), eq(g.partyKey, key), eq(g.tick, tick)),\n\t\t);",
+		put: "\t\ttx.deleteWhere(this.#t.grants, (g) =>\n\t\t\tand(eq(g.workspace, workspace), eq(g.thing, thing), eq(g.partyKey, key), eq(g.tick, tick), eq(g.sourceKey, sourceKey(source))),\n\t\t);",
+	},
+	{
+		name: "the create hook's view is not written",
+		file: "store.ts",
+		find: '\t\t\t\t\t\t\tview: answer?.view ?? "",\n\t\t\t\t\t\t\t...(defaults',
+		put: '\t\t\t\t\t\t\tview: "",\n\t\t\t\t\t\t\t...(defaults',
+	},
+	{
+		name: "a list's hidden things are shown to everyone",
+		file: "lists.ts",
+		find: '\t\t\tconst hides = look.answer(workspace, workspace, caller)?.ticks.includes("hide") === true;',
+		put: "\t\t\tconst hides = true;",
+	},
+	{
+		name: "roots include a workspace whose parent the caller is present in",
+		file: "lists.ts",
+		find: "\t\t\t\treturn answer !== undefined && !(answer.above ?? []).includes(parent);",
+		put: "\t\t\t\treturn answer !== undefined;",
+	},
+	{
+		name: "an origin names a workspace the caller is not present in (96)",
+		file: "lists.ts",
+		find: '\tif (!above.includes(at)) return { kind: "aboveUnnamed" };\n',
+		put: "",
+	},
 	// ---- the rules ----
 	{
 		name: "a thing's switch is ignored when the workspace shows things from above",
@@ -29,8 +230,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a link does not replace what came from above",
 		file: "rules.ts",
-		find: "for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));",
-		put: "for (const [thing, kind] of own.links) if (!here.has(thing)) here.set(thing, linkedHere(kind, giving.get(thing) ?? [], kinds));",
+		find: "for (const [thing, kind] of own.links) here.set(thing, linkedHere(kind, own.id, giving.get(thing) ?? [], kinds));",
+		put: "for (const [thing, kind] of own.links) if (!here.has(thing)) here.set(thing, linkedHere(kind, own.id, giving.get(thing) ?? [], kinds));",
 	},
 	{
 		name: "a giving grant below the link counts",
@@ -77,7 +278,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a tick for the other audience, or one the kind lacks, counts",
 		file: "rules.ts",
-		find: "if (!open && !isFor(kinds.tickFor(kind, grant.tick), grant.audience)) continue;",
+		find: "if (!open && !isFor(forWhom, grant.audience)) continue;",
 		put: "",
 	},
 	{
@@ -89,8 +290,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a person's own grant replaces what groups and everyone give (precedence, gone with item 106)",
 		file: "rules.ts",
-		find: "for (const party of counted.parties) {",
-		put: "for (const party of counted.named !== undefined && given.ticks.has(counted.named) ? [counted.named] : counted.parties) {",
+		find: "let union: Set<string> | undefined;\n\tfor (const party of counted.parties) {",
+		put: "let union: Set<string> | undefined;\n\tfor (const party of counted.named !== undefined && given.ticks.has(counted.named) ? [counted.named] : counted.parties) {",
 	},
 	{
 		name: "a tick withheld from a person is withheld from their own entry only (106)",
@@ -125,8 +326,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "`OPEN` withheld from a person keeps them out only by their own entry (113)",
 		file: "rules.ts",
-		find: "if (taken?.has(OPEN) === true) return undefined;",
-		put: "",
+		find: "given.takenFromNamed.get(counted.named);\n\tif (taken?.has(OPEN) === true) return undefined;",
+		put: "given.takenFromNamed.get(counted.named);",
 	},
 	{
 		name: "`OPEN` withheld lets the party in still (113)",
@@ -143,15 +344,15 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a row of a tick that counts for nothing lets its party in (113)",
 		file: "rules.ts",
-		find: "if (!open && !isFor(kinds.tickFor(kind, grant.tick), grant.audience)) continue;",
-		put: "if (!open && !isFor(kinds.tickFor(kind, grant.tick), grant.audience)) {\n\t\t\tticks.set(grant.party, ticks.get(grant.party) ?? new Set());\n\t\t\tcontinue;\n\t\t}",
+		find: "if (!open && !isFor(forWhom, grant.audience)) continue;",
+		put: "if (!open && !isFor(forWhom, grant.audience)) {\n\t\t\tticks.set(grant.party, ticks.get(grant.party) ?? new Set());\n\t\t\tcontinue;\n\t\t}",
 	},
 	// ---- the index ----
 	{
 		name: "the owner flag is ignored",
 		file: "access.ts",
-		find: 'const owner = caller.kind === "person" && this.#persons.get(caller.person)?.owner === true;',
-		put: "const owner = false;",
+		find: 'return caller.kind === "server" || (caller.kind === "person" && this.#persons.get(caller.person)?.owner === true);',
+		put: 'return caller.kind === "server";',
 	},
 	{
 		name: "a touched workspace's entries are not read again",
@@ -301,25 +502,25 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the maker gets no grant (item 90)",
 		file: "store.ts",
-		find: "const maker = makerParty(by);",
-		put: "const maker = undefined as Party | undefined;",
+		find: "const maker = makerParty(by);\n\t\tif (maker === undefined) return;",
+		put: "const maker = undefined as Party | undefined;\n\t\tif (maker === undefined) return;",
 	},
 	{
 		name: "a link starts with no default grants",
 		file: "store.ts",
-		find: "if (ticks !== undefined) this.#give(",
-		put: "if (ticks === null) this.#give(",
+		find: "for (const tick of written) {",
+		put: "for (const tick of written.slice(written.length)) {",
 	},
 	{
 		name: "a giving grant is written below a link",
 		file: "store.ts",
-		find: "if (gives === true && link === undefined) {",
+		find: "if (gives === true && link === undefined && !own) {",
 		put: "if (gives === true && link === undefined && false) {",
 	},
 	{
 		name: "a tick is given to whom it is not for",
 		file: "store.ts",
-		find: "if (gives === true && declared !== undefined && !isFor(declared.for, audienceOf(party.kind))) {",
+		find: "if (gives === true && forWhom !== undefined && !isFor(forWhom, audienceOf(party.kind))) {",
 		put: "if (false) {",
 	},
 	{
@@ -349,8 +550,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a reserved tick other than `OPEN` is written (113)",
 		file: "store.ts",
-		find: "if (gives !== undefined && tick !== OPEN && declared === undefined) {",
-		put: 'if (gives !== undefined && !tick.startsWith("@") && declared === undefined) {',
+		find: "if (gives !== undefined && tick !== OPEN && forWhom === undefined && !this.#unknownMake(info, own, tick)) {",
+		put: 'if (gives !== undefined && !tick.startsWith("@") && forWhom === undefined) {',
 	},
 	{
 		name: "a plugin's one thing is made again by every ensure",
@@ -373,8 +574,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the create hook is not told who makes the thing",
 		file: "store.ts",
-		find: "create?.(thing, args.input, args.by, ctx);",
-		put: 'create?.(thing, args.input, { kind: "plugin", plugin: "?" }, ctx);',
+		find: "create?.({ thing, input: args.input, by: args.by, workspace: args.workspace }, ctx)",
+		put: 'create?.({ thing, input: args.input, by: { kind: "plugin", plugin: "?" }, workspace: args.workspace }, ctx)',
 	},
 	{
 		name: "a write of a party's rows leaves their older rows as they are",
@@ -433,14 +634,14 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the start's seed runs before the lifecycle serves",
 		file: "store.ts",
-		find: "await Promise.all([lifecycle.serve(ctx), seed(ctx)]);",
-		put: "await seed(ctx);\n\t\t\tawait lifecycle.serve(ctx);",
+		find: "await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx)]);",
+		put: "await seed(ctx);\n\t\t\tawait Promise.all([lifecycle.serve(ctx), removal.serve(ctx)]);",
 	},
 	{
 		name: "a withheld row of a tick the kind lacks is written",
 		file: "store.ts",
-		find: "if (gives !== undefined && tick !== OPEN && declared === undefined) {",
-		put: "if (gives === true && tick !== OPEN && declared === undefined) {",
+		find: "if (gives !== undefined && tick !== OPEN && forWhom === undefined && !this.#unknownMake(info, own, tick)) {",
+		put: "if (gives === true && tick !== OPEN && forWhom === undefined && !this.#unknownMake(info, own, tick)) {",
 	},
 	// ---- the lifecycle ----
 	{
@@ -547,7 +748,7 @@ const MUTATIONS: readonly Mutation[] = [
 ];
 
 /** The plugin's tests every mutation runs. */
-const TESTS = ["access", "rules", "admission", "store", "kind", "plans", "server", "migration"].map(
+const TESTS = ["access", "rules", "admission", "store", "kind", "plans", "server", "migration", "workspaces"].map(
 	(name) => `plugins/things/test/${name}.test.ts`,
 );
 
@@ -610,12 +811,12 @@ function failing(mutation: Mutation): Promise<string[]> {
 	});
 }
 
-// Every mutation's text first, so a stale one fails at once.
-for (const mutation of MUTATIONS) {
-	const text = readFileSync(join(P3, "plugins", "things", mutation.file), "utf8");
-	if (text.split(mutation.find).length !== 2)
-		throw new Error(`"${mutation.name}": its text is not in ${mutation.file} once`);
-}
+// Every mutation's text first, so a stale one fails at once (all of them named).
+const stale = MUTATIONS.filter(
+	(mutation) => readFileSync(join(P3, "plugins", "things", mutation.file), "utf8").split(mutation.find).length !== 2,
+);
+if (stale.length > 0)
+	throw new Error(stale.map((mutation) => `"${mutation.name}": its text is not in ${mutation.file} once`).join("\n"));
 
 const words = process.argv.slice(2);
 const chosen = MUTATIONS.filter((mutation) => words.length === 0 || words.some((word) => mutation.name.includes(word)));

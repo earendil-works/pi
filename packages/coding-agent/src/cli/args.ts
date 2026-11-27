@@ -55,6 +55,12 @@ export interface Args {
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
 	unknownFlags: Map<string, boolean | string>;
+	/**
+	 * The restriction and resource flags (tools, extensions, skills, prompt templates, themes, system prompts,
+	 * context files, project trust, scoped models) with their values, as typed and in order. pi repeats them in the
+	 * command a terminal resumes it with (OSC 7577).
+	 */
+	resumeFlags: string[];
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
 }
 
@@ -69,16 +75,54 @@ export function normalizeSessionName(value: string): string | undefined {
 	return name.length > 0 ? name : undefined;
 }
 
+// Without these a resumed session would have other tools, resources or instructions than the one that ran, possibly
+// more access. The other flags either live in the session (model, thinking level, name), pick the session, are
+// cosmetic, or are secrets (--api-key) a terminal must not store.
+const RESUME_FLAGS = new Set([
+	"--tools",
+	"-t",
+	"--exclude-tools",
+	"-xt",
+	"--no-tools",
+	"-nt",
+	"--no-builtin-tools",
+	"-nbt",
+	"--extension",
+	"-e",
+	"--no-extensions",
+	"-ne",
+	"--no-mcp",
+	"--skill",
+	"--no-skills",
+	"-ns",
+	"--prompt-template",
+	"--no-prompt-templates",
+	"-np",
+	"--theme",
+	"--no-themes",
+	"--no-context-files",
+	"-nc",
+	"--system-prompt",
+	"--append-system-prompt",
+	"--approve",
+	"-a",
+	"--no-approve",
+	"-na",
+	"--models",
+]);
+
 export function parseArgs(args: string[]): Args {
 	const result: Args = {
 		messages: [],
 		fileArgs: [],
 		unknownFlags: new Map(),
+		resumeFlags: [],
 		diagnostics: [],
 	};
 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
+		const flagStart = i;
 
 		if (arg === "--") {
 			for (const positionalArg of args.slice(i + 1)) {
@@ -265,6 +309,12 @@ export function parseArgs(args: string[]): Args {
 		} else if (!arg.startsWith("-")) {
 			result.messages.push(arg);
 		}
+
+		// As typed, with the value the branch above consumed: a terminal compares the resume command with pi's
+		// command line, so `-t read` must stay `-t read` and `./ext.ts` must stay relative (Rex does).
+		if (RESUME_FLAGS.has(arg)) {
+			result.resumeFlags.push(...args.slice(flagStart, i + 1));
+		}
 	}
 
 	return result;
@@ -310,7 +360,8 @@ ${chalk.bold("Options:")}
   --session <path|id>            Open a session by file path or full/partial ID
   --session-id <id>              Use the current directory's existing session with the ID, creating it otherwise
   --fork <path|id>               Fork a session by file path or full/partial ID into the current directory
-  --session-dir <dir>            Directory for session storage and lookup
+  --session-dir <dir>            Directory for session storage and lookup (overrides ${ENV_SESSION_DIR} and the sessionDir setting)
+  --agent-dir <dir>              Config directory for settings, auth, and resources (overrides ${ENV_AGENT_DIR})
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
@@ -461,7 +512,7 @@ ${chalk.bold("Environment Variables:")}
   AWS_SECRET_ACCESS_KEY            - AWS secret key for Amazon Bedrock
   AWS_BEARER_TOKEN_BEDROCK         - Bedrock API key (bearer token)
   AWS_REGION                       - AWS region for Amazon Bedrock (e.g., us-east-1)
-  ${ENV_AGENT_DIR.padEnd(32)} - Config directory (default: ~/${CONFIG_DIR_NAME}/agent)
+  ${ENV_AGENT_DIR.padEnd(32)} - Config directory (default: ~/${CONFIG_DIR_NAME}/agent, overridden by --agent-dir)
   ${ENV_SESSION_DIR.padEnd(32)} - Session storage directory (overridden by --session-dir)
   PI_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)
   PI_OFFLINE                       - Disable startup network operations when set to 1/true/yes

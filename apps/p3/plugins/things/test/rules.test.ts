@@ -11,7 +11,16 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, type Reference } from "@earendil-works/p3/v1";
 import { Gives, ThingsStore } from "../contract.server.ts";
 import { OPEN, type Party, type Source } from "../contract.ts";
-import { accessHere, answerOf, type GrantEntry, personCounts, type WorkspaceEntries } from "../rules.ts";
+import {
+	ABOVE_THE_ROOT,
+	accessHere,
+	answerOf,
+	GONE,
+	type GrantEntry,
+	type KindsLookup,
+	personCounts,
+	type WorkspaceEntries,
+} from "../rules.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
 import { type World, world } from "./world.ts";
 
@@ -369,6 +378,10 @@ describe("ticks and kinds", () => {
 describe("the rules alone", () => {
 	/** A workspace's entries: nothing, then `own`. */
 	const entries = (own: Partial<WorkspaceEntries>): WorkspaceEntries => ({
+		id: "w",
+		kind: "things.workspace",
+		name: "w",
+		ownGrants: [],
 		parent: "",
 		showsThings: true,
 		showsPeople: true,
@@ -378,19 +391,44 @@ describe("the rules alone", () => {
 		grants: [],
 		...own,
 	});
-	const lookup = { tickFor: () => "all" as const, ticksOf: () => ["draw", "read"], ticksVersionOf: () => 1 };
+	const kindsOf = (tickFor: KindsLookup["tickFor"], ticks: string[]): KindsLookup => ({
+		tickFor,
+		ticksOf: () => ticks,
+		ticksVersionOf: () => 1,
+		stackingOf: () => "all",
+		makersOf: () => "anyone",
+		sortOf: () => "no",
+		kinds: () => ["k"],
+	});
+	const lookup = kindsOf(() => "all", ["draw", "read"]);
 	const grantOf = (own: Partial<GrantEntry>): GrantEntry => ({
 		thing: "sketch",
 		party: "everyone",
+		who: { kind: "everyone" } as const,
+		source: { kind: "plugin", plugin: "test" } as const,
 		audience: "people",
 		tick: OPEN,
 		gives: true,
 		...own,
 	});
 
+	it("below a gone workspace (its line cut by a removal) nothing counts, whatever is written there", () => {
+		const below = accessHere(
+			GONE,
+			entries({
+				links: new Map([["sketch", "k"]]),
+				members: new Set(["person/ada"]),
+				grants: [grantOf({ tick: "read" })],
+			}),
+			lookup,
+		);
+		assert.equal(below, GONE);
+		assert.equal(below.things.size + below.present.size, 0);
+	});
+
 	it("a giving grant stored below the link anyway counts for nothing", () => {
 		const top = accessHere(
-			{ things: new Map(), present: new Set(), hidden: new Set() },
+			ABOVE_THE_ROOT,
 			entries({
 				links: new Map([["sketch", "k"]]),
 				members: new Set(["person/ada"]),
@@ -400,27 +438,24 @@ describe("the rules alone", () => {
 		);
 		const below = accessHere(top, entries({ grants: [grantOf({ tick: "draw" })] }), lookup);
 		const ada = personCounts(below, "person/ada", { owner: false, groups: [] });
-		assert.deepEqual(answerOf(below.things.get("sketch")!, ada, lookup), {
+		assert.deepEqual(answerOf(below.things.get("sketch")!, ada, lookup, 1), {
 			kind: "k",
 			ticksVersion: 1,
 			ticks: ["read"],
+			depth: 1,
 		});
 	});
 
 	it("a row of a tick that counts lets its party in, `OPEN` with no tick; one that counts for nothing lets nobody in (113)", () => {
-		const onlyRead = {
-			tickFor: (_kind: string, tick: string) => (tick === "read" ? "all" : undefined),
-			ticksOf: () => ["read"],
-			ticksVersionOf: () => 1,
-		};
+		const onlyRead = kindsOf((_kind, tick) => (tick === "read" ? "all" : undefined), ["read"]);
 		const answer = (...grants: GrantEntry[]) => {
 			const here = accessHere(
-				{ things: new Map(), present: new Set(), hidden: new Set() },
+				ABOVE_THE_ROOT,
 				entries({ links: new Map([["sketch", "k"]]), members: new Set(["person/ada"]), grants }),
 				onlyRead,
 			);
 			const ada = personCounts(here, "person/ada", { owner: false, groups: [] });
-			return answerOf(here.things.get("sketch")!, ada, onlyRead)?.ticks;
+			return answerOf(here.things.get("sketch")!, ada, onlyRead, 0)?.ticks;
 		};
 		assert.equal(answer(grantOf({ party: "person/ada", tick: "fly" })), undefined);
 		assert.deepEqual(answer(grantOf({ party: "person/ada", tick: "read" })), ["read"]);
