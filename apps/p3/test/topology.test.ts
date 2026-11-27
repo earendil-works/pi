@@ -141,13 +141,20 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
-	for (const order of [
-		["people", "sign-in", "things"],
-		["people", "environments", "things", "sessions"],
-		// Both, back to back: a things store started anew (lazily, by the environments plugin) is reloaded again.
-		["people", "sign-in", "things", "people", "environments", "things", "sessions"],
-	]) {
-		it(`the ${order.join(", ")} plugins reloaded in that order (the owner bridge, ERNDL-1144): nothing reported`, async () => {
+	const orders: readonly { readonly order: readonly string[]; readonly todo?: string }[] = [
+		{ order: ["people", "sign-in", "things"] },
+		{ order: ["people", "environments", "things", "sessions"] },
+		// Back to back: a things store started anew (lazily, by whichever plugin uses it first) is reloaded again.
+		{
+			order: ["people", "environments", "things", "people", "environments", "things", "sessions"],
+			todo: "transaction_cancelled on a things reload during seedKind: ERNDL-1190",
+		},
+		{ order: ["people", "sign-in", "things", "people", "environments", "things", "sessions"] },
+		{ order: ["people", "sign-in", "things", "people", "sign-in", "things"] },
+	];
+	for (const { order, todo } of orders) {
+		const name = `the ${order.join(", ")} plugins reloaded in that order (the owner bridge, ERNDL-1144): nothing reported`;
+		it(name, { todo }, async () => {
 			const { t, owner } = await withSession();
 			const me = await owner.get(Me, {}, context);
 			await ownerAdopted(t);
