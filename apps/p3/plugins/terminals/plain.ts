@@ -1,4 +1,4 @@
-// A terminal's output as plain text, for what shows it without a terminal emulator: the pane's `PlainScreen` and the
+// A terminal's output as plain text, for what shows it without a terminal emulator: the view's `PlainScreen` and the
 // agent's `terminal` tool (its `read`).
 
 /**

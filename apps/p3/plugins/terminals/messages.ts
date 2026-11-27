@@ -1,5 +1,5 @@
 // The terminals plugin's texts people see: its ticks' labels (decision 65), as the things plugin's Settings view shows
-// them, what a refused call says, and the terminal pane's labels. Imported by the contract and by every facet that
+// them, what a refused call says, and the terminal view's labels. Imported by the contract and by every facet that
 // renders.
 
 import { defineMessages } from "@earendil-works/p3/v1";
@@ -13,7 +13,9 @@ export const messages = defineMessages("terminals", {
 		noTerminal: "This terminal does not exist here.",
 		notRunning: "This terminal's program has ended.",
 		noHost: "Terminals cannot be reached now.",
-		pane: "Terminals",
+		view: "Terminals",
+		kind: "Terminals",
+		plugin: "Terminals",
 		open: "New terminal",
 		close: "Close",
 		none: "No terminals are open here.",

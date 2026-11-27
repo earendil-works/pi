@@ -1,7 +1,7 @@
-// The Files pane: one folder of a machine through a workspace's Files, folders first, a page at a time; a search below
-// the folder; downloads; and, with Edit, uploads (one request per file), renames and removals. A component until
-// slice 4's `Views` registers panes; what it opens on (the workspace, its Files, the machine and the folder) is its
-// props. The pane follows the reference live: Browse or Edit withheld takes their controls away at once.
+// The Files view (`Views`): one folder of a machine through a workspace's Files, folders first, a page at a time; a
+// search below the folder; downloads; and, with Edit, uploads (one request per file), renames and removals. It opens
+// where the workspace works (`useWorkLocation`: a session's location, else this device's root). The view follows the
+// reference live: Browse or Edit withheld takes their controls away at once.
 
 import { Button, IconButton, Input } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Context, type Reference, type With, withGranted } from "@earendil-works/p3/v1";
@@ -18,27 +18,37 @@ import {
 	useRefState,
 } from "@earendil-works/p3/v1/web";
 import { type ChangeEvent, useCallback, useEffect, useState } from "react";
+import { useWorkLocation } from "../environments/contract.web.tsx";
 import { messages as machineMessages } from "../environments/messages.ts";
-import styles from "./files-pane.module.css";
+import type { ThingViewProps } from "../things/contract.web.tsx";
+import styles from "./files-view.module.css";
 import { type Entry, FILES_BROWSES, FILES_EDITS, Files, type Hit } from "./kind.ts";
 import { messages } from "./messages.ts";
 
-/** What the pane opens on: the workspace, its Files thing, a machine thing's id and an absolute folder on it. */
-export type FilesPaneProps = {
+/** What the browser opens on: the workspace, its Files thing, a machine thing's id and an absolute folder on it. */
+type BrowserProps = {
 	readonly workspace: string;
 	readonly thing: string;
 	readonly machine: string;
 	readonly folder: string;
 };
 
-/** Files with Browse, as the pane calls it. */
+/** Files with Browse, as the view calls it. */
 type Reader = With<Reference<typeof Files>, "entries" | "search" | "open">;
 
 /** Files with Edit. */
 type Writer = With<Reference<typeof Files>, "upload" | "rename" | "remove">;
 
-/** The pane on `props.folder` of `props.machine`; the person moves between folders in it. */
-export function FilesPane(props: FilesPaneProps) {
+/** Files `props.thing` held in `props.workspace`, opened where the workspace works. */
+export function FilesView(props: ThingViewProps) {
+	const { t } = useMessages(messages);
+	const at = useWorkLocation(props.workspace);
+	if (at === undefined) return <p className={styles.note}>{t("loading")}</p>;
+	return <Browser {...props} folder={at.folder} key={at.machine} machine={at.machine} />;
+}
+
+/** The browser on `props.folder` of `props.machine`; the person moves between folders in it. */
+function Browser(props: BrowserProps) {
 	const { t } = useMessages(messages);
 	const ref = useHold(Files, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
@@ -53,7 +63,7 @@ export function FilesPane(props: FilesPaneProps) {
 	if (live === undefined) return <p className={styles.note}>{t("loading")}</p>;
 	if (reader === undefined) return <p className={styles.note}>{t("denied")}</p>;
 	return (
-		<section aria-label={t("pane")} className={styles.pane} data-files={writer === undefined ? "reader" : "writer"}>
+		<section aria-label={t("view")} className={styles.view} data-files={writer === undefined ? "reader" : "writer"}>
 			<Folder
 				folder={folder}
 				key={`${folder}\n${changes}`}
@@ -351,7 +361,7 @@ function sizeText(size: number): string {
 	return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
-/** A call the pane makes: whether one runs and the text of the last failure. */
+/** A call the view makes: whether one runs and the text of the last failure. */
 type Action = {
 	readonly pending: boolean;
 	readonly error: string | undefined;
@@ -359,7 +369,7 @@ type Action = {
 	run(call: (context: Context) => Promise<unknown>): void;
 };
 
-/** The pane's call state and its `run`. */
+/** The view's call state and its `run`. */
 function useAction(): Action {
 	const files = useMessages(messages).t;
 	const environments = useMessages(machineMessages).t;

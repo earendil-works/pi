@@ -1,0 +1,16 @@
+.view {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-gap-small);
+	padding-block: var(--semantic-dimension-space-gap-x-small);
+}
+
+.title {
+	margin: 0;
+	font: var(--semantic-typography-ui-primary);
+}
+
+.note {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+}

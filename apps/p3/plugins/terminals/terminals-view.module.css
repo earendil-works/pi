@@ -1,6 +1,6 @@
 /* The terminal pane: the tabs of the open terminals with New terminal, the shown terminal's bar, then its screen. */
 
-.pane {
+.view {
 	display: flex;
 	flex-direction: column;
 	gap: var(--semantic-dimension-space-gap-small);

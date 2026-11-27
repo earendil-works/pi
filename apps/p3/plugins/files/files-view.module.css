@@ -1,6 +1,6 @@
 /* The Files pane: the folder's bar (Up, the path, Upload), the search field, then one row per entry. */
 
-.pane {
+.view {
 	display: flex;
 	flex-direction: column;
 	gap: var(--semantic-dimension-space-gap-small);

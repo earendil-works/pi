@@ -20,7 +20,7 @@
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -233,6 +233,32 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press("[data-gear]");
 		await browser.wait(`location.pathname.endsWith("/settings")`);
 		await browser.wait(`document.querySelector('[data-settings="${sketch}"]')`);
+	});
+
+	it("opens Pi's Files, Terminals and machine in their views, on a desktop and a phone (ERNDL-1172-1174)", async () => {
+		/** The navigator's entry named `name` in Pi: its thing's id. */
+		const entry = (name: string) =>
+			browser.evaluate<string>(
+				`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === ${JSON.stringify(name)})?.dataset.navThing`,
+			);
+		await press(`[data-nav-workspace="${pi}"]`);
+		await browser.wait(`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Files")`);
+		const views = [
+			// The owner has Edit by the owner flag: the browser's writer, on this device's root.
+			[await entry("Files"), 'section[aria-label="Files"][data-files="writer"]', "files"],
+			[await entry("Terminals"), 'section[aria-label="Terminals"][data-terminals]', "terminals"],
+			[await entry(hostname()), '[data-machine="ready"]', "machine"],
+		] as const;
+		for (const [thing, shown, name] of views) {
+			await browser.open(`${origin}/w/${pi}/t/${thing}`);
+			await browser.wait(`document.querySelector(${JSON.stringify(shown)})`);
+			await shots(`07-${name}-desktop`);
+			await browser.size(PHONE);
+			await browser.wait(`document.querySelector(${JSON.stringify(shown)})?.offsetParent !== null`);
+			await shots(`07-${name}-phone`);
+			await browser.size(DESKTOP);
+		}
+		await browser.open(`${origin}/w/${pi}`);
 	});
 
 	it("shows things from above greyed in a workspace below, and folds a hidden one", async () => {

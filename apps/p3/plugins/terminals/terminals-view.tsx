@@ -1,6 +1,6 @@
-// The terminal pane: the terminals open in a workspace as tabs, one shown at a time on a `TerminalScreen` (screen.tsx;
-// `PlainScreen` until a renderer is decided), and, with Use, New terminal (on the pane's machine, in its folder),
-// typing and Close. A component until slice 4's `Views` registers panes; what it opens on is its props. The screen
+// The Terminals view (`Views`): the terminals open in a workspace as tabs, one shown at a time on a `TerminalScreen`
+// (screen.tsx; `PlainScreen` until a renderer is decided), and, with Use, New terminal (where the workspace works:
+// `useWorkLocation`), typing and Close. The screen
 // reads the shown terminal's bytes from the address `attach` answers (kept output, then what follows, raw); Watch and
 // Use withheld take the list away at once and end the bytes.
 
@@ -16,14 +16,16 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useCallback, useState } from "react";
+import { useWorkLocation } from "../environments/contract.web.tsx";
 import { messages as machineMessages } from "../environments/messages.ts";
+import type { ThingViewProps } from "../things/contract.web.tsx";
 import { Terminals } from "./kind.ts";
 import { messages } from "./messages.ts";
 import { PlainScreen, type TerminalScreen } from "./screen.tsx";
-import styles from "./terminals-pane.module.css";
+import styles from "./terminals-view.module.css";
 
-/** What the pane opens on: the workspace, its Terminals thing, and the machine and folder new terminals start in. */
-export type TerminalsPaneProps = {
+/** What the tabs open on: the workspace, its Terminals thing, and the machine and folder new terminals start in. */
+type TabsProps = {
 	readonly workspace: string;
 	readonly thing: string;
 	readonly machine: string;
@@ -35,8 +37,16 @@ export type TerminalsPaneProps = {
 /** The size a new terminal starts with, before its screen measures itself. */
 const START = { columns: 80, rows: 24 };
 
-/** The pane on `props.workspace`'s terminals. */
-export function TerminalsPane(props: TerminalsPaneProps) {
+/** Terminals `props.thing` held in `props.workspace`; new terminals start where the workspace works. */
+export function TerminalsView(props: ThingViewProps) {
+	const { t } = useMessages(messages);
+	const at = useWorkLocation(props.workspace);
+	if (at === undefined) return <p className={styles.note}>{t("loading")}</p>;
+	return <Tabs {...props} folder={at.folder} key={at.machine} machine={at.machine} />;
+}
+
+/** The terminals of `props.workspace` as tabs. */
+function Tabs(props: TabsProps) {
 	const { t } = useMessages(messages);
 	const environments = useMessages(machineMessages).t;
 	const ref = useHold(Terminals, { workspace: props.workspace, thing: props.thing });
@@ -54,7 +64,7 @@ export function TerminalsPane(props: TerminalsPaneProps) {
 	const open = live.open;
 	const Screen = props.Screen ?? PlainScreen;
 	return (
-		<section aria-label={t("pane")} className={styles.pane} data-terminals="">
+		<section aria-label={t("view")} className={styles.view} data-terminals="">
 			<div className={styles.tabs} role="tablist">
 				{list.map((terminal, index) => (
 					<button

@@ -1,11 +1,11 @@
-// The boundary between the terminal pane and what draws a terminal: `TerminalScreen`, a component that gets a
+// The boundary between the Terminals view and what draws a terminal: `TerminalScreen`, a component that gets a
 // terminal's bytes in order and hands back what is typed and its size. How a terminal is rendered is pending a
 // decision (a terminal emulator on the page); until then `PlainScreen` shows the text with escape sequences dropped
-// and sends the keys typed into it. A renderer replaces it without touching the pane.
+// and sends the keys typed into it. A renderer replaces it without touching the view.
 
 import { type ComponentType, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { plain } from "./plain.ts";
-import styles from "./terminals-pane.module.css";
+import styles from "./terminals-view.module.css";
 
 /** What a screen gets: its terminal's bytes, and where typed keys and a new size go (absent: watch only). */
 export type TerminalScreenProps = {
