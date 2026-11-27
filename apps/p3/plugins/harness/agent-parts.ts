@@ -38,6 +38,7 @@ type Given = {
 	readonly extension: Extension | undefined;
 	readonly providers: readonly ThingProvider[];
 	readonly env: HarnessContribution["env"];
+	readonly ready: HarnessContribution["ready"];
 };
 
 /** The agent's registry, models and environment over the things it holds. */
@@ -106,29 +107,34 @@ export class AgentParts {
 		if (providersChanged(before, next)) this.#models = this.#compose(next);
 	}
 
-	/** The first model of the first kind that gives providers (a login), in the order of the held things. */
+	/**
+	 * Resolves once every kind's contribution is complete (`HarnessContribution.ready`: a login's models); fails with
+	 * the first that `context` cancelled first.
+	 */
+	async ready(context: Context): Promise<void> {
+		await Promise.all([...this.#given.values()].map((given) => given.ready?.(context)));
+	}
+
+	/**
+	 * The first model offered, in the order of the held things and their providers: a provider without models (a
+	 * login whose models are all hidden) is passed over (Astra, round 1 of model settings).
+	 */
 	firstModel(): ModelRef | undefined {
 		for (const given of this.#given.values()) {
-			const provider = given.providers[0]?.provider;
-			if (provider === undefined) continue;
-			const model = this.#models.getModels(provider.id)[0];
-			return model === undefined ? undefined : { provider: model.provider, modelId: model.id };
+			for (const { provider } of given.providers) {
+				const model = this.#models.getModels(provider.id)[0];
+				if (model !== undefined) return { provider: model.provider, modelId: model.id };
+			}
 		}
 		return undefined;
 	}
 
-	/**
-	 * Model `model` of the provider held thing `thing` gives (a login's: a session's model choice), as the agent names
-	 * it; `undefined` while no held thing gives it.
-	 */
-	modelOf(thing: string, model: string): ModelRef | undefined {
+	/** The id of the provider held thing `thing` gives (a login's), whatever models it has now; `undefined`: none. */
+	providerOf(thing: string): string | undefined {
 		for (const given of this.#given.values()) {
 			// A kind gives few providers: its list is looked over.
 			const provider = given.providers.find((one) => one.thing === thing)?.provider;
-			if (provider === undefined) continue;
-			return this.#models.getModel(provider.id, model) === undefined
-				? undefined
-				: { provider: provider.id, modelId: model };
+			if (provider !== undefined) return provider.id;
 		}
 		return undefined;
 	}
@@ -143,11 +149,12 @@ export class AgentParts {
 				extension: given.extension === undefined ? undefined : { ...given.extension, name: kind },
 				providers: given.providers ?? [],
 				env: given.env,
+				ready: given.ready,
 			};
 		} catch (error) {
 			// A kind's part is another plugin's code: its failure gives that kind nothing, the others keep theirs.
 			this.#report(kind, "part", error);
-			return { things, part, extension: undefined, providers: [], env: undefined };
+			return { things, part, extension: undefined, providers: [], env: undefined, ready: undefined };
 		}
 	}
 

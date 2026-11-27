@@ -5,6 +5,7 @@
 
 import {
 	arr,
+	bool,
 	int,
 	local,
 	method,
@@ -20,7 +21,7 @@ import {
 	unknown,
 } from "@earendil-works/p3/v1";
 import { Source } from "../things/contract.ts";
-import { Attempt, ModelOverride, SignInMethod } from "./contract.ts";
+import { Attempt, LoginDefinitions, LoginModels, ModelOverride, SignInMethod } from "./contract.ts";
 import { RequestAuth } from "./kind.ts";
 
 /**
@@ -190,4 +191,14 @@ export const LoginAccount = local("providers.login-account", {
 	version: 1,
 	params: { thing: str() },
 	members: { account: union([AccountModels, nul()]) },
+});
+
+/**
+ * A session's models, computed once for every holder of its `SessionModels` (`session-models.ts`): the picker's list
+ * and the worker's, and whether they are complete (see `SessionModels`).
+ */
+export const SessionModelSet = local("providers.session-model-set", {
+	version: 1,
+	params: { session: str() },
+	members: { complete: bool(), models: arr(LoginModels), catalog: arr(LoginDefinitions) },
 });

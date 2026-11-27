@@ -1,10 +1,11 @@
 // `SessionModels { session }` on the server (decision 118a): the models a session's agent may use, per login it may Use
 // in the session's workspace (its `Gives` as the session's worker), each login's account models (`LoginAccount`) with
-// the overrides of the model settings things that reach the session applied (`overrides.ts`, the nearest first). It
-// holds those logins' and model settings things' objects while they reach the session (a `SessionHolding`, following
-// the agent's answers) and publishes a new list whenever one of them changes; a login whose account and overrides are
-// the same keeps its entries. Admitted for everyone the session workspace gives anything; `catalog` is the session's
-// own worker's alone.
+// the overrides of the model settings things that reach the session applied (`overrides.ts`, the nearest first).
+// Computed once per session (`SessionModelSet`, its one `SessionHolding`): it holds those logins' and model settings
+// things' objects while they reach the session, following the agent's answers, and publishes new lists whenever one of
+// them changes, complete only once every value is in; a login whose account and overrides are the same keeps its
+// entries. `SessionModels` admits everyone the session workspace gives anything and forwards the set's members;
+// `catalog` is the session's own worker's alone.
 
 import {
 	type Admission,
@@ -25,34 +26,42 @@ import {
 	type Writable,
 } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { SESSION_KIND } from "../sessions/contract.ts";
 import { Gives } from "../things/contract.server.ts";
-import { type AccountModels, LoginAccount } from "./contract.server.ts";
-import { type LoginCatalog, type LoginModels, type ModelOverride, SessionModels } from "./contract.ts";
+import { type AccountModels, LoginAccount, SessionModelSet } from "./contract.server.ts";
+import { type LoginDefinitions, type LoginModels, type ModelOverride, SessionModels } from "./contract.ts";
 import { LoginKind } from "./kind.ts";
+import { modelInfos } from "./login-account.ts";
 import { messages } from "./messages.ts";
-import { ModelSettings, ModelSettingsKind } from "./models-kind.ts";
+import { ModelSettings, ModelSettingsKind } from "./model-settings-kind.ts";
 import { applied, NO_OVERRIDES, type Overrides, overridesOf } from "./overrides.ts";
 
-/** Serves `SessionModels` on `host`. */
+/** Serves `SessionModels` on `host`, and the one computation every holder of a session's reads (`SessionModelSet`). */
 export function serveSessionModels(host: FacetHost<P3Principal>): void {
+	host.serve(SessionModelSet, ({ session }, self) => {
+		const runtime = self.registry(ServerRuntime);
+		const agent = self.get(Gives, { workspace: session, caller: callerKey({ kind: "worker", session }) });
+		const published = self.writable<Published>(EMPTY);
+		const holding = self.open(
+			async (context) => new SessionHolding(runtime.value.host, session, published, context),
+			(open) => open.release(),
+		);
+		self.on(agent.answers, ({ value }) => holding.value.sync(value));
+		// Plain data, pi-ai's definitions among it: JSON.
+		const complete = self.derive([published], ([now]) => now.complete);
+		const models = self.derive([published], ([now]) => now.models as unknown as JsonValue);
+		const catalog = self.derive([published], ([now]) => now.catalog as unknown as JsonValue);
+		return {
+			complete,
+			models: models as unknown as Watchable<LoginModels[]>,
+			catalog: catalog as unknown as Watchable<LoginDefinitions[]>,
+		};
+	});
 	host.serve(
 		SessionModels,
 		({ session }, _principal, _admitted, self) => {
-			const runtime = self.registry(ServerRuntime);
-			const agent = self.get(Gives, { workspace: session, caller: callerKey({ kind: "worker", session }) });
-			const published = self.writable<Published>(EMPTY);
-			const holding = self.open(
-				async (context) => new SessionHolding(runtime.value.host, session, published, context),
-				(open) => open.release(),
-			);
-			self.on(agent.answers, ({ value }) => holding.value.sync(value));
-			// Plain data, pi-ai's definitions among it: JSON.
-			const models = self.derive([published], ([now]) => now.models as unknown as JsonValue);
-			const catalog = self.derive([published], ([now]) => now.catalog as unknown as JsonValue);
-			return {
-				models: models as unknown as Watchable<LoginModels[]>,
-				catalog: () => catalog as unknown as Watchable<LoginCatalog[]>,
-			};
+			const set = self.get(SessionModelSet, { session });
+			return { complete: set.complete, models: set.models, catalog: () => set.catalog };
 		},
 		{ admit: admitSession },
 	);
@@ -60,9 +69,6 @@ export function serveSessionModels(host: FacetHost<P3Principal>): void {
 
 /** What a caller of `SessionModels` is granted: the worker's flag or nothing. */
 type Granted = { granted: "catalog"[] };
-
-/** The session kind's name (`sessions/kind.ts`): the answer on the session workspace itself admits. */
-const SESSION_KIND = "sessions.session";
 
 /** The admission of a session's caller with its worker's flag, of any other one without, and the denial. */
 const WORKER: Admission<Granted> = allow({ granted: ["catalog"] });
@@ -86,11 +92,18 @@ function admitSession(
 	);
 }
 
-/** What `SessionModels` shows: the picker's list and the worker's. */
-type Published = { readonly models: readonly LoginModels[]; readonly catalog: readonly LoginCatalog[] };
+/**
+ * What `SessionModels` shows: the picker's list and the worker's, and whether they are complete (every login the agent
+ * may Use has its models in, every model settings thing that reaches it its overrides).
+ */
+type Published = {
+	readonly complete: boolean;
+	readonly models: readonly LoginModels[];
+	readonly catalog: readonly LoginDefinitions[];
+};
 
-/** Nothing yet. */
-const EMPTY: Published = { models: [], catalog: [] };
+/** Nothing yet: not complete before the agent's answers are known. */
+const EMPTY: Published = { complete: false, models: [], catalog: [] };
 
 /** The answers of a caller in a workspace (`Gives`' member), by thing. */
 type Answers = Readonly<
@@ -100,17 +113,22 @@ type Answers = Readonly<
 /** One held thing: its reference and its last value (`undefined` until it has one). */
 type Held<V> = { readonly ref: { release(): void }; value: V | undefined };
 
-/** One login's entries as published, and what they were made from (kept while both are the same). */
+/**
+ * One login's entries as published, and what they were made from: its account and, per account model, the overrides
+ * that name it (kept while all are the same objects).
+ */
 type Made = {
 	readonly account: AccountModels;
-	readonly overrides: Overrides;
+	readonly overrides: readonly (readonly ModelOverride[] | undefined)[];
 	readonly slim: LoginModels;
-	readonly full: LoginCatalog;
+	readonly full: LoginDefinitions;
 };
 
 /**
  * The logins and model settings things that reach one session's agent, held as the server: it follows the agent's
- * answers (`sync`) and publishes the list whenever a held value or the set changes.
+ * answers (`sync`) and publishes the lists whenever a held value or the set changes. While a held thing has no value
+ * yet, it publishes the last complete lists without the logins no longer given, marked incomplete: never a login
+ * before its models, never a model before the overrides that reach it (round 1, Opus M1, Astra 2).
  */
 class SessionHolding {
 	readonly #host: Host<P3Principal>;
@@ -120,6 +138,7 @@ class SessionHolding {
 	/** The logins the agent may Use, nearest first, and the model settings things that reach it, nearest first. */
 	#logins: readonly string[] = [];
 	#settings: readonly string[] = [];
+	#synced = false;
 	readonly #accounts = new Map<string, Held<AccountModels | null>>();
 	readonly #overrides = new Map<string, Held<readonly ModelOverride[]>>();
 	readonly #made = new Map<string, Made>();
@@ -136,12 +155,17 @@ class SessionHolding {
 	/** Holds what `answers` (the agent's) gives: the logins with Use, the model settings things with Use. */
 	sync(answers: Answers): void {
 		if (this.#ended) return;
+		this.#synced = true;
 		this.#logins = given(answers, LoginKind.name);
-		this.#settings = given(answers, ModelSettingsKind.name);
+		const settings = given(answers, ModelSettingsKind.name);
 		syncHeld(this.#accounts, this.#logins, (thing) => this.#holdAccount(thing));
-		syncHeld(this.#overrides, this.#settings, (thing) => this.#holdSettings(thing));
+		syncHeld(this.#overrides, settings, (thing) => this.#holdSettings(thing));
 		for (const login of this.#made.keys()) if (!this.#accounts.has(login)) this.#made.delete(login);
-		this.#mergeOverrides();
+		// The merge is made again only when the settings things that reach the session changed (Opus S1).
+		if (!sameList(settings, this.#settings)) {
+			this.#settings = settings;
+			this.#mergeOverrides();
+		}
 		this.#publish();
 	}
 
@@ -155,12 +179,7 @@ class SessionHolding {
 
 	#holdAccount(thing: string): Held<AccountModels | null> {
 		const ref = this.#host.hold(LoginAccount, { thing }, this.#context);
-		const held: Held<AccountModels | null> = { ref, value: undefined };
-		this.#follow(ref.account, (value) => {
-			held.value = value;
-			this.#publish();
-		});
-		return held;
+		return this.#follow(ref, ref.account, null, () => this.#publish());
 	}
 
 	#holdSettings(thing: string): Held<readonly ModelOverride[]> {
@@ -169,27 +188,33 @@ class SessionHolding {
 			{ workspace: this.#session, thing },
 			this.#context,
 		);
-		const held: Held<readonly ModelOverride[]> = { ref, value: undefined };
-		this.#follow(ref.overrides, (value) => {
-			held.value = value;
+		return this.#follow(ref, ref.overrides, NONE, () => {
 			this.#mergeOverrides();
 			this.#publish();
 		});
-		return held;
 	}
 
-	/** Calls `seen` with `member`'s value and every new one, until the holding ends or the reference goes. */
-	#follow<V>(member: Watchable<V>, seen: (value: V) => void): void {
+	/**
+	 * Reference `ref` with `member`'s value and every new one, each told by `changed`, until the holding ends or the
+	 * reference goes; one that never gets a value (its thing gone meanwhile) has `gone`, so nothing waits for it.
+	 */
+	#follow<V>(ref: { release(): void }, member: Watchable<V>, gone: V, changed: () => void): Held<V> {
+		const held: Held<V> = { ref, value: undefined };
+		const seen = (value: V): void => {
+			if (this.#ended) return;
+			held.value = value;
+			changed();
+		};
 		member.watch(this.#context).then(
 			(watch) => {
-				if (!this.#ended) seen(watch.value);
+				seen(watch.value);
 				watch.start(async (call) => {
-					if (call.kind === "value" && !this.#ended) seen(call.value);
+					if (call.kind === "value") seen(call.value);
 				});
 			},
-			// A reference that never got a value (its thing gone meanwhile, the holding ended) gives nothing.
-			() => undefined,
+			() => seen(gone),
 		);
+		return held;
 	}
 
 	#mergeOverrides(): void {
@@ -197,13 +222,42 @@ class SessionHolding {
 			const value = this.#overrides.get(thing)?.value;
 			return value === undefined || value.length === 0 ? [] : [value];
 		});
-		this.#merged = overridesOf(lists);
+		this.#merged = overridesOf(lists, this.#merged);
 	}
 
 	#publish(): void {
 		if (this.#ended) return;
+		const before = this.#out.value;
+		const next = this.#pending() ? this.#withoutGone(before) : this.#complete();
+		const same =
+			next.complete === before.complete &&
+			sameList(next.models, before.models) &&
+			sameList(next.catalog, before.catalog);
+		if (!same) this.#out.set(next);
+	}
+
+	/** Whether the agent's answers or a held value have not arrived yet. */
+	#pending(): boolean {
+		if (!this.#synced) return true;
+		for (const login of this.#logins) if (this.#accounts.get(login)?.value === undefined) return true;
+		for (const thing of this.#settings) if (this.#overrides.get(thing)?.value === undefined) return true;
+		return false;
+	}
+
+	/** `last` without the logins no longer given (a grant taken back is not waited for), incomplete. */
+	#withoutGone(last: Published): Published {
+		const wanted = new Set(this.#logins);
+		return {
+			complete: false,
+			models: last.models.filter(({ login }) => wanted.has(login)),
+			catalog: last.catalog.filter(({ login }) => wanted.has(login)),
+		};
+	}
+
+	/** Every login's entries now, complete. */
+	#complete(): Published {
 		const models: LoginModels[] = [];
-		const catalog: LoginCatalog[] = [];
+		const catalog: LoginDefinitions[] = [];
 		for (const login of this.#logins) {
 			const account = this.#accounts.get(login)?.value;
 			if (account === undefined || account === null) continue;
@@ -211,34 +265,49 @@ class SessionHolding {
 			models.push(made.slim);
 			catalog.push(made.full);
 		}
-		this.#out.set({ models, catalog });
+		return { complete: true, models, catalog };
 	}
 
-	/** Login `login`'s entries for `account` and the current overrides: the ones made before while both are the same. */
+	/**
+	 * Login `login`'s entries for `account` and the current overrides: the ones made before while its account and the
+	 * overrides naming its models are the same, whatever changed for other logins (Astra 5).
+	 */
 	#entriesOf(login: string, account: AccountModels): Made {
-		const before = this.#made.get(login);
-		if (before !== undefined && before.account === account && before.overrides === this.#merged) return before;
 		// Only `LoginAccount` makes the account's models, pi-ai's chat definitions.
-		const models = applied(account.provider, account.models as readonly Model<Api>[], this.#merged);
+		const definitions = account.models as Model<Api>[];
+		const overrides = definitions.map(({ id }) => this.#merged.get(id));
+		const before = this.#made.get(login);
+		if (before !== undefined && before.account === account && sameList(before.overrides, overrides)) return before;
+		const models = applied(account.provider, definitions, this.#merged);
 		const slim: LoginModels = {
 			login,
 			provider: account.provider,
 			providerName: account.providerName,
-			models: models.map(({ id, name, reasoning, contextWindow }) => ({ id, name, reasoning, contextWindow })),
+			models: modelInfos(models),
 		};
-		// The models are values handed on, never changed: a list of their own for the schema's mutable type.
-		const made = { account, overrides: this.#merged, slim, full: { login, models: [...models] } };
+		const made = { account, overrides, slim, full: { login, models } };
 		this.#made.set(login, made);
 		return made;
 	}
 }
 
+/** No overrides (a model settings thing gone before its first value). */
+const NONE: readonly ModelOverride[] = [];
+
+/** The tick both kinds' agents' Use is named by (`LoginKind`, `ModelSettingsKind`). */
+const USE = "use";
+
 /** The things of kind `kind` the agent may Use per `answers`, nearest first (by depth, then id). */
 function given(answers: Answers, kind: string): string[] {
 	return Object.entries(answers)
-		.filter(([, answer]) => answer.kind === kind && answer.ticks.includes("use"))
+		.filter(([, answer]) => answer.kind === kind && answer.ticks.includes(USE))
 		.sort(([a, one], [b, other]) => one.depth - other.depth || (a < b ? -1 : 1))
 		.map(([thing]) => thing);
+}
+
+/** Whether `a` and `b` have the same elements (the same objects) in the same order. */
+function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
+	return a.length === b.length && a.every((item, i) => item === b[i]);
 }
 
 /** Holds each of `things` not held in `held` yet (`hold`), and releases what `held` has of others. */

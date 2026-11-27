@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
+	createHost,
+	memoryLinkPair,
 	type P3Principal,
 	type Reference,
 	until,
@@ -23,9 +25,10 @@ import { ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import type { World } from "../../things/test/world.ts";
 import { Workspace } from "../../things/workspace.ts";
-import { type LoginModels, type ModelOverride, SessionModels } from "../contract.ts";
+import { LoginAccount } from "../contract.server.ts";
+import { type LoginDefinitions, type LoginModels, type ModelOverride, SessionModels } from "../contract.ts";
 import { makeLogin } from "../logins.ts";
-import { ModelSettings, ModelSettingsKind } from "../models-kind.ts";
+import { ModelSettings, ModelSettingsKind } from "../model-settings-kind.ts";
 import { PROVIDERS, providersWorld } from "./hosts.ts";
 
 /** Who sets things up. */
@@ -121,6 +124,23 @@ describe("a session's models", () => {
 		});
 	});
 
+	it("are computed once for every holder: the worker and a person get the same entries (118a)", async () => {
+		await loginIn(family);
+		const owner: P3Principal = {
+			kind: "person",
+			id: await things.createPerson({ name: "Ann", madeBy: BY }, context),
+			name: "Ann",
+		};
+		await things.setOwner({ person: owner.id, owner: true }, context);
+		await holding(agent, async (models, ctx) => {
+			const [mine] = await listed(models, (list) => list.length === 1, ctx);
+			await holding(owner, async (theirs, theirCtx) => {
+				const [same] = await listed(theirs, (list) => list.length === 1, theirCtx);
+				assert.equal(same, mine, "one computation per session, not one per holder");
+			});
+		});
+	});
+
 	it("follow a second link withholding Use, and a login hidden in the session, live", async () => {
 		const login = await loginIn(family);
 		await holding(agent, async (models, ctx) => {
@@ -152,6 +172,130 @@ describe("a session's models", () => {
 			assert.ok(both.includes(first!), "the unchanged login's entry is the same object");
 			const again = await until(models.catalog!, (list) => list.length === 2, within("the catalog", ctx));
 			assert.ok(again.includes(catalog[0]!));
+		});
+	});
+});
+
+/** Every value `member` of `models` takes while `fn` runs, from its first, mapped by `seen`. */
+async function traced<V, T>(
+	member: Reference<typeof SessionModels>["models"] | NonNullable<Reference<typeof SessionModels>["catalog"]>,
+	seen: (value: V) => T,
+	fn: () => Promise<void>,
+	ctx: Ctx<P3Principal>,
+): Promise<T[]> {
+	const trace: T[] = [];
+	const watch = await member.watch(ctx);
+	trace.push(seen(watch.value as V));
+	watch.start(async (call) => {
+		if (call.kind === "value") trace.push(seen(call.value as V));
+	});
+	await fn();
+	return trace;
+}
+
+describe("a session's models while they load (round 1 of model settings)", () => {
+	it("are complete only with every login's models: the first complete catalog has the login linked (Opus M1)", async () => {
+		await loginIn(family);
+		await holding(agent, async (models, ctx) => {
+			await until(models.complete, (complete) => complete, within("complete", ctx));
+			assert.deepEqual([models.models.value.length, models.catalog!.value.length], [1, 1]);
+		});
+	});
+
+	it("never list one login of two while the other's models load (Astra 2)", async () => {
+		const a = await loginIn(family, "A");
+		await loginIn(family, "B");
+		// A's account is read already (another session holds it); B's is not.
+		const warm = await w.host.get(LoginAccount, { thing: a }, context);
+		try {
+			await holding(agent, async (models, ctx) => {
+				const lengths = await traced(
+					models.catalog!,
+					(list: LoginDefinitions[]) => list.length,
+					() => until(models.catalog!, (list) => list.length === 2, within("both", ctx)).then(() => undefined),
+					ctx,
+				);
+				assert.ok(!lengths.includes(1), `catalog lengths ${lengths.join(", ")}`);
+			});
+		} finally {
+			warm.release();
+		}
+	});
+
+	it("never list a model before the overrides that hide it (Astra 2)", async () => {
+		const a = await loginIn(family);
+		const warm = await w.host.get(LoginAccount, { thing: a }, context);
+		await settingsIn(session, [{ model: FAUX_MODEL, hidden: true }]);
+		try {
+			await holding(agent, async (models, ctx) => {
+				const counts = await traced(
+					models.catalog!,
+					(list: LoginDefinitions[]) => list[0]?.models.length ?? 0,
+					() => until(models.complete, (complete) => complete, within("complete", ctx)).then(() => undefined),
+					ctx,
+				);
+				assert.ok(!counts.includes(1), `model counts ${counts.join(", ")}`);
+				assert.equal(models.catalog!.value[0]?.models.length, 0);
+			});
+		} finally {
+			warm.release();
+		}
+	});
+
+	it("reach a worker over a link, a second login too: the definitions are plain JSON (Astra 3)", async () => {
+		await loginIn(family, "One");
+		await holding(agent, async (local, ctx) => {
+			await listed(local, (list) => list.length === 1, ctx);
+			const [up, down] = memoryLinkPair();
+			const peer = createHost<P3Principal>({ onError: (error) => assert.fail(error.kind) });
+			w.host.accept(down, { principal: agent }, ctx);
+			peer.connect(up, { principal: { kind: "server" } }, ctx);
+			await peer.load([], ctx);
+			try {
+				const models = await peer.get(SessionModels, { session }, ctx);
+				await until(models.catalog!, (list) => list.length === 1, within("one", ctx));
+				await loginIn(family, "Two");
+				await until(models.catalog!, (list) => list.length === 2, within("the second login", ctx));
+			} finally {
+				await peer.close(ctx);
+			}
+		});
+		assert.deepEqual(w.errors, []);
+	});
+});
+
+describe("a login's entries", () => {
+	it("keep their identity when another login comes, whatever overrides name other models (Astra 5)", async () => {
+		const a = await loginIn(family, "A");
+		await settingsIn(session, [{ model: "absent", name: "X" }]);
+		await holding(agent, async (models, ctx) => {
+			await until(models.complete, (complete) => complete, within("complete", ctx));
+			const [slim] = models.models.value;
+			const [full] = models.catalog!.value;
+			await loginIn(session, "B");
+			const both = await listed(models, (list) => list.length === 2, ctx);
+			assert.equal(
+				both.find(({ login }) => login === a),
+				slim,
+			);
+			assert.equal(
+				models.catalog!.value.find(({ login }) => login === a),
+				full,
+			);
+		});
+	});
+
+	it("keep their identity when a model settings thing without overrides of theirs comes (Opus S1)", async () => {
+		await loginIn(family);
+		await settingsIn(family, [{ model: "other-model", name: "X" }]);
+		await holding(agent, async (models, ctx) => {
+			await until(models.complete, (complete) => complete, within("complete", ctx));
+			const [slim] = models.models.value;
+			await settingsIn(session, []);
+			// A login linked after it: once it is listed, the new settings thing was taken in before it.
+			await loginIn(session, "B");
+			const both = await listed(models, (list) => list.length === 2, ctx);
+			assert.ok(both.includes(slim!));
 		});
 	});
 });
@@ -211,6 +355,15 @@ describe("the model settings", () => {
 			);
 			await listed(models, (list) => list[0]?.models.length === 0, ctx);
 			await until(models.catalog!, (list) => list[0]?.models.length === 0, within("the hidden model", ctx));
+		});
+	});
+
+	it("refuse a negative price (Astra, round 1)", async () => {
+		const settings = await settingsIn(session, []);
+		await as(agent, async (ctx) => {
+			const held = await ctx.get(ModelSettings, { workspace: session, thing: settings });
+			const cost = { input: -1, output: 0, cacheRead: 0, cacheWrite: 0 };
+			await assert.rejects(held.set!({ overrides: [{ model: FAUX_MODEL, cost }] }, ctx));
 		});
 	});
 

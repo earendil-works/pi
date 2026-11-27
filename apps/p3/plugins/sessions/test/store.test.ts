@@ -153,7 +153,7 @@ const OldDefaults = local("sessions.defaults-settings", {
 const OLD_CHOICE = { provider: "anthropic", model: "claude", thinking: "high" } as const;
 
 describe("a store version 1 wrote (decision 125)", () => {
-	it("opens: a session's model choice reads as none, session defaults keep everything but their model", async () => {
+	it("opens: a model choice reads as none, defaults keep all but their model; a new choice outlives a restart", async () => {
 		const path = join(dataDir, "old.sqlite");
 		const old = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 		const host = createHost<P3Principal>({
@@ -208,29 +208,44 @@ describe("a store version 1 wrote (decision 125)", () => {
 		await (await host.get(OldDefaults, {}, context)).write({}, context);
 		await host.close(context);
 		await old.close(context);
-		const runtime = { dataDir, machine: { user: "test", hostname: "test" } } as ServerRuntime;
-		const now = await world(
-			context,
-			[
-				{
-					name: "p3.server",
-					facet: defineFacet((facetHost) => facetHost.serve(ServerRuntimeRegistry, { compose: () => runtime })),
-				},
-				{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-				{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
-			],
-			path,
-		);
-		try {
+		const choice = { login: "l1", model: "m", thinking: "high" } as const;
+		await opened(path, async (now) => {
 			const sessions = await now.host.get(SessionsStore, {}, context);
 			const [session] = (await sessions.sessions.one.page({ id: "s1" }, 1, context)).items;
 			assert.deepEqual([session?.state, session?.model], ["settled", null]);
 			const settings = await now.host.get(DefaultsSettings, {}, context);
 			const [defaults] = (await settings.settings.of.page({ thing: "d1" }, 1, context)).items;
 			assert.deepEqual(defaults?.defaults, { model: null, shared: false, opensWith: "transcript.session" });
-			assert.deepEqual(now.errors, []);
-		} finally {
-			await now.close(context);
-		}
+			// A choice of this version, written now, is there after the next start (Astra, round 1 of model settings).
+			await sessions.setModel({ session: "s1", model: choice }, context);
+		});
+		await opened(path, async (now) => {
+			const sessions = await now.host.get(SessionsStore, {}, context);
+			const [session] = (await sessions.sessions.one.page({ id: "s1" }, 1, context)).items;
+			assert.deepEqual(session?.model, choice);
+		});
 	});
 });
+
+/** Runs `fn` on this version's sessions plugin over the store file at `path`, nothing reported, then closes it. */
+async function opened(path: string, fn: (now: World) => Promise<void>): Promise<void> {
+	const runtime = { dataDir, machine: { user: "test", hostname: "test" } } as ServerRuntime;
+	const now = await world(
+		context,
+		[
+			{
+				name: "p3.server",
+				facet: defineFacet((facetHost) => facetHost.serve(ServerRuntimeRegistry, { compose: () => runtime })),
+			},
+			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+			{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
+		],
+		path,
+	);
+	try {
+		await fn(now);
+		assert.deepEqual(now.errors, []);
+	} finally {
+		await now.close(context);
+	}
+}

@@ -12,17 +12,27 @@ export type Overrides = ReadonlyMap<string, readonly ModelOverride[]>;
 /** No overrides. */
 export const NO_OVERRIDES: Overrides = new Map();
 
-/** The overrides of model settings things `settings`, nearest first, by model id. */
-export function overridesOf(settings: readonly (readonly ModelOverride[])[]): Overrides {
-	const byModel = new Map<string, ModelOverride[]>();
+/**
+ * The overrides of model settings things `settings`, nearest first, by model id; a model's list is `previous`'s while
+ * it has the same overrides, so what did not change for a model keeps its identity.
+ */
+export function overridesOf(settings: readonly (readonly ModelOverride[])[], previous: Overrides): Overrides {
+	const made = new Map<string, ModelOverride[]>();
 	for (const overrides of settings) {
 		for (const override of overrides) {
-			const list = byModel.get(override.model);
-			if (list === undefined) byModel.set(override.model, [override]);
+			const list = made.get(override.model);
+			if (list === undefined) made.set(override.model, [override]);
 			else list.push(override);
 		}
 	}
-	return byModel.size === 0 ? NO_OVERRIDES : byModel;
+	if (made.size === 0) return NO_OVERRIDES;
+	const byModel = new Map<string, readonly ModelOverride[]>(made);
+	for (const [model, list] of made) {
+		const old = previous.get(model);
+		if (old !== undefined && old.length === list.length && old.every((one, i) => one === list[i]))
+			byModel.set(model, old);
+	}
+	return byModel;
 }
 
 /**
@@ -30,7 +40,7 @@ export function overridesOf(settings: readonly (readonly ModelOverride[])[]): Ov
  * model sets; a model the nearest override that says so hides is left out. `models` itself when no override names
  * one of them.
  */
-export function applied(provider: string, models: readonly Model<Api>[], overrides: Overrides): readonly Model<Api>[] {
+export function applied(provider: string, models: Model<Api>[], overrides: Overrides): Model<Api>[] {
 	if (overrides.size === 0) return models;
 	let changed = false;
 	const result: Model<Api>[] = [];
@@ -43,33 +53,13 @@ export function applied(provider: string, models: readonly Model<Api>[], overrid
 			continue;
 		}
 		changed = true;
-		if (nearest(mine, "hidden") === true) continue;
-		result.push(overridden(model, mine));
+		// Each field from the nearest override that sets it: laid on from the farthest (a field an override leaves out
+		// is absent in it, its schema's `opt`). The fields left are the model's own, by pi-ai's names.
+		const set: ModelOverride = Object.assign({}, ...mine.toReversed());
+		const { provider: _provider, model: _model, hidden, maxRequestBytes, ...fields } = set;
+		if (hidden === true) continue;
+		const inputLimits = maxRequestBytes === undefined ? undefined : { ...model.inputLimits, maxRequestBytes };
+		result.push({ ...model, ...fields, ...(inputLimits === undefined ? {} : { inputLimits }) });
 	}
 	return changed ? result : models;
-}
-
-/** `model` with the fields of `overrides` (nearest first) set, each from the nearest that sets it. */
-function overridden(model: Model<Api>, overrides: readonly ModelOverride[]): Model<Api> {
-	const name = nearest(overrides, "name");
-	const cost = nearest(overrides, "cost");
-	const contextWindow = nearest(overrides, "contextWindow");
-	const maxTokens = nearest(overrides, "maxTokens");
-	const thinkingLevelMap = nearest(overrides, "thinkingLevelMap");
-	const maxRequestBytes = nearest(overrides, "maxRequestBytes");
-	return {
-		...model,
-		...(name === undefined ? {} : { name }),
-		...(cost === undefined ? {} : { cost }),
-		...(contextWindow === undefined ? {} : { contextWindow }),
-		...(maxTokens === undefined ? {} : { maxTokens }),
-		...(thinkingLevelMap === undefined ? {} : { thinkingLevelMap }),
-		...(maxRequestBytes === undefined ? {} : { inputLimits: { ...model.inputLimits, maxRequestBytes } }),
-	};
-}
-
-/** The value of field `field` in the nearest of `overrides` that sets it. */
-function nearest<F extends keyof ModelOverride>(overrides: readonly ModelOverride[], field: F): ModelOverride[F] {
-	for (const override of overrides) if (override[field] !== undefined) return override[field];
-	return undefined as ModelOverride[F];
 }

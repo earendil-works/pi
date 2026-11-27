@@ -61,7 +61,7 @@ export type ThingProvider = { readonly thing: string; readonly provider: Provide
  * What the things of one kind give the agent together: an extension (its tools take the thing they act on as an
  * argument, and a list tool names the things, so descriptions stay fixed text), the execution environment at a
  * conversation's location (a machine's: `undefined` for a location on a machine it does not give, at each use) and
- * model providers (a login's, one per thing, with it).
+ * model providers (a login's, one per thing, with it), and when they are complete.
  */
 export type HarnessContribution = {
 	readonly extension?: HarnessExtension;
@@ -70,6 +70,11 @@ export type HarnessContribution = {
 		context: Context,
 	) => ExecutionEnv | undefined | Promise<ExecutionEnv | undefined>;
 	readonly providers?: readonly ThingProvider[];
+	/**
+	 * Resolves once what it gives is complete (a login's: the session's models, every login and override in), so the
+	 * harness picks a model only then; cancelled first by `context`, it fails saying what is still loading.
+	 */
+	readonly ready?: (context: Context) => Promise<void>;
 };
 
 /**

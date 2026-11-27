@@ -2,7 +2,7 @@
 // picker, the harness): how a login signs in (`SignInMethod`), the sign-in a person runs on their own page before a
 // login exists (`SignIn`: the providers there are, the person's current attempt, its questions and notices), and the
 // models a session may use (`SessionModels`, decision 118). A finished sign-in's credential stays on the server; only
-// its attempt id reaches a login's create step. The login kind is `kind.ts`, the model settings kind `models-kind.ts`.
+// its attempt id reaches a login's create step. The login kind is `kind.ts`, the model settings kind `model-settings-kind.ts`.
 
 import {
 	arr,
@@ -139,25 +139,28 @@ export const LoginModels = obj({ login: str(), provider: str(), providerName: st
 export type LoginModels = Static<typeof LoginModels>;
 
 /** A login's models as its session's worker asks them: pi-ai's definitions (plain data, typed `unknown` here). */
-export const LoginCatalog = obj({ login: str(), models: arr(unknown()) });
+export const LoginDefinitions = obj({ login: str(), models: arr(unknown()) });
 
-/** A login's models as its session's worker asks them (see `LoginCatalog`). */
-export type LoginCatalog = Static<typeof LoginCatalog>;
+/** A login's models as its session's worker asks them (see `LoginDefinitions`). */
+export type LoginDefinitions = Static<typeof LoginDefinitions>;
 
 /**
  * The models a session may use (decision 118a), on the server, for everyone the session gives anything: per login its
  * agent may Use there (`models`, for the picker), each login's models being its type's catalog cut to its account,
  * with the overrides of the model settings things that reach the session applied (the nearest wins per field;
  * hidden models are left out). `catalog`, the same models as pi-ai's full definitions, is the session's own worker's
- * alone: the registry its agent asks. A login's entries keep their identity while that login, its type's catalog and
- * the overrides are unchanged.
+ * alone: the registry its agent asks. `complete` says that every login the agent may Use has its models in and every
+ * model settings thing its overrides; while it is `false` (just held, a login or settings thing just given) the lists
+ * are the last complete ones without what is no longer given, so a model is never offered before its overrides and
+ * the worker waits before it picks one (round 1, Opus M1, Astra 2). A login's entries keep their identity while its
+ * account and the overrides naming its models are unchanged. Computed once per session (`SessionModelSet`).
  */
 export const SessionModels = remote("providers.session-models", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: () => Server(),
 	admission: obj({}),
-	state: { models: arr(LoginModels), catalog: grantable(arr(LoginCatalog)) },
+	state: { complete: bool(), models: arr(LoginModels), catalog: grantable(arr(LoginDefinitions)) },
 });
 
 /**
@@ -171,7 +174,10 @@ export const ModelOverride = obj({
 	provider: opt(str({ max: 200 })),
 	model: str({ min: 1, max: 200 }),
 	name: opt(str({ max: 200 })),
-	cost: opt(obj({ input: num(), output: num(), cacheRead: num(), cacheWrite: num() })),
+	// Prices are never negative (Astra, round 1): a usage cost below zero is no product feature.
+	cost: opt(
+		obj({ input: num({ min: 0 }), output: num({ min: 0 }), cacheRead: num({ min: 0 }), cacheWrite: num({ min: 0 }) }),
+	),
 	contextWindow: opt(int({ min: 1 })),
 	maxTokens: opt(int({ min: 1 })),
 	thinkingLevelMap: opt(map(union([str({ max: 200 }), nul()]))),

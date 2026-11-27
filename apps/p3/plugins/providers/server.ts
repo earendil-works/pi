@@ -30,12 +30,12 @@ import {
 } from "./contract.server.ts";
 import type { ModelOverride } from "./contract.ts";
 import { type LoginInfo, LoginKind } from "./kind.ts";
-import { serveLoginAccount } from "./login-account.ts";
+import { modelInfos, serveLoginAccount } from "./login-account.ts";
 import { serveLoginCatalogs } from "./login-catalogs.ts";
 import { LoginProviders, serveLoginProviders } from "./login-providers.ts";
 import { ownerOf } from "./logins.ts";
+import { ModelSettingsKind } from "./model-settings-kind.ts";
 import { serveModelSettingsStore } from "./model-settings-store.ts";
-import { ModelSettingsKind } from "./models-kind.ts";
 import { serveSessionModels } from "./session-models.ts";
 import { serveSignIn } from "./sign-in.ts";
 import { serveStore } from "./store.ts";
@@ -110,12 +110,7 @@ function loginOf(
 			method: found.method,
 			status: found.status,
 			// The account's models are pi-ai's definitions (`LoginAccount`).
-			models: ((models?.models ?? []) as Model<Api>[]).map(({ id, name, reasoning, contextWindow }) => ({
-				id,
-				name,
-				reasoning,
-				contextWindow,
-			})),
+			models: modelInfos((models?.models ?? []) as Model<Api>[]),
 		};
 	});
 }

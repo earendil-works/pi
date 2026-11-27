@@ -40,7 +40,7 @@ import {
 } from "@earendil-works/p3/v1/worker";
 import { type HarnessLocation, type Held, HeldThings, ThingHarnessParts } from "../things/contract.worker.ts";
 import { activityOf, serialized } from "./activity.ts";
-import { AgentParts, type Parts } from "./agent-parts.ts";
+import { AgentParts, type ModelRef, type Parts } from "./agent-parts.ts";
 import { SUBAGENT_TASKS, subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
@@ -86,12 +86,14 @@ export default defineFacet((host, facet) => {
 			if (now !== undefined) opened.value.things.apply(now, parts.value);
 		};
 		/**
-		 * Waits until the holding is ready (bounded: a holding that never gets ready must not stop the agent), then
-		 * applies; past the bound it goes on with what was given and reports.
+		 * Waits until the holding is ready and the kinds' contributions are complete (a login's models), then applies;
+		 * bounded, as a holding or models that never get ready must not stop the agent: past the bound it goes on with
+		 * what was given, reports, and answers `loading`.
 		 */
-		const ready = async (context: Context): Promise<void> => {
+		const ready = async (context: Context): Promise<Readiness> => {
+			const bound = withAbortSignal(AbortSignal.timeout(READY_MS), context);
 			try {
-				await until(held, (value) => value !== undefined, withAbortSignal(AbortSignal.timeout(READY_MS), context));
+				await until(held, (value) => value !== undefined, bound);
 			} catch (error) {
 				// The caller's own cancellation goes on as one; the bound is reported.
 				if (context.abortSignal?.aborted === true) throw error;
@@ -102,6 +104,18 @@ export default defineFacet((host, facet) => {
 				);
 			}
 			apply();
+			try {
+				await opened.value.things.ready(bound);
+				return "complete";
+			} catch (error) {
+				if (context.abortSignal?.aborted === true) throw error;
+				reportError(
+					`p3 harness: session ${runtime.value.session}: the models not complete in ${READY_MS} ms`,
+					error,
+					BACKGROUND_CONTEXT,
+				);
+				return "loading";
+			}
 		};
 		self.contribute(
 			WorkerBusy,
@@ -137,13 +151,13 @@ export default defineFacet((host, facet) => {
 			submit: async (conversation, { text, requestId }, context) => {
 				if (archived.value) throw forbidden("harness: the session is archived");
 				const { durable, things } = opened.value;
-				await ready(context);
+				const models = await ready(context);
 				const target =
 					conversation === undefined
 						? await durable.root(context)
 						: await durable.conversation(Number(conversation) as ConversationId, context);
 				if (target === undefined) throw invalid("args", `harness: no conversation ${conversation}`);
-				await offerModel(target, things, facts.session.value?.model ?? null, context);
+				await offerModel(target, things, chosenModel(facts.session.value?.model ?? null, things, models), context);
 				await serial(async () => {
 					// An archive seen during the waits above takes nothing (Astra, round 1); the server refuses `working` for an
 					// archived session besides, so a worker that sees it later still starts no run the waker would wake.
@@ -220,26 +234,45 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 	return { durable, things };
 }
 
+/** Whether the kinds' contributions were complete when a submit picked its model, or still loading past the bound. */
+type Readiness = "complete" | "loading";
+
+/** A model the session's row chose, as the agent names it, and its thinking level. */
+type Chosen = { readonly model: ModelRef; readonly thinking: ModelChoice["thinking"] };
+
 /**
- * Gives `conversation` the session's chosen model (`choice`, the session row's: a login and its model) and thinking
- * level when the login it names gives that model (decision 118; Astra, slice 5 round 1). Without a choice, or with one
- * no held login gives, the decided behaviour: a model still offered is kept, else the first model of the session's
- * first login; without a login nothing changes (its run fails `no_model`).
+ * The model the row's `choice` names (a login and its model), as the agent names it. With the models complete, only
+ * one a held login gives; still loading (past the bound), the one its held login would give, so the run fails
+ * `no_model` naming it rather than asking another login (round 1 of model settings, Astra 2). `undefined`: no choice,
+ * or one no held login gives.
+ */
+function chosenModel(choice: ModelChoice | null, things: AgentParts, models: Readiness): Chosen | undefined {
+	if (choice === null) return undefined;
+	const provider = things.providerOf(choice.login);
+	if (provider === undefined) return undefined;
+	const model = { provider, modelId: choice.model };
+	if (models === "complete" && things.models.getModel(provider, choice.model) === undefined) return undefined;
+	return { model, thinking: choice.thinking };
+}
+
+/**
+ * Gives `conversation` the session's chosen model and thinking level (`chosen`, decision 118; Astra, slice 5 round
+ * 1). Without one, the decided behaviour: a model still offered is kept, else the first model offered, in the order
+ * of the held things; without one nothing changes (its run fails `no_model`).
  */
 async function offerModel(
 	conversation: Conversation,
 	things: AgentParts,
-	choice: ModelChoice | null,
+	chosen: Chosen | undefined,
 	context: Context,
 ): Promise<void> {
 	const agent = await conversation.agent(context);
-	const chosen = choice === null ? undefined : things.modelOf(choice.login, choice.model);
-	if (chosen !== undefined && choice !== null) {
+	if (chosen !== undefined) {
 		const same =
-			agent.model?.provider === chosen.provider &&
-			agent.model.modelId === chosen.modelId &&
-			agent.thinkingLevel === choice.thinking;
-		if (!same) await conversation.configure({ model: chosen, thinkingLevel: choice.thinking }, context);
+			agent.model?.provider === chosen.model.provider &&
+			agent.model.modelId === chosen.model.modelId &&
+			agent.thinkingLevel === chosen.thinking;
+		if (!same) await conversation.configure({ model: chosen.model, thinkingLevel: chosen.thinking }, context);
 		return;
 	}
 	const model = agent.model;

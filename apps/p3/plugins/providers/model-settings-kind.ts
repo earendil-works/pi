@@ -11,9 +11,6 @@ import { defineThing } from "../things/kind.ts";
 import { ModelOverride } from "./contract.ts";
 import { messages } from "./messages.ts";
 
-/** What Edit gives: the members a model settings thing's editor is granted. */
-export const MODEL_SETTINGS_WRITES = ["set"] as const;
-
 /**
  * A model settings thing: its `overrides` (for everyone let in) and `set` (Edit), which replaces them, as `configure`
  * does for a person with Configure where it is linked.
@@ -29,7 +26,7 @@ export const ModelSettingsKind = defineThing("providers.models", {
 	ticks: {
 		// `overrides`, which no tick gives, is for everyone let in: reading.
 		use: { label: messages.message("tickUseModelSettings"), for: "agents" },
-		edit: { label: messages.message("tickEditModelSettings"), gives: MODEL_SETTINGS_WRITES },
+		edit: { label: messages.message("tickEditModelSettings"), gives: ["set"] },
 	},
 	defaultGrants: { agents: ["use", "edit"], everyone: ["edit"] },
 	settings: ["overrides"],

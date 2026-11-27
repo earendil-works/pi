@@ -39,6 +39,9 @@ export const Location = obj({ environment: str({ max: 200 }), folder: str({ max:
 /** Where a session works (see `Location`). */
 export type Location = Static<typeof Location>;
 
+/** The session kind's name (`kind.ts`): a session is a workspace of this kind, its answer the one on itself. */
+export const SESSION_KIND = "sessions.session";
+
 /** How hard the model thinks (Durable's levels). */
 export const ThinkingLevel = oneOf("off", "minimal", "low", "medium", "high", "xhigh", "max");
 

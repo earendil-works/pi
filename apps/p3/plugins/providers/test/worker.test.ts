@@ -25,6 +25,8 @@ import {
 	sqliteBackend,
 	until,
 	type Watchable,
+	type Writable,
+	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { createModels, fauxAssistantMessage, fauxProvider, WorkerRuntime } from "@earendil-works/p3/v1/worker";
@@ -38,7 +40,7 @@ import {
 	type ThingProvider,
 } from "../../things/contract.worker.ts";
 import thingsWorker from "../../things/worker.ts";
-import { type LoginCatalog, SessionModels } from "../contract.ts";
+import { type LoginDefinitions, SessionModels } from "../contract.ts";
 import { type Login, type LoginInfo, LoginKind, type RequestAuth } from "../kind.ts";
 import providersWorker from "../worker.ts";
 
@@ -86,20 +88,30 @@ const recording = defineFacet((_host, self) => {
 const SCRIPT: Step[] = [{ when: "hello", reply: [{ kind: "text", text: "hi there" }] }];
 
 /** The models of the logins the tests hold, as the stand-in server's `SessionModels.catalog` lists them. */
-const CATALOGS: LoginCatalog[] = [
+const CATALOGS: LoginDefinitions[] = [
 	...["a", "b", "c", "x"].map((login) => ({ login, models: [...CATALOG] })),
 	{ login: "r", models: [...fauxProvider({ provider: "rec", api: "rec", models: [{ id: "m" }] }).models] },
 ];
 
-/** The stand-in server: `SessionModels` with `CATALOGS`, its catalog granted to the session's worker. */
+/** The stand-in server's `complete` of the case running (set by its object). */
+let complete: Writable<boolean> | undefined;
+
+/**
+ * The stand-in server: `SessionModels` with `CATALOGS`, complete until a case says otherwise, its catalog granted to
+ * the session's worker.
+ */
 const sessionModels = defineFacet((host) =>
 	// pi-ai's definitions are JSON: the catalog as the member types it.
 	host.serve(
 		SessionModels,
-		() => ({
-			models: constant([]),
-			catalog: () => constant(CATALOGS as unknown as JsonValue) as unknown as Watchable<LoginCatalog[]>,
-		}),
+		(_params, _principal, _admitted, self) => {
+			complete = self.writable(true);
+			return {
+				complete: self.derive([complete], ([now]) => now),
+				models: constant([]),
+				catalog: () => constant(CATALOGS as unknown as JsonValue) as unknown as Watchable<LoginDefinitions[]>,
+			};
+		},
 		{
 			admit: () => constant(allow({ granted: ["catalog" as const] })),
 		},
@@ -180,6 +192,26 @@ describe("the providers of the logins the agent holds", () => {
 			given[0]!.provider.getModels().map(({ id, provider }) => [id, provider]),
 			[[FAUX_MODEL, `${FAUX_PROVIDER}~a`]],
 		);
+	});
+
+	it("is ready once the session's models are complete; cut off before, it names the logins still missing", async () => {
+		await catalogued();
+		const [entry] = t.contributions(ThingHarnessParts);
+		const things = [held("a", SCRIPT), held("missing", SCRIPT)] as unknown as readonly HeldThing[];
+		const given = entry!.value.part(things, SESSION);
+		await given.ready!(context);
+		complete!.set(false);
+		// Once the worker has the change, a `ready` cut off by its context fails.
+		const failure = await eventually(
+			() =>
+				given.ready!(withAbortSignal(AbortSignal.timeout(50), context)).then(
+					() => "ready",
+					(error: Error) => error.message,
+				),
+			(message) => message !== "ready",
+			5_000,
+		);
+		assert.match(failure, /the models of logins missing are still loading/);
 	});
 
 	it("loads no request code until a request; one for a provider nobody has fails that request only", async () => {

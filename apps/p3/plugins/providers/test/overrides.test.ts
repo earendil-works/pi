@@ -1,7 +1,7 @@
 // The model settings' overrides as pure steps (`overrides.ts`): indexed by model id, nearest thing first; applied, each
 // field from the nearest override that sets it (the nearer sets the cost, the farther the context window, both
-// apply), an override of another provider type left out, a hidden model left out, and a list no override names given
-// back itself (decision 118b).
+// apply), an override of another provider type left out, a hidden model left out, a list no override names given
+// back itself (decision 118b), and a model's merged list kept while its overrides are the same.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -30,17 +30,20 @@ describe("the overrides", () => {
 	it("take each field from the nearest override that sets it", () => {
 		const nearer = [{ model: "a", cost: COST, name: "Near" }];
 		const farther = [{ model: "a", contextWindow: 5000, name: "Far" }];
-		const [a] = applied("p", [model("a")], overridesOf([nearer, farther]));
+		const [a] = applied("p", [model("a")], overridesOf([nearer, farther], NO_OVERRIDES));
 		assert.deepEqual([a!.name, a!.cost, a!.contextWindow, a!.maxTokens], ["Near", COST, 5000, 100]);
 	});
 
 	it("apply to their provider type only when they name one", () => {
-		const overrides = overridesOf([
+		const overrides = overridesOf(
 			[
-				{ provider: "other", model: "a", name: "Theirs" },
-				{ model: "b", name: "Any" },
+				[
+					{ provider: "other", model: "a", name: "Theirs" },
+					{ model: "b", name: "Any" },
+				],
 			],
-		]);
+			NO_OVERRIDES,
+		);
 		const laid = applied("p", [model("a"), model("b")], overrides);
 		assert.deepEqual(
 			laid.map(({ name }) => name),
@@ -49,7 +52,11 @@ describe("the overrides", () => {
 	});
 
 	it("leave out a model the nearest override hides, not one a farther hides and a nearer shows", () => {
-		const hidden = applied("p", [model("a"), model("b")], overridesOf([[{ model: "a", hidden: true }]]));
+		const hidden = applied(
+			"p",
+			[model("a"), model("b")],
+			overridesOf([[{ model: "a", hidden: true }]], NO_OVERRIDES),
+		);
 		assert.deepEqual(
 			hidden.map(({ id }) => id),
 			["b"],
@@ -57,7 +64,7 @@ describe("the overrides", () => {
 		const shown = applied(
 			"p",
 			[model("a")],
-			overridesOf([[{ model: "a", hidden: false }], [{ model: "a", hidden: true }]]),
+			overridesOf([[{ model: "a", hidden: false }], [{ model: "a", hidden: true }]], NO_OVERRIDES),
 		);
 		assert.deepEqual(
 			shown.map(({ id }) => id),
@@ -69,7 +76,10 @@ describe("the overrides", () => {
 		const [a] = applied(
 			"p",
 			[model("a")],
-			overridesOf([[{ model: "a", thinkingLevelMap: { high: "max", low: null }, maxRequestBytes: 1024 }]]),
+			overridesOf(
+				[[{ model: "a", thinkingLevelMap: { high: "max", low: null }, maxRequestBytes: 1024 }]],
+				NO_OVERRIDES,
+			),
 		);
 		assert.deepEqual([a!.thinkingLevelMap, a!.inputLimits], [{ high: "max", low: null }, { maxRequestBytes: 1024 }]);
 	});
@@ -77,7 +87,16 @@ describe("the overrides", () => {
 	it("give back the list itself when no override names one of its models", () => {
 		const models = [model("a")];
 		assert.equal(applied("p", models, NO_OVERRIDES), models);
-		assert.equal(applied("p", models, overridesOf([[{ model: "z", name: "Z" }]])), models);
-		assert.equal(overridesOf([[], []]), NO_OVERRIDES);
+		assert.equal(applied("p", models, overridesOf([[{ model: "z", name: "Z" }]], NO_OVERRIDES)), models);
+		assert.equal(overridesOf([[], []], NO_OVERRIDES), NO_OVERRIDES);
+	});
+
+	it("keep a model's list of the merge before while it has the same overrides (Astra 5)", () => {
+		const a = { model: "a", name: "A" };
+		const b = { model: "b", name: "B" };
+		const before = overridesOf([[a, b]], NO_OVERRIDES);
+		const after = overridesOf([[a], [{ model: "b", name: "B2" }, b]], before);
+		assert.equal(after.get("a"), before.get("a"));
+		assert.notEqual(after.get("b"), before.get("b"));
 	});
 });

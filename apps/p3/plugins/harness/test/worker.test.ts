@@ -213,6 +213,43 @@ describe("the harness plugin on a worker", () => {
 		assert.equal(agent.thinkingLevel, "high");
 	});
 
+	it("picks the chosen model only once the logins' models are complete: a login given late is asked (Astra, round 1 of model settings)", async () => {
+		const fallback = login("a", "faux-a", [says("", "A")]);
+		const chosen = login("b", "faux-b", [says("", "B")]);
+		const server = await start([fallback], { model: { login: "b", model: "faux-b-model", thinking: "high" } });
+		let complete!: () => void;
+		server.loading(
+			new Promise((resolve) => {
+				complete = resolve;
+			}),
+		);
+		const asked = ask("one");
+		// The submit waits in `ready`; the chosen login's models arrive, then the list is complete.
+		await eventually(
+			() => server.readies,
+			(readies) => readies > 0,
+			5000,
+		);
+		server.hold([fallback, chosen]);
+		complete();
+		await asked;
+		assert.deepEqual(
+			requests().map(({ provider }) => provider),
+			["faux-b"],
+		);
+	});
+
+	it("falls back past a login without models to the next one that has one (Astra, round 1 of model settings)", async () => {
+		const empty = login("a", "faux-empty", []);
+		const usable = login("b", "faux-b", [says("", "B")]);
+		await start([empty, usable]);
+		await ask("one");
+		assert.deepEqual(
+			requests().map(({ provider }) => provider),
+			["faux-b"],
+		);
+	});
+
 	it("falls back to the first login's model while the chosen one is not given (decision 118)", async () => {
 		const a = login("a", "faux-a", [says("", "A")]);
 		await start([a], { model: { login: "gone", model: "faux-gone-model", thinking: "off" } });

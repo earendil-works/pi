@@ -4,7 +4,8 @@
 // holder; a server restart mid-call resumes the run; an archived session's cut-off run schedules nothing; a row left
 // `working` with nothing to do (a crash before Durable took the input, or before the settled report) is settled by
 // the waker's start; a reload of the harness plugin mid-call finishes the run; Bash withheld from the agents in one
-// session is gone from the agent's next request there, and only there (ERNDL-704 test 5).
+// session is gone from the agent's next request there, and only there (ERNDL-704 test 5); of two logins, the one the
+// session's row chose is asked (ERNDL-705).
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -24,9 +25,16 @@ import {
 	until,
 	withGranted,
 } from "@earendil-works/p3/v1";
-import { SessionsStore } from "@earendil-works/p3/v1/server";
+import { ensureLogin, SessionsStore, setCredential } from "@earendil-works/p3/v1/server";
 import { ownerClient, type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
-import { type FauxRequest, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
+import {
+	FAUX_MODEL,
+	FAUX_PROVIDER,
+	type FauxRequest,
+	FauxRequests,
+	keyOf,
+	type Step,
+} from "../../../test/plugins/faux-login/contract.ts";
 import { newSession, scriptFaux, scriptFauxAs } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
@@ -186,6 +194,49 @@ describe("the harness end to end", () => {
 		await send(client, other, "there");
 		await reaches(client, other, "settled");
 		assert.ok((await requests(client, other))[0]?.tools.includes("bash"));
+		assert.deepEqual(t.errors, []);
+	});
+
+	// Opus S2, round 1 of model settings: the row's choice through `SessionModels` and the real providers worker.
+	it("asks the login the session's row chose, of two, and the other once the row chooses it", async () => {
+		const folder = await directory("p3-harness-e2e-");
+		const t = await start();
+		// Each login's script answers only its own message: a request to the other one matches nothing.
+		const own: Step[] = [{ when: "@first", reply: [{ kind: "text", text: "first" }] }];
+		const id = await session(t, folder, own);
+		// The login `session` made, scripted the same again: its id.
+		const first = await scriptFaux(t.host, id, own, context);
+		const script: Step[] = [{ when: "@second", reply: [{ kind: "text", text: "second" }] }];
+		const credential = { type: "api_key", key: keyOf(script) };
+		const by = { kind: "plugin", plugin: "p3-test-faux-login" } as const;
+		const second = await t.host.root(async (ctx) => {
+			const thing = await ensureLogin(
+				{ name: "Second", workspace: id, by, provider: FAUX_PROVIDER, credential },
+				ctx,
+			);
+			await setCredential(thing, { provider: FAUX_PROVIDER, credential }, ctx);
+			return thing;
+		}, context);
+		const client = await t.client(context);
+		const choose = (login: string) =>
+			client.root(async (ctx) => {
+				const held = withGranted(await ctx.get(SessionObject, { workspace: id, thing: id }), "setModel")!;
+				await held.setModel({ model: { login, model: FAUX_MODEL, thinking: "low" } }, ctx);
+			}, context);
+		await choose(second);
+		await send(client, id, "@second");
+		await reaches(client, id, "settled");
+		await choose(first);
+		await send(client, id, "@first");
+		await eventually(
+			() => requests(client, id),
+			(seen) => seen.length === 2,
+		);
+		await reaches(client, id, "settled");
+		assert.deepEqual(
+			(await requests(client, id)).map(({ matched }) => matched),
+			[true, true],
+		);
 		assert.deepEqual(t.errors, []);
 	});
 

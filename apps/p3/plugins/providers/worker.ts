@@ -9,15 +9,19 @@
 import {
 	type Api,
 	BACKGROUND_CONTEXT,
+	type Context,
 	contribute,
 	defineFacet,
 	type Model,
+	PluginError,
 	type Provider,
+	type Reference,
 	type RegistryValue,
+	until,
 } from "@earendil-works/p3/v1";
 import { lazyStream, loadProvider, WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
-import { type LoginCatalog, SessionModels } from "./contract.ts";
+import { type LoginDefinitions, SessionModels } from "./contract.ts";
 import { type Login, LoginKind } from "./kind.ts";
 import { LoginProviders, type ProviderMap, serveLoginProviders } from "./login-providers.ts";
 
@@ -31,7 +35,7 @@ export default defineFacet((host) => {
 			async (context) => runtime.value.host.hold(SessionModels, { session: runtime.value.session }, context),
 			(held) => held.release(),
 		);
-		const catalogOf = (): readonly LoginCatalog[] => models.value.catalog?.value ?? [];
+		const catalogOf = (): readonly LoginDefinitions[] => models.value.catalog?.value ?? [];
 		self.contribute(
 			ThingHarnessParts,
 			thingHarnessPart(LoginKind, (things) => ({
@@ -41,10 +45,30 @@ export default defineFacet((host) => {
 						? []
 						: [{ thing: held.thing, provider: loginProvider(held, shown.provider, added, catalogOf) }];
 				}),
+				ready: (context) => completed(models.value, things, context),
 			})),
 		);
 	});
 });
+
+/**
+ * Resolves once the session's models are complete (`SessionModels.complete`: every login and model settings thing in);
+ * cancelled first by `context` (the harness's bound), it fails naming the held logins whose models are still missing.
+ */
+async function completed(
+	models: Reference<typeof SessionModels>,
+	logins: readonly HeldThing<typeof Login>[],
+	context: Context,
+): Promise<void> {
+	try {
+		await until(models.complete, (complete) => complete, context);
+	} catch {
+		const listed = new Set((models.catalog?.value ?? []).map(({ login }) => login));
+		const loading = logins.filter(({ thing }) => !listed.has(thing)).map(({ thing }) => thing);
+		const what = loading.length === 0 ? "the model settings" : `the models of logins ${loading.join(", ")}`;
+		throw new PluginError("providers.loading", `providers: ${what} are still loading`, { loading });
+	}
+}
 
 /** No models (a login the session's catalog does not list yet). */
 const NONE: readonly unknown[] = [];
@@ -61,7 +85,7 @@ function loginProvider(
 	{ thing, ref }: HeldThing<typeof Login>,
 	base: string,
 	added: RegistryValue<ProviderMap>,
-	catalogOf: () => readonly LoginCatalog[],
+	catalogOf: () => readonly LoginDefinitions[],
 ): Provider {
 	const id = `${base}${SEPARATOR}${thing}`;
 	/** pi-ai's built-in request code, loaded on the first request that needs it; a failed load is tried again. */
