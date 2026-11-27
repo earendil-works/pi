@@ -71,7 +71,8 @@ server's host: `root`, the base's registries), `plugins` (the watcher's marks), 
 `apply(ctx)`, `restart(ctx)`, `stop(ctx)` (the data directory kept) and `close(ctx)`; workers idle 300 ms by default
 (`idleMs`). `ownerClient` and `ownerCookie` sign in to any running p3 server (a launched one too). The tests' own
 `test/support.ts` adds the probe (`PROBE`: a plugin under test that drives a session's worker, and whose server route
-`GET /_probe/principal` answers who a request signed in as), `constantPlugin(name, value)` (a single-file worker
+`GET /_probe/principal` answers who a request signed in as), `workerReports(client, session, context)` (what a
+session's worker reported, through the probe: `t.errors` has the server's only), `constantPlugin(name, value)` (a single-file worker
 plugin serving one value), `alive`, and for launched processes `launch` (a foreground `p3 server`) and `childrenOf`.
 Models: `test/skeleton.test.ts`, `plugins/sign-in/test/sign-ins.test.ts`.
 
