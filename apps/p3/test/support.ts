@@ -29,9 +29,18 @@ import {
 } from "@earendil-works/p3/v1";
 import { ensureLogin, setCredential } from "../plugins/providers/logins.ts";
 import { FAUX_PROVIDER, FauxScript, keyOf, type Step } from "./plugins/faux-login/contract.ts";
+import { Probe } from "./plugins/probe/contract.ts";
 
 /** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
 export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
+
+/**
+ * What session `session`'s worker reported since its start (a failed object, a failure nobody awaited), read through
+ * the probe as `client`'s owner: a worker's reports go to its stderr, never to the test server's `errors`.
+ */
+export function workerReports(client: Host<P3Principal>, session: string, context: Context): Promise<string[]> {
+	return client.root(async (ctx) => (await ctx.get(Probe, { session })).reported({}, ctx), context);
+}
 
 /** The faux login (`test/plugins/faux-login/`): a model login answering from a script, a plugin under test. */
 export const FAUX = fileURLToPath(new URL("./plugins/faux-login/", import.meta.url));

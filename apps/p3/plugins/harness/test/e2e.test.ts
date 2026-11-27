@@ -3,7 +3,8 @@
 // tool running in the session's folder; its state reaches its row (working, then settled); the worker stays alive while working with no
 // holder; a server restart mid-call resumes the run; an archived session's cut-off run schedules nothing; a row left
 // `working` with nothing to do (a crash before Durable took the input, or before the settled report) is settled by
-// the waker's start; a reload of the harness plugin mid-call finishes the run; Bash withheld from the agents in one
+// the waker's start; a reload of the harness plugin mid-call finishes the run, the held transcript following the next
+// harness with nothing failing on the worker; Bash withheld from the agents in one
 // session is gone from the agent's next request there, and only there (ERNDL-704 test 5).
 
 import assert from "node:assert/strict";
@@ -26,7 +27,7 @@ import {
 import { SessionsStore } from "@earendil-works/p3/v1/server";
 import { ownerClient, type TestServer, type TestServerOptions, testServer } from "@earendil-works/p3/v1/testing";
 import { type FauxRequest, FauxRequests, type Step } from "../../../test/plugins/faux-login/contract.ts";
-import { newSession, scriptFaux, scriptFauxAs } from "../../../test/support.ts";
+import { newSession, PROBE, scriptFaux, scriptFauxAs, workerReports } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { CodingToolsKind } from "../../tools/kind.ts";
@@ -275,11 +276,12 @@ describe("the harness end to end", () => {
 		await reaches(client, after, "settled", 20_000);
 	});
 
-	it("finishes a run when the harness plugin is reloaded mid-call", async () => {
+	it("finishes a run when the harness plugin is reloaded mid-call, and nothing fails on the worker", async () => {
 		const folder = await directory("p3-harness-e2e-");
 		const built = join(await directory("p3-harness-reload-"), "built-in");
 		await cp(fileURLToPath(new URL("../../", import.meta.url)), built, { recursive: true });
-		const t = await start({ builtIn: built });
+		// The probe keeps what the session's worker reports (Astra, slice 5 round 1, should 8).
+		const t = await start({ builtIn: built, plugins: [FAUX, PROBE] });
 		const id = await session(t, folder, [
 			{ when: "@go", reply: [{ kind: "tool", name: "bash", args: JSON.stringify({ command: GATED }) }] },
 			{ when: "", reply: [{ kind: "text", text: "after the reload" }] },
@@ -307,6 +309,8 @@ describe("the harness end to end", () => {
 			within("the answer in the held transcript", context, 10_000),
 		);
 		assert.deepEqual(t.errors, []);
+		// The held transcript's follower followed the next harness: the old one's close failed no object.
+		assert.doesNotMatch((await workerReports(client, id, context)).join("\n"), /object_failed|session closed/);
 	});
 });
 
