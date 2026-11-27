@@ -41,7 +41,8 @@ type Writer = With<Reference<typeof Files>, "upload" | "rename" | "remove">;
 export function FilesView(props: ThingViewProps) {
 	const { t } = useMessages(messages);
 	const at = useWorkLocation(props.workspace);
-	if (at === undefined) return <p className={styles.note}>{t("loading")}</p>;
+	if (at.kind === "loading") return <p className={styles.note}>{t("loading")}</p>;
+	if (at.kind === "unreadable") return <p className={styles.note}>{t("unavailable")}</p>;
 	return <Browser {...props} folder={at.folder} key={at.machine} machine={at.machine} />;
 }
 
