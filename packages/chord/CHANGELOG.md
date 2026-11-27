@@ -35,6 +35,7 @@
 
 ### Fixed
 
+- A registry served at another version keeps no last good composition of the version before: a reader of the new version got the old version's value when its first compose threw ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - `awaitWithContext` observes the promise of a waiter whose context was cancelled already: its later rejection was unhandled and could end the process ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - A registry whose provider was removed and served again, or served at another version and then at the reader's again, marks the derives and follows reading it; they stayed on what they read meanwhile ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - A transaction cancelled by its own object's end (the object ended, failed, was denied at a re-admission or replaced by a reload, a reload stopped the routine that ran it, or the seal cut off the job run that ran it) is no longer reported as `transaction_cancelled`: it is the object's end, not a lost change. Chord tells it by where the abort came from, not by its reason: a caller's cancel (also with the same reason object), a caller object's end, a settled root and a transaction's own exception still report ([ERNDL-1190](https://linear.app/earendil/issue/ERNDL-1190)).

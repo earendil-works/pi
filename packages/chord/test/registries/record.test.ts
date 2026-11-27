@@ -1007,3 +1007,38 @@ describe("a provider served again", () => {
 		}
 	});
 });
+
+// Astra, round 5 of ERNDL-1191: a version switch whose first compose threw handed out the old version's value.
+describe("a provider of another version", () => {
+	it("a version-2 reader cannot be handed a last good v1 composition that has the wrong shape", async () => {
+		const v1 = defineRegistry<number, number>("app.switch", { version: 1 });
+		const v2 = defineRegistry<number, string>("app.switch", { version: 2 });
+		const host = createHost({ onError() {} }),
+			name = "@test/provider";
+		const first = { name, facet: defineFacet((h) => h.serve(v1, { compose: () => 42 })) };
+		const failed = {
+			name,
+			facet: defineFacet((h) =>
+				h.serve(v2, {
+					compose: () => {
+						throw new Error("no version-2 value yet");
+					},
+				}),
+			),
+		};
+		const healthy = { name, facet: defineFacet((h) => h.serve(v2, { compose: () => "ready" })) };
+		try {
+			await host.load([first], context);
+			expect((await host.registry(v1, context)).value).toBe(42);
+			await host.reload([failed], context);
+			// First compose for the new version failed; no fallback value was produced at that version.
+			await expect(
+				host.registry(v2, context, { readyTimeout: 10 }).then((registry) => registry.value),
+			).rejects.toThrow("no version-2 value yet");
+			await host.reload([healthy], context);
+			expect((await host.registry(v2, context)).value).toBe("ready");
+		} finally {
+			await host.close(context);
+		}
+	});
+});

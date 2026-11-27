@@ -120,9 +120,12 @@ export class RegistryRecord {
 
 	/**
 	 * Serves the registry with `provider` at `version` (the defining plugin's facet, checked by `checkProvider` when
-	 * its setup ran), replacing the provider a reload changed, inside a batch: the table composes again (lazily).
+	 * its setup ran), replacing the provider a reload changed, inside a batch: the table composes again (lazily). A
+	 * provider of another version keeps no last good composition of the one before: its value has the other version's
+	 * type, which no reader of this version may get when this version's first compose throws.
 	 */
 	serve(version: number, provider: RegistryProvider<unknown, unknown>): void {
+		if (this.#provider?.version !== version) this.#composition = NEVER;
 		this.#provider = { version, provider };
 		this.#table = undefined;
 		this.#availabilityChanged();
