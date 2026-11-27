@@ -49,8 +49,6 @@ type GoogleAiPlanCredential = OAuthCredential & {
 	dpopKey: EcPrivateJwk;
 	/** Latest `DPoP-Nonce` from a refresh response; saves a `use_dpop_nonce` round trip. */
 	dpopNonce?: string;
-	/** Shown in the UI as the connected account. */
-	email: string;
 };
 
 interface TokenResponse {
@@ -133,8 +131,8 @@ function describeTokenError(prefix: string, status: number, body: TokenResponse)
 	return new Error(`${prefix}: ${status} ${body.error ?? ""} ${body.error_description ?? ""}`.trim());
 }
 
-/** Read `email` from the ID token after checking issuer, audience, expiry and nonce. */
-function readIdTokenEmail(idToken: string | undefined, nonce: string, clientId: string): string {
+/** Check the ID token's issuer, audience, expiry and nonce, as Google's docs require. */
+function checkIdToken(idToken: string | undefined, nonce: string, clientId: string): void {
 	if (!idToken) throw new Error("Google sign-in returned no ID token");
 	// The token comes straight from Google's token endpoint over TLS, so the claims are read without
 	// verifying the signature (OpenID Connect Core 3.1.3.7).
@@ -143,14 +141,12 @@ function readIdTokenEmail(idToken: string | undefined, nonce: string, clientId: 
 		aud?: string;
 		exp?: number;
 		nonce?: string;
-		email?: string;
 	};
 	const issuerOk = claims.iss === "https://accounts.google.com" || claims.iss === "accounts.google.com";
 	const notExpired = (claims.exp ?? 0) * 1000 > Date.now() - 60_000;
-	if (!issuerOk || claims.aud !== clientId || claims.nonce !== nonce || !notExpired || !claims.email) {
+	if (!issuerOk || claims.aud !== clientId || claims.nonce !== nonce || !notExpired) {
 		throw new Error("Google sign-in returned an ID token that failed validation");
 	}
-	return claims.email;
 }
 
 async function login(client: GoogleAiPlanClient, interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
@@ -237,13 +233,13 @@ async function finishSignIn(
 	if (!(body.scope ?? "").split(" ").includes(QUOTA_SCOPE)) {
 		throw new Error("Google did not grant access to the Google AI Ultra plan. Try signing in again.");
 	}
+	checkIdToken(body.id_token, session.nonce, client.clientId);
 	const credential: GoogleAiPlanCredential = {
 		type: "oauth",
 		access: body.access_token,
 		refresh: body.refresh_token,
 		expires: accessExpiry(body),
 		dpopKey: session.dpopKey,
-		email: readIdTokenEmail(body.id_token, session.nonce, client.clientId),
 	};
 	return credential;
 }
