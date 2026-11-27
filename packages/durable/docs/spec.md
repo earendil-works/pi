@@ -4952,6 +4952,13 @@ text as message when it is not empty, else the error diagnostics' messages, and
 the value, if any, as `error.structuredOutput`. Which tools declare a schema is
 recorded in the start data, so a resumed script maps results as it began.
 
+When a schema-less nested tool reports `truncated`, the `codemode` result warns
+which tool returned partial text, including its `full_output` notice if supplied.
+The warnings are `nested_output_truncated` diagnostics, not part of the string
+returned to the script. Only the first five affected calls in call order are
+named; any additional calls are counted. Structured tools do not forward these
+warnings: a cut in their model-facing output need not affect their script value.
+
 The tool's description is fixed: the script environment and its globals. The
 extension's `codemode` prompt section lists the agent's `callable` tools as
 TypeScript declarations, ungrouped tools first, then every namespace a selected

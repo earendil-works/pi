@@ -967,6 +967,53 @@ describe("durable code mode output and tool search", () => {
 		return { text: message.content.map((item) => item.text ?? `<${item.type}>`).join(""), message };
 	}
 
+	// Regression for #12594: the VM gets only the retained text; the model gets the warning separately.
+	it("reports schema-less truncation and a supplied spill path outside the script value, also after replay", async () => {
+		const chat = codemodeChat();
+		addTool(chat.setup.registry, {
+			...tool("big", async () => ({
+				output: [{ type: "text", text: "one\ntwo" }],
+				diagnostics: [{ severity: "info", code: "full_output", message: "Full output: /tmp/big.txt" }],
+			})),
+			outputLimits: { maxLines: 1 },
+		});
+		const { harness, result } = await restart(
+			chat,
+			`const value = await tools.big({}); await tools.hold({}); return value.length;`,
+		);
+		expect(result).toEqual({
+			text: "4<harness>\n[warn] tools.big: Output truncated to its beginning: 1 lines, 3 bytes dropped\nFull output: /tmp/big.txt\n</harness>",
+			isError: false,
+		});
+		await harness.close(context);
+	});
+
+	it("does not warn when only a structured tool's model preview was cut", async () => {
+		const chat = codemodeChat();
+		addTool(chat.setup.registry, {
+			...tool("big", async () => ({
+				output: [{ type: "text", text: "one\ntwo" }],
+				structuredOutput: "whole value",
+			})),
+			structuredOutputSchema: str(),
+			outputLimits: { maxLines: 1 },
+		});
+		const { text } = await runScript(`return await tools.big({});`, chat);
+		expect(text).toMatch(/Output:\nwhole value$/);
+	});
+
+	it("bounds truncation warnings for fan-out calls even when the script emits nothing", async () => {
+		const chat = codemodeChat();
+		addTool(chat.setup.registry, {
+			...tool("big", async () => ({ output: [{ type: "text", text: "one\ntwo" }] })),
+			outputLimits: { maxLines: 1 },
+		});
+		const { text } = await runScript(`await Promise.all(Array.from({length: 12}, () => tools.big({})));`, chat);
+		expect(text.match(/\[warn\] tools\.big:/g)).toHaveLength(5);
+		expect(text).toContain("[warn] Additional nested calls with truncated output: 7.");
+		expect(text).not.toContain("Full output:");
+	});
+
 	it("lays out text items, console lines, and the returned value under a header", async () => {
 		const { text } = await runScript(`text("one"); console.log("log", 1); text({ two: 2 }); return "three";`);
 		expect(text).toMatch(/^Script completed\nWall time [\d.]+ seconds\nOutput:\n/);

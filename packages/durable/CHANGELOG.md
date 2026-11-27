@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `codemode` silently returning results based on truncated text from schema-less tools. The model now sees a warning without changing the script's return value ([#12594](https://github.com/earendil-works/pi/issues/12594))
+
 ## [1.7.0] - 2026-11-27
 
 ## [1.6.1] - 2026-11-25
