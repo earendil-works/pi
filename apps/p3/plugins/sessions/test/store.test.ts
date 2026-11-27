@@ -6,7 +6,7 @@
 // them).
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -160,13 +160,13 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 		}),
 	);
 
-	it("names this device's machine once the store starts, moves a session's own folder to the work root, and a session works there (Files opens it)", async () => {
+	/**
+	 * Restarts with the older store and work root `workRoot`, writes rows `rows` (`this-device`, each in its folder)
+	 * through it, then updates to the sessions plugin as it is now, on the same store; this device's machine.
+	 */
+	async function updated(workRoot: string, rows: readonly { id: string; folder: string }[]): Promise<string> {
 		await w.close(context);
-		const runtime = {
-			dataDir,
-			workRoot: join(dataDir, "work"),
-			machine: { user: "test", hostname: "test" },
-		} as ServerRuntime;
+		const runtime = { dataDir, workRoot, machine: { user: "test", hostname: "test" } } as ServerRuntime;
 		w = await world(context, [
 			{
 				name: "p3.server",
@@ -175,8 +175,18 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 			{ name: "@earendil-works/p3-sessions", facet: older },
 		]);
+		const before = await w.host.get(OldStore, {}, context);
+		for (const { id, folder } of rows) await before.put({ id, environment: "this-device", folder }, context);
+		await w.reload("@earendil-works/p3-sessions", context, sessionsServer);
+		store = await w.host.get(SessionsStore, {}, context);
+		return seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+	}
+
+	/** Session `id`'s own folder as the older code made it. */
+	const own = (id: string) => join(dataDir, "folders", id);
+
+	it("names this device's machine once the store starts, moves a session's own folder to the work root, and a session works there (Files opens it)", async () => {
 		const work = join(dataDir, "work");
-		const own = (id: string) => join(dataDir, "folders", id);
 		// A session in its own folder, as the older code made it, with a file in it.
 		await mkdir(own("own"), { recursive: true });
 		await writeFile(join(own("own"), "marker"), "prior-content");
@@ -188,16 +198,11 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 		await writeFile(join(own("taken"), "marker"), "here");
 		await mkdir(join(work, "taken"), { recursive: true });
 		await writeFile(join(work, "taken", "other"), "there");
-		const before = await w.host.get(OldStore, {}, context);
-		// A location the person chose (not the session's own folder).
-		await before.put({ id: "old", environment: "this-device", folder: dataDir }, context);
-		for (const id of ["own", "cut", "taken"]) {
-			await before.put({ id, environment: "this-device", folder: own(id) }, context);
-		}
-		// The update: the sessions plugin's code as it is now, on the same store.
-		await w.reload("@earendil-works/p3-sessions", context, sessionsServer);
-		store = await w.host.get(SessionsStore, {}, context);
-		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		const machine = await updated(work, [
+			// A location the person chose (not the session's own folder).
+			{ id: "old", folder: dataDir },
+			...["own", "cut", "taken"].map((id) => ({ id, folder: own(id) })),
+		]);
 		await eventually(
 			async () => (await row("old"))?.location.environment,
 			(environment) => environment === machine,
@@ -216,5 +221,36 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 		// The machine's host is reached for it, as Files and the harness reach it.
 		const hosts = (await w.host.registry(MachineHosts, context)).value;
 		assert.ok((await hosts(machine, context)) !== undefined);
+	});
+
+	// Astra, round 6: a copy across file systems whose removal of the source failed halfway left the row on a source
+	// with files missing. One rename only: where it cannot be done, the folder stays whole and the row keeps it.
+	it("leaves a session's own folder whole where it is, and the row on it, when the work root is on another file system", async (t) => {
+		const work = await mkdtemp("/dev/shm/p3-sessions-work-").catch(() => undefined);
+		if (work === undefined || (await stat(work)).dev === (await stat(dataDir)).dev) {
+			t.skip("needs /dev/shm on another file system than the temporary directory");
+			if (work !== undefined) await rm(work, { recursive: true, force: true });
+			return;
+		}
+		const output = join(own("far"), "read-only-output");
+		try {
+			await mkdir(output, { recursive: true });
+			await writeFile(join(output, "a"), "A");
+			await writeFile(join(own("far"), "b"), "B");
+			await chmod(output, 0o500);
+			const machine = await updated(work, [{ id: "far", folder: own("far") }]);
+			await eventually(
+				async () => (await row("far"))?.location,
+				(location) => location?.environment === machine && location.folder === own("far"),
+			);
+			assert.deepEqual(
+				[await readFile(join(own("far"), "b"), "utf8"), await readFile(join(output, "a"), "utf8")],
+				["B", "A"],
+			);
+			await assert.rejects(stat(join(work, "far")), { code: "ENOENT" });
+		} finally {
+			await chmod(output, 0o700).catch(() => undefined);
+			await rm(work, { recursive: true, force: true });
+		}
 	});
 });
