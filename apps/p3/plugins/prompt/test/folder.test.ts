@@ -76,7 +76,7 @@ describe("a folder's skills", () => {
 		assert.match((await readSkill(root, join(root, "coding"), "release", "release")).text, /The steps\./);
 	});
 
-	it("keep the first of two equal names also when it is offered by command only, as pi does (Astra, review)", async () => {
+	it("keep the first of two equal names, also one offered by command only, as pi (Astra, review)", async () => {
 		await skillMd("coding", "a-manual", "---\nname: release\ndescription: x\ndisable-model-invocation: true\n---\n");
 		await skillMd("coding", "release", "---\nname: release\ndescription: Cut a release\n---\n");
 		await skillMd("coding", "review", "---\ndescription: Review\n---\n");
