@@ -43,8 +43,7 @@ import { kindServer, refused } from "../../things/test/kind-server.ts";
 import { DOWNLOAD_PATH, FILES_BROWSES, FILES_EDITS, Files, FilesKind, UPLOAD_PATH } from "../kind.ts";
 import { must } from "../places.ts";
 import filesServer from "../server.ts";
-import { StagingStore } from "../staging.ts";
-import { owned } from "../transfers.ts";
+import { owned, StagingStore } from "../staging.ts";
 
 /** A person's principal. */
 type Person = Extract<P3Principal, { kind: "person" }>;
