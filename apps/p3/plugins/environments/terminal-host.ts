@@ -53,6 +53,10 @@ export function serveTerminals(host: FacetHost<P3Principal>): void {
 				terminals.closeThing(thing);
 				return null;
 			},
+			closeWorkspace: async ({ workspace }) => {
+				terminals.closeWorkspace(workspace);
+				return null;
+			},
 		};
 	});
 	// Held while the plugin is loaded, so a terminal outlives its viewers and the plugins showing it.

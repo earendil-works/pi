@@ -1,11 +1,11 @@
 // The terminals plugin on the server (`testPlugin`, beside the things, environments and people plugins' server
-// facets, and a stand-in machine host whose terminals are fake programs): Terminals is made in Pi once and gives
-// everyone there Watch, the agents Use; Watch is for people, Use gives the list and the bytes too. One terminal, many
+// facets, and a stand-in machine host whose terminals are fake programs): Terminals is made in Pi once and gives the
+// agents Use, people nothing until Who may gives them a tick; Watch is for people, Use gives the list and the bytes too. One terminal, many
 // viewers: what is typed reaches the program, its bytes reach every viewer at the address `attach` answers (kept
 // output, then what follows) and the backlog; resize and close reach it, its exit shows in the list. Every call
 // reaches the machine as the caller: a machine withheld from a person is refused and its terminals are not listed;
 // closing needs only Use. A stream ends in the flush that withholds Watch and Use. A terminal outlives its viewers and
-// the agent's Use; it ends with its machine, its Terminals thing, or the environments plugin's host.
+// the agent's Use; it ends with its machine, its Terminals thing, its workspace, or the environments plugin's host.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -510,20 +510,20 @@ describe("a stream holds what lets its viewer in (round 2)", () => {
 });
 
 describe("terminals of a workspace that went", () => {
-	it("are closed at the next open, and free their slots (opus round 2, S2)", async () => {
-		const worker = await agent("s1");
-		const host = (await t.host.registry(TerminalHosts, context)).value!;
-		const gone = await host.open(
-			{ owner: { thing: terminals, workspace: "a-workspace-that-went" }, machine, folder: "/tmp", ...SIZE, max: 20 },
+	// The things plugin tells the kind (`workspaceGone`, ERNDL-1143); nothing waits for the next open (deck2).
+	it("are closed once the workspace is removed, those of other workspaces kept", async () => {
+		const child = await things.createWorkspace(
+			{ kind: "things.workspace", name: "Family", parent: pi, by: BY },
 			context,
 		);
+		await things.putParty({ workspace: child, party: { kind: "agent", session: "s1" }, source: BY }, context);
+		const worker = await agent("s1");
+		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx), child);
 		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
-		assert.equal(started()[0]!.closed, true);
-		assert.equal(
-			host.owners().some((owner) => owner.workspace === "a-workspace-that-went"),
-			false,
-		);
-		assert.equal(host.write(gone, "x"), false);
+		const [there, here] = started();
+		await things.removeWorkspace({ workspace: child }, context);
+		await there!.ended;
+		assert.equal(here!.closed, false);
 	});
 });
 

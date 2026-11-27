@@ -4,11 +4,10 @@
 // A terminal belongs to its Terminals thing and workspace (the host's owner key); each caller sees the ones of its
 // workspace on machines it may use there, checked for the caller (`checkMachine`, through the things plugin's index).
 // Anyone with Use types in any terminal here: limiting an agent to the terminals it opened is a limit, postponed
-// (decision 89). A Terminals thing that goes takes its terminals with it (its delete hook); the terminals of a
-// workspace that went are closed at the next open anywhere, until the things plugin tells kinds that a workspace went
-// (ERNDL-1143).
+// (decision 89). A Terminals thing that goes takes its terminals with it (its delete hook), and a workspace that goes
+// takes the terminals opened there (`workspaceGone`, ERNDL-1143).
 
-import { type Context, defineFacet, forbidden, invalid, type Reference } from "@earendil-works/p3/v1";
+import { defineFacet, forbidden, invalid } from "@earendil-works/p3/v1";
 import { checkMachine, machineAvailable } from "../environments/contract.server.ts";
 import {
 	TERMINAL_BACKLOG,
@@ -18,7 +17,7 @@ import {
 	TerminalList,
 	type TerminalOwner,
 } from "../environments/contract.terminal-host.server.ts";
-import { givesTo, ThingsStore } from "../things/contract.server.ts";
+import { givesTo } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
 import { serveAttach } from "./attach.ts";
 import { ATTACH_PATH, TerminalsKind } from "./kind.ts";
@@ -72,9 +71,7 @@ export default defineFacet((host) => {
 							message: messages.message("notAbsolute"),
 						});
 					}
-					const host = at();
-					await sweep(host, await ctx.get(ThingsStore, {}), ctx);
-					return host.open({ owner, machine, folder, columns, rows, max: MAX_TERMINALS }, ctx);
+					return at().open({ owner, machine, folder, columns, rows, max: MAX_TERMINALS }, ctx);
 				},
 				type: async ({ terminal, bytes }) => {
 					if (!at().write(usable(terminal), bytes)) {
@@ -99,15 +96,11 @@ export default defineFacet((host) => {
 		delete: async (thing, ctx) => {
 			await (await ctx.get(TerminalKeeper, {})).closeThing({ thing }, ctx);
 		},
+		// Closing what is already closed changes nothing: safe to repeat after a crash.
+		workspaceGone: async (workspace, ctx) => {
+			await (await ctx.get(TerminalKeeper, {})).closeWorkspace({ workspace }, ctx);
+		},
 		one: { name: "Terminals" },
 	});
 	serveAttach(host);
 });
-
-/** Closes the terminals of the workspaces that went. */
-async function sweep(host: TerminalHost, store: Reference<typeof ThingsStore>, context: Context): Promise<void> {
-	for (const { workspace } of host.owners()) {
-		if ((await store.workspaces.one.page({ workspace }, 1, context)).items.length === 0)
-			host.closeWorkspace(workspace);
-	}
-}
