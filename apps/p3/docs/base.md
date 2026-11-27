@@ -57,10 +57,10 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   Manage, or the agent's `location_move`, the machine part's tool, through `SessionFacts.moveLocation`) works at its
   own location from its next tool call on; a call under way keeps its environment. A move with `location: null` is
   undone (the conversation follows its owner again); a subagent keeps its own while archived (a restore finds it).
-  A move is refused unless the folder is a full path and the agents have Work on the machine in the session, and a person's unless the
-  machine is available to them there (the environments plugin's `checkMachine`, as Files and Terminals). Manage shows
-  the moved conversations (`detail`, one document per session, by conversation id); the worker reads the same in
-  `SessionFacts.detail`.
+  A move is refused unless the folder is a full path and the agents have Work on the machine in the session, and a
+  person's unless the machine is available to them there (the environments plugin's `checkMachine`, as Files and
+  Terminals). Manage shows the moved conversations (`detail`, one document per session, by conversation id); the
+  worker reads the same in `SessionFacts.detail`.
 - **What its workers keep** (their directory, `<data>/workers/<id>`) goes with the session: removing the session stops
   its worker and deletes it (the runner's `remove`, refusing an id that names no session). A directory of a session
   with no row is swept whenever a runner appears (at every start), each one reported as it goes, one that fails
