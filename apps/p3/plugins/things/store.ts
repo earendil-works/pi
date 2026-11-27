@@ -28,7 +28,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { AccessIndex, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
-import { Cleanup, deleteTold, type Going } from "./cleanup.ts";
+import { Cleanup, deleteTold } from "./cleanup.ts";
 import { AccessHandles, type CreateAnswer, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
 import {
 	type Caller,
@@ -69,6 +69,7 @@ import {
 	Grants,
 	Links,
 	type Retired,
+	type Retiring,
 	Switches,
 	type Tables,
 	ThingColumns,
@@ -177,7 +178,20 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		): Promise<R> => {
 			const retired: Retired[] = [];
 			const signedOut: string[] = [];
-			const transaction = (touched: Touched) => self.tx((tx) => fn(tx, { ...touched, retired, signedOut }), ctx);
+			const transaction = (touched: Touched) =>
+				self.tx(async (tx) => {
+					const retiring: Retiring = {
+						sources: new Set(),
+						things: new Set(),
+						groups: new Set(),
+						workspaces: new Set(),
+					};
+					const changes = { ...touched, retired, signedOut, retiring };
+					const result = await fn(tx, changes);
+					// The cleanup's last step, once all the write retires is known: the persons its sources made.
+					await cleanup.settle(tx, changes);
+					return result;
+				}, ctx);
 			// The store is live while it writes, so its index opened. A checked write is asked in the same operation.
 			const result =
 				checked === undefined
@@ -470,7 +484,9 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return null;
 				return write(
 					(tx, touched) =>
-						people.adoptOwner(tx, touched, seed, (persons) => cleanup.somethingLeftOf(tx, persons, {})),
+						people.adoptOwner(tx, touched, seed, (persons) =>
+							cleanup.somethingLeftOf(tx, persons, touched.retiring),
+						),
 					ctx,
 				);
 			},
@@ -893,10 +909,9 @@ class Writes {
 		)) {
 			if (await this.#linkedOnlyIn(tx, workspace, link.thing)) going.push(link);
 		}
-		// Its own groups go first (its Guests group, with their memberships): the cleanups of the things going below
-		// count those, and the rows written here, as gone.
-		const also = { workspace, groups: await this.#cleanup.retireWorkspace(tx, touched, workspace) };
-		for (const { thing, of } of going) await this.removeThing(tx, touched, thing, of, also);
+		// Its own groups and invite links; the cleanup's last step counts what is written here as gone.
+		await this.#cleanup.retireWorkspace(tx, touched, workspace);
+		for (const { thing, of } of going) await this.removeThing(tx, touched, thing, of);
 		tx.deleteWhere(t.links, (l) => eq(l.workspace, workspace));
 		tx.deleteWhere(t.grants, (g) => eq(g.workspace, workspace));
 		tx.deleteWhere(t.switches, (w) => eq(w.workspace, workspace));
@@ -922,7 +937,7 @@ class Writes {
 			touched.presence.add(other);
 		}
 		tx.delete(t.workspaces, { workspace });
-		if (row !== undefined) await this.removeThing(tx, touched, workspace, row.kind, also);
+		if (row !== undefined) await this.removeThing(tx, touched, workspace, row.kind);
 		tx.put(t.gone, { workspace });
 		touched.workspaces.add(workspace);
 		touched.presence.add(workspace);
@@ -999,9 +1014,9 @@ class Writes {
 
 	/**
 	 * Removes `thing`: its links, grants and switches wherever written, its row; its kind's `delete` hook is pending
-	 * (`lifecycle.ts`), and runs after the commit. `also`: what else the write deletes (a cleared workspace's rows).
+	 * (`lifecycle.ts`), and runs after the commit.
 	 */
-	async removeThing(tx: Tx, touched: Changes, thing: string, kind: string, also: Going = {}): Promise<null> {
+	async removeThing(tx: Tx, touched: Changes, thing: string, kind: string): Promise<null> {
 		const t = this.#t;
 		const item = itemKey({ kind: "thing", thing });
 		await deleteTold(tx, t.links, Links, (l) => eq(l.thing, thing), touched.workspaces, "workspace");
@@ -1009,7 +1024,8 @@ class Writes {
 		await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), touched.workspaces, "workspace");
 		// A thing is a source (a share, a bot): what it wrote, the groups it manages and the persons it made go with it,
 		// in this commit (the cleanup, people.md §7); its rows deleted above count as gone.
-		await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }), { ...also, thing });
+		touched.retiring.things.add(thing);
+		await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));
 		tx.delete(this.#t.things, { thing });
 		tx.put(this.#t.pending, { thing, kind });
 		touched.retired.push({ thing, kind });

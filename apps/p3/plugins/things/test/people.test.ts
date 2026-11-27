@@ -975,6 +975,36 @@ describe("round 2's reproductions (Opus, Astra)", () => {
 		);
 	});
 
+	it("a removed workspace takes a thing's guest whose own thing goes in the same commit; kept when it stays elsewhere (Astra, round 3)", async () => {
+		/** Sketch made Guest, Guest made Sheet in the session; `elsewhere`: Sheet linked in Family too. */
+		const retire = async (elsewhere: boolean) => {
+			const session = await store.createWorkspace(
+				{ kind: "things.workspace", name: "Session", parent: f.family, by: ADMIN },
+				context,
+			);
+			const sketch = await store.create(
+				{ kind: Board.name, name: "Sketch", workspace: session, by: ADMIN },
+				context,
+			);
+			const guest = await store.createPerson({ name: "Guest", madeBy: { kind: "thing", thing: sketch } }, context);
+			const by: Source = { kind: "person", person: guest };
+			const sheet = await store.create({ kind: Board.name, name: "Sheet", workspace: session, by }, context);
+			if (elsewhere) await store.link({ workspace: f.family, thing: sheet }, context);
+			await store.removeWorkspace({ workspace: session }, context);
+			await eventually(
+				() => w.rows("things"),
+				(rows) => !rows.some((row) => row.thing === session),
+			);
+			assert.deepEqual(
+				[sketch, sheet].map((id) => w.rows("things").some((row) => row.thing === id)),
+				[false, elsewhere],
+			);
+			return (await store.persons.one.page({ person: guest }, 1, context)).items.length;
+		};
+		assert.equal(await retire(false), 0);
+		assert.equal(await retire(true), 1);
+	});
+
 	it("the adoption takes only the placeholder the first start made, never another owner named alike (Astra 5)", async () => {
 		const [placeholder] = (await store.persons.owners.page({}, 10, context)).items.map(({ person: id }) => id);
 		const other = await store.createPerson(

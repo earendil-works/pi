@@ -22,6 +22,18 @@ type Mutation = { readonly name: string; readonly file: string; readonly find: s
 const MUTATIONS: readonly Mutation[] = [
 	// ---- people, round 2 ----
 	{
+		name: "the cleanup counts a thing going in the same write as made",
+		file: "cleanup.ts",
+		find: "if (!retired.has(row.thing)) left.add(personOf.get(row.madeByKey)!);",
+		put: "left.add(personOf.get(row.madeByKey)!);",
+	},
+	{
+		name: "the write's cleanup never decides the persons",
+		file: "store.ts",
+		find: "\t\t\t\t\tawait cleanup.settle(tx, changes);\n",
+		put: "",
+	},
+	{
 		name: "a group hidden where the caller is present is present for them",
 		file: "group.ts",
 		find: "if (present && access.present.has(target) && !access.hidden.has(target)) return true;",
@@ -40,28 +52,28 @@ const MUTATIONS: readonly Mutation[] = [
 		put: 'if (caller === undefined || caller.kind !== "person") return undefined;',
 	},
 	{
-		name: "the cleanup counts the rows on the thing it removes",
-		file: "cleanup.ts",
-		find: "(row.thing !== undefined && row.thing === going.thing) ||",
+		name: "the cleanup counts the rows on the thing it removes, and the thing",
+		file: "store.ts",
+		find: "touched.retiring.things.add(thing);",
 		put: "",
 	},
 	{
 		name: "the cleanup counts the rows in the workspace it clears",
 		file: "cleanup.ts",
-		find: "||\n\t\t\t(row.workspace !== undefined && row.workspace === going.workspace);",
-		put: ";",
+		find: "touched.retiring.workspaces.add(workspace);",
+		put: "",
 	},
 	{
-		name: "the cleanup counts the memberships of a cleared workspace's groups",
+		name: "the cleanup counts the memberships of the groups the write removes",
 		file: "cleanup.ts",
-		find: "const groups = new Set([...managed, ...(also.groups ?? [])]);",
-		put: "const groups = new Set(managed);",
+		find: "touched.retiring.groups.add(group);",
+		put: "",
 	},
 	{
 		name: "a removed workspace keeps its own groups",
-		file: "store.ts",
-		find: "const also = { workspace, groups: await this.#cleanup.retireWorkspace(tx, touched, workspace) };",
-		put: "const also = { workspace };",
+		file: "cleanup.ts",
+		find: 'await this.#removeManaged(tx, touched, managedByKey({ kind: "workspace", workspace }));',
+		put: "",
 	},
 	{
 		name: "a removed workspace keeps its invite links",
@@ -78,8 +90,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a person who made a thing goes with the source's cleanup",
 		file: "cleanup.ts",
-		find: "const makers = [rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns), tx.rows(t.things, things)];",
-		put: "const makers = [rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns)];",
+		find: "if (!retired.has(row.thing)) left.add(personOf.get(row.madeByKey)!);",
+		put: "{}",
 	},
 	{
 		name: "expired links are not swept at a new link",
@@ -933,7 +945,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a thing's last unlink leaves what it wrote and made",
 		file: "store.ts",
-		find: 'await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }), { ...also, thing });',
+		find: 'await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));',
 		put: "",
 	},
 	{
@@ -945,7 +957,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a person who made someone goes with the source's cleanup",
 		file: "cleanup.ts",
-		find: "for (const rows of makers) for await (const row of rows) left.add(personOf.get(row.madeByKey)!);",
+		find: "for await (const row of rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns))\n\t\t\tleft.add(personOf.get(row.madeByKey)!);",
 		put: "",
 	},
 	{

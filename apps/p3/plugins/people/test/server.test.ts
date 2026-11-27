@@ -210,11 +210,11 @@ describe("an invite link", () => {
 	});
 	afterEach(() => t.close(context));
 
-	/** Posts `link`'s token as its page does. */
-	const post = (link: string) =>
+	/** Posts `link`'s token as its page does (from a browser signed in with `cookie`, if given). */
+	const post = (link: string, cookie?: string) =>
 		fetch(`http://127.0.0.1:${t.port}/_p3/invite`, {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: { "content-type": "application/json", ...(cookie === undefined ? {} : { cookie }) },
 			body: JSON.stringify({ token: link.slice(link.indexOf("#") + 1) }),
 		});
 	/** The principal a browser with `cookie` signs in as, or `undefined`. */
@@ -272,6 +272,24 @@ describe("an invite link", () => {
 			assert.deepEqual(
 				[entries.map(({ workspace: at }) => at), groups.map(({ outside }) => outside)],
 				as === "member" ? [[pi], []] : [[], [true]],
+			);
+			if (as === "guest") continue;
+			// Signed in, the member accepts a guest link too: they are put in themself, no person is made, the browser
+			// keeps its sign-in (Astra, round 3).
+			const cookie = signed.headers.get("set-cookie")!.split(";")[0]!;
+			const persons = () => things(async (store, ctx) => (await store.persons.all.page({}, 20, ctx)).items.length);
+			const before = await persons();
+			const next = await workspace.inviteLink!({ name: "already here", as: "guest" }, context);
+			const again = await post(next.url, cookie);
+			assert.equal(again.status, 200);
+			assert.equal(again.headers.get("set-cookie"), null);
+			assert.equal(await persons(), before, "no new person");
+			const mine = await things(
+				async (store, ctx) => (await store.groupMembers.ofPerson.page({ person: id }, 10, ctx)).items,
+			);
+			assert.deepEqual(
+				mine.map(({ outside }) => outside),
+				[true],
 			);
 		}
 	});
