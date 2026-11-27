@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildCatalog } from "../catalog/build.ts";
+import radiusCatalogDefinition from "../catalog/providers/radius.ts";
+import { fetchRadiusCatalog } from "../catalog/sources/index.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { createModels } from "../src/models.ts";
 import { InMemoryModelsStore } from "../src/models-store.ts";
@@ -115,7 +118,7 @@ describe("Radius provider catalogs", () => {
 	it("exposes classifier models from /v1/config without listing them in getModels()", async () => {
 		const config: RadiusGatewayConfig = {
 			...radiusConfig(),
-			classifiers: [
+			decision: [
 				{
 					id: "jev-latest",
 					name: "TypeSafe: Jev Latest",
@@ -310,5 +313,87 @@ describe("Radius provider catalogs", () => {
 			input: ["text", "image"],
 			output: ["image", "text"],
 		});
+	});
+});
+
+describe("Radius catalog generation", () => {
+	function emptySources(radius: Awaited<ReturnType<typeof fetchRadiusCatalog>>) {
+		return {
+			modelsDev: {},
+			modelsDevDecisions: {},
+			openRouter: { chat: [], images: [], classifiers: [] },
+			aiGateway: { chat: [], classifiers: [] },
+			nvidiaModelIds: new Map<string, string>(),
+			radius,
+		};
+	}
+
+	it("succeeds with empty image and classifier lists when /v1/config omits them", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(JSON.stringify(radiusConfig()), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+
+		const radius = await fetchRadiusCatalog();
+		const built = buildCatalog([radiusCatalogDefinition], emptySources(radius), true).radius;
+
+		expect(built.chat.map((model) => model.id)).toEqual(["balanced", "organization-only"]);
+		expect(built.image).toEqual([]);
+		expect(built.classifier).toEqual([]);
+	});
+
+	it("includes decision and image models when /v1/config returns them", async () => {
+		const config: RadiusGatewayConfig = {
+			...radiusConfig(),
+			decision: [
+				{
+					id: "jev-latest",
+					name: "TypeSafe: Jev Latest",
+					input: ["text"],
+					cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 262144,
+				},
+			],
+			images: [
+				{
+					id: "nano-banana",
+					name: "Nano Banana",
+					input: ["text", "image"],
+					output: ["image", "text"],
+					cost: { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.083333 },
+				},
+			],
+		};
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(JSON.stringify(config), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+
+		const radius = await fetchRadiusCatalog();
+		const built = buildCatalog([radiusCatalogDefinition], emptySources(radius), true).radius;
+
+		expect(built.chat.map((model) => model.id)).toEqual(["balanced", "organization-only"]);
+		expect(built.classifier).toEqual([
+			expect.objectContaining({
+				id: "jev-latest",
+				type: "classifier",
+				api: "pi-decision",
+				provider: "radius",
+				baseUrl: "https://radius.example/v1",
+			}),
+		]);
+		expect(built.image).toEqual([
+			expect.objectContaining({
+				id: "nano-banana",
+				type: "image",
+				api: "pi-image",
+				provider: "radius",
+				baseUrl: "https://radius.example/v1",
+			}),
+		]);
 	});
 });
