@@ -177,6 +177,9 @@ export default defineProvider({
 		// Copilot passes mid-conversation developer messages and `additional_tools`
 		// through to OpenAI unchanged; tool search is not verified through it.
 		enableOpenAiMidConvoSystemMessages(model, { proxy: true });
+		if (model.api === "openai-responses" && /^mai-code-/u.test(model.id)) {
+			mergeCompat(model as Model<"openai-responses">, { supportsTemperature: false });
+		}
 		if (model.api === "openai-responses" && MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS.has(model.id)) {
 			mergeCompat(model as Model<"openai-responses">, { supportsMidConvoSystemMessages: true });
 		}

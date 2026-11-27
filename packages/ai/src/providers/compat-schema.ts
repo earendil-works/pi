@@ -428,6 +428,12 @@ const OpenAIResponsesCompatProperties = {
 			default: false,
 		}),
 	),
+	supportsTemperature: opt(
+		bool({
+			description: "Whether the model accepts the temperature request field.",
+			default: true,
+		}),
+	),
 	supportsMaxOutputTokens: opt(
 		bool({
 			description: "Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it.",
@@ -629,6 +635,10 @@ const ProviderCompatPropertyOverrides = {
 		description:
 			"Whether the provider supports OpenAI custom tools with Lark or regex grammar formats. When false, grammar-constrained tools fall back to normal function tools.",
 		default: false,
+	}),
+	supportsTemperature: optionalCompatBoolean({
+		description: "Whether the model accepts the temperature request field. Defaults are API-specific.",
+		default: true,
 	}),
 	sendSessionAffinityHeaders: optionalCompatBoolean({
 		description: "Whether to send session-affinity data from options.sessionId. Defaults are API-specific.",

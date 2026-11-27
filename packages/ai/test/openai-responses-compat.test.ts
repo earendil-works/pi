@@ -110,6 +110,37 @@ describe("openai-responses provider defaults", () => {
 			reasoning: expect.anything(),
 		});
 	});
+	it("omits temperature for GitHub Copilot MAI Code models", async () => {
+		let capturedPayload: unknown;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			getModel("github-copilot", "mai-code-2"),
+			normalizeContext({
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			}),
+			{
+				apiKey: "sk-test-key",
+				temperature: 0.5,
+				samplingParams: { temperature: 0.25 },
+				onPayload: (payload) => {
+					capturedPayload = payload;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload).not.toMatchObject({ temperature: expect.anything() });
+	});
 
 	it("forwards required tool choice", async () => {
 		let capturedPayload: unknown;

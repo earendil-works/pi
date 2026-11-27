@@ -1062,6 +1062,11 @@
           "description": "Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages, openai-responses, and openai-codex-responses APIs.",
           "default": false
         },
+        "supportsTemperature": {
+          "type": "boolean",
+          "description": "Whether the model accepts the temperature request field. Defaults are API-specific.",
+          "default": true
+        },
         "supportsMaxOutputTokens": {
           "type": "boolean",
           "description": "Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it.",
@@ -1075,11 +1080,6 @@
         "supportsCacheControlOnTools": {
           "type": "boolean",
           "description": "Whether the provider supports Anthropic-style cache_control markers on tool definitions. When false, cache_control is omitted from tool parameters. Some Anthropic-compatible providers, such as Fireworks, do not support this field on tools and may reject or ignore it.",
-          "default": true
-        },
-        "supportsTemperature": {
-          "type": "boolean",
-          "description": "Whether the model accepts the Anthropic temperature request field. Claude Opus 4.7+ rejects non-default values.",
           "default": true
         },
         "forceAdaptiveThinking": {

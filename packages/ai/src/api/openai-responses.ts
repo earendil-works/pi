@@ -97,6 +97,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 		supportsMidConvoEffort: model.compat?.supportsMidConvoEffort ?? false,
+		supportsTemperature: model.compat?.supportsTemperature ?? true,
 	};
 }
 
@@ -371,7 +372,7 @@ function buildParams(
 		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
 	}
 
-	if (options?.temperature !== undefined && !omitUnsupportedFields) {
+	if (options?.temperature !== undefined && !omitUnsupportedFields && compat.supportsTemperature) {
 		params.temperature = options?.temperature;
 	}
 
@@ -408,7 +409,13 @@ function buildParams(
 	// Last so model and request sampling parameters override named request fields.
 	const samplingParams = resolveSamplingParams(model, reasoningEffort ?? "off", options?.samplingParams);
 	if (samplingParams) {
-		Object.assign(params, samplingParams);
+		if (compat.supportsTemperature) {
+			Object.assign(params, samplingParams);
+		} else {
+			const samplingParamsWithoutTemperature = { ...samplingParams };
+			delete samplingParamsWithoutTemperature.temperature;
+			Object.assign(params, samplingParamsWithoutTemperature);
+		}
 	}
 
 	return params;
