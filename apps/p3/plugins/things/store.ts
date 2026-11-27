@@ -117,10 +117,28 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		// attempt's own context. Closed with the attempt: its watchers attach to the next attempt's index.
 		self.open(
 			async (ctx) => {
-				await self.tx(async (tx) => {
-					await people.ensureOwner(tx);
-					return ensurePi(tx, t);
-				}, ctx);
+				// Pi and the owner's person exist from the first start on: read first, outside a transaction, so a start
+				// after the first (a reload, maybe right after another) opens with no transaction a reload could cancel.
+				const pi = (
+					await t.workspaces.page(
+						query(Workspaces).where((w) => eq(w.parent, "")),
+						1,
+						ctx,
+					)
+				).items[0];
+				const owner = (
+					await t.persons.page(
+						query(Persons).where((p) => eq(p.owner, 1)),
+						1,
+						ctx,
+					)
+				).items[0];
+				if (pi === undefined || owner === undefined) {
+					await self.tx(async (tx) => {
+						await people.ensureOwner(tx);
+						return ensurePi(tx, t);
+					}, ctx);
+				}
 				index = new AccessIndex(readerOf(q, kindsNow, reported), kindsNow, ctx);
 				return index;
 			},
@@ -180,13 +198,14 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
-			pending: async (ctx) => {
-				const rows = [];
-				// The whole table, outside a transaction (a store ending meanwhile leaves none to cancel): what waits for
-				// a delete hook is few rows, read at the start and when the hooks change.
-				for await (const row of pending.rows(query(Pending), ctx)) rows.push(row);
-				return rows;
-			},
+			pending: (ctx) =>
+				self.tx(async (tx) => {
+					const rows = [];
+					// The whole table: what waits for a delete hook is few rows, read at the start and when the hooks
+					// change.
+					for await (const row of tx.rows(pending, query(Pending))) rows.push(row);
+					return rows;
+				}, ctx),
 			hooks: () => hooks.value,
 		});
 		/**
@@ -238,12 +257,9 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				const entry = hooks.value.get(kind);
 				if (entry?.value.one === undefined) throw invalid("args", `things: ${kind} has no seeded thing`);
 				const by: Source = { kind: "plugin", plugin: entry.plugin };
-				// Read outside a transaction: at the start the seed is there already but on the first one.
-				const mine = query(Things).where((r) => and(eq(r.madeByKey, sourceKey(by)), eq(r.kind, kind)));
-				const found = (await t.things.page(mine, 1, ctx)).items[0]?.thing;
+				const found = await self.tx((tx) => writes.one(tx, kind, by), ctx);
 				if (found !== undefined) return found;
-				const root = query(Workspaces).where((w) => eq(w.parent, ""));
-				const workspace = (await t.workspaces.page(root, 1, ctx)).items[0]!.workspace;
+				const workspace = (await self.tx((tx) => rootOf(tx, t), ctx))!;
 				const args = { kind, name: entry.value.one.name, workspace, by };
 				return make(args, (tx, changes, thing) => writes.makeOne(tx, changes, { ...args, thing }), ctx);
 			})();

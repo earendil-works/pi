@@ -1057,6 +1057,7 @@ export async function main(cliArgs: string[], options?: MainOptions) {
 			tuiMode: parsed.tuiMode,
 			initialThemeSetting: parsed.useTheme,
 			programResumeToken,
+			programResumeFlags: parsed.resumeFlags,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();
