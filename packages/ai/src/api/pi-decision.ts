@@ -1,10 +1,7 @@
-import { calculateCost } from "../models.ts";
 import type {
 	ClassifierAnswer,
-	ClassifierApi,
 	ClassifierContext,
 	ClassifierFunction,
-	ClassifierModel,
 	ClassifierOptions,
 	ClassifierQuestion,
 	ClassifierResult,
@@ -12,6 +9,7 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { isRecord, postClassifierRequest, requiredNumber } from "./classifier-shared.ts";
+import { parsePiUsage } from "./json-request.ts";
 
 /**
  * pi-decision API implementation.
@@ -46,51 +44,12 @@ export type PiDecisionResponse = {
 	responseId?: string;
 };
 
-function finiteNonNegative(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
-}
-
 function requiredUnitInterval(value: unknown, field: string): number {
 	const num = requiredNumber(LABEL, value, field);
 	if (num < 0 || num > 1) {
 		throw new Error(`${LABEL} returned out-of-range ${field}: ${num}`);
 	}
 	return num;
-}
-
-function parseUsage(value: unknown, model: ClassifierModel<ClassifierApi>): Usage | undefined {
-	if (!isRecord(value) || (typeof value.input !== "number" && typeof value.output !== "number")) return undefined;
-	const input = finiteNonNegative(value.input);
-	const output = finiteNonNegative(value.output);
-	const cacheRead = finiteNonNegative(value.cacheRead);
-	const cacheWrite = finiteNonNegative(value.cacheWrite);
-	const totalTokens =
-		typeof value.totalTokens === "number" && Number.isFinite(value.totalTokens) && value.totalTokens >= 0
-			? value.totalTokens
-			: input + output + cacheRead + cacheWrite;
-	const usage: Usage = {
-		input,
-		output,
-		cacheRead,
-		cacheWrite,
-		totalTokens,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
-	if (isRecord(value.cost) && typeof value.cost.total === "number" && Number.isFinite(value.cost.total)) {
-		usage.cost = {
-			input: finiteNonNegative(value.cost.input),
-			output: finiteNonNegative(value.cost.output),
-			cacheRead: finiteNonNegative(value.cost.cacheRead),
-			cacheWrite: finiteNonNegative(value.cost.cacheWrite),
-			total: finiteNonNegative(value.cost.total),
-			...(typeof value.cost.totalFromProvider === "boolean"
-				? { totalFromProvider: value.cost.totalFromProvider }
-				: {}),
-		};
-	} else {
-		calculateCost(model, usage);
-	}
-	return usage;
 }
 
 function parseProbabilities(value: unknown, id: string, criteria: Record<string, string>): Record<string, number> {
@@ -178,7 +137,7 @@ export const classify: ClassifierFunction<PiDecisionOptions> = async (model, con
 		const body = await postClassifierRequest(LABEL, url, model, requestBody, options);
 		if (!isRecord(body)) throw new Error(`${LABEL} returned an unexpected response`);
 		if (typeof body.responseId === "string" && body.responseId) output.responseId = body.responseId;
-		const usage = parseUsage(body.usage, model);
+		const usage = parsePiUsage(body.usage, model);
 		if (usage) output.usage = usage;
 		output.answers = parseAnswers(body.answers, context);
 		return output;

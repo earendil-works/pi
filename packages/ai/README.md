@@ -888,6 +888,37 @@ console.log(model.input);  // ['text'] or ['text', 'image']
 console.log(model.output); // ['image'] or ['image', 'text']
 ```
 
+### Pi Image
+
+The `pi-image` API sends pi's image-generation types directly to a backend without provider translation, analogous to `pi-messages` and `pi-decision`. Each call sends a single `POST` to `<baseUrl>/image` with bearer auth (`Authorization: Bearer <apiKey>`) and body `{ model, context: { input }, options? }` (`PiImageRequest`), where `options` may carry `aspectRatio`, `size`, `sessionId`, and `metadata`.
+
+A `200 OK` response returns `{ output, usage?, responseId? }` (`PiImageResponse`), where `output` is an array of `TextContent` and base64 `ImageContent` blocks. When `usage.cost.total` is present (including cost-only responses without token counts), pi trusts it as authoritative; otherwise pi computes cost from the model catalog. Non-2xx responses use the `{ error: { message, code?, details? } }` envelope. Requests with input images are rejected client-side if `model.input` does not include `"image"`.
+
+```typescript
+import { createProvider, envApiKeyAuth } from '@earendil-works/pi-ai';
+import { piImageApi } from '@earendil-works/pi-ai/api/pi-image.lazy';
+
+const gateway = createProvider({
+  id: 'my-gateway',
+  name: 'My Gateway',
+  auth: { apiKey: envApiKeyAuth('My Gateway API key', ['MY_GATEWAY_API_KEY']) },
+  models: [
+    {
+      type: 'image',
+      id: 'gemini-2.5-flash-image',
+      name: 'Gemini 2.5 Flash Image',
+      api: 'pi-image',
+      provider: 'my-gateway',
+      baseUrl: 'https://gateway.example/v1',
+      input: ['text', 'image'],
+      output: ['image', 'text'],
+      cost: { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.083333 },
+    },
+  ],
+  images: { 'pi-image': piImageApi() },
+});
+```
+
 ### Notes and Limitations
 
 - Image models and chat models share `Models` and `Provider`; list them with `getModelsOfType('image')` and run them with `generateImages()`, never the chat/stream APIs.
