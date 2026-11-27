@@ -18,6 +18,7 @@ import {
 	createHost,
 	defineFacet,
 	defineTable,
+	evolveTable,
 	host as hostColumn,
 	int,
 	json,
@@ -48,7 +49,7 @@ import { seeded } from "../../environments/test/seeded.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { type World, world } from "../../things/test/world.ts";
 import { SessionsStore } from "../contract.server.ts";
-import { ThinkingLevel } from "../contract.ts";
+import { ModelChoice, ThinkingLevel } from "../contract.ts";
 import { DefaultsSettings } from "../defaults.ts";
 import sessionsServer from "../server.ts";
 
@@ -388,7 +389,12 @@ describe("a store version 1 wrote (decision 125)", () => {
 			assert.deepEqual([session?.state, session?.model], ["settled", null]);
 			const settings = await now.host.get(DefaultsSettings, {}, context);
 			const [defaults] = (await settings.settings.of.page({ thing: "d1" }, 1, context)).items;
-			assert.deepEqual(defaults?.defaults, { model: null, shared: false, opensWith: "transcript.session" });
+			assert.deepEqual(defaults?.defaults, {
+				model: null,
+				shared: false,
+				opensWith: "transcript.session",
+				location: null,
+			});
 			// A choice of this version, written now, is there after the next start (Astra, round 1 of model settings).
 			await sessions.setModel({ session: "s1", model: choice }, context);
 		});
@@ -397,6 +403,63 @@ describe("a store version 1 wrote (decision 125)", () => {
 			const [session] = (await sessions.sessions.one.page({ id: "s1" }, 1, context)).items;
 			assert.deepEqual(session?.model, choice);
 		});
+	});
+});
+
+/** The defaults' table as version 2 defined it (39bfcfca1): a model choice naming a login, no location. */
+const SettingsV2 = evolveTable(OldSettings, (t) =>
+	t.json(
+		"defaults",
+		json(obj({ model: union([ModelChoice, nul()]), shared: bool(), opensWith: union([str({ max: 200 }), nul()]) }), {
+			version: 2,
+			migrate: (old) => ({ ...(old as { shared: boolean; opensWith: string | null }), model: null }),
+		}),
+	),
+);
+
+/** The defaults' owner as version 2 served it: one write of a defaults thing's settings. */
+const DefaultsV2 = local("sessions.defaults-settings", {
+	version: 1,
+	params: {},
+	members: { write: method(obj({ thing: str(), defaults: obj({}) })) },
+});
+
+describe("a store version 2 wrote (decision 125)", () => {
+	// Astra, push 5: version 2's history defined with this version's schema refused a real version 2 store.
+	it("opens: defaults keep everything, their login choice too, and have no location; also after the next start", async () => {
+		const path = join(dataDir, "v2.sqlite");
+		const old = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
+		const host = createHost<P3Principal>({
+			address: Server(),
+			principal: { kind: "server" },
+			store: old,
+			onError: (error) => assert.fail(error.kind),
+		});
+		const model = { login: "l1", model: "m", thinking: "high" } as const;
+		const v2 = defineFacet((facetHost) =>
+			facetHost.serve(DefaultsV2, (_params, self) => {
+				const settings = self.table(SettingsV2);
+				return {
+					write: ({ thing }, ctx) =>
+						self.tx(async (tx) => {
+							tx.put(settings, { thing, defaults: { model, shared: false, opensWith: "transcript.session" } });
+							return null;
+						}, ctx),
+				};
+			}),
+		);
+		await host.load([{ name: "@earendil-works/p3-sessions", facet: v2 }], context);
+		await (await host.get(DefaultsV2, {}, context)).write({ thing: "d2", defaults: {} }, context);
+		await host.close(context);
+		await old.close(context);
+		const expected = { model, shared: false, opensWith: "transcript.session", location: null };
+		for (let start = 0; start < 2; start++) {
+			await opened(path, async (now) => {
+				const settings = await now.host.get(DefaultsSettings, {}, context);
+				const [defaults] = (await settings.settings.of.page({ thing: "d2" }, 1, context)).items;
+				assert.deepEqual(defaults?.defaults, expected);
+			});
+		}
 	});
 });
 

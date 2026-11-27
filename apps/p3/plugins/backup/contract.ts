@@ -2,7 +2,7 @@
 //
 // Who uses which contract:
 // - the owner: `Backups` (whether sessions are backed up by default, and an overview) and `BackupsList` (the sessions
-//   that need attention);
+//   in one state);
 // - a session's worker: `SessionBackup` (whether to back up its store, and where its backup stands).
 //
 // What is stored: a session's row keeps only its state (`BackupState`) and changes only when that state changes.
@@ -60,6 +60,12 @@ export const BackupStatus = obj({
 /** What an uploader reports. */
 export type BackupStatus = Static<typeof BackupStatus>;
 
+/** How many sessions are in each state. */
+export const Counts = obj({ synced: num(), retrying: num(), paused: num(), stopped: num() });
+
+/** How many sessions are in each state. */
+export type Counts = Static<typeof Counts>;
+
 /** One row of the owner's list: the session, its state, and since when. */
 export const SessionBackupRow = obj({ session: str(), state: BackupState, since: num() });
 
@@ -82,7 +88,7 @@ export const Backups = remote("backup.backups", {
 	state: {
 		defaultEnabled: bool(),
 		server: union([BackupStatus, nul()]),
-		counts: obj({ synced: num(), retrying: num(), paused: num(), stopped: num() }),
+		counts: Counts,
 	},
 	methods: {
 		/** Sets whether sessions without a choice of their own are backed up. */
@@ -93,12 +99,12 @@ export const Backups = remote("backup.backups", {
 });
 
 /**
- * The sessions whose backup needs the owner: `stopped` first, then `retrying`, the oldest first. One list per screen
- * (`view` is the screen's id). `more` loads the next page. The owner's only.
+ * The sessions in state `state`, the longest in it first. One list per screen and state (`view` is the screen's id).
+ * `more` loads the next page. The owner's only.
  */
 export const BackupsList = remote("backup.list", {
 	version: 1,
-	params: { view: str() },
+	params: { view: str(), state: oneOf("synced", "retrying", "paused", "stopped") },
 	hostAddress: () => Server(),
 	admission: obj({}),
 	state: { list: obj({ rows: arr(SessionBackupRow), moreAfter: bool() }) },

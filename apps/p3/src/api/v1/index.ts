@@ -59,6 +59,7 @@ export {
 	Location,
 	ModelChoice,
 	SessionDefaults,
+	SessionDefaultsHere,
 	SessionDetail,
 	SessionFacts,
 	SessionRow,
