@@ -193,9 +193,9 @@ describe("a new session's folder", () => {
 			async (ctx) => (await ctx.get(SessionsStore, {})).sessions.one.page({ id }, 1, ctx),
 			context,
 		);
-		const where = rows.items[0]!.location;
+		const where = rows.items[0]!.location!;
 		const browser = await client.get(Files, { workspace: pi, thing: files }, context);
-		const page = await browser.entries!({ machine: where.environment, path: where.folder }, context);
+		const page = await browser.entries!({ machine: where.machine, path: where.folder }, context);
 		assert.deepEqual(page.entries, []);
 	});
 });

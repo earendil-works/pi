@@ -62,6 +62,7 @@ const SESSION: HarnessSession = {
 	workspace: "w1",
 	call: (fn) => fn({} as never),
 	location: async () => undefined,
+	moveLocation: () => Promise.reject(new Error("no move")),
 };
 
 /** What a faux login shows. */

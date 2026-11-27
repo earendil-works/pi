@@ -113,29 +113,33 @@ messages.message("…") }`, the label a message of the plugin's `messages.ts`, w
 ```ts
 // kind.ts: the session kind. A session is a session workspace (a kind of the things plugin): its ticks are its rights,
 // its row a state member for everyone let in, Manage gives the changes. contract.ts holds what it is as data.
-export const SessionKind = defineWorkspace("sessions.session", { version: 1, leaf: true, makers: "anyone",
-	state: { row: SessionRow },
-	methods: { archive: method(), restore: method(), setModel: … },              // its name: Configure in the parent
+export const SessionKind = defineWorkspace("sessions.session", { version: 2, leaf: true, makers: "anyone",
+	state: { row: SessionRow, detail: SessionDetail },
+	methods: { archive: method(), restore: method(), setModel: …, moveLocation: … },   // its name: Configure in the parent
 	ticks: { read: { label: messages.message("tickRead") }, send: { …, for: "people" }, stop: { …, for: "people" },
-		manage: { …, for: "people", gives: ["archive", "restore", "setModel"] } },
+		manage: { …, for: "people", gives: ["detail", "archive", "restore", "setModel", "moveLocation"] } },
 	defaultGrants: { agents: [MAKE_ANY], everyone: ["read", "send"], guests: ["read"] },
 	create: { input: obj({ location: opt(Location) }) } });
 
 // contract.ts: what the plugin's facets and other plugins import (the worker's own facts among them)
-export const SessionFacts = remote("sessions.facts", { version: 1, params: {}, hostAddress: () => Server(),
-	state: { session: union([SessionRow, nul()]) }, methods: { report: method(obj({ state: SessionState })) } });
+export const SessionFacts = remote("sessions.facts", { version: 2, params: {}, hostAddress: () => Server(),
+	state: { session: union([SessionRow, nul()]), detail: SessionDetail },
+	methods: { report: method(obj({ state: SessionState })), moveLocation: method(ConversationLocation) } });
 
 // contract.server.ts: the store, for server facets only; other objects read its named queries
-export const SessionsStore = local("sessions.store", { version: 1, params: {}, members: {
+export const SessionsStore = local("sessions.store", { version: 2, params: {}, members: {
 	sessions: queries(SessionRow, { one: obj({ id: str() }) }),
+	moved: keyed(SessionDetail, Session),                             // a document per session, read whole
 	insert: method(obj({ id: str(), location: opt(Location), model: … })), archive: …, report: …, working: … } });
 ```
 
 **The store owns the table; every write goes through it; reads are named queries.**
 
 ```ts
-const Rows = defineTable("sessions.sessions", { version: 1, columns: ROW, key: ["id"],
+const RowsV1 = defineTable("sessions.sessions", { version: 1, columns: { id: …, environment: str(), … }, key: ["id"],
 	indexes: { working: ["state", "archivedAt"] } });                     // one index per query's order
+// A changed definition is a new version: stored rows migrate (p3-base's data survives updates), never edited in place.
+const Rows = evolveTable(RowsV1, (t) => t.rename("environment", "machine"));
 
 host.serve(SessionsStore, (_params, self) => {
 	const rows = self.table(Rows);
@@ -171,7 +175,8 @@ serveThing(host, SessionKind, {
 
 host.serve(SessionFacts, (_params, principal, self) => {
 	if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");
-	return { session: sessionRow(principal.session, self), report: … };   // live queries of the store and the things store
+	return { session: sessionRow(principal.session, self), detail: store.moved.at(Session({ id: principal.session })), report: …,
+		moveLocation: … };                                                // live queries of the store; writes through it
 });
 ```
 

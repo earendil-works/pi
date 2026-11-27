@@ -160,6 +160,7 @@ export async function kindServer<C extends Contract>(
 				workspace,
 				call: (call, ctx) => host.root(call, ctx, { principal }),
 				location: async () => location,
+				moveLocation: () => Promise.reject(new Error("kind-server: no move")),
 			};
 			return host.root(
 				async (ctx) => {

@@ -114,6 +114,21 @@ export const Caller = union([
 /** Who calls a thing's object (see `Caller`). */
 export type Caller = Static<typeof Caller>;
 
+/**
+ * The caller key (`callerKey` of its principal: `person:<id>`, `worker:<session>`, `server`) of `caller`, what
+ * `Gives` and `ThingsStore.answerOf` take; `callerOfKey` is its inverse.
+ */
+export function callerKeyOf(caller: Caller): string {
+	switch (caller.kind) {
+		case "person":
+			return `person:${caller.person}`;
+		case "agent":
+			return `worker:${caller.session}`;
+		case "server":
+			return "server";
+	}
+}
+
 /** The admission data of every thing's object besides `granted`: who calls. */
 export const ThingAdmission = obj({ caller: Caller });
 

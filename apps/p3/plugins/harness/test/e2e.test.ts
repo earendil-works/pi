@@ -5,9 +5,9 @@
 // nothing; a row left `working` with nothing to do (a crash before Durable took the input, or before the settled
 // report) is settled by the waker's start; a reload of the harness plugin mid-call finishes the run, the held
 // transcript following the next harness with nothing failing on the worker; Bash withheld from the agents in one
-// session is gone from the agent's next request there, and only there (ERNDL-704 test 5); of two logins, the one the
-// session's row chose is asked, and model settings linked mid-run are waited for before the next request: a model they
-// hide is not asked (ERNDL-705).
+// session is gone from the agent's next request there, and only there (ERNDL-704 test 5); a conversation moved by the
+// owner runs its next tool there (ERNDL-704 test 8); of two logins, the one the session's row chose is asked, and
+// model settings linked mid-run are waited for before the next request: a model they hide is not asked (ERNDL-705).
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -39,6 +39,7 @@ import {
 } from "../../../test/plugins/faux-login/contract.ts";
 import { newSession, PROBE, scriptFaux, scriptFauxAs, workerReports } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
+import { MACHINE_KIND } from "../../environments/contract.ts";
 import type { ModelOverride } from "../../providers/contract.ts";
 import { SessionModels } from "../../providers/contract.ts";
 import { ModelSettings, ModelSettingsKind } from "../../providers/model-settings-kind.ts";
@@ -131,6 +132,32 @@ describe("the harness end to end", () => {
 		const seen = await requests(client, id);
 		assert.equal(seen.length, 2);
 		assert.ok(seen[1]?.last.includes(folder), "the tool ran in the session's folder");
+		assert.deepEqual(t.errors, []);
+	});
+
+	// ERNDL-704 test 8 (decision 24): the owner moves the main conversation; its next tool call runs there.
+	it("runs a conversation's next tool where the owner moved it, on a machine the agents have Work on", async () => {
+		const [folder, moved] = [await directory("p3-harness-e2e-"), await directory("p3-harness-moved-")];
+		const t = await start();
+		const pwd = { kind: "tool", name: "bash", args: JSON.stringify({ command: "pwd" }) } as const;
+		const id = await session(t, folder, [
+			{ when: "@where", reply: [pwd] },
+			{ when: "", reply: [{ kind: "text", text: "done" }] },
+		]);
+		const client = await t.client(context);
+		const machine = await t.host.root(
+			async (ctx) => until((await ctx.get(OneThing, { kind: MACHINE_KIND })).thing, (thing) => thing !== "", ctx),
+			context,
+		);
+		await client.root(async (ctx) => {
+			const held = withGranted(await ctx.get(SessionObject, { workspace: id, thing: id }), "moveLocation")!;
+			// The main conversation is Durable's root, id 1.
+			await held.moveLocation({ conversation: "1", location: { machine, folder: moved } }, ctx);
+		}, context);
+		await send(client, id, "@where");
+		await reaches(client, id, "settled");
+		const seen = await requests(client, id);
+		assert.ok(seen.at(-1)?.last.includes(moved), `the tool ran in the moved folder: ${seen.at(-1)?.last}`);
 		assert.deepEqual(t.errors, []);
 	});
 

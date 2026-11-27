@@ -30,11 +30,15 @@ export function useWorkLocation(workspace: string): WorkLocation {
 	const state = useRefState(session);
 	const device = useWatch(useLive(useHold(ThisDevice, {}))?.machine);
 	if (info === undefined) return LOADING;
+	const atDevice: WorkLocation =
+		device === undefined || device === "" ? LOADING : { kind: "at", machine: device, folder: "/" };
 	if (info.kind === SESSION_KIND) {
-		if (row !== undefined) return { kind: "at", machine: row.location.environment, folder: row.location.folder };
+		// A session on no machine (its maker could use none, R41): this device's root, as outside a session.
+		if (row?.location === null) return atDevice;
+		if (row !== undefined) return { kind: "at", machine: row.location.machine, folder: row.location.folder };
 		return state?.kind === "failed" ? { kind: "unreadable" } : LOADING;
 	}
-	return device === undefined || device === "" ? LOADING : { kind: "at", machine: device, folder: "/" };
+	return atDevice;
 }
 
 /** Session `workspace`'s object, held while `held` (a workspace that is no session's is never asked for one). */

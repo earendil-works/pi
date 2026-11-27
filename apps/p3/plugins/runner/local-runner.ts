@@ -4,8 +4,9 @@
 // included. `close` refuses new starts, forks nothing for a start under way and stops every worker at once, not after
 // what its session queued: a start queued behind a worker that no longer answers would wait for its exit forever.
 
-import { join } from "node:path";
-import { type Address, type Context, type Link, reportError, Session } from "@earendil-works/p3/v1";
+import { readdir, rm } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { type Address, type Context, invalid, type Link, reportError, Session } from "@earendil-works/p3/v1";
 import {
 	clearStaleLock,
 	type PluginScript,
@@ -29,6 +30,9 @@ type WorkerQueue = {
 	forking: Promise<WorkerProcess | undefined> | undefined;
 	failed: string | undefined;
 };
+
+/** A session's id as the things store makes it (a UUID; a test's short name): one path segment, never `.` or `..`. */
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 /** How long a worker may take to be ready before it is killed, by default. */
 const START_MS = 60_000;
@@ -85,6 +89,36 @@ export class LocalRunner implements WorkerRunner {
 		this.#runtime().sessions.retry(Session({ id }));
 	}
 
+	async remove(id: string): Promise<void> {
+		// A trust boundary: the id comes from a plugin's server code, and the directory made of it is deleted. Checked
+		// before anything stops or touches the file system: one directory below `workers/`, never `workers/` itself.
+		const dir = this.#dirOf(id);
+		if (!SESSION_ID.test(id) || dirname(resolve(dir)) !== resolve(this.#workers())) {
+			throw invalid("args", `p3 runner: ${JSON.stringify(id)} is no session id`);
+		}
+		await this.stop(id);
+		// In the session's turn, after the stop: whatever a start queued meanwhile forked has stopped too.
+		const queue = this.#queueOf(id);
+		await this.#enqueue(queue, async () => {
+			await queue.worker?.stop();
+			await rm(dir, { recursive: true, force: true });
+		});
+	}
+
+	async stored(): Promise<readonly string[]> {
+		try {
+			const entries = await readdir(this.#workers(), { withFileTypes: true });
+			// Only what a session's workers made: a name no session has is nobody's to delete.
+			return entries
+				.filter((entry) => entry.isDirectory() && SESSION_ID.test(entry.name))
+				.map((entry) => entry.name);
+		} catch (error) {
+			// No worker ever started here.
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+			throw error;
+		}
+	}
+
 	state(): Readonly<Record<string, WorkerState>> {
 		const state: Record<string, WorkerState> = {};
 		for (const [id, { worker, failed }] of this.#queues) {
@@ -122,7 +156,7 @@ export class LocalRunner implements WorkerRunner {
 	async #fork(queue: WorkerQueue, context: Context): Promise<WorkerProcess> {
 		const { id } = queue;
 		const runtime = this.#runtime();
-		const dir = join(runtime.dataDir, "workers", id);
+		const dir = this.#dirOf(id);
 		const lock = `p3-session:${dir}`;
 		// Where the lock is a file (macOS, the BSDs), one a killed worker left fails closed: the runner, the one starter of
 		// a session's workers, one start at a time, clears it.
@@ -164,6 +198,16 @@ export class LocalRunner implements WorkerRunner {
 		const worker = queue.worker ?? (await queue.forking);
 		if (worker === undefined || worker.status === "stopping") return undefined;
 		return worker.reload(scripts);
+	}
+
+	/** Where the sessions' workers keep what they keep, one directory per session. */
+	#workers(): string {
+		return join(this.#runtime().dataDir, "workers");
+	}
+
+	/** Where session `id`'s workers keep what they keep: their store, their lock. */
+	#dirOf(id: string): string {
+		return join(this.#workers(), id);
 	}
 
 	/** Session `id`'s worker queue, made by its first use. */

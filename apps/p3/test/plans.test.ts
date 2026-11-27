@@ -117,10 +117,7 @@ describe("the plans of the stores' queries", () => {
 			let one = "";
 			for (let i = 0; i < 6; i++) {
 				one = `s${i}`;
-				await sessions.insert(
-					{ id: one, location: { environment: machine, folder: "/tmp" }, model: null },
-					context,
-				);
+				await sessions.insert({ id: one, location: { machine, folder: "/tmp" }, model: null }, context);
 				if (i % 2 === 0) await sessions.archive({ session: one }, context);
 			}
 			const settings = await host.get(DefaultsSettings, {}, context);

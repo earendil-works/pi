@@ -60,6 +60,7 @@ export {
 	Location,
 	ModelChoice,
 	SessionDefaults,
+	SessionDetail,
 	SessionFacts,
 	SessionRow,
 	SessionState,
