@@ -144,8 +144,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now,
 		// and a session's own folder moves to where new sessions get theirs (one read of every row, no index on
-		// `machine`: it runs once, the marker says so after). The folders move outside a transaction: the rows are
-		// written once every folder is where it stays.
+		// `machine`: it runs once, the marker says so after). The folders move outside a transaction, one rename each (a
+		// folder one rename cannot move stays where it is, its row keeping it).
 		self.onLive(async (ctx) => {
 			if (rewrites.value.thisDevice) return;
 			const machine = await until(device.thing, (id) => id !== "", ctx);
