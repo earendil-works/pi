@@ -6,7 +6,8 @@
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
 // It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always; once the agent no
-// longer has the subagents' tool, it withdraws the messages to subagents still queued.
+// longer has the subagents' tool, it withdraws the messages to subagents still queued, and after a restart it finishes
+// the stops of subagents it cut.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -42,7 +43,8 @@ import { type HarnessLocation, type Held, HeldThings, ThingHarnessParts } from "
 import { activityOf, serialized } from "./activity.ts";
 import { AgentParts, type Parts } from "./agent-parts.ts";
 import { SubagentsKind } from "./kind.ts";
-import { SUBAGENT_TASKS, withdrawQueued } from "./reporter.ts";
+import { recordUse, SUBAGENT_TASKS } from "./reporter.ts";
+import { finishStops } from "./roster.ts";
 import { subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
@@ -85,8 +87,9 @@ export default defineFacet((host, facet) => {
 		/** Whether the agent had the subagents' tool at the last apply (none yet: unknown). */
 		let subagents: boolean | undefined;
 		/**
-		 * Applies what the agent holds; not ready yet: what was given stays. The subagents' tool gone (Use withheld, or
-		 * the thing let go of): the messages to subagents still queued are withdrawn (once per change, and once at start).
+		 * Applies what the agent holds; not ready yet: what was given stays. Whether the agent has the subagents' tool is
+		 * recorded when it changes (and once at start); gone (Use withheld, or the thing let go of), the messages to
+		 * subagents still queued are withdrawn.
 		 */
 		const apply = (): void => {
 			const now = held.value;
@@ -94,9 +97,9 @@ export default defineFacet((host, facet) => {
 			const { things, durable } = opened.value;
 			things.apply(now, parts.value);
 			const offered = things.registry.snapshot().extension(SubagentsKind.name) !== undefined;
-			if (!offered && subagents !== false)
-				withdrawQueued(durable, BACKGROUND_CONTEXT).catch((error: unknown) =>
-					reportError(`p3 harness: session ${runtime.value.session}: withdrawing`, error, BACKGROUND_CONTEXT),
+			if (offered !== subagents)
+				recordUse(durable, offered, BACKGROUND_CONTEXT).catch((error: unknown) =>
+					reportError(`p3 harness: session ${runtime.value.session}: subagents' Use`, error, BACKGROUND_CONTEXT),
 				);
 			subagents = offered;
 		};
@@ -129,7 +132,10 @@ export default defineFacet((host, facet) => {
 		self.on(archived, async ({ value }, ctx) => {
 			if (value) return;
 			await ready(ctx);
-			opened.value.durable.resume();
+			const { durable } = opened.value;
+			durable.resume();
+			// A stop of a subagent a restart cut aborts the older generation's work now.
+			await finishStops(durable, ctx);
 		});
 		const harness: OpenHarness = {
 			get durable() {

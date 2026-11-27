@@ -1,8 +1,10 @@
 // The session's subagents (the subagents' part, `subagents.ts`, starts and drives them; `reporter.ts` delivers their
 // messages): the document listing them by name (`Subagents`, the session's, so every top-level conversation sees the
-// same names), the task owning each one's conversation (`Anchor`), and what a subagent gets from the agent when it is
-// configured: the agent's tools it may be given now, and its thinking level clamped to its model.
+// same names), the task owning each one's conversation (`Anchor`), what a subagent gets from the agent when it is
+// configured (the agent's tools it may be given now, its thinking level clamped to its model), the request ids of its
+// messages (which carry the generation they were sent in), and the stop of an older generation's work.
 
+import type { Context } from "@earendil-works/p3/v1";
 import {
 	type Agent,
 	type ConversationId,
@@ -10,8 +12,11 @@ import {
 	defineDoc,
 	defineTask,
 	type EntryId,
+	LiveDoc,
 	type Models,
 	type ModelThinkingLevel,
+	type TaskId,
+	type Tx,
 } from "@earendil-works/p3/v1/worker";
 import type { HarnessTool } from "../things/contract.worker.ts";
 import type { ModelRef } from "./agent-parts.ts";
@@ -20,30 +25,44 @@ import type { ModelRef } from "./agent-parts.ts";
 export const SUBAGENT_TOOL = "subagent";
 
 /**
- * A subagent: its conversation; the answers already reported (several messages may end in one answer); the model
- * (`provider/modelId`) and thinking level it was given (the level as asked: it is clamped to the model when applied);
- * the tools it was given by name (none: every tool the agent may give it); its generation, which every stop and archive
- * bumps (a message sent before is not delivered after); and whether it is archived (hidden from `status`, still usable).
+ * A subagent: its conversation; its answers that were reported (several messages may end in one answer), and to whom
+ * (each sender once); the model (`provider/modelId`) and thinking level it was given (the level as asked: it is clamped
+ * to the model when applied); the tools it was given by name (none: every tool the agent may give it); its generation,
+ * which every stop and archive bumps (a message sent before is not delivered after), and whether that stop still has
+ * to abort the older generation's work (`stopping`: a restart finishes it); the follow-ups waiting for its current
+ * answer, by reporter, in the order sent; and whether it is archived (hidden from `status`, still usable).
  */
 export type Subagent = {
 	readonly conversationId: ConversationId;
 	readonly reported: EntryId[];
+	readonly reportedTo: { readonly answer: EntryId; readonly to: ConversationId }[];
 	model: string;
 	thinkingLevel: ModelThinkingLevel;
 	tools?: string[];
 	generation: number;
+	stopping?: true;
+	followUps: TaskId[];
 	archived?: true;
 };
 
-/** The session's subagents by name. */
-export const Subagents = defineDoc<{ agents: Record<string, Subagent> }>({
+/**
+ * The session's subagents by name, and whether Use is withheld from the agent (`withheld`: the harness writes it before
+ * it withdraws the queued messages, and a reporter checks it in the commit that admits its message).
+ */
+export const Subagents = defineDoc<{ agents: Record<string, Subagent>; withheld?: true }>({
 	checkpointWhen: () => false,
 	kind: "harness.subagents",
-	version: 1,
+	// 2: the session's (1 was each conversation's).
+	version: 2,
 	// The session's: a top-level branch sees the same subagents; each message's answer goes to the conversation that sent it.
 	scope: "session",
 	initial: () => ({ agents: {} }),
 });
+
+/** The subagent `name` of `agents` (`Object.hasOwn`: a name is the model's text); none: there is no such subagent. */
+export function subagentOf<T extends Subagent>(agents: Readonly<Record<string, T>>, name: string): T | undefined {
+	return Object.hasOwn(agents, name) ? agents[name] : undefined;
+}
 
 /**
  * What owns a subagent's conversation: a background task that ends at once. A subagent outlives the agent's turns; a
@@ -99,4 +118,62 @@ export function levelOf(agent: Pick<Subagent, "model" | "thinkingLevel">, models
 	const model = ref === undefined ? undefined : models.getModel(ref.provider, ref.modelId);
 	const thinkingLevel = model === undefined ? agent.thinkingLevel : clampThinkingLevel(model, agent.thinkingLevel);
 	return { model: ref, thinkingLevel };
+}
+
+/** A message's request id: its reporter and the generation it was sent in (`subagent:<reporter>:<generation>`). */
+export function requestOf(reporter: string | number, generation: number): string {
+	return `${REQUEST}${reporter}:${generation}`;
+}
+
+/** The prefix of every message's request id. */
+export const REQUEST = "subagent:";
+
+/** The generation a request id names; none: not a message of a reporter. */
+function generationOf(requestId: string | undefined): number | undefined {
+	if (requestId?.startsWith(REQUEST) !== true) return undefined;
+	const generation = Number(requestId.slice(requestId.lastIndexOf(":") + 1));
+	return Number.isSafeInteger(generation) ? generation : undefined;
+}
+
+/** What finishing a stop needs: commits, and a subagent's conversation to abort (a tool's api, or the harness). */
+export type Stopping = {
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
+	conversation(id: ConversationId, context: Context): Promise<{ abort(context: Context): Promise<void> } | undefined>;
+};
+
+/**
+ * Finishes the stop of subagent `name` its document marks (`stopping`): aborts its current work only if a message of
+ * an older generation started it, never work sent after the stop's commit (Astra, round 2 of the port), then clears
+ * the mark. Run by the stop itself, and again after a restart that cut it.
+ */
+export async function finishStop(owner: Stopping, name: string, context: Context): Promise<void> {
+	const marked = await owner.commit(async (tx) => {
+		const agent = subagentOf((await tx.doc(Subagents)).agents, name);
+		return agent?.stopping === undefined ? undefined : agent.conversationId;
+	}, context);
+	if (marked === undefined) return;
+	const child = await owner.conversation(marked, context);
+	const older = await owner.commit(async (tx) => {
+		const agent = subagentOf((await tx.doc(Subagents)).agents, name);
+		if (agent === undefined) return false;
+		for (const input of (await tx.doc(LiveDoc, marked)).run?.inputs ?? []) {
+			const sent = generationOf((await tx.submission(input))?.requestId);
+			if (sent === undefined || sent < agent.generation) return true;
+		}
+		return false;
+	}, context);
+	if (older) await child?.abort(context);
+	await owner.commit(async (tx) => {
+		const agent = subagentOf((await tx.doc(Subagents)).agents, name);
+		if (agent !== undefined) delete agent.stopping;
+	}, context);
+}
+
+/** Finishes every stop a restart cut (see `finishStop`). */
+export async function finishStops(owner: Stopping, context: Context): Promise<void> {
+	const marked = await owner.commit(async (tx) => {
+		const { agents } = await tx.doc(Subagents);
+		return Object.entries(agents).flatMap(([name, agent]) => (agent.stopping === undefined ? [] : [name]));
+	}, context);
+	for (const name of marked) await finishStop(owner, name, context);
 }

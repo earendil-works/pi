@@ -1,9 +1,10 @@
 // The subagents' reporter (`reporter.ts`) on its own, its phases called as the scheduler calls them, over stand-ins of
-// Durable's runtime (Astra, rounds 1 and 2, and round 1 of the port): the message admitted in the commit that checks
-// the subagent (the same one, its generation, the agent still with the `subagent` tool), nothing reported for a
-// subagent replaced, stopped or gone since, the withdrawal reported when Use was withheld; a message left queued behind
-// a failed run decided for withdrawal in a commit of its own, still reported after a restart, and one that was placed
-// and failed otherwise reported as it failed; steer and followUp, with the same request ids after a restart.
+// Durable's runtime (Astra, rounds 1 and 2, and rounds 1 and 2 of the port): the message admitted in the commit that
+// checks the subagent (the same one, its generation, Use not recorded withheld), nothing reported for a subagent
+// replaced, stopped or gone since, the withdrawal reported when Use was withheld; an answer completed before a stop
+// kept and reported, and reported once to each sender; a message left queued behind a failed run decided for
+// withdrawal in a commit of its own, still reported after a restart, and one that was placed and failed otherwise
+// reported as it failed; steer and followUp, with the same request ids after a restart.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -30,28 +31,44 @@ function submissionOf(settled?: Settled) {
 /** What a case's stand-ins saw: the next states committed, the drafts submitted and admitted. */
 type Seen = { checkpoints: { phase: string; report?: string }[]; submitted: unknown[]; admitted: unknown[] };
 
+/** The session's subagent `reader`, conversation `conversationId`, in `generation`. */
+function readerOf(conversationId = 2, generation = 0) {
+	return {
+		conversationId,
+		generation,
+		reported: [] as number[],
+		reportedTo: [] as object[],
+		followUps: [] as number[],
+	};
+}
+
 /**
- * A runtime over the session's subagents `agents` (by default `reader`, conversation 2, generation 0), whose subagent
- * answers `submit` with `submission`; `subagentTool: false`: the agent no longer has the `subagent` tool.
+ * A runtime of conversation `sender` over the session's subagents `agents` (by default `reader`, conversation 2,
+ * generation 0), whose subagent answers `submit` with `submission`; `withheld`: the document says Use is withheld;
+ * `ended`: the tasks that are terminal.
  */
 function runtimeOf(
 	submission: object,
 	{
-		agents = { reader: { conversationId: 2, generation: 0, reported: [] as number[] } } as Record<string, object>,
-		subagentTool = true,
+		agents = { reader: readerOf() } as Record<string, object>,
+		withheld = false,
 		idle = false,
+		sender = 1,
+		ended = [] as number[],
 	} = {},
 ) {
 	const seen: Seen = { checkpoints: [], submitted: [], admitted: [] };
-	const roster = { agents };
+	const roster = { agents, ...(withheld ? { withheld: true } : {}) };
 	const tx = {
 		doc: async (token: unknown) => (token === Subagents ? roster : {}),
 		entry: async () => ({ model: [] }),
 		submissionByRequest: async () => (seen.admitted.length > 0 ? { status: "queued" } : undefined),
+		// Every task the case names is running, but the ones `ended` lists.
+		task: async (id: number) => ({ state: { status: ended.includes(id) ? "terminal" : "running" } }),
 	};
 	const runtime = {
-		conversationId: 1,
-		agent: async () => ({ tools: subagentTool ? [{ name: "subagent" }] : [] }),
+		conversationId: sender,
+		agent: async () => ({ tools: [{ name: "subagent" }] }),
 		conversation: async () => ({
 			id: 2,
 			admit: async (_tx: unknown, draft: unknown) => seen.admitted.push(draft),
@@ -86,7 +103,7 @@ describe("a subagent's reporter", () => {
 		const delivered = phase("deliver")(reporterOf(9, "earlier"), runtime, context);
 		await until(() => seen.submitted.length === 1);
 		// Archived and its name given to a new subagent while the message was answered.
-		const replacement = { conversationId: 3, generation: 0, reported: [] as number[] };
+		const replacement = readerOf(3);
 		roster.agents = { reader: replacement };
 		settled.resolve({ status: "done", type: "input", answer: 42 });
 		await delivered;
@@ -98,7 +115,7 @@ describe("a subagent's reporter", () => {
 		const { runtime, seen, roster } = runtimeOf({ wait: () => settled.promise });
 		const delivered = phase("deliver")(reporterOf(9, "first"), runtime, context);
 		await until(() => seen.submitted.length === 1);
-		roster.agents = { reader: { conversationId: 3, generation: 0, reported: [] } };
+		roster.agents = { reader: readerOf(3) };
 		settled.resolve({ status: "unanswered", reason: "model_error" });
 		await delivered;
 		assert.deepEqual(seen.checkpoints, [{ phase: "report" }]);
@@ -106,20 +123,78 @@ describe("a subagent's reporter", () => {
 
 	it("delivers nothing to a subagent stopped or archived since the message was sent, and reports nothing", async () => {
 		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
-			agents: { reader: { conversationId: 2, generation: 1, reported: [] } },
+			agents: { reader: readerOf(2, 1) },
 		});
 		await phase("deliver")(reporterOf(9, "before the stop"), runtime, context);
 		assert.deepEqual([seen.admitted, seen.submitted, seen.checkpoints], [[], [], [{ phase: "report" }]]);
 	});
 
-	it("delivers nothing once the agent no longer has the subagent tool, and reports the withdrawal", async () => {
-		// Answered at once if it were delivered: the case ends either way.
+	it("delivers nothing once Use is recorded withheld, and reports the withdrawal (Opus, round 2 of the port)", async () => {
+		// The phase's agent still has the subagent tool: the commit's own read of the document decides.
 		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
-			subagentTool: false,
+			withheld: true,
 		});
 		await phase("deliver")(reporterOf(9, "after the withhold"), runtime, context);
 		assert.deepEqual(seen.admitted, []);
 		assert.match(seen.checkpoints[0]?.report ?? "", /reader failed: the message was withdrawn before it ran/);
+	});
+
+	it("keeps an answer completed before a stop for `answer`, and reports it (Astra, round 2 of the port)", async () => {
+		// Recovery: admitted and answered in generation 0; a stop moved the subagent to generation 1 before the reporter
+		// ran again.
+		const agent = readerOf(2, 1);
+		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
+			agents: { reader: agent },
+		});
+		seen.admitted.push({ requestId: "subagent:9:0" });
+		await phase("deliver")(reporterOf(9, "done before the stop"), runtime, context);
+		assert.deepEqual(agent.reported, [42]);
+		assert.match(seen.checkpoints.at(-1)?.report ?? "", /\[subagent reader answered\]/);
+	});
+
+	it("reports one answer to each sender whose message it answers, once (Astra, round 2 of the port)", async () => {
+		const agent = readerOf();
+		const answered = submissionOf({ status: "done", type: "input", answer: 42 });
+		const reports = [];
+		for (const [id, sender] of [
+			[9, 1],
+			[10, 5],
+			[11, 5],
+		] as const) {
+			const { runtime, seen } = runtimeOf(answered, { agents: { reader: agent }, sender });
+			await phase("deliver")(reporterOf(id, `from ${sender}`), runtime, context);
+			reports.push(seen.checkpoints.at(-1)?.report !== undefined);
+		}
+		assert.deepEqual([reports, agent.reported], [[true, true, false], [42]]);
+	});
+
+	it("admits a follow-up only after the follow-ups sent before it went (Astra, round 2 of the port)", async () => {
+		const agent = { ...readerOf(), followUps: [8, 9] };
+		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
+			agents: { reader: agent },
+		});
+		const waited: number[] = [];
+		const waiting = {
+			...runtime,
+			// The earlier follow-up ends: it took itself off the list when it was admitted.
+			waitForTask: async (id: number) => {
+				waited.push(id);
+				agent.followUps = agent.followUps.filter((each) => each !== id);
+			},
+		};
+		await phase("deliver")(reporterOf(9, "second", true), waiting, context);
+		assert.deepEqual([waited, seen.admitted.length, agent.followUps], [[8], 1, []]);
+	});
+
+	it("is not held back by an earlier follow-up that ended without taking itself off", async () => {
+		const agent = { ...readerOf(), followUps: [8, 9] };
+		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
+			agents: { reader: agent },
+			ended: [8],
+		});
+		const waiting = { ...runtime, waitForTask: async () => {} };
+		await phase("deliver")(reporterOf(9, "second", true), waiting, context);
+		assert.deepEqual([seen.admitted.length, agent.followUps], [1, []]);
 	});
 
 	it("decides a stranded message's withdrawal before withdrawing it, and reports it after a restart (Astra, round 2)", async () => {
@@ -175,9 +250,9 @@ describe("a subagent's reporter", () => {
 				requestId,
 			]),
 			[
-				["steer", "subagent:7"],
-				["followUp", "subagent:8"],
-				["followUp", "subagent:8"],
+				["steer", "subagent:7:0"],
+				["followUp", "subagent:8:0"],
+				["followUp", "subagent:8:0"],
 			],
 		);
 	});

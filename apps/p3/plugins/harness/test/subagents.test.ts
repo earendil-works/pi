@@ -1,8 +1,10 @@
 // The subagents' part on a worker (`harnessed`: the harness plugin beside stand-ins and a scripted login): the one
 // `subagent` tool for the main conversation while Use is granted, and never a subagent's; each action (spawn, send,
-// configure, stop, archive, restore, answer, status, models) and its refusals; answers reported back once each, a
-// message stranded behind a failed run reported, Use withheld giving a running subagent no new message; `main` tools
-// left out of a subagent's and refused there.
+// configure, stop, archive, restore, answer, status, models) and its refusals; answers reported back once to each
+// sender; follow-ups delivered after the current answer, in the order sent, each with its sender's tools; a subagent's
+// tools taken from the agent again with each message (never `main` ones, never one the agent lacks); Use withheld
+// giving a running subagent no new message and withdrawing the waiting ones; stop and archive bound to the generation
+// they end, also against a send in one round; the session's subagents in every top-level branch.
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -14,6 +16,9 @@ import { BACKGROUND_CONTEXT as context, obj } from "@earendil-works/p3/v1";
 import { configure, defineTool } from "@earendil-works/p3/v1/worker";
 import { eventually } from "../../../test/until.ts";
 import type { HarnessTool } from "../../things/contract.worker.ts";
+import { SESSION } from "../../things/test/part.ts";
+import { Subagents } from "../roster.ts";
+import { subagentsPart } from "../subagents.ts";
 import {
 	calls,
 	coding,
@@ -116,6 +121,16 @@ describe("the subagents' part", () => {
 		await (await loaded.harness()).durable.waitForIdle(context);
 	}
 
+	/** Waits until `count` follow-ups to `reader` wait for its current answer. */
+	async function waiting(count: number): Promise<void> {
+		assert.ok(loaded !== undefined);
+		const { durable } = await loaded.harness();
+		await eventually(
+			async () => (await durable.snapshot(Subagents, context))?.agents.reader?.followUps.length,
+			(length) => length === count,
+		);
+	}
+
 	/** Waits until the bash call of a subagent's first step started. */
 	async function started(): Promise<void> {
 		await eventually(() => existsSync(join(folder, "started")), Boolean);
@@ -146,29 +161,27 @@ describe("the subagents' part", () => {
 		assert.deepEqual(requests().at(-1)?.tools, ["bash", "edit", "read", "write"]);
 	});
 
-	it("ends a queued message whose subagent's run then failed, and reports it (Astra, round 1)", async () => {
+	it("delivers a follow-up sent while the run fails after it, instead of leaving it queued (Astra, rounds 1 and 2)", async () => {
 		const script = [
 			spawn("@spawn", "child-start"),
 			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo not-scripted"),
 			says('"done":', "ok"),
 			on("@queue", "send", { message: "later", followUp: true }),
+			says("later", "taken after the failure"),
 			says("[subagent reader failed:", "noted"),
+			says("[subagent reader answered]", "noted"),
 		];
 		const { harness } = await start([login("l", "faux", script), coding(), subagents()]);
 		const open = await harness();
 		await open.submit(undefined, { text: "@spawn", requestId: "spawn" }, context);
 		await started();
 		await open.submit(undefined, { text: "@queue", requestId: "q" }, context);
-		await eventually(
-			() => open.durable.inspect(context),
-			(found) =>
-				found.submissions.some((s) => s.status === "queued" && s.requestId?.startsWith("subagent:") === true),
-		);
+		await waiting(1);
 		await writeFile(join(folder, "gate"), "");
-		await eventually(
-			() => requests(),
-			(sent) => sent.some((request) => request.last.startsWith("[subagent reader failed:")),
-			5000,
+		await reported("[subagent reader answered] taken after the failure");
+		assert.ok(
+			requests().some(({ last }) => last.startsWith("[subagent reader failed:")),
+			"the first run's failure",
 		);
 		await eventually(
 			() => open.durable.inspect(context),
@@ -463,7 +476,7 @@ describe("the subagents' part", () => {
 		assert.deepEqual(requests().find((r) => r.last === "child")?.tools, ["red_label"]);
 	});
 
-	it("withdraws a follow-up queued before Use is withheld and reports it; the subagent never gets it (Opus S2)", async () => {
+	it("withdraws a follow-up waiting when Use is withheld and reports it; the subagent never gets it (Opus S2)", async () => {
 		const script = [
 			spawn("@spawn", "child-start"),
 			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo first done"),
@@ -472,17 +485,14 @@ describe("the subagents' part", () => {
 			says("", "ok"),
 		];
 		const held = [login("login", "faux", script), coding(), subagents()];
-		const { ask, control, harness } = await start(held);
-		const open = await harness();
+		const { ask, control } = await start(held);
 		await ask("@spawn");
 		await started();
 		await ask("@queue");
-		await eventually(
-			() => open.durable.inspect(context),
-			(found) =>
-				found.submissions.some((s) => s.status === "queued" && s.requestId?.startsWith("subagent:") === true),
-		);
+		await waiting(1);
 		control.hold([held[0]!, held[1]!, subagents(false)]);
+		await writeFile(join(folder, "gate"), "");
+		await reported("[subagent reader answered] first answer");
 		await eventually(
 			() =>
 				requests().filter(({ last }) => last.startsWith("[subagent reader failed: the message was withdrawn"))
@@ -490,8 +500,6 @@ describe("the subagents' part", () => {
 			(count) => count === 1,
 			5000,
 		);
-		await writeFile(join(folder, "gate"), "");
-		await reported("[subagent reader answered] first answer");
 		assert.ok(!requests().some(({ last }) => last.includes("queued message")));
 	});
 
@@ -656,5 +664,146 @@ describe("the subagents' part", () => {
 			},
 		] = statuses() as [{ subagents: [{ thinkingLevel: string }] }];
 		assert.equal(reader.thinkingLevel, "off");
+	});
+
+	it("reports an answer two senders' messages share to each of them once (Astra, round 2 of the port)", async () => {
+		const script = [
+			spawn("@spawn", "root task"),
+			runs("root task", "touch started; until [ -e gate ]; do sleep 0.02; done; echo ready"),
+			on("@steer", "send", { message: "branch task" }),
+			says("branch task", "joint result"),
+			says("", "ok"),
+		];
+		const { ask, harness } = await start([login("a", "faux", script), coding(), subagents()]);
+		await ask("@spawn");
+		await started();
+		const open = await harness();
+		const root = await open.durable.root(context);
+		const entry = (await root.entries({}, 1, undefined, context)).items[0]!;
+		const branch = await root.fork(entry.id, { ownership: { kind: "ownerless" } }, context);
+		await open.submit(String(branch.id), { text: "@steer", requestId: "branch" }, context);
+		await branch.waitForIdle(context);
+		await eventually(
+			() => open.durable.inspect(context),
+			(info) => info.submissions.some((s) => s.status === "queued" && s.requestId?.startsWith("subagent:") === true),
+		);
+		await writeFile(join(folder, "gate"), "");
+		await eventually(
+			() => requests(),
+			(rs) => rs.some((r) => r.last === "[subagent reader answered] joint result"),
+		);
+		await eventually(
+			() => open.durable.inspect(context),
+			(info) => info.tasks.length === 0 && info.submissions.length === 0,
+		);
+		const counts = await Promise.all(
+			[root, branch].map(
+				async (chat) =>
+					(await chat.entries({}, 100, undefined, context)).items.filter(
+						(e) =>
+							e.conversationId === chat.id &&
+							e.model?.some(
+								(m) =>
+									m.role === "user" &&
+									JSON.stringify(m.content).includes("[subagent reader answered] joint result"),
+							),
+					).length,
+			),
+		);
+		assert.deepEqual(counts, [1, 1]);
+	});
+
+	it("leaves work sent after an archive's commit running when the archive's abort comes (Astra, round 2 of the port)", async () => {
+		const script = [
+			spawn("@spawn", "initial"),
+			says("initial", "idle"),
+			on("@new", "send", { message: "restored task" }),
+			runs("restored task", "touch started; until [ -e gate ]; do sleep 0.02; done; echo continued"),
+			says("continued", "new result"),
+			says("", "ok"),
+		];
+		const { ask, harness } = await start([login("a", "faux", script), coding(), subagents()]);
+		await ask("@spawn");
+		await reported("[subagent reader answered] idle");
+		const { durable } = await harness();
+		const root = await durable.root(context);
+		// Pause exactly between archive's durable transition and child abort; use real Durable for both.
+		const paused = Promise.withResolvers<void>();
+		const resume = Promise.withResolvers<void>();
+		const archiveTool = subagentsPart.part([subagents().held], SESSION).extension!.tools![0]!;
+		const api = {
+			conversationId: root.id,
+			commit: durable.commit.bind(durable),
+			conversation: async (id: typeof root.id) => {
+				paused.resolve();
+				await resume.promise;
+				return durable.conversation(id, context);
+			},
+		};
+		const archiving = archiveTool.execute({ action: "archive", name: "reader" } as never, api as never, context);
+		try {
+			await paused.promise;
+			await ask("@new");
+			await started();
+		} finally {
+			resume.resolve();
+			await archiving;
+			await writeFile(join(folder, "gate"), "");
+		}
+		await eventually(
+			() => durable.inspect(context),
+			(info) => info.tasks.length === 0 && info.submissions.length === 0,
+		);
+		assert.deepEqual(
+			requests()
+				.filter((r) => r.last.startsWith("[subagent reader "))
+				.map((r) => r.last),
+			["[subagent reader answered] idle", "[subagent reader answered] new result"],
+		);
+	});
+
+	it("gives each follow-up its own sender's tools, in the order sent (Astra, round 2 of the port)", async () => {
+		const script = [
+			spawn("@spawn", "busy work"),
+			runs("busy work", "touch started; until [ -e gate ]; do sleep 0.02; done; echo released"),
+			on("@one", "send", { message: "first follow up", followUp: true }),
+			on("@two", "send", { message: "second follow up", followUp: true }),
+			says("first follow up", "one done"),
+			says("second follow up", "two done"),
+			says("", "ok"),
+		];
+		const { ask, harness } = await start(
+			[login("a", "faux", script), coding(), subagents(), other("test.label", "label")],
+			[{ kind: "test.label", tools: [testTool("alpha_label"), testTool("beta_label")] }],
+		);
+		await ask("@spawn");
+		await started();
+		const { durable, ...open } = await harness();
+		const root = await durable.root(context);
+		const entry = (await root.entries({}, 1, undefined, context)).items[0]!;
+		const branch = await root.fork(entry.id, { ownership: { kind: "ownerless" } }, context);
+		for (const [sender, label] of [
+			[root, "alpha_label"],
+			[branch, "beta_label"],
+		] as const) {
+			const tools = (await sender.agent(context)).tools.filter((t) => t.name === "subagent" || t.name === label);
+			await durable.commit((tx) => configure(tx, sender.id, { tools }), context);
+		}
+		// The follow-ups wait in their reporters, in the order sent, until the subagent's current work answered.
+		await ask("@one");
+		await waiting(1);
+		await open.submit(String(branch.id), { text: "@two", requestId: "two" }, context);
+		await branch.waitForIdle(context);
+		await waiting(2);
+		await writeFile(join(folder, "gate"), "");
+		await reported("[subagent reader answered] two done");
+		const offers = (text: string) =>
+			requests()
+				.find((r) => r.last === text)
+				?.tools.filter((t) => t.endsWith("_label"));
+		assert.deepEqual(
+			[offers("@one"), offers("@two"), offers("first follow up"), offers("second follow up")],
+			[["alpha_label"], ["beta_label"], ["alpha_label"], ["beta_label"]],
+		);
 	});
 });

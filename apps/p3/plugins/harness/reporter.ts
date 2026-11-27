@@ -1,6 +1,6 @@
 // The messages to subagents (`subagents.ts` sends them): a reporter task per message, which delivers it to the
-// subagent and hands its answer back to the conversation that sent it, and the withdrawal of the queued ones when Use
-// is withheld. The tasks are an extension of their own the harness installs always (`SUBAGENT_TASKS`), so a reporter
+// subagent and hands its answer back to the conversation that sent it, and, when Use is withheld, the record of it and
+// the withdrawal of the queued messages. The tasks are an extension of their own the harness installs always (`SUBAGENT_TASKS`), so a reporter
 // under way when Use is withheld still reports: a subagent that runs finishes its step, and gets no new message.
 
 import type { Context } from "@earendil-works/p3/v1";
@@ -13,12 +13,14 @@ import {
 	defineTask,
 	type Extension,
 	type Harness,
+	LiveDoc,
 	type Message,
 	type SettledSubmissionRecord,
 	type Submission,
+	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/p3/v1/worker";
-import { Anchor, SUBAGENT_TOOL, type Subagent, Subagents, toolsOf } from "./roster.ts";
+import { Anchor, REQUEST, requestOf, Subagents, subagentOf, toolsOf } from "./roster.ts";
 
 /**
  * What a reporter delivers: to which subagent (its name and conversation, and its generation when the message was
@@ -44,12 +46,14 @@ const WITHDRAWN = "the message was withdrawn before it ran (Use was withheld, or
 /**
  * Delivers one message to a subagent and reports its answer to the conversation that sent it as a follow-up input, a
  * background task (the agent's stop and idle waits leave it alone). The message is admitted in the commit that checks
- * the subagent is still the one it was sent to, in the same generation, and that the agent still has the `subagent`
- * tool; the same commit gives the subagent the agent's tools as they are now. Request ids make a repeated submission
- * return the first: after a restart the subagent gets the message once and the agent the report once. A message left
- * queued behind a run that failed (Durable keeps it until the next input, which a subagent may never get) is withdrawn
- * in a phase of its own, `withdraw`, decided in a commit before the withdrawal: a restart in between withdraws it again
- * and still reports it (Astra, rounds 1, 2).
+ * the subagent is still the one it was sent to, in the same generation, and that Use is not withheld; the same commit
+ * gives the subagent the sender's tools as they are now. A follow-up is admitted only once the subagent is idle and the
+ * follow-ups sent before it went, so the run it starts has its sender's tools (Astra, round 2 of the port); a steer
+ * joins the running work at once. Request ids make a repeated submission return the first: after a restart the
+ * subagent gets the message once and the agent the report once. A steer left queued behind a run that failed (Durable
+ * keeps it until the next input, which a subagent may never get) is withdrawn in a phase of its own, `withdraw`,
+ * decided in a commit before the withdrawal: a restart in between withdraws it again and still reports it (Astra,
+ * rounds 1, 2).
  */
 export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 	name: "harness.subagent-reporter",
@@ -99,21 +103,24 @@ export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 type ReporterRuntime = TaskRuntime<ReporterInput, ReporterState, null, object>;
 
 /** A reporter as its phases get it. */
-type Reporting = { readonly id: string | number; readonly input: ReporterInput };
-
-/** The prefix of a message's request id: `subagent:<reporter>`. */
-const REQUEST = "subagent:";
+type Reporting = { readonly id: TaskId; readonly input: ReporterInput };
 
 /** The reporter's message as a submission: a steer reaches a busy subagent at its next step, a follow-up after it. */
 function draftOf({ id, input }: Reporting) {
 	const whenBusy = input.followUp ? "followUp" : "steer";
-	return { type: "input", content: input.message, whenBusy, requestId: `${REQUEST}${id}` } as const;
+	return { type: "input", content: input.message, whenBusy, requestId: requestOf(id, input.generation) } as const;
 }
 
+/** What one admission commit decided: admitted (now, or before a restart), refused (the report decided), or to wait. */
+type Admission =
+	| { readonly kind: "admitted" }
+	| { readonly kind: "refused" }
+	| { readonly kind: "busy" }
+	| { readonly kind: "behind"; readonly earlier: TaskId };
+
 /**
- * Admits the message in one commit with its checks, and gives the subagent the agent's tools as they are now; true:
- * admitted (now, or before a restart). Refused, the same commit decides the report: nothing for a subagent stopped,
- * archived or replaced since; the withdrawal for an agent without the `subagent` tool (Use withheld).
+ * Admits the message, waiting first for a follow-up's turn: true once admitted (now, or before a restart); false when
+ * refused, the report decided.
  */
 async function admit(
 	reporter: Reporting,
@@ -121,30 +128,68 @@ async function admit(
 	runtime: ReporterRuntime,
 	context: Context,
 ): Promise<boolean> {
-	const own = await runtime.agent(context);
-	const draft = draftOf(reporter);
-	let admitted = false;
-	await runtime.commit(async (tx) => {
-		if ((await tx.submissionByRequest(subagent.id, draft.requestId)) !== undefined) {
-			admitted = true;
-			return undefined;
+	for (;;) {
+		const admission = await admitOnce(reporter, subagent, runtime, context);
+		switch (admission.kind) {
+			case "admitted":
+				return true;
+			case "refused":
+				return false;
+			case "busy":
+				await subagent.waitForIdle(context);
+				break;
+			case "behind":
+				// The earlier follow-up ends after its answer is reported: then this one's turn may come.
+				await runtime.waitForTask(admission.earlier, context);
+				break;
 		}
-		const agent = current(reporter.input, (await tx.doc(Subagents)).agents);
-		if (agent === undefined) return reportOf();
-		if (!own.tools.some((tool) => tool.name === SUBAGENT_TOOL)) return reportOf(failed(reporter.input, WITHDRAWN));
-		await configure(tx, subagent.id, toolsOf(agent, own));
-		await subagent.admit(tx, draft);
-		admitted = true;
-		return undefined;
-	}, context);
-	return admitted;
+	}
 }
 
-/** The subagent `input` was sent to, if it is still that one in the same generation (not stopped or archived since). */
-function current(input: ReporterInput, agents: Record<string, Subagent>): Subagent | undefined {
-	const agent = Object.hasOwn(agents, input.name) ? agents[input.name] : undefined;
-	if (agent?.conversationId !== input.conversationId || agent.generation !== input.generation) return undefined;
-	return agent;
+/**
+ * One commit with the checks and the admission: refused for a subagent stopped, archived or replaced since (nothing
+ * reported) and while Use is withheld (the withdrawal reported); a follow-up waits for the earlier ones and for an idle
+ * subagent. Admitted, the subagent gets the sender's tools as they are now.
+ */
+async function admitOnce(
+	reporter: Reporting,
+	subagent: ConversationHandle,
+	runtime: ReporterRuntime,
+	context: Context,
+): Promise<Admission> {
+	const own = await runtime.agent(context);
+	const draft = draftOf(reporter);
+	let admission: Admission = { kind: "admitted" };
+	await runtime.commit(async (tx) => {
+		if ((await tx.submissionByRequest(subagent.id, draft.requestId)) !== undefined) return undefined;
+		const roster = await tx.doc(Subagents);
+		const agent = subagentOf(roster.agents, reporter.input.name);
+		const sent = agent?.conversationId === reporter.input.conversationId ? agent : undefined;
+		const current = sent?.generation === reporter.input.generation ? sent : undefined;
+		if (current === undefined || roster.withheld === true) {
+			admission = { kind: "refused" };
+			if (sent !== undefined) sent.followUps = sent.followUps.filter((id) => id !== reporter.id);
+			return reportOf(current === undefined ? undefined : failed(reporter.input, WITHDRAWN));
+		}
+		if (reporter.input.followUp) {
+			const earlier = current.followUps[0];
+			if (earlier !== undefined && earlier !== reporter.id) {
+				// One that ended without taking itself off (aborted) is taken off here; its wait then returns at once.
+				if ((await tx.task(earlier))?.state.status === "terminal") current.followUps.shift();
+				admission = { kind: "behind", earlier };
+				return undefined;
+			}
+			if ((await tx.doc(LiveDoc, subagent.id)).run !== undefined) {
+				admission = { kind: "busy" };
+				return undefined;
+			}
+			current.followUps.shift();
+		}
+		await configure(tx, subagent.id, toolsOf(current, own));
+		await subagent.admit(tx, draft);
+		return undefined;
+	}, context);
+	return admission;
 }
 
 /** The next state: the report phase, with `report` or nothing to report. */
@@ -174,9 +219,11 @@ async function settle(
 }
 
 /**
- * One commit decides the report and records the answer as delivered, so a restart does not decide again. Nothing is
- * reported for a subagent stopped, archived or replaced since (`current`: Astra, rounds 1, 2), so a stop's withdrawal
- * is silent; a message withdrawn otherwise reports why (`stranded`, or Use withheld).
+ * One commit decides the report and records the answer, so a restart does not decide again. A completed answer is
+ * recorded for `answer` once, also of a subagent stopped since (Astra, round 2 of the port), and reported once to each
+ * conversation that sent a message it answers (two senders whose messages one run took both get it). Nothing is
+ * reported for a subagent replaced or gone since (Astra, rounds 1, 2), nor for a message a stop or archive withdrew
+ * (an older generation); a message withdrawn otherwise reports why (`stranded`, or Use withheld).
  */
 async function decide(
 	input: ReporterInput,
@@ -186,16 +233,20 @@ async function decide(
 	context: Context,
 ): Promise<void> {
 	await runtime.commit(async (tx) => {
-		const agent = current(input, (await tx.doc(Subagents)).agents);
-		if (agent === undefined) return reportOf();
+		const agent = subagentOf((await tx.doc(Subagents)).agents, input.name);
+		if (agent?.conversationId !== input.conversationId) return reportOf();
 		if (settled.status === "unanswered") {
-			const why = stranded ?? (settled.reason === "aborted" ? WITHDRAWN : settled.reason);
-			return reportOf(failed(input, why));
+			if (agent.generation !== input.generation) return reportOf();
+			return reportOf(failed(input, stranded ?? (settled.reason === "aborted" ? WITHDRAWN : settled.reason)));
 		}
-		if (settled.type !== "input" || agent.reported.includes(settled.answer)) return reportOf();
-		agent.reported.push(settled.answer);
-		const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0];
-		return reportOf(`[subagent ${input.name} answered] ${textOf(answer)}`);
+		if (settled.type !== "input") return reportOf();
+		const { answer } = settled;
+		if (!agent.reported.includes(answer)) agent.reported.push(answer);
+		const to = runtime.conversationId;
+		if (agent.reportedTo.some((each) => each.answer === answer && each.to === to)) return reportOf();
+		agent.reportedTo.push({ answer, to });
+		const message = (await tx.entry(AssistantEntry, answer))?.model?.[0];
+		return reportOf(`[subagent ${input.name} answered] ${textOf(message)}`);
 	}, context);
 }
 
@@ -211,10 +262,18 @@ export function textOf(message: Message | undefined): string {
 }
 
 /**
- * Withdraws every message to a subagent still queued (Use withheld: a subagent that runs takes no new message). Each
- * reporter then reports the withdrawal to the conversation that sent it.
+ * Records whether Use is withheld from the agent (`offered`: the agent has the `subagent` tool), and when it is,
+ * withdraws every message to a subagent still queued (a subagent that runs takes no new message). Recorded first, so a
+ * reporter admitting after this commit refuses (Opus, round 2 of the port); each reporter reports its withdrawal to
+ * the conversation that sent it.
  */
-export async function withdrawQueued(durable: Harness, context: Context): Promise<void> {
+export async function recordUse(durable: Harness, offered: boolean, context: Context): Promise<void> {
+	await durable.commit(async (tx) => {
+		const roster = await tx.doc(Subagents);
+		if (offered) delete roster.withheld;
+		else roster.withheld = true;
+	}, context);
+	if (offered) return;
 	const { submissions } = await durable.inspect(context);
 	for (const queued of submissions) {
 		if (queued.status !== "queued" || queued.requestId?.startsWith(REQUEST) !== true) continue;

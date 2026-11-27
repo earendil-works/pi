@@ -27,6 +27,7 @@ import { closeModels, listModels } from "./model-list.ts";
 import { Reporter, textOf } from "./reporter.ts";
 import {
 	Anchor,
+	finishStop,
 	givable,
 	levelOf,
 	modelRef,
@@ -34,6 +35,7 @@ import {
 	SUBAGENT_TOOL,
 	type Subagent,
 	Subagents,
+	subagentOf,
 	toolsOf,
 } from "./roster.ts";
 
@@ -77,7 +79,7 @@ const subagentTool = defineTool({
 		"- configure (`name`; `model`, `thinkingLevel`, `tools`): replaces what is given, for its later work.",
 		"- stop (`name`): stops its current work and drops the messages it has not taken yet; it stays usable.",
 		"- archive (`name`): stops it and hides it from status; restore (`name`) or send brings it back.",
-		"- answer (`name`): its latest answer again, and whether it is working on a newer one.",
+		"- answer (`name`): its latest reported answer again, and whether it is working on a newer one.",
 		"- status (optional `name`): your subagents, whether each is working, its model, thinking level (as used) and",
 		"  tools; archived ones only by name.",
 		"- models (optional `model`: a provider or words of a model's id or name): the models you can give, by `model`.",
@@ -135,10 +137,12 @@ async function spawn(call: Call, api: ToolExecutionApi, context: Context): Promi
 		const agent: Subagent = {
 			conversationId: child.id,
 			reported: [],
+			reportedTo: [],
 			model: modelText(model),
 			thinkingLevel,
 			...(tools === undefined ? {} : { tools }),
 			generation: 0,
+			followUps: [],
 		};
 		roster.agents[name] = agent;
 		const instructions = instructionsOf(name);
@@ -176,8 +180,14 @@ async function send(call: Call, api: ToolExecutionApi, context: Context): Promis
 		const agent = subagentNamed((await tx.doc(Subagents)).agents, name);
 		delete agent.archived;
 		const { conversationId, generation } = agent;
-		const input = { name, conversationId, generation, message, followUp: call.followUp === true };
-		await tx.createTask(Reporter, input, BACKGROUND);
+		const followUp = call.followUp === true;
+		const reporter = await tx.createTask(
+			Reporter,
+			{ name, conversationId, generation, message, followUp },
+			BACKGROUND,
+		);
+		// Follow-ups go in the order sent.
+		if (followUp) agent.followUps.push(reporter);
 	}, context);
 	return { name, done: "sent" };
 }
@@ -227,8 +237,9 @@ async function archive(call: Call, api: ToolExecutionApi, context: Context): Pro
 }
 
 /**
- * Stops the call's subagent: one commit bumps its generation (and makes `also`'s change), then its conversation is
- * aborted. A send whose commit comes later restores it and is delivered; one before is dropped (Astra, round 1 of the
+ * Stops the call's subagent: one commit bumps its generation (and makes `also`'s change) and marks the stop, then the
+ * older generation's work is aborted (`finishStop`; a restart in between finishes it). A send whose commit comes later
+ * restores it and is delivered, and its work is not aborted; one before is dropped (Astra, rounds 1 and 2 of the
  * port).
  */
 async function halt(
@@ -238,13 +249,13 @@ async function halt(
 	also?: (agent: Subagent) => void,
 ): Promise<string> {
 	const name = nameOf(call);
-	const conversationId = await api.commit(async (tx) => {
+	await api.commit(async (tx) => {
 		const agent = subagentNamed((await tx.doc(Subagents)).agents, name);
 		agent.generation += 1;
+		agent.stopping = true;
 		also?.(agent);
-		return agent.conversationId;
 	}, context);
-	await (await api.conversation(conversationId, context))?.abort(context);
+	await finishStop(api, name, context);
 	return name;
 }
 
@@ -329,7 +340,7 @@ function messageOf(call: Call): string {
 
 /** The subagent `name` of `agents`, or the refusal naming it. */
 function subagentNamed<T extends Subagent>(agents: Record<string, T>, name: string): T {
-	const agent = Object.hasOwn(agents, name) ? agents[name] : undefined;
+	const agent = subagentOf(agents, name);
 	if (agent === undefined) throw invalid("args", `subagent: you have no subagent named ${name} (see status)`);
 	return agent;
 }

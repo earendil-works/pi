@@ -64,8 +64,10 @@ export {
 	type Submission,
 	section,
 	type TaskGraph,
+	type TaskId,
 	type TaskRuntime,
 	type ToolExecutionApi,
+	type Tx,
 } from "@earendil-works/pi-durable";
 export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
