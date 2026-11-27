@@ -21,7 +21,6 @@ workspaces and access, complete, as code](https://linear.app/earendil/issue/ERND
   link](https://linear.app/earendil/issue/ERNDL-1180) (decisions 138, 141). Until then a list member is `obj({ rows:
   arr(Row), moreAfter: bool() })`, as notes' `NotesPage`.
 - **Harness parts with nothing held** (decision 142): section 6, "nothing held".
-- **Canvas** is not yet on this pattern (its cleanup is under way); do not copy it until that lands.
 
 ## 1. Files
 
@@ -111,7 +110,7 @@ Notes' declaration, shortened (`notes/kind.ts`).
 | `makers` | always stated, chosen on purpose: `"anyone"` content; `"people"` a credential, money, outsiders, code; `"plugin"` only the kind's own plugin makes them, no person and no agent (guide 3.1) | `notes` anyone; `providers/kind.ts` people; `tools/kind.ts` plugin |
 | `workspaces`, `stacking` | stated only when not the default (`"many"`, `"all"`). With `"all"` the part and the views handle several things; with `"nearest"` the part reads the last thing it gets | `files/kind.ts` (`"one"`, `"nearest"`) |
 | members | plain members are what everyone let in may have: reads, and methods that change nothing stored. Say so in one comment in `ticks`, naming them (guide 1.13) | `notes/kind.ts` |
-| `ticks` | named as verbs, never like a member (guide 1.11); each a `label` from `messages.ts` (`tick<Name>`); `for` only when not all; a tick's `gives` is an exported `as const` list when the view or the worker narrows by it; a tick without `gives` is a flag tick | one tick: notes; two: `checklist/kind.ts`; flag ticks, a people-only tick: `canvas/contract.ts` (the ticks only: canvas awaits its cleanup); agents-only flag ticks: `tools/kind.ts`; a member in two ticks: `terminals/kind.ts` |
+| `ticks` | named as verbs, never like a member (guide 1.11); each a `label` from `messages.ts` (`tick<Name>`); `for` only when not all; a tick's `gives` is an exported `as const` list when the view or the worker narrows by it; a tick without `gives` is a flag tick | one tick: notes; two: `checklist/kind.ts`; flag ticks, a people-only tick: `canvas/kind.ts`; agents-only flag ticks: `tools/kind.ts`; a member in two ticks: `terminals/kind.ts` |
 | `defaultGrants` | `everyone`, `agents`: what a new link starts with; `[]` lets the party in with no tick. `guests` decided on purpose and written down: no key (not let in) or `[]` (plain members) (guide 2.3, 2.4) | notes; `environments/kind.ts` (`everyone: []`) |
 | `settings` | names of state members; changed only through `configure` (guide 4.3) | notes `["order"]`; `prompt/instructions-kind.ts` |
 | `create.input` | the schema of what the create step hands over; the store checks it before the hook runs; the hook checks only what the schema cannot say (a family type's own settings: `environments/machines.ts`). A kind without one takes no input | `providers/kind.ts`, `environments/kind.ts` |
@@ -154,7 +153,7 @@ export default defineFacet((host) => {
 | --- | --- | --- |
 | hooks | in this order, the order of `ThingImplementation` (`things/serve.ts`): `implement`, `create`, `configure`, `delete`, `workspaceGone`, `one` | `prompt/server.ts` |
 | `implement` | returns every member; a grantable state or event member is a builder `() => …`, a method a function (guide 5.1). It gets data and forwards to the store with the thing's id; no logic of the store in it | `notes/server.ts`; a builder: `terminals/server.ts` |
-| no access check | no test of a principal, no table of who may, no second check of the caller's access to this thing (guide 5.2). A flag tick is read from `granted` (`granted.has("removeAny")`). `caller` is data for authorship only (5.3), stored as the things plugin's `Caller` union, never as a text key | `canvas/server.ts` (the flags only); `notes/store.ts` (`author: Caller`) |
+| no access check | no test of a principal, no table of who may, no second check of the caller's access to this thing (guide 5.2). A flag tick is read from `granted` (`granted.has("removeAny")`). `caller` is data for authorship only (5.3), stored as the things plugin's `Caller` union, never as a text key | `canvas/server.ts`; `notes/store.ts` (`author: Caller`) |
 | a method naming another thing | the one exception (guide 5.2, R41): it checks the caller's answer on that thing and refuses with a message. Files and Terminals do it for a machine through `reachMachine` / `checkMachine` | `files/server.ts`, `environments/contract.server.ts` |
 | the store | a `local` with empty params, `<plugin>.store`; it owns the tables (`<plugin>.<rows>`), keys every row by the thing's id, checks no caller, and says so in its header. Reads are named queries (index named, `reads` listed), writes are one `self.tx` each, a touch is a `tx.update`. `clear` removes everything of a thing in one transaction and is safe to run twice. A change of a table's or a setting's shape is never made in place: `evolveTable` to a new version with a migration and its test, since stored data survives updates (decision 125; `chord-practices.md`, Data). Example: `sessions/store.ts` (`RowsV2 = evolveTable(RowsV1, …)`), tested in `sessions/test/store.test.ts` | `notes/store.ts`; `checklist/store.ts` |
 | `create` | writes what a new thing needs under the new id, from an input the kind's `create.input` schema already checked; a throw makes nothing (guide 5.6) | `providers/server.ts` |
@@ -313,7 +312,7 @@ never with a stand-in object that imitates one.
 
 | Question | The way | Decision |
 | --- | --- | --- |
-| where the `defineThing` lives | `kind.ts` (`<noun>-kind.ts` with several kinds); `contract.ts` only for what other plugins import | the pattern; all built-in kinds but canvas |
+| where the `defineThing` lives | `kind.ts` (`<noun>-kind.ts` with several kinds); `contract.ts` only for what other plugins import | the pattern; all built-in kinds |
 | where the store's contract lives | `store.ts`, until another plugin or the API reads it: then `contract.server.ts` | 120 |
 | file names | plain (`store.ts`, `<thing>-view.tsx`); `*.<kind>.ts(x)` is for contract files only | 120 |
 | how a tool calls | the held reference directly; `session.call` for a reference of the call's own | 120 |
