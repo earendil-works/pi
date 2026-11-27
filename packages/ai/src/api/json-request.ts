@@ -116,6 +116,10 @@ export function parsePiUsage(value: unknown, model: AnyModel): Usage | undefined
 		output,
 		cacheRead,
 		cacheWrite,
+		// Left undefined when the backend does not report a reasoning breakdown.
+		...(typeof value.reasoning === "number" && Number.isFinite(value.reasoning) && value.reasoning >= 0
+			? { reasoning: value.reasoning }
+			: {}),
 		totalTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};

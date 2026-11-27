@@ -228,6 +228,7 @@ function parseUsage(
 		prompt_tokens?: number;
 		completion_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: ImageModel<ImageApi>,
 ) {
@@ -243,6 +244,8 @@ function parseUsage(
 		output,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
+		// completion_tokens already includes reasoning_tokens.
+		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
 		totalTokens: input + output + cacheReadTokens + cacheWriteTokens,
 		cost: {
 			input: (model.cost.input / 1000000) * input,
