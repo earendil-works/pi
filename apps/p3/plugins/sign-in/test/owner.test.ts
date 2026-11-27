@@ -84,7 +84,10 @@ describe("the owner link", () => {
 		const owner = await ownerOf(t);
 		assert.deepEqual(await principalOf(t, cookie), owner, "the browser is the owner's person's");
 		const browsers = await t.host.root(
-			async (ctx) => (await ctx.get(SignIns, {})).list.value.filter(({ kind }) => kind === "browser"),
+			async (ctx) =>
+				(await (await ctx.get(SignIns, {})).rows.all.page({}, 100, ctx)).items.filter(
+					({ kind }) => kind === "browser",
+				),
 			context,
 		);
 		assert.deepEqual(

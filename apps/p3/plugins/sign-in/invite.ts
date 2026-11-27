@@ -14,8 +14,8 @@ import {
 } from "@earendil-works/p3/v1";
 import { Http } from "@earendil-works/p3/v1/server";
 import { ThingsStore } from "../things/contract.server.ts";
-import { INVITE_PATH } from "./contract.ts";
-import { answer, type Issued, issue, linkPage, revoke, revokeEvery } from "./link.ts";
+import { INVITE_PATH, SignIns } from "./contract.ts";
+import { answer, type Issued, issue, linkPage, revoke } from "./link.ts";
 
 /** Serves the invite link's page and post on `host`. */
 export function serveInvite(host: FacetHost<P3Principal>): void {
@@ -92,9 +92,12 @@ async function spentUnredeemed(
 	ctx: Ctx,
 ): Promise<void> {
 	await things.spendInvite({ secret }, ctx);
-	await revokeEvery(person, ctx).catch((error: unknown) =>
-		reportError("sign-in: a sign-in the invite route may have issued could not be revoked", error, ctx),
-	);
+	const signIns = await ctx.get(SignIns, {});
+	await signIns
+		.revokeOf({ person }, ctx)
+		.catch((error: unknown) =>
+			reportError("sign-in: a sign-in the invite route may have issued could not be revoked", error, ctx),
+		);
 }
 
 /**

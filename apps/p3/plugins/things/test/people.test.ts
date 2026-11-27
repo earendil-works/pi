@@ -116,6 +116,11 @@ async function ownerSortingFirst(): Promise<void> {
 	assert.equal((await store.persons.owners.page({}, 1, context)).items[0]?.person, "0");
 }
 
+/** Every sign-in the stand-in signer has now. */
+async function signedIn() {
+	return (await (await w.host.get(SignIns, {}, context)).rows.all.page({}, 100, context)).items;
+}
+
 /** Runs `fn` as person `id`. */
 function as<T>(id: string, fn: (ctx: Ctx<P3Principal>) => Promise<T>): Promise<T> {
 	return w.host.root(fn, context, { principal: principal(id) });
@@ -236,13 +241,14 @@ describe("persons and the owner", () => {
 		assert.equal(await ticks(f.session, f.sketch, f.kim), undefined);
 		assert.ok(!w.rows("workspace-members").some((row) => String(row.partyKey) === `person/${f.kim}`));
 		assert.ok(!storedRows(w.path, "persons").some((row) => row.person === f.kim));
-		await until(
-			(await w.host.get(SignIns, {}, context)).list,
-			(list) => list.length === 0,
-			within("her sign-ins ended", context),
-		);
+		// Her sign-ins ended.
+		await eventually(signedIn, (rows) => rows.length === 0);
 		assert.deepEqual(signIns.revoked, [id]);
-		assert.deepEqual(w.rows("sign-outs"), []);
+		// Its row goes once they ended.
+		await eventually(
+			() => w.rows("sign-outs").length,
+			(n) => n === 0,
+		);
 	});
 });
 
@@ -630,11 +636,8 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 		await store.unlink({ workspace: f.session, thing: board }, context);
 		assert.ok(!storedRows(w.path, "persons").some(({ person: id }) => id === made));
 		assert.equal(await store.redeemInvite({ secret: link }, context), null);
-		await until(
-			(await w.host.get(SignIns, {}, context)).list,
-			(list) => list.length === 0,
-			within("the guest's sign-in ended", context),
-		);
+		// The guest's sign-in ended.
+		await eventually(signedIn, (rows) => rows.length === 0);
 	});
 
 	it("the picker offers what is present where the caller is present, inherited below too (Opus S1, Astra must 3)", async () => {
@@ -1017,11 +1020,8 @@ describe("round 2's reproductions (Opus, Astra)", () => {
 		await store.unlink({ workspace: f.session, thing: f.sketch }, context);
 		assert.equal(w.rows("grants").filter((row) => row.thing === f.sketch).length, 0);
 		assert.equal((await store.persons.one.page({ person: made }, 1, context)).items.length, 0);
-		await until(
-			(await w.host.get(SignIns, {}, context)).list,
-			(list) => list.length === 0,
-			within("the guest's sign-in ended", context),
-		);
+		// The guest's sign-in ended.
+		await eventually(signedIn, (rows) => rows.length === 0);
 		assert.deepEqual(signIns.revoked, [id]);
 	});
 

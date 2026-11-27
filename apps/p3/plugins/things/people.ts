@@ -312,9 +312,6 @@ export class PeopleWrites {
 
 /** Ends every sign-in of the persons `persons` (they were removed): each one's open links close at once. */
 export async function endSignIns(persons: readonly string[], ctx: Ctx<P3Principal>): Promise<void> {
-	const gone = new Set(persons);
 	const signIns = await ctx.get(SignIns, {});
-	for (const signIn of signIns.list.value) {
-		if (signIn.principal.kind === "person" && gone.has(signIn.principal.id)) await signIns.revoke(signIn.id, ctx);
-	}
+	for (const person of persons) await signIns.revokeOf({ person }, ctx);
 }

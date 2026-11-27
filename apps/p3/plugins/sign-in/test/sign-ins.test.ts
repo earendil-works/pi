@@ -12,13 +12,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createHttp } from "@earendil-works/chord/http";
+import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
 	BACKGROUND_CONTEXT as context,
 	createHost,
+	defineFacet,
 	isChordError,
+	local,
+	method,
+	obj,
+	openStore,
 	type P3Principal,
+	type PluginFacet,
 	Roots,
-	until,
+	Server,
+	sqliteBackend,
+	str,
 	webSocketLink,
 } from "@earendil-works/p3/v1";
 import {
@@ -32,8 +42,10 @@ import {
 } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { newSession, TMP } from "../../../test/support.ts";
-import { collected, eventually, within } from "../../../test/until.ts";
+import { collected, eventually } from "../../../test/until.ts";
 import { SignIns } from "../contract.ts";
+import signInServer from "../server.ts";
+import { SignInsDocument } from "../sign-ins.ts";
 
 const DAY = 24 * 60 * 60_000;
 /** A person whose sign-ins the identity tests issue (who they are does not matter to a sign-in). */
@@ -106,7 +118,7 @@ function revoke(t: TestedPlugin<P3Principal>, id: string): Promise<null> {
 
 /** The sign-ins `t` lists. */
 function listed(t: TestedPlugin<P3Principal>) {
-	return t.root(async (ctx) => (await ctx.get(SignIns, {})).list.value, context);
+	return t.root(async (ctx) => (await (await ctx.get(SignIns, {})).rows.all.page({}, 100, ctx)).items, context);
 }
 
 /** A request from this machine with `headers`, as the HTTP component admits one. */
@@ -248,14 +260,9 @@ describe("the plugin's SignIns", () => {
 		assert.equal(await lastUsed(), start);
 		mock.timers.setTime(start + 61_000);
 		assert.deepEqual(await verify(t, issued.token), OWNER);
-		await t.root(
-			async (ctx) =>
-				until(
-					(await ctx.get(SignIns, {})).list,
-					(rows) => rows.some((row) => row.id === issued.id && row.lastUsed === start + 61_000),
-					within("the touch", context),
-				),
-			context,
+		await eventually(
+			() => listed(t),
+			(rows) => rows.some((row) => row.id === issued.id && row.lastUsed === start + 61_000),
 		);
 		// The touch counts: 400 days and a moment after the issue it still signs in.
 		mock.timers.setTime(start + 400 * DAY + 1);
@@ -271,16 +278,114 @@ describe("the plugin's SignIns", () => {
 		// That use touched it: 400 days later again.
 		mock.timers.setTime(start + 800 * DAY + 1);
 		assert.equal(await verify(t, issued.token), null);
-		await t.root(
-			async (ctx) =>
-				until(
-					(await ctx.get(SignIns, {})).list,
-					(rows) => !rows.some((row) => row.id === issued.id),
-					within("the ended sign-in gone", context),
-				),
-			context,
+		await eventually(
+			() => listed(t),
+			(rows) => !rows.some((row) => row.id === issued.id),
 		);
 		assert.deepEqual(t.errors.slice(loaded), []);
+	});
+});
+
+describe("one person's sign-ins, and the sign-ins version 1 kept", () => {
+	it("lists one person's sign-ins live in the order they were made, and revokeOf ends them all", async () => {
+		const t = await signInPlugin();
+		try {
+			const first = await issue(t, MAX, "device", "laptop");
+			const second = await issue(t, MAX, "browser", "phone");
+			const other = await issue(t, OWNER, "device", "owner's");
+			const ofMax = async () =>
+				(
+					await t.root(
+						async (ctx) => (await ctx.get(SignIns, {})).rows.ofPerson.page({ person: MAX.id }, 10, ctx),
+						context,
+					)
+				).items;
+			assert.deepEqual(
+				(await ofMax()).map(({ id, label }) => [id, label]),
+				[
+					[first.id, "laptop"],
+					[second.id, "phone"],
+				],
+			);
+			await t.root(async (ctx) => (await ctx.get(SignIns, {})).revokeOf({ person: MAX.id }, ctx), context);
+			assert.deepEqual(await ofMax(), []);
+			assert.deepEqual([await verify(t, first.token), await verify(t, second.token)], [null, null]);
+			assert.deepEqual(await verify(t, other.token), OWNER);
+		} finally {
+			await t.close(context);
+		}
+	});
+
+	it("moves the sign-ins version 1 kept in its document into the table once: their tokens still sign in", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "p3-sign-ins-"));
+		const path = join(dir, "store.sqlite");
+		// Version 1's document as it was stored: written through a stand-in object of the same type.
+		const V1 = local("p3.sign-ins", { version: 1, params: {}, members: { seed: method(obj({ hash: str() })) } });
+		const seeded = {
+			name: "test.v1",
+			facet: defineFacet((h) =>
+				h.serve(V1, (_params, self) => {
+					const document = self.state(SignInsDocument);
+					return {
+						seed: async ({ hash }, ctx) => {
+							await document.change((draft) => {
+								draft.cookie = { id: "abcdefghijk", secret: "s".repeat(43) };
+								draft.signIns.old = {
+									hash,
+									label: "old",
+									kind: "device",
+									principal: MAX,
+									created: 1,
+									lastUsed: Date.now(),
+								};
+							}, ctx);
+							return null;
+						},
+					};
+				}),
+			),
+		};
+		const secret = newToken(32);
+		const open = async (plugins: PluginFacet<P3Principal>[]) => {
+			const store = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
+			const host = createHost<P3Principal>({
+				address: Server(),
+				principal: { kind: "server" },
+				store,
+				onError: (error) => assert.fail(error.kind),
+			});
+			const http = createHttp(host, { onError: () => {} }, context);
+			const loaded = await host.load([{ name: "chord.http", facet: http.facet }, ...plugins], context);
+			assert.deepEqual(loaded.failed, []);
+			return {
+				host,
+				close: async () => {
+					await host.close(context);
+					await store.close(context);
+				},
+			};
+		};
+		try {
+			const before = await open([seeded]);
+			await before.host.root(async (ctx) => (await ctx.get(V1, {})).seed({ hash: hashToken(secret) }, ctx), context);
+			await before.close();
+			for (let start = 0; start < 2; start++) {
+				const after = await open([{ name: "@earendil-works/p3-sign-in", facet: signInServer }]);
+				try {
+					const signIns = await after.host.get(SignIns, {}, context);
+					assert.deepEqual(await signIns.verify(`old.${secret}`, context), MAX);
+					const { items } = await signIns.rows.ofPerson.page({ person: MAX.id }, 10, context);
+					assert.deepEqual(
+						items.map(({ id, label }) => [id, label]),
+						[["old", "old"]],
+					);
+				} finally {
+					await after.close();
+				}
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });
 

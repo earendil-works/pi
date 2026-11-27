@@ -13,15 +13,22 @@ import {
 	type Context,
 	createHost,
 	defineFacet,
+	defineTable,
+	eq,
 	type Facet,
 	type Host,
 	type HostError,
+	int,
 	invalid,
+	json,
+	oneOf,
 	openStore,
-	type P3Principal,
+	P3Principal,
 	type PluginFacet,
+	query,
 	Server,
 	sqliteBackend,
+	str,
 } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
@@ -125,15 +132,21 @@ export function storedRows(path: string, table: string): Record<string, SQLOutpu
 	}
 }
 
-/** A sign-in as the stub keeps it. */
-type SignIn = {
-	id: string;
-	label: string;
-	kind: "browser" | "device";
-	principal: P3Principal;
-	created: number;
-	lastUsed: number;
-};
+/** The stand-in's sign-ins: one row each, by person as the real table has them. */
+const StubSignIns = defineTable("test.sign-ins", {
+	version: 1,
+	columns: {
+		id: str(),
+		label: str(),
+		kind: json(oneOf("browser", "device"), { version: 1 }),
+		principal: json(P3Principal, { version: 1 }),
+		person: str(),
+		created: int(),
+		lastUsed: int(),
+	},
+	key: ["id"],
+	indexes: { by_person: ["person", "created"] },
+});
 
 /**
  * A stand-in for the sign-in plugin's `SignIns` (the store ends a removed person's sign-ins through it): `issue`
@@ -161,22 +174,54 @@ export function signInsStub(): {
 		name: "test.sign-in",
 		facet: defineFacet((host) =>
 			host.serve(SignIns, (_params, self) => {
-				const list = self.writable<SignIn[]>([]);
+				const table = self.table(StubSignIns);
+				const revoke = async (id: string, ctx: Context) => {
+					if (stub.failing) throw new Error("the sign-in plugin failed");
+					revoked.push(id);
+					await self.tx(async (tx) => {
+						tx.delete(table, { id });
+						return null;
+					}, ctx);
+					return null;
+				};
 				return {
-					list: self.derive([list], ([value]) => value),
-					issue: async ({ principal, label }) => {
+					rows: self.queries(
+						table,
+						{
+							map: ({ id, label, kind, principal, created, lastUsed }) => ({
+								id,
+								label,
+								kind,
+								principal,
+								created,
+								lastUsed,
+							}),
+						},
+						{
+							ofPerson: ({ person }: { person: string }) =>
+								query(StubSignIns)
+									.where((r) => eq(r.person, person))
+									.orderBy((r) => r.created, "asc"),
+							all: (_args: Record<never, never>) => query(StubSignIns),
+						},
+					),
+					issue: async ({ principal, label }, ctx) => {
 						if (stub.issueFails === "before") throw invalid("args", "the signer refused");
 						const id = crypto.randomUUID();
-						const signIn: SignIn = { id, label, kind: "browser", principal, created: 0, lastUsed: 0 };
-						list.set([...list.value, signIn]);
+						const person = principal.kind === "person" ? principal.id : "";
+						const row = { id, label, kind: "browser", principal, person, created: 0, lastUsed: 0 } as const;
+						await self.tx(async (tx) => {
+							tx.put(table, row);
+							return null;
+						}, ctx);
 						if (stub.issueFails === "after") throw new Error("the signer's answer was lost");
 						return { id, token: id, cookie: "" };
 					},
 					verify: async () => null,
-					revoke: async (id) => {
-						if (stub.failing) throw new Error("the sign-in plugin failed");
-						revoked.push(id);
-						list.set(list.value.filter((signIn) => signIn.id !== id));
+					revoke,
+					revokeOf: async ({ person }, ctx) => {
+						const mine = query(StubSignIns).where((r) => eq(r.person, person));
+						for (const { id } of (await table.page(mine, 1000, ctx)).items) await revoke(id, ctx);
 						return null;
 					},
 				};

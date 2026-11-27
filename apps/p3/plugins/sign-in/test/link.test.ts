@@ -57,7 +57,7 @@ async function signInHost() {
 	const by = { kind: "plugin", plugin: "test" } as const;
 	/** The person ids with a sign-in now. */
 	const signedIn = async () =>
-		(await host.get(SignIns, {}, context)).list.value.map(({ principal }) =>
+		(await (await host.get(SignIns, {}, context)).rows.all.page({}, 100, context)).items.map(({ principal }) =>
 			principal.kind === "person" ? principal.id : "",
 		);
 	/** An anonymous browser's post of `token` to the invite route. */
