@@ -9,9 +9,11 @@
 - `useVariant(ref, variant)` and `TuiScope.variant(ref, variant)` are replaced by `useLive(ref)` and `TuiScope.live(ref)`: the reference while it is live (and while it rebinds after it was), re-rendering when its grant changes. `VariantRef`, `VariantOf` and `InVariant` are removed (`LiveRef`).
 - A flag's label is a message: `remote(..., { flags: { export: messages.message("flagExport") } })` takes a `MessageData` (from the plugin's `defineMessages`, its key checked against the catalog), not English text, and the declaration refuses a label that is no message. Labels stay out of the fingerprint. Migration: add the label to the plugin's `messages.ts` and declare `messages.message(key)`; render it with the viewer's `t.render(label)`.
 - The link's `bound` entry carries `granted` (indexes into the version's sorted grantable members and flags) in place of `variant`; remote contracts' fingerprints change. `PROTOCOL_VERSION` is 2: a host of an earlier release (protocol 1) is refused at its `hello` (the link closes with a protocol error) instead of failing at its first `bound`. Update every host of an app together.
+- `SyncFileSystem` has `flushFile(path, context)` (fsync), as Pi Durable's `FileSystem` has it: an implementation of its own adds it.
 
 ### Added
 
+- `self.follow(over, attach)`: a follow over a changing source (a registry value or a writable), attached again to each of its values: one replacement and no failure when the source is replaced, calls held while it attaches. A failure of the source still given while the object is live fails the member (`follow_failed`, a new `HostError`), retried with backoff; the object stays live. Attachments are counted (`chord.follow.attaches`) ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - `grantable(member)`, `GrantableName<C>`, `AllowedOf<C>` and flags in remote contracts (slice 15).
 - `deny(reason, message?)`: an admission's denial carries a message as data for the person (`MessageData`), in the `forbidden` error's `details.message` (the denied reference's failure, a call's `forbidden`, a cut call's `forbidden/revoked`). A changed message is a new decision without a rebuild.
 - `MessageData`, `MessageParam` and `MessageSchema` are exported from the package root's data layer as well (still from `/surfaces`).
@@ -22,6 +24,7 @@
 
 ### Changed
 
+- A `failed` call to a `self.follow` observer fails the member until its next value, which replaces the value whole; while the object activates it fails the activation `transient` (before the attachment settles, only when it is the last call); it was ignored (Durable never sends one) ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - A commit files a read only under the row keys that came or went since its last run, and a live window that moved by k rows is diffed by identity: a 500-item checklist read by 100 unshared lists 54 → 45 ms per write, a shifted window of 500 rows diffed in about 3 µs instead of 80 (`docs/benchmarks.md`, "Identical live reads", step 4).
 - Identical live reads share one source: `self.liveQuery` and `self.count` readers of the same provider instance's named query with the same arguments and window (or count) share one read: one run, one decode and one value per write, their frames diffed once. 100 callers each holding their own object over a link with the same window of 50 notes: 1.6 ms to the last delivery per write instead of 8.1 ms, a 500-item checklist 1.8 ms instead of 46 ms; one query run instead of 100 (`docs/benchmarks.md`, "Identical live reads"). Lists do not share their pages yet.
 - A reference makes its named queries' handles on first use: a reference to a store with 23 named queries, none read, takes 1.3 KiB instead of 6.4 KiB.
@@ -33,12 +36,16 @@
 
 ### Fixed
 
+- A registry served at another version keeps no last good composition of the version before: a reader of the new version got the old version's value when its first compose threw ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
+- `awaitWithContext` observes the promise of a waiter whose context was cancelled already: its later rejection was unhandled and could end the process ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
+- A registry whose provider was removed and served again, or served at another version and then at the reader's again, marks the derives and follows reading it; they stayed on what they read meanwhile ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - A transaction cancelled by its own object's end (the object ended, failed, was denied at a re-admission or replaced by a reload, a reload stopped the routine that ran it, or the seal cut off the job run that ran it) is no longer reported as `transaction_cancelled`: it is the object's end, not a lost change. Chord tells it by where the abort came from, not by its reason: a caller's cancel (also with the same reason object), a caller object's end, a settled root and a transaction's own exception still report ([ERNDL-1190](https://linear.app/earendil/issue/ERNDL-1190)).
 - A page or terminal reconnecting to a restarted server before its surface built no longer reloads: it took the scripts object's set with no base (shown until the first build) for another base. It skips that set and applies the first set that follows, so a plugin that kept its old code loads in place (`test/node/web/styles.test.ts`' reconnect case failed most runs).
 - A reference of an older version its provider refuses a member waits unbound (`failed { waiting }`, `contract_mismatch`) also when its object is denied (it showed the denial), and reads nothing from an instance that refuses its version: during a restart whose old attempt refuses it, it shows `loading` and its reads throw `not_ready` until the successor serves it (it showed `live` with the old attempt's values); its named queries throw `not_ready` meanwhile. A failed activation also leaves such holders waiting unbound (they showed the failure).
 - The plugins component's first uses of a kind at once (`scripts(kind)`, `load`, a rollout) share one making of its current set: each facet is built once, not once per caller (a server resuming many workers built every worker facet once per worker). A making that failed is forgotten, so the next use tries again.
 - The plugins component's shared first making of a kind's set runs in the component's own context (aborted by `close`), each caller waiting in its own: one caller going away (a worker's start whose hold ended) no longer fails every other first use waiting for the same build, and a waiter leaves no abort listener behind.
 - Fixed an intermittent CI failure in the grant-cache eviction test when V8 deferred finalization.
+- `FileSystemSyncRemote` creates a slot once when two uploads of a session race (each session's creations are queued in the instance; one process writes a directory), flushes every file to disk before renaming it into place, and finds a session's head from a `head.json` written after each slot instead of reading every slot per upload.
 
 ## [1.6.1] - 2026-11-25
 

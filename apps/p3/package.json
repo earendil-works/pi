@@ -69,7 +69,8 @@
 		"esbuild": "0.28.2",
 		"react": "19.3.0",
 		"react-dom": "19.3.0",
-		"ws": "8.21.0"
+		"ws": "8.21.0",
+		"yaml": "2.9.0"
 	},
 	"devDependencies": {
 		"@types/react": "19.2.14",

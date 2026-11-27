@@ -25,7 +25,7 @@ import { eventually } from "../../../test/until.ts";
 import { ThingsStore } from "../contract.server.ts";
 import type { Source } from "../contract.ts";
 import { BOARD, Board } from "./kinds.ts";
-import { THINGS } from "./world.ts";
+import { RUNTIME, THINGS } from "./world.ts";
 
 /** A query's pages, read once each. */
 type Read = () => Promise<unknown>;
@@ -76,7 +76,7 @@ describe("the plans of the things store's queries", () => {
 			onError: (e) => assert.fail(e.kind),
 		});
 		try {
-			await host.load([THINGS, BOARD], context);
+			await host.load([THINGS, RUNTIME, BOARD], context);
 			const things = await host.get(ThingsStore, {}, context);
 			const by: Source = { kind: "plugin", plugin: "test" };
 			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
@@ -268,7 +268,7 @@ describe("the plans of the things store's queries", () => {
 			onError: (e) => assert.fail(e.kind),
 		});
 		try {
-			await host.load([THINGS, BOARD], context);
+			await host.load([THINGS, RUNTIME, BOARD], context);
 			const things = await host.get(ThingsStore, {}, context);
 			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 			/** A share with `guests` guests in its group, put into Pi, removed: its reads, commits and statements. */

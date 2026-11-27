@@ -23,14 +23,13 @@ import type { Context } from "@earendil-works/chord/context";
 import { createHttp, type HttpError } from "@earendil-works/chord/http";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { type P3Principal, Server, Session } from "@earendil-works/p3/v1";
-import { PeopleStore, type ServerRuntime } from "@earendil-works/p3/v1/server";
+import { type ServerRuntime, ThingsStore } from "@earendil-works/p3/v1/server";
 import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import controlServer from "../plugins/control/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import environmentsWorker from "../plugins/environments/worker.ts";
 import filesServer from "../plugins/files/server.ts";
-import peopleServer from "../plugins/people/server.ts";
 import runnerServer from "../plugins/runner/server.ts";
 import runnerWorker from "../plugins/runner/worker.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
@@ -55,12 +54,11 @@ const SERVER_PLUGINS: readonly Plugin[] = [
 	{ name: "@earendil-works/p3-control", facet: controlServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 	{ name: "@earendil-works/p3-files", facet: filesServer },
-	{ name: "@earendil-works/p3-people", facet: peopleServer },
 	{ name: "@earendil-works/p3-runner", facet: runnerServer },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
 	{ name: "@earendil-works/p3-terminals", facet: terminalsServer },
-	// The things plugin: it serves the registry the people plugin hands its owner to (ERNDL-1144's bridge).
+	// The things plugin: the persons and the owner (`Me`, the owners' admission), the owner link's person.
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 ];
 
@@ -88,7 +86,7 @@ export type Topology = {
 		| { readonly kind: "load_failed"; readonly failed: LoadReport["failed"] }
 	)[];
 	readonly closed: readonly string[];
-	/** The owner's person (the people plugin made it at the start), as a principal. */
+	/** The owner's person (the things store made it at the first start), as a principal. */
 	readonly owner: P3Principal;
 	/** The sum of the server's metric `name` so far (`chord.query.runs`, `chord.query.probes`, ...). */
 	count(name: string): number;
@@ -174,10 +172,10 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 	];
 	throwFailed(await server.load(serverFacets, context));
 	const [found] = (
-		await server.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+		await server.root(async (ctx) => (await ctx.get(ThingsStore, {})).persons.owners.page({}, 1, ctx), context)
 	).items;
 	return {
-		owner: { kind: "person", id: found!.id, name: found!.name },
+		owner: { kind: "person", id: found!.person, name: found!.name },
 		server,
 		workers,
 		errors,

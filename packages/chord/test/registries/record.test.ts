@@ -12,9 +12,10 @@ import {
 	type RegistryTable,
 	type TableItem,
 } from "../../src/registries/index.ts";
-import type { Writable } from "../../src/state/index.ts";
+import { constant, type Writable } from "../../src/state/index.ts";
 import type { NativeWatchCall } from "../../src/watch.ts";
 import {
+	changesOf,
 	delivered,
 	expectCollected,
 	failures,
@@ -814,5 +815,262 @@ describe('registry_undeclared (decision "Mistakes that wait are reported at once
 		await host.reload([serving], context);
 		expect(undeclared(errors)).toEqual([]);
 		await host.close(context);
+	});
+});
+
+/** A registry whose value is its contributions summed with its provider's bonus (ERNDL-1191, round 4 probes). */
+const Sum = defineRegistry<number, number>("app.sum", { version: 1 });
+const SumReader = local("app.reader", { version: 1, params: {}, members: { doubled: int() } });
+
+const provider = (bonus: number) => ({
+	name: "@test/provider",
+	facet: defineFacet((h) =>
+		h.serve(Sum, { compose: (table) => table.reduce((sum, entry) => sum + entry.value, bonus) }),
+	),
+});
+/** One giver type per value (each plugin serves its own): a host-lifetime object contributing `value`. */
+const GIVERS = {
+	1: local("app.giver1", { version: 1, params: {}, members: {} }),
+	5: local("app.giver5", { version: 1, params: {}, members: {} }),
+} as const;
+const giver = (value: 1 | 5) => ({
+	name: `@test/giver${value}`,
+	facet: defineFacet((h) =>
+		h.serve(GIVERS[value], (_, self) => {
+			self.contribute(Sum, constant(value));
+			return {};
+		}),
+	),
+});
+
+/** A derive of the reader nobody holds or watches: read lazily. */
+let lazy: { value: number } | undefined;
+
+const reader = {
+	name: "@test/reader",
+	facet: defineFacet((h) =>
+		h.serve(SumReader, (_, self) => {
+			const sum = self.registry(Sum);
+			lazy = self.derive([sum], ([value]) => value * 3) as { value: number };
+			return { doubled: self.derive([sum], ([value]) => value * 2) };
+		}),
+	),
+};
+
+/** What reading the derive gives: its value, or its failure's message. */
+const read = (ref: { doubled: { value: number } }): number | string => {
+	try {
+		return ref.doubled.value;
+	} catch (error) {
+		return (error as Error).message;
+	}
+};
+
+// Fable and Opus, round 4 of ERNDL-1191: a provider coming, going or changing its version marks every reader.
+describe("a provider served again", () => {
+	it("a derive over it computes again when a provider serves it again", async () => {
+		const host = createHost({ onError() {} });
+		try {
+			// No contributions: the provider's coming and going is the only change of the registry.
+			await host.load([provider(1), reader], context);
+			const ref = await host.get(SumReader, {}, context);
+			const calls = changesOf(await ref.doubled.watch(context));
+			await host.reload([reader], context);
+			await delivered();
+			await host.reload([provider(100), reader], context);
+			await delivered();
+			// Watched, never read by the test: only a mark from the registry makes it compute again.
+			expect(calls.map((call) => (call.kind === "value" ? call.value : "failed"))).toEqual(["failed", 200]);
+		} finally {
+			await host.close(context);
+		}
+	});
+
+	it("hides no change made while none served it: contributions that came and went are composed", async () => {
+		const host = createHost({ onError() {} });
+		try {
+			await host.load([provider(0), giver(1), reader], context);
+			const ref = await host.get(SumReader, {}, context);
+			const registry = await host.registry(Sum, context);
+			await host.reload([giver(1), reader], context);
+			await delivered();
+			// Read while none serves it, then the table changes twice, read in between.
+			expect(() => registry.value).toThrow("no plugin serves");
+			await host.reload([giver(1), giver(5), reader], context);
+			await delivered();
+			expect(() => registry.value).toThrow("no plugin serves");
+			await host.reload([giver(5), reader], context);
+			await delivered();
+			await host.reload([provider(10), giver(5), reader], context);
+			await delivered();
+			expect([registry.value, read(ref)]).toEqual([15, 30]);
+			// And a change after it is served again still reaches the readers.
+			await host.reload([provider(10), giver(5), giver(1), reader], context);
+			await delivered();
+			expect([registry.value, read(ref)]).toEqual([16, 32]);
+		} finally {
+			await host.close(context);
+		}
+	});
+
+	it("a derive nobody holds computes again too", async () => {
+		const host = createHost({ onError() {} });
+		try {
+			await host.load([provider(0), giver(1), reader], context);
+			await host.get(SumReader, {}, context);
+			expect(lazy!.value).toBe(3);
+			await host.reload([giver(1), reader], context);
+			await delivered();
+			expect(() => lazy!.value).toThrow("no plugin serves");
+			await host.reload([provider(100), giver(1), reader], context);
+			await delivered();
+			expect(lazy!.value).toBe(303);
+		} finally {
+			await host.close(context);
+		}
+	});
+
+	it("a provider leaving and served again marks the value's dependents each time, read meanwhile or not", async () => {
+		const host = createHost({ onError() {} });
+		try {
+			// No contributions: the provider's coming and going is the only change of the registry.
+			await host.load([provider(7), reader], context);
+			const source = (host as unknown as ChordHost).registryRecord(Sum.name).value(Sum.version);
+			let marks = 0;
+			const dependent = { invalidate: () => void marks++, sourceRetired() {} };
+			source.dependents.add(dependent);
+			expect(source.value).toBe(7);
+			await host.reload([reader], context);
+			expect(marks).toBe(1);
+			// The dependent reads it while none serves it.
+			expect(() => source.value).toThrow("no plugin serves");
+			await host.reload([provider(100), reader], context);
+			expect([marks, source.value]).toEqual([2, 100]);
+			source.dependents.delete(dependent);
+		} finally {
+			await host.close(context);
+		}
+	});
+	// Opus, round 4 of ERNDL-1191: a change of a contribution while no provider served it, read in between or not.
+	it.each([false, true])(
+		"a derive shows a change made while no provider served it (read meanwhile: %s)",
+		async (readMeanwhile) => {
+			const host = createHost({ onError() {} });
+			try {
+				let setValue = (_n: number) => {};
+				const changing = defineFacet((h) =>
+					h.serve(GIVERS[1], (_, self) => {
+						const value = self.writable(1);
+						self.contribute(Sum, value);
+						setValue = (n) => value.set(n);
+						return {};
+					}),
+				);
+				const giving = { name: "@test/giver1", facet: changing };
+				await host.load([provider(0), giving, reader], context);
+				const ref = await host.get(SumReader, {}, context);
+				await host.reload([giving, reader], context);
+				await delivered();
+				if (readMeanwhile) expect(() => ref.doubled.value).toThrow("no plugin serves");
+				setValue(2);
+				await delivered();
+				await host.reload([provider(0), giving, reader], context);
+				await delivered();
+				expect(ref.doubled.value).toBe(4);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+
+	// Astra, round 4 of ERNDL-1191: a reader's version not served, its table changed meanwhile, then served again.
+	it("a reader of a version that comes back is marked, its table changed while it was not served", async () => {
+		const host = createHost({ onError() {} });
+		try {
+			const Sum2 = defineRegistry<number, string>(Sum.name, { version: 2 });
+			const v2 = { name: "@test/provider", facet: defineFacet((h) => h.serve(Sum2, { compose: () => "v2" })) };
+			await host.load([provider(0), giver(1), reader], context);
+			const ref = await host.get(SumReader, {}, context);
+			const calls = changesOf(await ref.doubled.watch(context));
+			await host.reload([v2, giver(1), reader], context);
+			await delivered();
+			await host.reload([v2, giver(1), giver(5), reader], context);
+			await delivered();
+			await host.reload([provider(0), giver(1), giver(5), reader], context);
+			await delivered();
+			expect([read(ref), calls.at(-1)?.kind === "value" ? calls.at(-1) : undefined]).toMatchObject([
+				12,
+				{ value: 12 },
+			]);
+		} finally {
+			await host.close(context);
+		}
+	});
+});
+
+// Astra, round 5 of ERNDL-1191: a version switch whose first compose threw handed out the old version's value.
+describe("a provider of another version", () => {
+	it("a version-2 reader cannot be handed a last good v1 composition that has the wrong shape", async () => {
+		const v1 = defineRegistry<number, number>("app.switch", { version: 1 });
+		const v2 = defineRegistry<number, string>("app.switch", { version: 2 });
+		const host = createHost({ onError() {} }),
+			name = "@test/provider";
+		const first = { name, facet: defineFacet((h) => h.serve(v1, { compose: () => 42 })) };
+		const failed = {
+			name,
+			facet: defineFacet((h) =>
+				h.serve(v2, {
+					compose: () => {
+						throw new Error("no version-2 value yet");
+					},
+				}),
+			),
+		};
+		const healthy = { name, facet: defineFacet((h) => h.serve(v2, { compose: () => "ready" })) };
+		try {
+			await host.load([first], context);
+			expect((await host.registry(v1, context)).value).toBe(42);
+			await host.reload([failed], context);
+			// First compose for the new version failed; no fallback value was produced at that version.
+			await expect(
+				host.registry(v2, context, { readyTimeout: 10 }).then((registry) => registry.value),
+			).rejects.toThrow("no version-2 value yet");
+			await host.reload([healthy], context);
+			expect((await host.registry(v2, context)).value).toBe("ready");
+		} finally {
+			await host.close(context);
+		}
+	});
+});
+
+// Astra, round 6 of ERNDL-1191 (control): a provider of the same version keeps the last good composition.
+describe("a provider of the same version", () => {
+	it("retains the previous value when the same version is served by new code and its first compose fails", async () => {
+		const R = defineRegistry<number, string>("app.keep", { version: 1 }),
+			name = "@test/keep";
+		const host = createHost({ onError() {} });
+		try {
+			await host.load([{ name, facet: defineFacet((h) => h.serve(R, { compose: () => "first" })) }], context);
+			const current = await host.registry(R, context);
+			expect(current.value).toBe("first");
+			await host.reload(
+				[
+					{
+						name,
+						facet: defineFacet((h) =>
+							h.serve(R, {
+								compose: () => {
+									throw new Error("failed on same version");
+								},
+							}),
+						),
+					},
+				],
+				context,
+			);
+			expect([(await host.registry(R, context)).value, current.value]).toEqual(["first", "first"]);
+		} finally {
+			await host.close(context);
+		}
 	});
 });

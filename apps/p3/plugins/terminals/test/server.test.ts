@@ -1,5 +1,5 @@
-// The terminals plugin on the server (plugin.ts: `testPlugin` beside the things, environments and people plugins'
-// server facets, and a stand-in machine host whose terminals are fake programs): Terminals is made in Pi once and gives
+// The terminals plugin on the server (plugin.ts: `testPlugin` beside the things and environments plugins' server
+// facets, and a stand-in machine host whose terminals are fake programs): Terminals is made in Pi once and gives
 // the agents Use, people nothing until Who may gives them a tick; Watch is for people and lists and attaches, Use also
 // opens, types, reads the kept output (at once, or once it went quiet) and closes. Every call reaches the
 // machine as the caller: a machine withheld from a person is refused and its terminals are not listed; closing needs

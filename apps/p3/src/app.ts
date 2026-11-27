@@ -6,7 +6,7 @@
 import { lit, obj, type Static, str, union } from "@earendil-works/chord";
 
 /**
- * Who someone is in p3: a person (the owner is one: their row in the people plugin says so), a session's worker, or
+ * Who someone is in p3: a person (an owner is one: their row in the things store has the owner flag), a session's worker, or
  * the server.
  */
 export const P3Principal = union([

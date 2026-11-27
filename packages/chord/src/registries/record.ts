@@ -120,12 +120,15 @@ export class RegistryRecord {
 
 	/**
 	 * Serves the registry with `provider` at `version` (the defining plugin's facet, checked by `checkProvider` when
-	 * its setup ran), replacing the provider a reload changed, inside a batch: the table composes again (lazily).
+	 * its setup ran), replacing the provider a reload changed, inside a batch: the table composes again (lazily). A
+	 * provider of another version keeps no last good composition of the one before: its value has the other version's
+	 * type, which no reader of this version may get when this version's first compose throws.
 	 */
 	serve(version: number, provider: RegistryProvider<unknown, unknown>): void {
+		if (this.#provider?.version !== version) this.#composition = NEVER;
 		this.#provider = { version, provider };
 		this.#table = undefined;
-		this.#invalidate();
+		this.#availabilityChanged();
 	}
 
 	/**
@@ -136,7 +139,7 @@ export class RegistryRecord {
 		this.#provider = undefined;
 		this.#table = undefined;
 		this.#composition = NEVER;
-		this.#invalidate();
+		this.#availabilityChanged();
 	}
 
 	/** The first composition of a served registry, at `load`'s publication or a reload's commit, inside its batch. */
@@ -253,6 +256,16 @@ export class RegistryRecord {
 		this.#dirty = false;
 		for (const value of this.#values.values()) value.close();
 		this.#values.clear();
+	}
+
+	/**
+	 * A provider came, went or changed its version: every version's value is marked, whether or not its dependents
+	 * read it since the last change. A read that found no provider, or one of another version, composed nothing, so
+	 * the table may still be dirty, and a dirty table only lists (`#invalidate`): its readers would never learn of it.
+	 */
+	#availabilityChanged(): void {
+		this.#dirty = true;
+		for (const value of this.#values.values()) value.recomposed();
 	}
 
 	/**

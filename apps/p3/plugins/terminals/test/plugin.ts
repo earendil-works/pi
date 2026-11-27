@@ -1,5 +1,5 @@
-// The terminals plugin on the server for its tests (`testPlugin`, beside the things, environments and people plugins'
-// server facets and a stand-in machine whose terminals are fake programs, environments/test/fake-machine.ts): Pi, its
+// The terminals plugin on the server for its tests (`testPlugin`, beside the things and environments plugins' server
+// facets and a stand-in machine whose terminals are fake programs, environments/test/fake-machine.ts): Pi, its
 // Terminals and this device's machine, people and agents put in, grants, holds, and the attach socket's handler driven
 // through a stand-in socket (`FakeSocket`: the HTTP component, which upgrades a browser's request, is not on this
 // tier; the socket end to end is e2e.test.ts's), with stand-in sign-ins (`LinkOpened`, as the sign-in plugin
@@ -20,7 +20,6 @@ import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { type FakeMachine, fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
 import { seeded } from "../../environments/test/seeded.ts";
-import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Party, Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
@@ -86,7 +85,6 @@ export async function terminalsPlugin(): Promise<TerminalsPlugin> {
 		{ name: "@earendil-works/p3-a-fake-machine", facet: fakeType(() => fake.host) },
 		{ name: "@earendil-works/p3-things", facet: thingsServer },
 		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-		{ name: "@earendil-works/p3-people", facet: peopleServer },
 	];
 	const t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs }, context);
 	const things = await t.host.get(ThingsStore, {}, context);

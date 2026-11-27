@@ -1,6 +1,6 @@
 // p3's API v1 for server facets (`@earendil-works/p3/v1/server`): Chord's HTTP surface, the registries the base
 // serves, what a runner needs (the worker's control messages, Chord's process locks), and the built-in plugins' server
-// contracts p3 promises (the sessions' and people's stores, the things store and `serveThing`, a kind's server side).
+// contracts p3 promises (the sessions' store, the things store and `serveThing`, a kind's server side).
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
@@ -43,10 +43,12 @@ export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 // pi-env's daemon and its terminals, for the machine types' (this device's). `Connection` is a name of Chord's HTTP
 // surface's too (an HTTP connection's info).
 export { Connection as DaemonConnection, openTerminal, RemoteError } from "@earendil-works/pi-env";
+// YAML, for the prompt plugin's server facet: a skill's front matter, read as pi reads it (its `yaml` pin). A built-in
+// plugin's own npm dependency would have to be installed in its folder; through the API it is the server's one copy.
+export { parse as parseYaml } from "yaml";
 export * from "../../../plugins/environments/contract.server.ts";
-export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
-// The things plugin's store and what a kind's server side needs; the index's handles and the owner bridge stay out.
+// The things plugin's store and what a kind's server side needs; the index's handles stay out.
 export {
 	type CreateAnswer,
 	Gives,

@@ -11,11 +11,9 @@ import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
 	type Ctx,
-	constant,
 	BACKGROUND_CONTEXT as context,
 	defineFacet,
 	LoginProviders,
-	OwnerAccess,
 	type P3Principal,
 	type Reference,
 	until,
@@ -47,14 +45,6 @@ const oauth = { refreshes: 0 };
 
 /** A text no state, error or log line may show: what a provider's server answered, a token among it. */
 const MARKER = "token-MARKER-0f3a";
-
-/** The `callerKey`s of the owners (the people plugin's answer, stubbed). */
-const owners = new Set<string>();
-
-/** The owner's admission (`OwnerAccess`), answering from `owners`. */
-const ownerStub = defineFacet((host) =>
-	host.serve(OwnerAccess, ({ caller }) => ({ owner: constant(owners.has(caller)) })),
-);
 
 /**
  * A failing test provider (`failing`): its sign-in fails, its request auth fails, both with `MARKER` in their error
@@ -138,7 +128,6 @@ let pi: string;
 
 beforeEach(async () => {
 	oauth.refreshes = 0;
-	owners.clear();
 	t = await testPlugin(
 		fileURLToPath(new URL("../", import.meta.url)),
 		{
@@ -149,7 +138,6 @@ beforeEach(async () => {
 				{ name: "oauth-test", facet: oauthStub },
 				{ name: "failing", facet: failingStub },
 				{ name: "stubborn", facet: stubbornStub },
-				{ name: "@earendil-works/p3-people", facet: ownerStub },
 			],
 		},
 		context,
@@ -167,10 +155,10 @@ async function person(name: string, workspace = pi): Promise<Person> {
 	return { kind: "person", id, name };
 }
 
-/** Makes owner `name` (the people plugin's owner: who may sign in), put into `workspace`; their principal. */
+/** Makes owner `name` (a person with the owner flag: who may sign in), put into `workspace`; their principal. */
 async function owner(name: string, workspace = pi): Promise<Person> {
 	const made = await person(name, workspace);
-	owners.add(`person:${made.id}`);
+	await things.setOwner({ person: made.id, owner: true }, context);
 	return made;
 }
 

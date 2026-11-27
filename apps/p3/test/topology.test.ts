@@ -18,14 +18,7 @@ import {
 	WorkspaceChildren,
 	withGranted,
 } from "@earendil-works/p3/v1";
-import {
-	Http,
-	PeopleStore,
-	type Router,
-	ServerCommands,
-	SessionsStore,
-	ThingsStore,
-} from "@earendil-works/p3/v1/server";
+import { Http, type Router, ServerCommands, SessionsStore, ThingsStore } from "@earendil-works/p3/v1/server";
 import { MachineHosts } from "../plugins/environments/contract.server.ts";
 import { TerminalHosts } from "../plugins/environments/contract.terminal-host.server.ts";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
@@ -73,20 +66,6 @@ async function withSession(idleMs?: number) {
 	};
 	const id = await make("one");
 	return { t, owner, make, archive, rename, id, pi };
-}
-
-/**
- * Until the things store has adopted the people plugin's owner as its owner: a reload of things while the first
- * start's adoption still commits cancels it (a one-time window at a Pi's first start).
- */
-async function ownerAdopted(t: Topology): Promise<void> {
-	const id = t.owner.kind === "person" ? t.owner.id : "";
-	const owners = () =>
-		t.server.root(
-			async (ctx) => (await (await ctx.get(ThingsStore, {})).persons.owners.page({}, 10, ctx)).items,
-			context,
-		);
-	await eventually(owners, (items) => items.some(({ person }) => person === id));
 }
 
 /** The handlers of the files plugin's routes and the terminals plugin's socket in the HTTP component's router. */
@@ -224,11 +203,14 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
-	it("the people, environments, things and sessions plugins: a person's objects and the owner's go on", async () => {
+	it("the environments, things and sessions plugins: a person's objects and the owner's go on", async () => {
 		const { t, owner, id, pi } = await withSession();
-		await ownerAdopted(t);
 		const ann = await t.server.root(
-			async (ctx) => (await ctx.get(PeopleStore, {})).createPerson({ name: "Ann" }, ctx),
+			async (ctx) =>
+				(await ctx.get(ThingsStore, {})).createPerson(
+					{ name: "Ann", madeBy: { kind: "plugin", plugin: "test" } },
+					ctx,
+				),
 			context,
 		);
 		// Ann is put into Pi: the session's grant for everyone here (Read, Send) is hers.
@@ -241,10 +223,9 @@ describe("reloads while in use", () => {
 		const me = await person.get(Me, {}, context);
 		const session = await person.get(SessionObject, { workspace: id, thing: id }, context);
 		const environments = await owner.get(Environments, {}, context);
-		for (const plugin of ["people", "environments", "things", "sessions"])
-			await t.reload(`@earendil-works/p3-${plugin}`);
+		for (const plugin of ["environments", "things", "sessions"]) await t.reload(`@earendil-works/p3-${plugin}`);
 		await t.server.root(
-			async (ctx) => (await ctx.get(PeopleStore, {})).renamePerson({ person: ann, name: "Anna" }, ctx),
+			async (ctx) => (await ctx.get(ThingsStore, {})).renamePerson({ person: ann, name: "Anna" }, ctx),
 			context,
 		);
 		await until(me.me, (value) => value.kind === "person" && value.name === "Anna", within("the new name", context));
@@ -258,20 +239,17 @@ describe("reloads while in use", () => {
 	});
 
 	const orders: readonly (readonly string[])[] = [
-		["people", "sign-in", "things"],
-		["people", "environments", "things", "sessions"],
 		// Back to back: a things store started anew (lazily, by whichever plugin uses it first) is reloaded again; a
 		// reload during its seeding cancels the seed's transaction, which reports nothing since ERNDL-1190.
-		["people", "environments", "things", "people", "environments", "things", "sessions"],
-		["people", "sign-in", "things", "people", "environments", "things", "sessions"],
-		["people", "sign-in", "things", "people", "sign-in", "things"],
+		["environments", "things", "environments", "things", "sessions"],
+		["sign-in", "things", "environments", "things", "sessions"],
+		["sign-in", "things", "sign-in", "things"],
 	];
 	for (const order of orders) {
-		const name = `the ${order.join(", ")} plugins reloaded in that order (the owner bridge, ERNDL-1144): nothing reported`;
+		const name = `the ${order.join(", ")} plugins reloaded in that order (ERNDL-1144): nothing reported`;
 		it(name, async () => {
 			const { t, owner } = await withSession();
 			const me = await owner.get(Me, {}, context);
-			await ownerAdopted(t);
 			for (const plugin of order) await t.reload(`@earendil-works/p3-${plugin}`);
 			await until(me.me, (value) => value.kind === "person" && value.owner, within("still the owner", context));
 			assert.deepEqual(t.errors, []);

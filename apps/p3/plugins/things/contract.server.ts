@@ -150,9 +150,9 @@ export const InviteInput = obj({
 });
 export type InviteInput = Static<typeof InviteInput>;
 
-/** Whom a redeemed invite link signs in. */
-export const Invited = obj({ person: str(), name: str() });
-export type Invited = Static<typeof Invited>;
+/** A person and their name: whom a redeemed invite link or the owner link signs in. */
+export const PersonName = obj({ person: str(), name: str() });
+export type PersonName = Static<typeof PersonName>;
 
 /** A person in a group as the group's page lists them: with their name. */
 export const GroupMemberNameRow = obj({ group: str(), person: str(), name: str(), source: Source });
@@ -311,10 +311,24 @@ export const ThingsStore = local("things.store", {
 		 */
 		createInvite: method(InviteInput, str()),
 		/**
-		 * Redeems an invite link's secret for `person` (signed in already) or, left out, a new person named as the link
-		 * says, made by its maker; answers whom to sign in, `null` for a secret used up, expired or unknown.
+		 * The name an invite link's secret would make its new person with; `null` for a secret used up, expired or
+		 * unknown. Not a redemption: the link stays as it is (the invite route signs the new person in first).
 		 */
-		redeemInvite: method(obj({ secret: str(), person: opt(str()) }), union([Invited, nul()])),
+		invitation: method(obj({ secret: str() }), union([obj({ name: str() }), nul()])),
+		/**
+		 * Spends an invite link's secret without redeeming it (a link for several uses stays): what the invite route does
+		 * when it cannot tell whether it issued the new person's sign-in.
+		 */
+		spendInvite: method(obj({ secret: str() })),
+		/**
+		 * Redeems an invite link's secret for `person` (signed in already) or, left out, a new person named as the link
+		 * says, made by its maker, with id `newPerson` if given (a sign-in was issued for it already); answers whom to
+		 * sign in, `null` for a secret used up, expired or unknown. `invalid` with both `person` and `newPerson`.
+		 */
+		redeemInvite: method(
+			obj({ secret: str(), person: opt(str()), newPerson: opt(str()) }),
+			union([PersonName, nul()]),
+		),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
 		/**
 		 * Takes `person` out of `group` in one commit: every row of theirs there but a provider's and a share's (theirs
@@ -322,10 +336,11 @@ export const ThingsStore = local("things.store", {
 		 */
 		removeMember: method(obj({ group: str(), person: str() })),
 		/**
-		 * The people plugin's owner made the owner here, with the same id, once (the bridge, ERNDL-1144 push B removes
-		 * it): `owner-bridge.ts` calls it with the people plugin's seed.
+		 * The machine's owner, whom the owner link signs in as (the machine's user): the first start's person, or on a Pi
+		 * from before the people plugin went the owner it handed over, with the same id; also after they handed the
+		 * owner flag over. `invalid` once that person is gone (nothing removes them today).
 		 */
-		adoptOwner: method(obj({ person: str(), name: str() })),
+		machineOwner: method(obj({}), PersonName),
 		/**
 		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the
 		 * groups it manages with all naming them, and the persons it made of whom nothing else is left.
@@ -495,16 +510,6 @@ export const OneThing = local("things.one", {
 	params: { kind: str() },
 	members: { thing: str() },
 });
-
-/** The people plugin's owner as it hands it over (see `OwnerSeeds`): their person, `null` while there is none. */
-export type OwnerSeed = { readonly person: string; readonly name: string } | null;
-
-/**
- * A bridge until the people plugin goes (ERNDL-1144's push B removes it): the people plugin contributes its owner's
- * person, and the things store makes that person, with the same id, its owner, so the owner the owner link signs in
- * as has the owner flag in the access index. Composed: the people plugin's contribution, `null` without one.
- */
-export const OwnerSeeds = defineRegistry<OwnerSeed, OwnerSeed>("things.owner-seed", { version: 1 });
 
 /**
  * Whether group `group` is present for person `person`: present where they are present (the picker's rule, R18), so

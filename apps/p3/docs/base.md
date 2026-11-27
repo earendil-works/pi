@@ -38,8 +38,8 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
 - **Shared or private** comes from the nearest session defaults thing (`sessions.defaults`) available in the parent
   (decisions 75, 93; one `Gives` read as the server, switches applied): shared gives everyone here Read and Send;
   private writes no grant for everyone and hides people from above. The defaults also give the new session its
-  model (metadata until the model picker asks the agent's model with it) and the view it opens with. The sessions
-  plugin seeds one defaults thing in Pi (shared).
+  model, the view it opens with and where it works (a machine and a folder; the new-session step pre-fills them from
+  `SessionDefaultsHere`). The sessions plugin seeds one defaults thing in Pi (shared).
 - **Its row** (`SessionRow`: location, state, last touch, archived, model) is the session kind's state, for everyone
   let in: `SessionObject` held at `{ workspace: id, thing: id }`. The worker reports the state
   (`SessionFacts.report`); the waker starts the workers of `working` sessions after a restart.
@@ -51,20 +51,21 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   presence. Listing starts no worker.
 - **Where it works** (decision 24): each conversation has a location. The session's (its row's `location`) is where a
   top-level conversation works: the make's, refused unless its maker may use that machine in the parent (R41); left out,
-  this device in a folder of its own (`<work root>/<Pi's id>/<id>`) if its maker may use this device there, else none
-  (its agent has no environment until a conversation is moved; the new-session step says so). A subagent's
-  conversation works where its caller works, and follows its moves. A conversation moved (`SessionObject.moveLocation`
-  with Manage, by a client: the Settings view has no form for it yet; or by the agent with the machine part's
-  `location_move`, through `HarnessSession.moveLocation`) works at its own location from its next tool call on; a call
-  under way keeps its environment. A move with `location: null` is undone (the conversation follows its owner again); a
-  subagent keeps its own while archived (a restore finds it). A move is refused unless the folder is a full path and the
-  agents have Work on the machine in the session, and a person's unless the machine is available to them there (the
-  environments plugin's `checkMachine`, as Files and Terminals). The harness (`HarnessSession.moveLocation`, the path
-  the agent's tool takes) refuses to move a conversation the session does not have; an undo always goes through. A
-  direct `SessionFacts.moveLocation` call by the session's worker is not checked: the worker is trusted plugin code
-  (decision 111). Manage's path takes any well-formed id for now (carry-over 3 of ERNDL-704: the server asking the
-  session's worker). Manage shows the moved conversations (`detail`, one document per session, by conversation id);
-  the worker reads the same in `SessionFacts.detail`.
+  the nearest session defaults' location if it has a folder and the maker may use its machine there; else (and with
+  `location: null`, the step's empty folder), this device in a folder of its own (`<work root>/<Pi's id>/<id>`) if its
+  maker may use this device there, else none (its agent has no environment until a conversation is moved; the
+  new-session step says so). A subagent's conversation works where its caller works, and follows its moves. A
+  conversation moved (`SessionObject.moveLocation` with Manage, by a client: the Settings view has no form for it yet;
+  or by the agent with the machine part's `location_move`, through `HarnessSession.moveLocation`) works at its own
+  location from its next tool call on; a call under way keeps its environment. A move with `location: null` is undone
+  (the conversation follows its owner again); a subagent keeps its own while archived (a restore finds it). A move is
+  refused unless the folder is a full path and the agents have Work on the machine in the session, and a person's unless
+  the machine is available to them there (the environments plugin's `checkMachine`, as Files and Terminals). The harness
+  (`HarnessSession.moveLocation`, the path the agent's tool takes) refuses to move a conversation the session does not
+  have; an undo always goes through. A direct `SessionFacts.moveLocation` call by the session's worker is not checked:
+  the worker is trusted plugin code (decision 111). Manage's path takes any well-formed id for now (carry-over 3 of
+  ERNDL-704: the server asking the session's worker). Manage shows the moved conversations (`detail`, one document per
+  session, by conversation id); the worker reads the same in `SessionFacts.detail`.
 - **What its workers keep** (their directory, `<data>/workers/<id>`) goes with the session: removing the session stops
   its worker and deletes it (the runner's `remove`, refusing an id that names no session). A directory of a session
   with no row is swept whenever a runner appears (at every start), each one reported as it goes, one that fails
@@ -198,10 +199,9 @@ packages of the `web` kind, so a third party's plugin type-checks against the ve
 
 | Plugin | Owns |
 | --- | --- |
-| `things` | the things core: things, workspaces, grants, the access index (`Gives`, `MyAnswer`), the kinds' registries, `Workspace` and the page's lists; the page's frame for workspaces |
+| `things` | the things core: things, workspaces, grants, the access index (`Gives`, `MyAnswer`), the kinds' registries, `Workspace` and the page's lists; persons, groups and invite links, `Me` and the owners' admission (`OwnerAccess`, `admitOwner`); the page's frame for workspaces |
 | `sessions` | the session kind (session workspaces), the session defaults kind, the sessions' store (where each works, its state, its model), the waker, a worker's facts, the holding |
-| `sign-in` | sign-ins; the owner link |
-| `people` | persons and groups; `Me`; invite links that make a person and sign them in |
+| `sign-in` | sign-ins; the owner link; the invite link's page, which redeems a things invite link and signs its new person in |
 | `environments` | machines; this device; `ExecutionEnvironments` |
 | `harness` | Durable in the worker over the kinds' harness parts, the activity report; the subagents kind (`harness.subagents`) |
 | `transcript` | a session's conversation as people see it, by the session's ticks; its view |

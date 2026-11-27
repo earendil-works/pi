@@ -1,9 +1,9 @@
 // The prompt plugin on a session's worker: the harness parts of its two kinds. Instructions give one prompt section per
-// thing the agent may use (the flag `use`), in the order held (the closest last, once the holding orders by depth):
-// the base text of the thing's language, then its text, both read at each prompt, so a change made with Configure
-// reaches the next step. Skills give one prompt section listing the skills of every set the agent may use (Use gives
-// `read`), a name in two sets the closer set's, and the tool `skills_read({ name })`, which reads the text through the
-// held reference of the set that owns the name. A skill's files stay on the Pi for now: the tool names them.
+// thing the agent may use (the flag `use`), in the order held (the closest last): the base text of the thing's
+// language, then its text, both read at each prompt, so a change made with Configure reaches the next step. Skills
+// give one prompt section listing the skills of every set the agent may use (Use gives `read`), a name in two sets
+// the closer set's, and the tool `skills_read({ name })`, which reads the text through the held reference of the set
+// that owns the name. A skill's files stay on the Pi for now: the tool names them.
 
 import { contribute, defineFacet, forbidden, invalid, obj, str } from "@earendil-works/p3/v1";
 import { defineTool, type PromptSection } from "@earendil-works/p3/v1/worker";
@@ -17,7 +17,7 @@ export default defineFacet((host) => {
 		self.contribute(
 			ThingHarnessParts,
 			thingHarnessPart(InstructionsKind, (things) => ({
-				extension: { sections: things.filter(({ ref }) => ref.granted.has("use")).map(instructionsSection) },
+				extension: { sections: things.filter(({ granted }) => granted.has("use")).map(instructionsSection) },
 			})),
 		),
 	);
@@ -50,8 +50,9 @@ type HeldSet = HeldThing<typeof Skills>;
 
 /** What the sets give: the list section and `skills_read`, over the sets the agent may read; none: nothing. */
 function skillsPart(things: readonly HeldSet[]) {
-	// Use gives `read`: a set the agent is let in to without it lists nothing.
-	const usable = things.filter(({ ref }) => ref.granted.has("read"));
+	// Use gives `read`: a set the agent is let in to without it lists nothing. The grant as this list has it; the tool
+	// reads the reference's `read` again at each call.
+	const usable = things.filter(({ granted }) => granted.has("read"));
 	if (usable.length === 0) return {};
 	const index = new SkillsIndex(usable);
 	return {
@@ -100,7 +101,8 @@ class SkillsIndex {
 			for (const skill of set.ref.skills.value) if (!named.has(skill.name)) named.set(skill.name, { set, skill });
 		}
 		this.#named = named;
-		const lines = [...named.values()].map(({ skill }) => `- ${skill.name}: ${skill.description}`);
+		// A description is as its `SKILL.md` has it (a folded one ends in a line break): one line each here.
+		const lines = [...named.values()].map(({ skill }) => `- ${skill.name}: ${skill.description.trim()}`);
 		this.#section =
 			lines.length === 0
 				? undefined

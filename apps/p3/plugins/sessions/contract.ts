@@ -101,16 +101,31 @@ export type SessionRow = Static<typeof SessionRow>;
 /**
  * What a new session starts with where this thing applies (the nearest one reaching its parent, decision 75): its
  * model, whether it is shared (everyone here Read and Send) or private (no grant for everyone, people from above
- * hidden; decision 93), and the view it opens with (item 74; `null`: the kind's).
+ * hidden; decision 93), the view it opens with (item 74; `null`: the kind's) and where it works (`null`: this device
+ * in a folder of its own; a folder `""`: that folder, the machine only what the new-session step offers first). A make
+ * without a location starts there when its maker may use the machine (R41), else as with none.
  */
 export const SessionDefaults = obj({
 	model: union([ModelChoice, nul()]),
 	shared: bool(),
 	opensWith: union([str({ max: 200 }), nul()]),
+	location: union([Location, nul()]),
 });
 
 /** What a new session starts with (see `SessionDefaults`). */
 export type SessionDefaults = Static<typeof SessionDefaults>;
+
+/**
+ * What a new session made in `workspace` starts with now (the nearest defaults there, as a make reads them), live, for
+ * a caller present there: what the new-session step pre-fills.
+ */
+export const SessionDefaultsHere = remote("sessions.defaults-here", {
+	version: 1,
+	params: { workspace: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: { defaults: SessionDefaults },
+});
 
 /**
  * A session's own facts for its worker, which holds it as itself: its row (`null` for a session the server does not

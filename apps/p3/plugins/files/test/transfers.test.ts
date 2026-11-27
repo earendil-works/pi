@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, type Reference } from "@earendil-works/p3/v1";
-import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
+import { SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { newSession } from "../../../test/support.ts";
 import { eventually } from "../../../test/until.ts";
@@ -41,8 +41,8 @@ before(async () => {
 		const things = await ctx.get(ThingsStore, {});
 		pi = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
 		// The owner, in Pi: the session below is theirs.
-		const [owner] = (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items;
-		await things.putParty({ workspace: pi, party: { kind: "person", person: owner!.id }, source: BY }, ctx);
+		const [owner] = (await (await ctx.get(ThingsStore, {})).persons.owners.page({}, 1, ctx)).items;
+		await things.putParty({ workspace: pi, party: { kind: "person", person: owner!.person }, source: BY }, ctx);
 		files = await seeded(await ctx.get(OneThing, { kind: FilesKind.name }), ctx);
 		machine = await seeded(await ctx.get(OneThing, { kind: MACHINE_KIND }), ctx);
 		// Who may lets everyone in Pi browse, as the owner would: the kind gives nobody anything.

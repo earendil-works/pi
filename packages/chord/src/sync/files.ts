@@ -31,6 +31,8 @@ export interface SyncFileSystem {
 	writeFile(path: string, content: string | Uint8Array, context: Context): Promise<FileResult<void>>;
 	/** Append to a file, creating it: a body is written chunk by chunk as it streams. */
 	appendFile(path: string, content: string | Uint8Array, context: Context): Promise<FileResult<void>>;
+	/** Flush a file's content to disk (fsync): a file renamed into place after it survives a power loss. */
+	flushFile(path: string, context: Context): Promise<FileResult<void>>;
 	renameFile(sourcePath: string, destinationPath: string, context: Context): Promise<FileResult<void>>;
 	listDir(path: string, context: Context): Promise<FileResult<SyncFileInfo[]>>;
 	createDir(path: string, options: { recursive?: boolean } | undefined, context: Context): Promise<FileResult<void>>;
