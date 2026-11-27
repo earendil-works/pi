@@ -25,6 +25,7 @@ import {
 	opt,
 	type P3Principal,
 	queries,
+	type RefState,
 	type Self,
 	type Static,
 	str,
@@ -379,6 +380,20 @@ export function abortWhen<T>(
 }
 
 /**
+ * `abortWhen` for the reference a stream's caller holds: aborts `controller` once `ref` fails, ends or no longer has
+ * its member `member` (the tick that gave it was withheld).
+ */
+export function abortWhenLost<R extends { readonly state: NativeWatchable<RefState> }>(
+	ref: R,
+	member: keyof R,
+	controller: AbortController,
+	context: Context,
+): void {
+	const lost = (state: RefState) => state.kind === "failed" || state.kind === "ended" || ref[member] === undefined;
+	abortWhen(ref.state, lost, controller, context);
+}
+
+/**
  * What the store's object hands admissions: attaching to its index (`Gives` follows it with `self.follow`; `undefined`
  * once the store object ended), and whether it is still the store's.
  */
@@ -441,9 +456,10 @@ export type ThingHook = {
 	readonly workspaceGone?: (workspace: string, ctx: Ctx<P3Principal>) => Promise<void>;
 	/**
 	 * The plugin's seeded thing of the kind, named `name`: made in Pi once the kind is registered, and again at once
-	 * when it is deleted (`ensure`, `OneThing`).
+	 * when it is deleted (`ensure`, `OneThing`), through the create path with `input` (checked against the kind's
+	 * `create.input` like any other).
 	 */
-	readonly one?: { readonly name: string };
+	readonly one?: { readonly name: string; readonly input?: unknown };
 };
 
 /**

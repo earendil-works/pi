@@ -1,123 +1,138 @@
-// The terminals' harness part, called as the harness calls it (a stand-in reference with its grants and members):
-// no tool without Use on the nearest Terminals; with it, one tool `terminal` whose tagged action lists the terminals
-// (JSON), opens one at the conversation's location, types a line (Enter after it) or keys, reads the output as plain
-// text and closes; Use withheld after the part was built refuses the next call (forbidden), a conversation on no
-// machine refuses to open (invalid).
+// The terminals' harness part, as the worker facet contributes it to `ThingHarnessParts`, given the Terminals a
+// session's agent holds (real references, held as the session's worker on a server with the things and environments
+// plugins and a stand-in machine whose programs are fakes, `kindServer`): no tool without Use; with it, one tool
+// `terminal` whose tagged action lists the terminals (JSON), opens one at the conversation's location, types a line
+// (Enter after it) or keys, reads the output as plain text and closes; Use withheld after the part was built refuses
+// the next call (forbidden), a conversation on no machine refuses to open (invalid). Holding Terminals costs no query
+// run per holder: the list is the terminal host's, in memory.
 
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { BACKGROUND_CONTEXT as context, isChordError } from "@earendil-works/p3/v1";
-import type { HarnessLocation, HarnessSession, HeldThing } from "../../things/contract.worker.ts";
-import type { Terminals } from "../kind.ts";
-import { terminalsPart } from "../worker.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { type Ctx, BACKGROUND_CONTEXT as context, defineFacet, type P3Principal, until } from "@earendil-works/p3/v1";
+import { type ServerRuntime, ServerRuntime as ServerRuntimeRegistry } from "@earendil-works/p3/v1/server";
+import { within } from "../../../test/until.ts";
+import { MACHINE_KIND } from "../../environments/contract.ts";
+import environmentsServer from "../../environments/server.ts";
+import { type FakeMachine, fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
+import { seeded } from "../../environments/test/seeded.ts";
+import { OneThing } from "../../things/contract.server.ts";
+import type { HarnessExtension, HarnessLocation, HeldThing } from "../../things/contract.worker.ts";
+import { type KindServer, kindServer, refused, runTool, toolNames } from "../../things/test/kind-server.ts";
+import { type Terminals, TerminalsKind } from "../kind.ts";
+import terminalsServer from "../server.ts";
 
-/** What the stand-in reference was called with, by member. */
-type Calls = Record<string, unknown[]>;
+/** The terminals plugin's root. */
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
-/** The session the part is called for: its conversations work at `location`. */
-function session(location: HarnessLocation | undefined): HarnessSession {
-	return {
-		session: "s",
-		workspace: "w",
-		call: () => Promise.reject(new Error("no call")),
-		location: async () => location,
-		moveLocation: () => Promise.reject(new Error("no move")),
-	};
-}
+/** The session's agent as a party. */
+const AGENT = { kind: "agent", session: "s1" } as const;
 
-/** A held Terminals whose reference has `granted` and records its calls in `calls`; `backlog` answers `output`. */
-function held(granted: readonly string[], calls: Calls, output = ""): HeldThing<typeof Terminals> {
-	const recorded =
-		(name: string, answer: unknown) =>
-		async (args: unknown): Promise<unknown> => {
-			calls[name] = [...(calls[name] ?? []), args];
-			return answer;
-		};
-	const ref: Record<string, unknown> = { granted: new Set(granted) };
-	const answers: Record<string, unknown> = {
-		open: "t1",
-		type: null,
-		close: null,
-		backlog: { data: Buffer.from(output).toString("base64") },
-	};
-	for (const [name, answer] of Object.entries(answers)) if (granted.includes(name)) ref[name] = recorded(name, answer);
-	if (granted.includes("terminals")) {
-		ref.terminals = {
-			value: [
-				{ id: "t1", folder: "/work", exitCode: null },
-				{ id: "t2", folder: "/", exitCode: 1 },
-			],
-		};
-	}
-	// A stand-in for the holding's reference: the part reads only `granted` and the members.
-	return { thing: "terms", workspace: "w", depth: 0, ref: ref as unknown as HeldThing<typeof Terminals>["ref"] };
-}
+let k: KindServer<typeof Terminals>;
+let device: FakeMachine;
+let dataDir: string;
+let terminals: string;
+let machine: string;
+let s1: string;
 
-/** What Use grants. */
-const USE = ["terminals", "attach", "backlog", "open", "type", "resize", "close"];
+beforeEach(async () => {
+	device = fakeMachine();
+	dataDir = await mkdtemp(join(tmpdir(), "p3-terminals-part-"));
+	const runtime = { dataDir, workRoot: join(dataDir, "work"), machine: { user: "test", hostname: "test" } };
+	const beside = [
+		{
+			name: "p3.server",
+			facet: defineFacet((host) => host.serve(ServerRuntimeRegistry, { compose: () => runtime as ServerRuntime })),
+		},
+		// This device's type, its plugin name sorting first: programs are fakes.
+		{ name: "@earendil-works/p3-a-fake", facet: fakeType(() => device.host) },
+		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+	];
+	const plugin = { name: "@earendil-works/p3-terminals", root: ROOT, server: terminalsServer };
+	k = await kindServer(plugin, TerminalsKind, context, beside);
+	terminals = await seeded(await k.host.get(OneThing, { kind: TerminalsKind.name }, context), context);
+	machine = await seeded(await k.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+	s1 = await k.workspace("s1");
+});
 
-/** Runs tool `name` of `tools` with `args`; its output text. */
-async function run(tools: ReturnType<typeof toolsOf>, name: string, args: object): Promise<string> {
-	const tool = tools.find((entry) => entry.name === name);
-	assert.ok(tool, `tool ${name}`);
-	// The tools read only `conversationId` of the api.
-	const result = await tool.execute(args as never, { conversationId: 7 } as never, context);
-	const [first] = result.output ?? [];
-	return first?.type === "text" ? first.text : "";
-}
+afterEach(async () => {
+	await k.close();
+	await rm(dataDir, { recursive: true, force: true });
+});
 
-/** The tools the part gives for `things` in `at`. */
-function toolsOf(things: HeldThing<typeof Terminals>[], at = session({ machine: "m1", folder: "/work" })) {
-	return terminalsPart.part(things, at).extension?.tools ?? [];
-}
+/**
+ * Runs `fn` with s1's agent holding Pi's Terminals, its conversations working at `location` (`/work` by default; `null`:
+ * on no machine).
+ */
+const giving = <T>(
+	fn: (extension: HarnessExtension, ctx: Ctx<P3Principal>, held: readonly HeldThing<typeof Terminals>[]) => Promise<T>,
+	location: HarnessLocation | null = { machine, folder: "/work" },
+) => k.giving({ session: "s1", workspace: s1, ...(location === null ? {} : { location }) }, [terminals], fn);
+
+/** Runs the tool's `action` in `extension`; its output text. */
+const terminal = (extension: HarnessExtension, action: object, ctx: Ctx<P3Principal>) =>
+	runTool(extension, "terminal", { action }, ctx);
 
 describe("the terminals' harness part", () => {
-	it("gives no tool without Use on the nearest Terminals", () => {
-		assert.deepEqual(toolsOf([held(["terminals", "attach"], {})]), []);
-		assert.deepEqual(toolsOf([held(USE, {}), held(["terminals"], {})]), [], "the nearest (last) decides");
+	it("gives no tool without Use", async () => {
+		await k.tick(k.pi, terminals, AGENT, "use", false);
+		// A part that gives nothing gives no extension.
+		await assert.rejects(
+			giving(async () => null),
+			/gave no extension/,
+		);
 	});
 
 	it("gives one tool whose tagged action lists, opens at the location, types, reads plain text and closes", async () => {
-		const calls: Calls = {};
-		const tools = toolsOf([held(USE, calls, "\u001b[1m$ \u001b[0mls\r\nREADME.md\r\n")]);
-		assert.deepEqual(
-			tools.map((tool) => tool.name),
-			["terminal"],
-		);
-		assert.deepEqual(JSON.parse(await run(tools, "terminal", { action: { kind: "list" } })), [
-			{ id: "t1", folder: "/work", exitCode: null },
-			{ id: "t2", folder: "/", exitCode: 1 },
-		]);
-		assert.deepEqual(JSON.parse(await run(tools, "terminal", { action: { kind: "open" } })), {
-			terminal: "t1",
-			folder: "/work",
+		await giving(async (extension, ctx, [held]) => {
+			assert.deepEqual(toolNames(extension), ["terminal"]);
+			assert.deepEqual(JSON.parse(await terminal(extension, { kind: "list" }, ctx)), []);
+			const opened = JSON.parse(await terminal(extension, { kind: "open" }, ctx));
+			assert.equal(opened.folder, "/work");
+			const [program] = device.started;
+			assert.deepEqual([program?.options.cwd, program?.size], ["/work", [120, 40]]);
+			await until(held!.ref.terminals!, (list) => list.length === 1, within("the list", ctx));
+			assert.deepEqual(JSON.parse(await terminal(extension, { kind: "list" }, ctx)), [
+				{ id: opened.terminal, folder: "/work", exitCode: null },
+			]);
+			await terminal(extension, { kind: "type", terminal: opened.terminal, input: "ls" }, ctx);
+			await terminal(extension, { kind: "keys", terminal: opened.terminal, input: "q" }, ctx);
+			assert.deepEqual(program?.typed, ["ls\r", "q"]);
+			program?.say("\u001b[1m$ \u001b[0mls\r\nREADME.md\r\n");
+			assert.equal(await terminal(extension, { kind: "read", terminal: opened.terminal }, ctx), "$ ls\nREADME.md\n");
+			assert.equal(await terminal(extension, { kind: "close", terminal: opened.terminal }, ctx), "{}");
+			assert.equal(program?.closed, true);
 		});
-		assert.deepEqual(calls.open, [{ machine: "m1", folder: "/work", columns: 120, rows: 40 }]);
-		await run(tools, "terminal", { action: { kind: "type", terminal: "t1", input: "ls" } });
-		await run(tools, "terminal", { action: { kind: "keys", terminal: "t1", input: "q" } });
-		assert.deepEqual(calls.type, [
-			{ terminal: "t1", bytes: "ls\r" },
-			{ terminal: "t1", bytes: "q" },
-		]);
-		assert.equal(await run(tools, "terminal", { action: { kind: "read", terminal: "t1" } }), "$ ls\nREADME.md\n");
-		// The kept output's tail only, not the whole backlog (opus round 2, S1).
-		assert.deepEqual(calls.backlog, [{ terminal: "t1", max: 64_000 }]);
-		assert.equal(await run(tools, "terminal", { action: { kind: "close", terminal: "t1" } }), "{}");
-		assert.deepEqual(calls.close, [{ terminal: "t1" }]);
 	});
 
 	it("refuses to open where the conversation works on no machine, and once Use is withheld", async () => {
-		const thing = held(USE, {});
-		const nowhere = toolsOf([thing], session(undefined));
-		await assert.rejects(run(nowhere, "terminal", { action: { kind: "open" } }), (error: unknown) =>
-			isChordError(error, "invalid"),
-		);
-		const tools = toolsOf([thing]);
-		// The holding's reference loses its members in the flush in which Use is withheld.
-		(thing.ref as unknown as Record<string, unknown>).type = undefined;
-		await assert.rejects(
-			run(tools, "terminal", { action: { kind: "type", terminal: "t1", input: "x" } }),
-			(error: unknown) => isChordError(error, "forbidden"),
-		);
+		await giving(async (extension, ctx) => {
+			await refused(terminal(extension, { kind: "open" }, ctx), "invalid");
+		}, null);
+		await giving(async (extension, ctx, [held]) => {
+			await k.tick(k.pi, terminals, AGENT, "use", false);
+			// The holding's reference loses its members in the flush in which Use is withheld.
+			await until(held!.ref.state, () => held!.ref.open === undefined, within("Use withheld", ctx));
+			await refused(terminal(extension, { kind: "list" }, ctx), "forbidden");
+		});
+	});
+});
+
+describe("the cost of holding Terminals", () => {
+	it("is no query run per holder after the first: the list is the terminal host's", async () => {
+		const persons = [await k.person("Ann"), await k.person("Ben"), await k.person("Cy")];
+		for (const person of persons) await k.tick(k.pi, terminals, { kind: "person", person: person.id }, "watch", true);
+		const first = await k.holders(persons.slice(0, 1), k.pi, terminals);
+		try {
+			const before = k.count("chord.query.runs");
+			const more = await k.holders(persons.slice(1), k.pi, terminals);
+			await more.release();
+			assert.equal(k.count("chord.query.runs") - before, 0);
+		} finally {
+			await first.release();
+		}
 	});
 });

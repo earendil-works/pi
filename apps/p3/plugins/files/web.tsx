@@ -1,6 +1,6 @@
 // The files plugin's web facet, contributions only: the Files view (`Views`, files-view.tsx), what the kind has once
-// (`ThingParts`: its title and icon), the plugin's title for the add-thing picker (`PluginTitles`) and its catalogs,
-// with the machine's, whose refusals the view shows (`Translations`).
+// (`ThingParts`: its title and icon), the plugin's title for the add-thing picker (`PluginTitles`) and its catalog
+// (`Translations`).
 
 import { defineFacet, Translations } from "@earendil-works/p3/v1";
 import { FolderIcon } from "@earendil-works/p3/v1/web";

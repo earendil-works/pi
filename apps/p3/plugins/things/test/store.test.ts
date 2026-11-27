@@ -323,6 +323,33 @@ describe("a plugin's one thing", () => {
 		assert.deepEqual(inputs, ["ann"]);
 	});
 
+	it("a seeded kind with a required create input is made with the input its `one` gives (harness2)", async (t) => {
+		const Inbox = defineThing("test.seeded-inbox", {
+			version: 1,
+			ticks: { use: { label } },
+			create: { input: obj({ signIn: str() }) },
+		});
+		const inputs: string[] = [];
+		const at = await world(context, [
+			{
+				name: "seeded-inbox",
+				facet: defineFacet((host) =>
+					serveThing(host, Inbox, {
+						implement: () => ({}),
+						create: async ({ input }) => void inputs.push(input.signIn),
+						one: { name: "Inbox", input: { signIn: "owner" } },
+					}),
+				),
+			},
+		]);
+		t.after(() => at.close(context));
+		const things = await at.host.get(ThingsStore, {}, context);
+		const seeded = await things.ensure({ kind: Inbox.name }, context);
+		assert.ok(storedRows(at.path, "things").some(({ thing }) => thing === seeded));
+		assert.deepEqual(inputs, ["owner"]);
+		assert.deepEqual(at.errors, []);
+	});
+
 	it("ensure refuses a kind that asks for none, and `OneThing` names none of its things", async (t) => {
 		const at = await machineWorld([]);
 		t.after(() => at.w.close(context));

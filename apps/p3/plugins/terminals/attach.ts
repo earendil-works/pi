@@ -15,7 +15,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { Http, type HttpRequest, type HttpResponse } from "@earendil-works/p3/v1/server";
 import { type TerminalHost, TerminalHosts } from "../environments/contract.terminal-host.server.ts";
-import { abortWhen } from "../things/contract.server.ts";
+import { abortWhen, abortWhenLost } from "../things/contract.server.ts";
 import { ATTACH_PATH, Terminals } from "./kind.ts";
 
 /** Serves the attach route on `host`. */
@@ -47,12 +47,7 @@ async function attach(request: HttpRequest, terminals: TerminalHost | undefined,
 	}
 	const lost = new AbortController();
 	const list = ref.terminals;
-	abortWhen(
-		ref.state,
-		(state) => state.kind === "failed" || state.kind === "ended" || ref.attach === undefined,
-		lost,
-		ctx,
-	);
+	abortWhenLost(ref, "attach", lost, ctx);
 	abortWhen(list, (rows) => !rows.some((row) => row.id === terminal), lost, ctx);
 	let from = 0;
 	// One context for every read: the request's scope (the reads run in it) cut by the loss too.

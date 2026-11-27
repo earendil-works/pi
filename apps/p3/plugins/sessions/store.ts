@@ -2,13 +2,17 @@
 // it was archived), one per conversation moved to a location of its own, their named queries, and every write. Both
 // are keyed by the session's address, so a session's export, import and delete carry them. Who may do what is the
 // things plugin's (the session's workspace); this store checks no caller and holds no members, but a move needs the
-// agents' Work on the machine (decision 24).
+// agents' Work on the machine (decision 24). Rows older code wrote naming this device as `this-device` are rewritten
+// once per Pi to its machine's id, a session's own folder moved from the data directory to the work root (decision
+// 125).
 
-import { mkdir } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { cp, mkdir, rename, rm, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join } from "node:path";
 import {
 	and,
+	bool,
 	type Ctx,
+	defineState,
 	defineTable,
 	eq,
 	evolveTable,
@@ -18,6 +22,7 @@ import {
 	invalid,
 	json,
 	nul,
+	obj,
 	type P3Principal,
 	query,
 	type RowOf,
@@ -82,15 +87,68 @@ const Locations = defineTable("sessions.locations", {
 /** The machine kind's tick that lets the agents work on a machine (Work here). */
 const WORK = "work";
 
+/**
+ * The id a session's location named this device by before the machine was a thing (p3-base's data from 7093618af,
+ * decision 125): rewritten once per Pi to the machine's id (`OLD_DEVICE` rows, the `Rewrites` marker).
+ */
+const OLD_DEVICE = "this-device";
+
+/** Which one-time rewrites of the rows this Pi has run: the old device id's (decision 125). */
+const Rewrites = defineState("sessions.rewrites", {
+	schema: obj({ thisDevice: bool() }),
+	version: 1,
+	initial: () => ({ thisDevice: false }),
+	persist: true,
+	// One small value written once: a checkpoint keeps it a single row.
+	checkpointWhen: () => true,
+});
+
 /** Serves `SessionsStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(SessionsStore, (_params, self) => {
 		const rows = self.table(Rows);
+		const rewrites = self.state(Rewrites);
 		const things = self.get(ThingsStore, {});
 		// This device's machine: where a session works unless it says otherwise.
 		const device = self.get(OneThing, { kind: MACHINE_KIND });
 		const runtime = self.registry(ServerRuntime);
 		const locations = self.table(Locations);
+		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now,
+		// and a session's own folder moves to where new sessions get theirs (one read of every row, no index on
+		// `machine`: it runs once, the marker says so after). The folders move outside a transaction: a copy may take
+		// long.
+		self.onLive(async (ctx) => {
+			if (rewrites.value.thisDevice) return;
+			const machine = await until(device.thing, (id) => id !== "", ctx);
+			const old = query(Rows).where((s) => eq(s.machine, OLD_DEVICE));
+			const found = await self.tx(async (tx) => {
+				const all: { id: RowOf<typeof ROW>["id"]; folder: string }[] = [];
+				for await (const row of tx.rows(rows, old)) all.push({ id: row.id, folder: row.folder });
+				return all;
+			}, ctx);
+			const moved: typeof found = [];
+			for (const { id, folder } of found) {
+				const session = id.params.id;
+				const own = join(runtime.value.dataDir, "folders", session);
+				// A location the person chose stays where it is.
+				moved.push({
+					id,
+					folder: folder === own ? await movedFolder(own, join(runtime.value.workRoot, session)) : folder,
+				});
+			}
+			await self.tx(async (tx) => {
+				for (const { id, folder } of moved) {
+					// A session deleted while its folder moved stays deleted.
+					if ((await tx.get(rows, { id })) !== undefined) {
+						tx.update(rows, { id }, { machine, folder });
+					}
+				}
+				return null;
+			}, ctx);
+			await rewrites.change((draft) => {
+				draft.thisDevice = true;
+			}, ctx);
+		});
 		/** Sets `change` on session `id`'s row: an `update`, so only the reads that depend on those columns run. */
 		const update = (id: string, change: SetOf<typeof ROW, readonly ["id"]>, ctx: Ctx<P3Principal>) =>
 			self.tx(async (tx) => {
@@ -232,6 +290,42 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 function noMachine(machine: string): Error {
 	return invalid("args", `sessions: no machine ${machine}`, { message: messages.message("noMachine", machine) });
 }
+
+/**
+ * Moves a session's own folder `from` to `to` and answers where its files are now: `to` once moved; `from` when `to`
+ * is taken or the move failed (nothing is lost, nothing overwritten); `to` when only `to` is there (a move a crash cut
+ * short after the rename).
+ */
+async function movedFolder(from: string, to: string): Promise<string> {
+	const [source, target] = await Promise.all([present(from), present(to)]);
+	if (target) return source ? from : to;
+	if (!source) return from;
+	try {
+		await mkdir(dirname(to), { recursive: true, mode: 0o700 });
+		await rename(from, to);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EXDEV") return from;
+		// Another file system: a copy beside the target, renamed into place once whole, so `to` is never a part.
+		const part = `${to}.moving`;
+		try {
+			await rm(part, { recursive: true, force: true });
+			await cp(from, part, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+			await rename(part, to);
+		} catch {
+			await rm(part, { recursive: true, force: true });
+			return from;
+		}
+		await rm(from, { recursive: true, force: true });
+	}
+	return to;
+}
+
+/** Whether `path` is there. */
+const present = (path: string) =>
+	stat(path).then(
+		() => true,
+		() => false,
+	);
 
 /** A table row as the store's queries answer it. */
 function shown({ id, machine, folder, state, archivedAt, model, ...row }: RowOf<typeof ROW>) {

@@ -16,11 +16,8 @@ import {
 	type NameEntry,
 	type StagedFile,
 } from "./contract.server.ts";
-import { MACHINE_KIND } from "./contract.ts";
+import { MACHINE_KIND, THIS_DEVICE_TYPE } from "./contract.ts";
 import { messages } from "./messages.ts";
-
-/** The type's name: what this device's machine stores (its seeded thing, which has no row, is of it). */
-export const THIS_DEVICE_TYPE = "local";
 
 /** This device's machine: the machine kind's one thing (`OneThing`'s params). */
 export const THIS_DEVICE = { kind: MACHINE_KIND };

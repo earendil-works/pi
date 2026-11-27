@@ -4,7 +4,7 @@
 // listed there only. One terminal, many viewers: each viewer reads its bytes from the address `attach` answers (its
 // kept output, then what follows, raw), the agent its kept output with `backlog`. Watch (for people) lists terminals
 // and attaches to them; Use (people and agents) does that too, and opens terminals, types in them, reads their kept
-// output, resizes and closes them.
+// output, resizes and closes them. By default only the agents get Use; people get a tick through Who may.
 
 import { arr, int, method, obj, opt, str } from "@earendil-works/p3/v1";
 import { TerminalRow } from "../environments/contract.ts";
@@ -14,8 +14,8 @@ import { messages } from "./messages.ts";
 /** A machine thing's id. */
 const MachineId = str({ min: 1, max: 200 });
 
-/** A terminal's id. */
-const TerminalId = str({ min: 1, max: 100 });
+/** A terminal's id, as `open` answers it and the list shows it. */
+export const TerminalId = str({ min: 1, max: 100 });
 
 /** A terminal's size in character cells. */
 const Columns = int({ min: 1, max: 1000 });
@@ -52,7 +52,7 @@ export const TerminalsKind = defineThing("terminals.pane", {
 			obj({ machine: MachineId, folder: str({ min: 1, max: 4096 }), columns: Columns, rows: Rows }),
 			str(),
 		),
-		/** Types `bytes` into a terminal (keys as the terminal reads them: `\r` is Enter); refused once its program ended. */
+		/** Types `bytes` into a terminal (keys as the terminal reads them: `\r` is Enter); refused once its program ends. */
 		type: method(obj({ terminal: TerminalId, bytes: str({ max: 64 * 1024 }) })),
 		/** Gives a terminal a new size. */
 		resize: method(obj({ terminal: TerminalId, columns: Columns, rows: Rows })),
@@ -67,8 +67,9 @@ export const TerminalsKind = defineThing("terminals.pane", {
 			gives: ["terminals", "attach", "backlog", "open", "type", "resize", "close"],
 		},
 	},
-	// A Read share's guests watch (decision 100): Watch changes nothing.
-	defaultGrants: { everyone: ["watch"], agents: ["use"], guests: ["watch"] },
+	// The agents use them (the terminal tool); people, guests too, only once Who may lets them: a terminal shows what
+	// runs on the machine (round 5, decision 100's guests line withdrawn here, until folder limits, ERNDL-1151).
+	defaultGrants: { agents: ["use"] },
 });
 
 /** Terminals held in a workspace: `TerminalsKind`'s contract. */

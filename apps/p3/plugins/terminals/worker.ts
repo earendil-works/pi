@@ -9,7 +9,7 @@
 import { defineFacet, forbidden, int, invalid, lit, obj, opt, sleep, str, union } from "@earendil-works/p3/v1";
 import { defineExtension, defineTool } from "@earendil-works/p3/v1/worker";
 import { type HarnessSession, type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
-import { type Terminals, TerminalsKind } from "./kind.ts";
+import { TerminalId, type Terminals, TerminalsKind } from "./kind.ts";
 import { plain } from "./plain.ts";
 
 export default defineFacet((_host, self) => {
@@ -31,16 +31,13 @@ const READ_BYTES = 4 * READ;
 /** How long `read` waits at most before it reads. */
 const MAX_WAIT = 30_000;
 
-/** The terminals' harness part (exported for its test): the tool while the nearest Terminals gives Use. */
-export const terminalsPart = thingHarnessPart(TerminalsKind, (things, session) => {
+/** The terminals' harness part: the tool while the nearest Terminals gives Use. */
+const terminalsPart = thingHarnessPart(TerminalsKind, (things, session) => {
 	// Never called with none; the nearest is last (stacking "nearest").
 	const nearest = things[things.length - 1];
 	if (nearest === undefined || !nearest.ref.granted.has("open")) return {};
 	return { extension: defineExtension({ name: TerminalsKind.name, tools: [terminalTool(nearest, session)] }) };
 });
-
-/** A terminal's id, as `list` and `open` answer it. */
-const TerminalId = str({ min: 1, max: 100 });
 
 /** What the tool does: one action, with the arguments its kind needs. */
 const Action = union([

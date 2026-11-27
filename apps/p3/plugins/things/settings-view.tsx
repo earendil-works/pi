@@ -20,10 +20,10 @@ import {
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
-import { Invite, useNames } from "./contract.web.tsx";
+import { Invite, useErrorText, useNames } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useErrorText, useFromText, useUnavailable } from "./use-page.ts";
+import { useFromText, useUnavailable } from "./use-page.ts";
 import { WhatIsHere } from "./what-is-here.tsx";
 import { WhoIsHere } from "./who-is-here.tsx";
 import { WhoMayTable } from "./who-may.tsx";

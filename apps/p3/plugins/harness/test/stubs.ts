@@ -245,14 +245,10 @@ export function standIns(
 	const device = defineFacet((_host, self) => {
 		self.contribute(
 			ThingHarnessParts,
-			thingHarnessPart(
-				DeviceKind,
-				() => ({
-					env: (location) =>
-						location.machine === "this-device" ? new NodeExecutionEnv({ cwd: location.folder }) : undefined,
-				}),
-				{ env: "gives" },
-			),
+			thingHarnessPart(DeviceKind, () => ({
+				env: (location) =>
+					location.machine === "this-device" ? new NodeExecutionEnv({ cwd: location.folder }) : undefined,
+			})),
 		);
 	});
 	const holding = defineFacet((host) => {
@@ -290,20 +286,14 @@ export function standIns(
 			const Kind = defineThing(kind, { version: 1, ticks: {} });
 			self.contribute(
 				ThingHarnessParts,
-				thingHarnessPart(
-					Kind,
-					(_things, session) => {
-						count(kind);
-						seen?.(session);
-						return {
-							...(prompt === undefined
-								? {}
-								: { extension: { sections: [section("test-extra", () => prompt)] } }),
-							...(env === undefined ? {} : { env }),
-						};
-					},
-					env === undefined ? {} : { env: "gives" },
-				),
+				thingHarnessPart(Kind, (_things, session) => {
+					count(kind);
+					seen?.(session);
+					return {
+						...(prompt === undefined ? {} : { extension: { sections: [section("test-extra", () => prompt)] } }),
+						...(env === undefined ? {} : { env }),
+					};
+				}),
 			);
 		}
 	});

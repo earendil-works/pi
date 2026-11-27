@@ -122,8 +122,8 @@ with them:
 - **A tool acts as the agent** through the held reference (decision 120.1); `session.call(fn, context)` runs `fn` as
   the session's worker with references of its own, released when `fn` settles, for a tool that needs one.
 - **A part's environment** is a function of the conversation's location (`{ machine, folder }`), answered by the
-  machine kind for the machines the agent may work on (`thingHarnessPart(…, { env: "gives" })`). Once such a part is
-  registered, a machine withheld or let go of leaves no environment.
+  machine kind for the machines the agent may work on. Only parts give environments: a machine withheld or let go of
+  leaves none.
 - **The agent makes things** with the things plugin's own part, `make_thing` over the session workspace's `make`:
   planned, not built yet.
 - Installing a plugin gives no session anything; there is no global tools registry. An agent that holds no login has

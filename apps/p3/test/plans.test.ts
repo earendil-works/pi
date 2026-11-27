@@ -1,8 +1,9 @@
-// The plans of the stores' named queries (sessions, people, notes, canvas, checklist, prompt), as SQLite runs them: each read must search the index its comment names, with no sort (a temporary B-tree would read and sort every
-// row of a tie, or of the list, for one page), except the joins ordered by a partner's column, which say in their
-// comment that SQLite sorts their few rows: for those the plan asserted is the one they get. The test opens the
-// server's store on a SQLite database of its own, records the statements Chord runs while each query reads its first
-// page and the page after a bookmark, and asks SQLite for each one's plan.
+// The plans of the stores' named queries (sessions, people, notes, canvas, checklist, prompt, Files' staged uploads),
+// as SQLite runs them: each read must search the index its comment names, with no sort (a temporary B-tree would read
+// and sort every row of a tie, or of the list, for one page), except the joins ordered by a partner's column, which say
+// in their comment that SQLite sorts their few rows: for those the plan asserted is the one they get. The test opens
+// the server's store on a SQLite database of its own, records the statements Chord runs while each query reads its
+// first page and the page after a bookmark, and asks SQLite for each one's plan.
 
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -19,6 +20,7 @@ import { ChecklistStore } from "../plugins/checklist/store.ts";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import { seeded } from "../plugins/environments/test/seeded.ts";
+import { StagingStore, serveStaging } from "../plugins/files/staging.ts";
 import notesServer from "../plugins/notes/server.ts";
 import { NotesStore } from "../plugins/notes/store.ts";
 import peopleServer from "../plugins/people/server.ts";
@@ -45,8 +47,11 @@ describe("the plans of the stores' queries", () => {
 		const reads = new Set<string>();
 		database.prepare = (sql) => {
 			const statement = prepare(sql);
-			// The stores' tables, and the session defaults' own (a local of the sessions plugin besides its store).
-			if (!sql.startsWith("SELECT ") || !/\.store:|sessions\.defaults-settings:/.test(sql)) return statement;
+			// The stores' tables, the session defaults' own (a local of the sessions plugin besides its store) and Files'
+			// staged uploads' (a local of the files plugin besides its routes).
+			if (!sql.startsWith("SELECT ") || !/\.store:|sessions\.defaults-settings:|files\.staging:/.test(sql)) {
+				return statement;
+			}
 			const all = statement.all.bind(statement);
 			const iterate = statement.iterate.bind(statement);
 			// Chord passes positional parameters only.
@@ -82,6 +87,8 @@ describe("the plans of the stores' queries", () => {
 					{ name: "@earendil-works/p3-things", facet: thingsServer },
 					// The kinds' store alone: its kinds need the things plugin, whose store has a plan test of its own.
 					{ name: "@earendil-works/p3-prompt", facet: defineFacet((h) => servePrompt(h)) },
+					// Files' staged uploads alone: the files plugin's kind needs the things plugin's kinds loaded.
+					{ name: "@earendil-works/p3-files", facet: defineFacet((h) => serveStaging(h)) },
 				],
 				context,
 			);
@@ -124,6 +131,13 @@ describe("the plans of the stores' queries", () => {
 			for (const thing of ["t1", "t2"]) {
 				await prompt.configureInstructions({ thing, text: "be kind", language: "en" }, context);
 				await prompt.configureSkills({ thing, folder: thing }, context);
+			}
+			// Staged uploads on two machines, made at 1..3 each: an earlier process's are those before a bound.
+			const staging = await host.get(StagingStore, {}, context);
+			for (const machine of ["m1", "m2"]) {
+				for (let at = 1; at <= 3; at++) {
+					await staging.remember({ machine, path: `/tmp/${at}`, identity: `${at}`, at }, context);
+				}
 			}
 			/** The plans of the statements `read` makes Chord prepare. */
 			const plansOf = async (read: Read): Promise<string[]> => {
@@ -181,6 +195,11 @@ describe("the plans of the stores' queries", () => {
 				["items.of", pages(checklists.items.of, { checklist: "c1" }), { index: `${K}.items:by_order` }],
 				["prompt.instructions.of", pages(prompt.instructions.of, { thing: "t1" }), {}],
 				["prompt.skills.of", pages(prompt.skills.of, { thing: "t1" }), {}],
+				[
+					"staging.stale",
+					[() => staging.stale({ machine: "m1", before: 3 }, context)],
+					{ index: "files.staging:files.staging:by_machine" },
+				],
 			];
 			for (const [name, read, expected] of cases) {
 				const plans = (await Promise.all(read.map((each) => plansOf(each)))).flat();

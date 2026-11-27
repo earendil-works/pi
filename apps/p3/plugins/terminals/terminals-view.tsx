@@ -1,27 +1,17 @@
 // The Terminals view (`Views`): the terminals open in a workspace as tabs, one shown at a time on a `TerminalScreen`
 // (screen.tsx; `PlainScreen` until a renderer is decided), and, with Use, New terminal (where the workspace works:
-// `useWorkLocation`), typing and Close. The screen
-// reads the shown terminal's bytes from the address `attach` answers (kept output, then what follows, raw); Watch and
-// Use withheld take the list away at once and end the bytes.
+// `useWorkLocation`), typing and Close. The screen reads the shown terminal's bytes from the address `attach` answers
+// (kept output, then what follows, raw); Watch and Use withheld take the list away at once and end the bytes.
 
 import { Button, IconButton } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Reference, reportError, withCancel } from "@earendil-works/p3/v1";
-import {
-	CloseIcon,
-	refusalText,
-	useHold,
-	useLive,
-	useMessages,
-	useRefState,
-	useWatch,
-} from "@earendil-works/p3/v1/web";
+import { CloseIcon, useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useCallback, useState } from "react";
 import { useWorkLocation } from "../environments/contract.web.tsx";
-import { messages as machineMessages } from "../environments/messages.ts";
-import type { ThingViewProps } from "../things/contract.web.tsx";
+import { type ThingViewProps, useErrorText } from "../things/contract.web.tsx";
 import { Terminals } from "./kind.ts";
 import { messages } from "./messages.ts";
-import { PlainScreen, type TerminalScreen } from "./screen.tsx";
+import { PlainScreen } from "./screen.tsx";
 import styles from "./terminals-view.module.css";
 
 /** What the tabs open on: the workspace, its Terminals thing, and the machine and folder new terminals start in. */
@@ -30,8 +20,6 @@ type TabsProps = {
 	readonly thing: string;
 	readonly machine: string;
 	readonly folder: string;
-	/** What draws a terminal (default `PlainScreen`). */
-	readonly Screen?: TerminalScreen;
 };
 
 /** The size a new terminal starts with, before its screen measures itself. */
@@ -48,7 +36,7 @@ export function TerminalsView(props: ThingViewProps) {
 /** The terminals of `props.workspace` as tabs. */
 function Tabs(props: TabsProps) {
 	const { t } = useMessages(messages);
-	const environments = useMessages(machineMessages).t;
+	const errorText = useErrorText();
 	const ref = useHold(Terminals, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const state = useRefState(ref);
@@ -60,9 +48,8 @@ function Tabs(props: TabsProps) {
 	if (live === undefined) return <p className={styles.note}>{t("loading")}</p>;
 	if (list === undefined) return <p className={styles.note}>{t("denied")}</p>;
 	const shown = list.find((terminal) => terminal.id === chosen) ?? list[list.length - 1];
-	const failed = (failure: unknown) => setError(refusalText(failure, { terminals: t, environments }));
+	const failed = (failure: unknown) => setError(errorText(failure));
 	const open = live.open;
-	const Screen = props.Screen ?? PlainScreen;
 	return (
 		<section aria-label={t("view")} className={styles.view} data-terminals="">
 			<div className={styles.tabs} role="tablist">
@@ -112,7 +99,7 @@ function Tabs(props: TabsProps) {
 							</IconButton>
 						)}
 					</div>
-					<Shown key={shown.id} label={shown.folder} live={live} Screen={Screen} terminal={shown.id} />
+					<Shown key={shown.id} label={shown.folder} live={live} terminal={shown.id} />
 				</>
 			)}
 			{error === undefined ? null : <p className={styles.error}>{error}</p>}
@@ -120,14 +107,13 @@ function Tabs(props: TabsProps) {
 	);
 }
 
-/** Terminal `terminal` on `Screen`: its bytes from the reference, its keys and size back to it with Use. */
+/** Terminal `terminal` on its screen: its bytes from the reference, its keys and size back to it with Use. */
 function Shown(props: {
 	readonly live: Reference<typeof Terminals>;
 	readonly terminal: string;
 	readonly label: string;
-	readonly Screen: TerminalScreen;
 }) {
-	const { live, terminal, Screen } = props;
+	const { live, terminal } = props;
 	const subscribe = useCallback(
 		(onBytes: (bytes: Uint8Array) => void) => followBytes(live, terminal, onBytes),
 		[live, terminal],
@@ -135,7 +121,7 @@ function Shown(props: {
 	const type = live.type;
 	const resize = live.resize;
 	return (
-		<Screen
+		<PlainScreen
 			label={props.label}
 			subscribe={subscribe}
 			{...(type === undefined ? {} : { onInput: (bytes) => void type({ terminal, bytes }, BACKGROUND_CONTEXT) })}

@@ -1,6 +1,7 @@
-// Files' search walk (files/server.ts `searched`), over a stand-in machine whose host hides one folder of the test's
-// own: a hidden folder and `.git` are not entered, a search that found more than it answers says so, and a cancelled
-// search fails rather than answering what it found so far.
+// Files' search walk (files/server.ts `searched`) and a folder's pages (`paged`), over a stand-in machine whose host
+// hides one folder of the test's own and counts its reads: a hidden folder and `.git` are not entered, a search that
+// found more than it answers says so, a cancelled search fails rather than answering what it found so far, and a page
+// of a big folder costs one listing and one read per entry shown (the time it takes: bench/files-page.ts).
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
@@ -30,11 +31,22 @@ let entered = Promise.withResolvers<void>();
 /** The folders listed, in order. */
 const listed: string[] = [];
 
+/** The entries read one by one (`fileInfo`), in order. */
+const read: string[] = [];
+
+/** Node's environment, its `fileInfo` reads recorded in `read`. */
+class CountingEnv extends NodeExecutionEnv {
+	override fileInfo(path: string, context: Context) {
+		read.push(path);
+		return super.fileInfo(path, context);
+	}
+}
+
 /** A stand-in for this device's host: Node's files, `hiddenFolder` hidden, a listing of `stuck` waiting. */
 const hiding = fakeType(
 	() =>
 		fakeMachine({
-			env: new NodeExecutionEnv({ cwd: "/" }),
+			env: new CountingEnv({ cwd: "/" }),
 			hidden: [hiddenFolder],
 			listNames: async (folder, max, context) => {
 				listed.push(folder);
@@ -55,6 +67,7 @@ const hiding = fakeType(
 describe("Files' search", () => {
 	let t: TestedPlugin<P3Principal>;
 	let root: string;
+	let entries: (path: string, after?: string) => Promise<{ entries: { name: string }[]; next?: string }>;
 	let search: (
 		path: string,
 		query: string,
@@ -78,6 +91,24 @@ describe("Files' search", () => {
 		const by = { kind: "plugin", plugin: "test" } as const;
 		const id = await things.createPerson({ name: "Ann", madeBy: by }, context);
 		await things.putParty({ workspace: pi, party: { kind: "person", person: id }, source: by }, context);
+		const browse = {
+			workspace: pi,
+			thing,
+			party: { kind: "person", person: id },
+			tick: "browse",
+			gives: true,
+		} as const;
+		await things.setGrants({ source: by, grants: [browse] }, context);
+		entries = (path, after) =>
+			t.root(
+				async (ctx) =>
+					(await ctx.get(Files, { workspace: pi, thing }, { readyTimeout: 500 })).entries!(
+						{ machine, path, ...(after === undefined ? {} : { after }) },
+						ctx,
+					),
+				context,
+				{ principal: { kind: "person", id, name: "Ann" } },
+			);
 		search = (path, query, call = context) =>
 			t.root(
 				async (ctx) =>
@@ -135,5 +166,20 @@ describe("Files' search", () => {
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		assert.deepEqual(listed.slice(before), [], "no folder read after the cancellation");
 		stuck = "";
+	});
+
+	// Fable, round 5: a wall-clock budget failed under load; the work is what the page costs.
+	it("reads a page of a folder of 1,000 entries with one listing and 200 entry reads, the next after it", async () => {
+		const big = join(root, "big");
+		await mkdir(big);
+		await Promise.all(
+			Array.from({ length: 1000 }, (_, i) => writeFile(join(big, `f${String(i).padStart(4, "0")}`), "")),
+		);
+		const [listedBefore, readBefore] = [listed.length, read.length];
+		const first = await entries(big);
+		assert.deepEqual([listed.length - listedBefore, read.length - readBefore], [1, 200]);
+		assert.deepEqual([first.entries.length, first.entries[0]?.name], [200, "f0000"]);
+		const second = await entries(big, first.next);
+		assert.equal(second.entries[0]?.name, "f0200");
 	});
 });

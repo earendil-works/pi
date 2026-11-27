@@ -1,5 +1,6 @@
 // The files plugin's texts people see: its ticks' labels (decision 65), as the things plugin's Settings view shows
-// them, what a refused call says, and the Files view's labels. Imported by the contract and by every facet that renders.
+// them, what a refused call says, and the Files view's labels. Imported by the contract and by every facet that
+// renders.
 
 import { defineMessages } from "@earendil-works/p3/v1";
 

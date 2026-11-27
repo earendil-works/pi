@@ -10,6 +10,12 @@ import { defineThing } from "../things/kind.ts";
 import { MACHINE_KIND } from "./contract.ts";
 import { messages } from "./messages.ts";
 
+/** What a new machine is made of: its type (a `MachineTypes` entry's name) and that type's settings. */
+export const MachineInput = obj({ type: str(), settings: unknown() });
+
+/** What a new machine is made of (see `MachineInput`). */
+export type MachineInput = Static<typeof MachineInput>;
+
 /**
  * What a machine is: its name (its thing's), its type, and whether it can be used (`unavailable`: its type is not
  * installed; it comes back when the type does).
@@ -30,13 +36,12 @@ export type MachineInfo = Static<typeof MachineInfo>;
 export const MachineKind = defineThing(MACHINE_KIND, {
 	version: 1,
 	makers: "plugin",
-	// A machine's type and settings (`{ type, settings }`), checked by the create hook against its type's schema. Any
-	// input until the things plugin's `one` takes one (things2): the seeded machine is made with none, and the store
-	// checks a seed's input too; then `obj({ type: str(), settings: unknown() })`.
-	create: { input: unknown() },
+	// The store checks the input's shape; the create hook checks the settings against the type's schema.
+	create: { input: MachineInput },
 	state: { info: MachineInfo },
 	ticks: { work: { label: messages.message("tickWork"), for: "agents" } },
-	// A Read share's guests are let in with no tick (decision 100), so Files and Terminals let them browse and watch.
+	// A Read share's guests are let in with no tick (decision 100): what they may do there is Files' and Terminals'
+	// ticks, which nobody gets by default.
 	defaultGrants: { everyone: [], agents: ["work"], guests: [] },
 });
 

@@ -45,6 +45,9 @@ before(async () => {
 		await things.putParty({ workspace: pi, party: { kind: "person", person: owner!.id }, source: BY }, ctx);
 		files = await seeded(await ctx.get(OneThing, { kind: FilesKind.name }), ctx);
 		machine = await seeded(await ctx.get(OneThing, { kind: MACHINE_KIND }), ctx);
+		// Who may lets everyone in Pi browse, as the owner would: the kind gives nobody anything.
+		const grant = { workspace: pi, thing: files, party: { kind: "everyone" }, tick: "browse", gives: true } as const;
+		await things.setGrants({ source: BY, grants: [grant] }, ctx);
 	}, context);
 });
 

@@ -1,10 +1,11 @@
-// The files kind: Files (`files.browser`), the one thing in Pi through which people browse, search,
-// download and upload the files of the machines a workspace sees (decision 24). Every call names its machine (a
-// machine thing's id) and an absolute path; the server refuses a machine that is not available to the caller in the
-// workspace, and Pi's own data folder. Browse gives listing, searching and opening (an address to read a file from);
-// Edit gives uploading (an address to send a file to), renaming and removing. Both are for people: an agent works on
-// files with the coding tools. No member is plain: someone let in with no tick gets an empty object. File content
-// never goes through a state member: it travels on the two routes (transfers.ts).
+// The files kind: Files (`files.browser`), the one thing in Pi through which people browse, search, download and upload
+// the files of the machines a workspace sees (decision 24). Every call names its machine (a machine thing's id) and an
+// absolute path; the server refuses a machine that is not available to the caller in the workspace, and Pi's own data
+// folder. Browse gives listing, searching and opening (an address to read a file from); Edit gives uploading (an
+// address to send a file to), renaming and removing. Both are for people: an agent works on files with the coding
+// tools. Nobody but the owner and the maker gets either by default (Who may gives them). No member is plain: someone
+// let in with no tick gets an empty object. File content never goes through a state member: it travels on the two
+// routes (transfers.ts).
 
 import { arr, bool, int, method, obj, oneOf, opt, type Static, str } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
@@ -81,8 +82,9 @@ export const FilesKind = defineThing("files.browser", {
 		browse: { label: messages.message("tickBrowse"), for: "people", gives: FILES_BROWSES },
 		edit: { label: messages.message("tickEdit"), for: "people", gives: FILES_EDITS },
 	},
-	// A Read share's guests browse (decision 100): Browse changes nothing.
-	defaultGrants: { everyone: ["browse"], guests: ["browse"] },
+	// Nobody but the owner and the maker is let in until Who may lets them, guests neither: a machine's files are all of
+	// it, its secrets too, until folder limits exist (ERNDL-1151; round 5, decision 100's guests line withdrawn here).
+	defaultGrants: {},
 });
 
 /** Files held in a workspace: `FilesKind`'s contract. */

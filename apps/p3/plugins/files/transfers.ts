@@ -5,13 +5,14 @@
 // at the next piece, a read under way cut. Both are checked before the machine's host is asked for. Each route checks
 // the member once when it starts (the tick, the machine and the path, live); the upload checks it again before it
 // lands, and from the landing's call on the landing has won over a loss.
-// - `GET /files/download`: one reader opened once (the path's last component not followed) and read as the browser
-//   asks (ranges answered), so a file saved meanwhile never splices two revisions; released when the response ends
-//   (read whole, a range, `HEAD`, 416, a disconnect), on a failure or a loss.
+// - `GET /files/download`: one reader opened once (the path's last component not followed) and read as the browser asks
+//   (ranges answered), so a file saved meanwhile never splices two revisions; released when the response ends (read
+//   whole, a range, `HEAD`, 416, a disconnect), on a failure or a loss.
 // - `PUT /files/upload`: the body streamed into a file staged beside the target (`MachineHost.stageFile`: a name of its
 //   own, only the server's user reads it) and landed over the target once all of it came, keeping the replaced file's
 //   permission bits; discarded on a failure, a refusal, a loss or a disconnect, and remembered meanwhile (with its
-//   identity) so a crash's leftovers go (staging.ts), never a file that took their place. Two uploads of one name never mix: each has its file, the last one landed wins whole.
+//   identity) so a crash's leftovers go (staging.ts), never a file that took their place. Two uploads of one name never
+//   mix: each has its file, the last one landed wins whole.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -41,7 +42,7 @@ import {
 	machineAvailable,
 	type StagedFile,
 } from "../environments/contract.server.ts";
-import { abortWhen, Gives } from "../things/contract.server.ts";
+import { abortWhen, abortWhenLost, Gives } from "../things/contract.server.ts";
 import { DOWNLOAD_PATH, Files, UPLOAD_PATH } from "./kind.ts";
 import { must, placed, placedNew } from "./places.ts";
 import { StagingStore, serveStaging } from "./staging.ts";
@@ -243,12 +244,7 @@ async function held(
 	const at = await hosts(machine, ctx);
 	if (at === undefined || !allowed()) return undefined;
 	const lost = new AbortController();
-	abortWhen(
-		files.state,
-		(state) => state.kind === "failed" || state.kind === "ended" || files[member] === undefined,
-		lost,
-		ctx,
-	);
+	abortWhenLost(files, member, lost, ctx);
 	abortWhen(answers, (given) => !machineAvailable(caller, given[machine]), lost, ctx);
 	return {
 		files,
