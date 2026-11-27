@@ -25,8 +25,8 @@ const Rows = int({ min: 1, max: 1000 });
 
 /**
  * Terminals (`terminals.pane`): one per Pi, made by this plugin, linked in Pi only (below it can only be hidden or have
- * its ticks withheld); the nearest one reaching a workspace applies. A new link gives everyone here Watch and the
- * agents Use; Use for people is the owner's (the owner flag) and whoever it is granted to.
+ * its ticks withheld); the nearest one reaching a workspace applies. A new link gives the agents Use and people
+ * nothing (decision 126): Watch and Use are the owner's (the owner flag) and whoever Who may gives them to.
  */
 export const TerminalsKind = defineThing("terminals.pane", {
 	version: 1,
