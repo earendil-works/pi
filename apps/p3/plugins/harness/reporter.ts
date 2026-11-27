@@ -21,7 +21,7 @@ import {
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/p3/v1/worker";
-import { Anchor, REQUEST, requestOf, Stopper, Subagents, subagentOf, toolsOf } from "./roster.ts";
+import { Anchor, REQUEST, requestOf, Stopper, Subagents, sentTo, toolsOf } from "./roster.ts";
 
 /**
  * What a reporter delivers: to which subagent (its name and conversation, and its generation when the message was
@@ -177,14 +177,14 @@ async function admitOnce(
 	await runtime.commit(async (tx) => {
 		if ((await tx.submissionByRequest(subagent.id, draft.requestId)) !== undefined) return undefined;
 		const roster = await tx.doc(Subagents);
-		const agent = subagentOf(roster.agents, reporter.input.name);
-		const sent = agent?.conversationId === reporter.input.conversationId ? agent : undefined;
+		const found = sentTo(roster.agents, reporter.input);
+		const sent = found?.agent;
 		const current = sent?.generation === reporter.input.generation ? sent : undefined;
 		const withdrawn = roster.withheld === true || (roster.withholds ?? 0) !== reporter.input.withholds;
 		if (current === undefined || withdrawn) {
 			admission = { kind: "refused" };
 			if (sent !== undefined) sent.followUps = sent.followUps.filter((id) => id !== reporter.id);
-			return reportOf(current === undefined ? undefined : failed(reporter.input, WITHDRAWN));
+			return reportOf(current === undefined ? undefined : failed(found?.name ?? reporter.input.name, WITHDRAWN));
 		}
 		// A stop is ending the older generation's work: nothing new joins it meanwhile, so its abort cannot take it; the
 		// stopper's end, which clears the mark, wakes the reporter (Astra, round 3 of the port).
@@ -230,7 +230,7 @@ function reportOf(report?: string) {
 }
 
 /** The report of a message to `input`'s subagent that failed, and why. */
-function failed({ name }: ReporterInput, why: string): string {
+function failed(name: string, why: string): string {
 	return `[subagent ${name} failed: ${why}]`;
 }
 
@@ -264,11 +264,12 @@ async function decide(
 	context: Context,
 ): Promise<void> {
 	await runtime.commit(async (tx) => {
-		const agent = subagentOf((await tx.doc(Subagents)).agents, input.name);
-		if (agent?.conversationId !== input.conversationId) return reportOf();
+		const found = sentTo((await tx.doc(Subagents)).agents, input);
+		if (found === undefined) return reportOf();
+		const { name, agent } = found;
 		if (settled.status === "unanswered") {
 			if (agent.generation !== input.generation) return reportOf();
-			return reportOf(failed(input, stranded ?? (settled.reason === "aborted" ? WITHDRAWN : settled.reason)));
+			return reportOf(failed(name, stranded ?? (settled.reason === "aborted" ? WITHDRAWN : settled.reason)));
 		}
 		if (settled.type !== "input") return reportOf();
 		const { answer } = settled;
@@ -277,7 +278,7 @@ async function decide(
 		if (agent.reportedTo.some((each) => each.answer === answer && each.to === to)) return reportOf();
 		agent.reportedTo.push({ answer, to });
 		const message = (await tx.entry(AssistantEntry, answer))?.model?.[0];
-		return reportOf(`[subagent ${input.name} answered] ${textOf(message)}`);
+		return reportOf(`[subagent ${name} answered] ${textOf(message)}`);
 	}, context);
 }
 

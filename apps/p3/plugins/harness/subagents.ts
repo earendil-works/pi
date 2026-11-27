@@ -29,6 +29,7 @@ import {
 	Anchor,
 	givable,
 	levelOf,
+	MAX_NAME,
 	modelRef,
 	modelText,
 	Stopper,
@@ -52,7 +53,7 @@ const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as 
 /** The tool's arguments: the action, and the fields the actions take. */
 const Args = obj({
 	action: oneOf("spawn", "send", "configure", "stop", "archive", "restore", "answer", "status", "models"),
-	name: opt(str({ min: 1, max: 100 })),
+	name: opt(str({ min: 1, max: MAX_NAME })),
 	message: opt(str({ min: 1 })),
 	followUp: opt(bool()),
 	model: opt(str({ min: 1 })),

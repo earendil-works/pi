@@ -82,20 +82,21 @@ type Adopting = Pick<Harness, "commit" | "snapshot" | "conversation">;
  * Moves the subagents version 1 listed per conversation into the session's document, once: when the session's does
  * not exist yet (decision 125: stored data survives an update). Each keeps its conversation and reported answers
  * (reported to the conversation that listed it), gets the model and thinking level its conversation's agent has, every
- * tool the agent may give, generation 0; a name two conversations listed gets the conversation's id appended. Runs
- * before the harness resumes, so no reporter reads the session's document before.
+ * tool the agent may give, generation 0. Every conversation's document is read, a subagent's too (Astra, round 4 of the
+ * port). A name taken already gets a free one (`freeName`); version 1's reporters find their subagent by its
+ * conversation (`sentTo`). Runs before the harness resumes, so no reporter reads the session's document before.
  */
 export async function adoptConversationRosters(durable: Adopting, context: Context): Promise<void> {
 	if ((await durable.snapshot(Subagents, context)) !== undefined) return;
 	const owners = await durable.commit(async (tx) => {
-		const ownerless: ConversationId[] = [];
+		const all: ConversationId[] = [];
 		let cursor: Parameters<typeof tx.scanConversations>[2];
 		do {
 			const page = await tx.scanConversations({}, 200, cursor);
-			for (const record of page.items) if (record.owner === undefined) ownerless.push(record.id);
+			for (const record of page.items) all.push(record.id);
 			cursor = page.next;
 		} while (cursor !== undefined);
-		return ownerless;
+		return all;
 	}, context);
 	const adopted: { name: string; agent: Subagent }[] = [];
 	for (const owner of owners) {
@@ -110,11 +111,39 @@ export async function adoptConversationRosters(durable: Adopting, context: Conte
 	}
 	await durable.commit(async (tx) => {
 		const roster = await tx.doc(Subagents);
-		for (const { name, agent } of adopted) {
-			const free = subagentOf(roster.agents, name) === undefined ? name : `${name}-${agent.conversationId}`;
-			roster.agents[free] = agent;
-		}
+		for (const { name, agent } of adopted) roster.agents[freeName(roster.agents, name, agent.conversationId)] = agent;
 	}, context);
+}
+
+/** The longest name the `subagent` tool takes. */
+export const MAX_NAME = 100;
+
+/**
+ * `name` if no subagent of `agents` has it, else the first free one of `<name>-<conversation>`, `<name>-<conversation>-2`,
+ * ...; `name` cut so the whole stays within `MAX_NAME`, so the tool reaches it (Astra, round 4 of the port).
+ */
+function freeName(agents: Record<string, Subagent>, name: string, conversation: ConversationId): string {
+	if (subagentOf(agents, name) === undefined && name.length <= MAX_NAME) return name;
+	for (let n = 1; ; n++) {
+		const suffix = n === 1 ? `-${conversation}` : `-${conversation}-${n}`;
+		const candidate = `${name.slice(0, MAX_NAME - suffix.length)}${suffix}`;
+		if (subagentOf(agents, candidate) === undefined) return candidate;
+	}
+}
+
+/**
+ * The subagent a reporter's message went to, and its name now: the one of its name with its conversation; for a
+ * reporter of version 1, whose subagent the move may have renamed, the one with its conversation. None: gone or replaced.
+ */
+export function sentTo<T extends Subagent>(
+	agents: Record<string, T>,
+	input: { readonly name: string; readonly conversationId: ConversationId; readonly v1?: true },
+): { readonly name: string; readonly agent: T } | undefined {
+	const named = subagentOf(agents, input.name);
+	if (named?.conversationId === input.conversationId) return { name: input.name, agent: named };
+	if (input.v1 !== true) return undefined;
+	const found = Object.entries(agents).find(([, agent]) => agent.conversationId === input.conversationId);
+	return found === undefined ? undefined : { name: found[0], agent: found[1] };
 }
 
 /** The subagent `name` of `agents` (`Object.hasOwn`: a name is the model's text); none: there is no such subagent. */
@@ -189,8 +218,11 @@ export const REQUEST = "subagent:";
 /** The generation a request id names; none: not a message of a reporter. */
 function generationOf(requestId: string | undefined): number | undefined {
 	if (requestId?.startsWith(REQUEST) !== true) return undefined;
-	const generation = Number(requestId.slice(requestId.lastIndexOf(":") + 1));
-	return Number.isSafeInteger(generation) ? generation : undefined;
+	const [, generation] = requestId.slice(REQUEST.length).split(":");
+	// A reporter of version 1 (`subagent:<reporter>`) sent in generation 0 (Astra, round 4 of the port).
+	if (generation === undefined) return 0;
+	const number = Number(generation);
+	return Number.isSafeInteger(number) ? number : undefined;
 }
 
 /** What a stopper ends: the subagent `name`, and its conversation. */
