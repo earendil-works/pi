@@ -125,7 +125,7 @@ export class RegistryRecord {
 	serve(version: number, provider: RegistryProvider<unknown, unknown>): void {
 		this.#provider = { version, provider };
 		this.#table = undefined;
-		this.#invalidate();
+		this.#availabilityChanged();
 	}
 
 	/**
@@ -136,7 +136,7 @@ export class RegistryRecord {
 		this.#provider = undefined;
 		this.#table = undefined;
 		this.#composition = NEVER;
-		this.#invalidate();
+		this.#availabilityChanged();
 	}
 
 	/** The first composition of a served registry, at `load`'s publication or a reload's commit, inside its batch. */
@@ -193,8 +193,6 @@ export class RegistryRecord {
 	start(): NativeStart<unknown> {
 		if (this.#composing) throw invalid("cycle", `registry ${this.name} is read while it composes`);
 		if (this.#provider === undefined) {
-			// Read since the change: the next one (a provider served again) marks its dependents (a follow over it).
-			this.#dirty = false;
 			const error = new ChordError({
 				code: "unavailable",
 				reason: "undeclared",
@@ -255,6 +253,16 @@ export class RegistryRecord {
 		this.#dirty = false;
 		for (const value of this.#values.values()) value.close();
 		this.#values.clear();
+	}
+
+	/**
+	 * A provider came, went or changed its version: every version's value is marked, whether or not its dependents
+	 * read it since the last change. A read that found no provider, or one of another version, composed nothing, so
+	 * the table may still be dirty, and a dirty table only lists (`#invalidate`): its readers would never learn of it.
+	 */
+	#availabilityChanged(): void {
+		this.#dirty = true;
+		for (const value of this.#values.values()) value.recomposed();
 	}
 
 	/**

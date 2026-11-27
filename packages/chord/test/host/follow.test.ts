@@ -3,6 +3,8 @@
 // `self.follow(over, attach)` (ERNDL-1191), attached again to each runtime a registry gives, with the races p3's
 // plugin-side follower met in review (Opus, Astra, Fable).
 
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
 import { int, local, obj, str, unknown } from "../../src/contracts/index.ts";
@@ -243,7 +245,7 @@ describe("ends during activation and in one batch (review regressions)", () => {
 				observer.end({ kind: "ended" });
 				return { value: { n: 7 }, detach() {} };
 			},
-			{ label: "early end", context, ended() {}, live: () => true },
+			{ label: "early end", context, ended() {} },
 			new Batch(() => {}, undefined),
 		);
 		await source.attach(context);
@@ -309,7 +311,7 @@ describe("ends during activation and in one batch (review regressions)", () => {
 				observer = attached;
 				return { value: { n: 7 }, detach() {} };
 			},
-			{ label: "retirement", context, ended() {}, live: () => true },
+			{ label: "retirement", context, ended() {} },
 			batch,
 		);
 		await source.attach(context);
@@ -330,7 +332,7 @@ describe("ends during activation and in one batch (review regressions)", () => {
 				observer = attached;
 				return { value: { n: 0 }, detach() {} };
 			},
-			{ label: "unwatched", context, ended() {}, live: () => true },
+			{ label: "unwatched", context, ended() {} },
 			new Batch(() => {}, undefined),
 		);
 		await source.attach(context);
@@ -1747,6 +1749,246 @@ describe("over a changing source: its registry provider removed and served again
 				1,
 				[replaced(2)],
 			]);
+		} finally {
+			await host.close(context);
+		}
+	});
+});
+
+// Astra, round 4 of this change (M1-M3): the first attachment folds its calls until it settles (the last decides, a
+// cancelled attach crashes nothing), and a detach that ends the attempt starts no successor.
+describe("over a changing source: the first attachment's calls and the attempt's seal", () => {
+	it("a synchronous failed call from an attach that honors cancellation cannot terminate the host", () => {
+		const entry = fileURLToPath(new URL("./fixtures/follow-cancelled-attach.ts", import.meta.url));
+		const child = spawnSync(process.execPath, ["--conditions=source", "--unhandled-rejections=strict", entry], {
+			encoding: "utf8",
+		});
+		expect(child.status, child.stderr).toBe(0);
+		expect(child.stdout).toContain("observed state and error reports: failed");
+	});
+	it.each(["plain", "over"])(
+		"a %s attach whose early failure recovers before resolution activates from the final good value",
+		async (form) => {
+			const { host, errors } = await loaded((h) =>
+				h.serve(View, (_, self) => {
+					const attach: FollowAttach<Count> = async (observer, ctx) => {
+						observer.advance({ kind: "failed", error: new Error("brief failure") }, ctx);
+						observer.advance({ kind: "value", value: { n: 8 }, ops: [["r", { n: 8 }]], retired: false }, ctx);
+						return { value: { n: 7 }, detach() {} };
+					};
+					const a =
+						form === "plain"
+							? self.follow(attach)
+							: self.follow(self.writable(0), (_, obs, ctx) => attach(obs, ctx));
+					return { a, sum: self.derive([a], ([x]) => x.n) };
+				}),
+			);
+			try {
+				const ref = host.hold(View, {}, context);
+				await delivered();
+				expect([ref.state.value.kind, errors.map((e) => e.kind)]).toEqual(["live", []]);
+				expect([ref.a.value, ref.sum.value]).toEqual([{ n: 8 }, 8]);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+
+	it.each(["plain", "over"])(
+		"a %s attach ending with a failed call fails activation transient without a derive",
+		async (form) => {
+			const { host, errors } = await loaded((h) =>
+				h.serve(Follower, (_, self) => {
+					const attach: FollowAttach<Count> = async (observer, ctx) => {
+						observer.advance({ kind: "failed", error: new Error("failed before return") }, ctx);
+						return { value: { n: 7 }, detach() {} };
+					};
+					return {
+						a:
+							form === "plain"
+								? self.follow(attach)
+								: self.follow(self.writable(1), (_, obs, ctx) => attach(obs, ctx)),
+					};
+				}),
+			);
+			try {
+				const ref = host.hold(Follower, { id: "1" }, context);
+				await delivered();
+				expect(ref.state.value).toMatchObject({ kind: "failed", cause: { kind: "transient" } });
+				expect(errors).toMatchObject([{ kind: "activation_failed", failure: { kind: "transient" } }]);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+
+	it("a settled observation's detach can release the last holder without starting the successor on an aborted attempt", async () => {
+		let release = () => {},
+			replace = () => {};
+		const calls: [number, boolean][] = [];
+		const { host, errors } = await loaded((h) =>
+			h.serve(Follower, (_, self) => {
+				const s = self.writable(1);
+				replace = () => s.set(2);
+				return {
+					a: self.follow(s, async (n, _, ctx) => {
+						calls.push([n, ctx.abortSignal!.aborted]);
+						return {
+							value: { n },
+							detach() {
+								if (n === 1) release();
+							},
+						};
+					}),
+				};
+			}),
+		);
+		try {
+			const ref = await host.get(Follower, { id: "1" }, context);
+			release = () => ref.release();
+			replace();
+			await delivered();
+			expect([calls, errors]).toEqual([[[1, false]], []]);
+		} finally {
+			await host.close(context);
+		}
+	});
+});
+
+// Astra, round 4 of this change (S2): an ended or failed value withdrawn and given again in the next batch.
+describe("over a changing source: an idle value withdrawn and given again", () => {
+	it.each(["ended", "failed"])(
+		"a %s address withdrawn in one batch and given again in the next is observed without waiting for another input",
+		async (end) => {
+			const a = new Runtime(1);
+			const { host, hold, give } = await overRuntimes(a);
+			try {
+				const ref = hold();
+				await waitLive(ref);
+				const registry = await host.registry(Runtimes, context);
+				const frames: string[] = [];
+				const observed = registry.observe(
+					{
+						advance(call) {
+							if (call.kind === "value") frames.push(call.value === undefined ? "absent" : "present");
+						},
+						end() {},
+					},
+					context,
+				);
+				a.end(end === "ended" ? { kind: "ended" } : { kind: "failed", error: new Error("was unavailable") });
+				await delivered();
+				// Separate commits, not A/undefined/A *inside one commit*; native readers see both.
+				give(undefined);
+				give(a);
+				await delivered();
+				a.set(3);
+				await delivered();
+				observed.detach();
+				expect([frames, a.attachments, a.observers.size]).toEqual([["absent", "present"], 2, 1]);
+				expect(ref.a.value).toEqual({ n: 3 });
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+});
+
+// Astra, round 4 of this change: contributions changed while no provider served the registry, read meanwhile.
+describe("over a changing source: reads while its registry has no provider", () => {
+	it("a contribution changed between unserved reads is the one the restored provider composes, then later contributions still wake it", async () => {
+		const a = new Runtime(1),
+			b = new Runtime(2),
+			c = new Runtime(3),
+			d = new Runtime(4);
+		let give = (_v: Runtime) => {};
+		const consumer = { name: "@test/consumer", facet: follower() };
+		const giver = {
+			name: "@test/giver",
+			facet: defineFacet((h) =>
+				h.serve(Giver, (_, self) => {
+					const v = self.writable(a);
+					self.contribute(Runtimes, v);
+					give = (r) => v.set(r);
+					return {};
+				}),
+			),
+		};
+		const provider = {
+			name: "@test/provider",
+			facet: defineFacet((h) => h.serve(Runtimes, { compose: (t) => t[0]?.value })),
+		};
+		const host = createHost({ onError() {} });
+		try {
+			await host.load([provider, giver, consumer], context);
+			const ref = await host.get(Follower, { id: "1" }, context);
+			const registry = await host.registry(Runtimes, context);
+			const calls = changesOf(await ref.a.watch(context));
+			await host.reload([giver, consumer], context);
+			await delivered();
+			expect(() => registry.value).toThrow("no plugin serves");
+			give(b);
+			expect(() => registry.value).toThrow("no plugin serves");
+			give(c);
+			expect(() => registry.value).toThrow("no plugin serves");
+			await host.reload([giver, consumer, provider], context);
+			await delivered();
+			expect(registry.value).toBe(c);
+			give(d);
+			await delivered();
+			expect([registry.value === d, ref.a.value, calls, b.attachments]).toEqual([
+				true,
+				{ n: 4 },
+				[replaced(3), replaced(4)],
+				0,
+			]);
+		} finally {
+			await host.close(context);
+		}
+	});
+});
+
+// Astra, round 4 of this change (S1): the reader's registry version not served, then served again.
+describe("over a changing source: its registry version served again", () => {
+	it("a table change while this reader's version is not served cannot hide its compatible provider returning", async () => {
+		const a = new Runtime(1),
+			b = new Runtime(2);
+		const V2 = defineRegistry<Runtime | undefined, Runtime | undefined>(Runtimes.name, { version: 2 });
+		let give = (_r: Runtime) => {};
+		const consumer = { name: "@test/consumer", facet: follower() };
+		const giver = {
+			name: "@test/giver",
+			facet: defineFacet((h) =>
+				h.serve(Giver, (_, self) => {
+					const v = self.writable(a);
+					give = (r) => v.set(r);
+					self.contribute(Runtimes, v);
+					return {};
+				}),
+			),
+		};
+		const v1 = {
+			name: "@test/provider",
+			facet: defineFacet((h) => h.serve(Runtimes, { compose: (t) => t[0]?.value })),
+		};
+		const v2 = { name: "@test/provider", facet: defineFacet((h) => h.serve(V2, { compose: () => undefined })) };
+		const host = createHost({ onError() {} });
+		try {
+			await host.load([giver, consumer, v1], context);
+			const ref = await host.get(Follower, { id: "1" }, context);
+			const registry = await host.registry(Runtimes, context);
+			const calls = changesOf(await ref.a.watch(context));
+			await host.reload([giver, consumer, v2], context);
+			await delivered();
+			expect(() => registry.value).toThrow("version 1 is not served");
+			expect(a.observers.size).toBe(0);
+			give(b);
+			await delivered();
+			expect(() => registry.value).toThrow("version 1 is not served");
+			await host.reload([giver, consumer, v1], context);
+			await delivered();
+			expect(registry.value).toBe(b);
+			expect([ref.a.value, b.observers.size, calls]).toEqual([{ n: 2 }, 1, [replaced(2)]]);
 		} finally {
 			await host.close(context);
 		}

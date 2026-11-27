@@ -3910,8 +3910,14 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   (`registries/record.ts`). A `failed` call while the object activates (also a plain follow's, also after this
   follow's first attachment) fails the activation `transient`, never a member failed from the start, which a derive
   over it would break. The first wait for a usable value fails at the deadline as any activation, its error naming
-  what it waited for ("waiting for a value of registry …"). The runtime's `detach` runs outside any batch. Attachments are counted
-  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 to 3: Opus, Astra, Fable.)
+  what it waited for ("waiting for a value of registry …"). Round 4 (Astra, Fable): before a plain follow's
+  attachment settles its calls are folded and the last decides, as in the over form (a failure followed by a value
+  activates; a failure last fails the activation); an attachment's detach that ends its attempt starts no successor;
+  an idle value (ended, or failed and waiting for its retry) follows `over`'s committed values, so a withdrawal and the
+  same value in the next batch wakes it (A, B, A inside one batch still does not); a registry provider coming, going
+  or changing its version marks every reader of every version, read since or not (`registries/record.ts`); whether
+  the attempt is live is a flag the attempt sets on its follows (`FollowSource.live()`). The runtime's `detach` runs outside any batch. Attachments are counted
+  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 to 4: Opus, Astra, Fable.)
   **Built as an attach of its own** (`host/follow-over.ts`; main session, 2026-11-27, decision 140, reversible, from
   Fable's review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
   it; its one new rule: a `failed` call fails the member until the next value, which replaces it whole (Durable

@@ -190,4 +190,26 @@ describe("Context", () => {
 		await expect(work).resolves.toBe("completed later");
 		await expect(awaitWithContext(Promise.resolve("completed"), BACKGROUND_CONTEXT)).resolves.toBe("completed");
 	});
+
+	// ERNDL-1191 (Astra, round 4): work an aborted waiter never waited for rejected unobserved and ended the process.
+	it("observes work it does not wait for when the invocation was cancelled already", async () => {
+		const controller = new AbortController();
+		controller.abort(new Error("cancelled"));
+		const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT);
+		const unhandled: unknown[] = [];
+		const record = (reason: unknown) => void unhandled.push(reason);
+		process.on("unhandledRejection", record);
+		try {
+			let rejectWork!: (error: Error) => void;
+			const work = new Promise<string>((_resolve, reject) => {
+				rejectWork = reject;
+			});
+			await expect(awaitWithContext(work, context)).rejects.toThrow("cancelled");
+			rejectWork(new Error("failed after the cancellation"));
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(unhandled).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", record);
+		}
+	});
 });

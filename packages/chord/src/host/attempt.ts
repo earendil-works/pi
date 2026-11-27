@@ -799,12 +799,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 						},
 						report: (error) => host.report({ kind: "follow_failed", object: label, error }),
 					});
-		const owner = {
-			label,
-			context: this.#context,
-			ended: (end: WatchEnd) => this.#followEnded(end),
-			live: () => this.#isLive,
-		};
+		const owner = { label, context: this.#context, ended: (end: WatchEnd) => this.#followEnded(end) };
 		const source = new FollowSource(attached, owner, host.batch);
 		this.#follows = appended(this.#follows, source);
 		return source as unknown as Watchable<T>;
@@ -1075,6 +1070,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	/** The object went live: its jobs take starts and its routines start, in this turn; both stop when it is sealed. */
 	live(): void {
 		this.#isLive = true;
+		for (const follow of this.#follows) follow.live();
 		const early = this.#extras?.endedEarly;
 		if (early !== undefined) {
 			this.#object.failLive(this, { kind: "transient", error: early });

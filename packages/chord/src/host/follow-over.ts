@@ -9,7 +9,7 @@ import { awaitWithContext, type Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
 import type { JsonValue } from "../json.ts";
 import { RegistryValueSource } from "../registries/internal.ts";
-import { type Dependent, FollowedSource, handedOut } from "../state/internal.ts";
+import { type Dependent, FollowedSource, handedOut, type NativeObserver } from "../state/internal.ts";
 import type { ChordMetrics } from "../telemetry.ts";
 import type { WatchCall, WatchEnd } from "../watch.ts";
 import { nextDelay } from "./backoff.ts";
@@ -101,10 +101,21 @@ class FollowOver implements Dependent {
 	/** Whether a reconciliation with `over`'s value is queued (once per change, outside the batch). */
 	#reconciling = false;
 	/**
-	 * A value of `over` with no attachment that waits: its attachment failed (`retry`: the same value again waits for
-	 * the retry) or its runtime ended it (`ended`: only another value attaches). Let go of at the next other value.
+	 * A value of `over` with no attachment that waits: its attachment failed (the same value again waits for the retry)
+	 * or its runtime ended it (only another value attaches). Let go of at the next other value, also one a later batch
+	 * replaced again before the reconciliation (`#moves`).
 	 */
-	#idle: { readonly for: unknown; readonly why: "retry" | "ended" } | undefined;
+	#idle: { readonly for: unknown } | undefined;
+	/**
+	 * What follows `over`'s committed values while idle: one call per batch that gave another value (none for A, B, A
+	 * inside one batch), so a withdrawal and the same value given again in the next batch wakes it.
+	 */
+	readonly #moves: NativeObserver<unknown> = {
+		advance: (call) => {
+			if (call.kind === "value" && this.#idle !== undefined && call.value !== this.#idle.for) this.#awake();
+		},
+		end: () => {},
+	};
 	/** Observations let go of, to detach outside the batch, and before anything attaches again. */
 	#leaving: FollowAttachment<JsonValue>[] = [];
 	/** From a failure while live to the next attachment taken: the episode is reported once. */
@@ -187,8 +198,10 @@ class FollowOver implements Dependent {
 	 */
 	#follow(reason: "value" | "retry"): void {
 		if (this.#sealed || this.#current !== undefined) return;
-		// The runtime gets its old observation back before a new one: it may hold one at a time.
+		// The runtime gets its old observation back before a new one: it may hold one at a time. Its detach may end the
+		// attempt (its last holder released), which starts nothing more.
 		this.#left();
+		if (this.#sealed) return;
 		const value = this.#given();
 		this.#moving = false;
 		if (this.#first !== undefined)
@@ -214,8 +227,21 @@ class FollowOver implements Dependent {
 		this.#letGo();
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
-		this.#idle = undefined;
+		this.#awake();
 		this.#follow("value");
+	}
+
+	/** Waits with no attachment for `value` of `over` (its attachment failed or its runtime ended it). */
+	#rest(value: unknown): void {
+		if (this.#idle === undefined) this.#over.subscribe(this.#moves);
+		this.#idle = { for: value };
+	}
+
+	/** Waits no more: what it waited on is let go of. */
+	#awake(): void {
+		if (this.#idle === undefined) return;
+		this.#idle = undefined;
+		this.#over.unsubscribe(this.#moves);
 	}
 
 	/**
@@ -255,7 +281,7 @@ class FollowOver implements Dependent {
 					? held.last.value
 					: attached.value;
 		const first = this.#first;
-		this.#idle = undefined;
+		this.#awake();
 		if (first !== undefined) {
 			this.#first = undefined;
 			first.resolve({ value, detach: this.#release });
@@ -311,7 +337,7 @@ class FollowOver implements Dependent {
 		const ended = this.#current?.for;
 		this.#letGo();
 		if (this.#activating) this.#observer.end(end);
-		else this.#idle = { for: ended, why: "ended" };
+		else this.#rest(ended);
 	}
 
 	/**
@@ -330,12 +356,12 @@ class FollowOver implements Dependent {
 			else this.#observer.end({ kind: "failed", error });
 			return;
 		}
-		this.#idle = { for: failed, why: "retry" };
+		this.#rest(failed);
 		this.#delay = nextDelay(this.#delay);
 		clearTimeout(this.#timer);
 		this.#timer = setTimeout(() => {
 			this.#timer = undefined;
-			this.#idle = undefined;
+			this.#awake();
 			this.#follow("retry");
 		}, this.#delay);
 		if (this.#failing) return;
@@ -378,7 +404,7 @@ class FollowOver implements Dependent {
 		this.#detached = true;
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
-		this.#idle = undefined;
+		this.#awake();
 		this.#over.dependents.delete(this);
 		const current = this.#current;
 		this.#current = undefined;

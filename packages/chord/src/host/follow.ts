@@ -17,7 +17,7 @@ export type FollowObserver<T> = {
 	/**
 	 * One change, synchronously and quickly: Chord only records it. A `failed` call makes the source a failed member
 	 * (its last value kept) until its next value, which replaces the value whole (`[["r", value]]`); while its object
-	 * activates, it fails the activation `transient` instead (R4).
+	 * activates it fails the activation `transient` instead (R4), before the attachment resolved only as the last call.
 	 */
 	advance(call: WatchCall<T>, context: Context): void;
 	/** The followed source ended: `failed` (its runtime failed), or `ended` for good. */
@@ -46,8 +46,6 @@ export type FollowOwner = {
 	 * ended); `ended` while live is final for the source only.
 	 */
 	ended(end: WatchEnd): void;
-	/** Whether its attempt is live: before, a `failed` call is the activation's failure, as a `failed` end. */
-	live(): boolean;
 };
 
 /**
@@ -70,6 +68,8 @@ export class FollowSource extends Source {
 	readonly #owner: FollowOwner;
 	#state: FollowState = { kind: "attaching", end: undefined };
 	#value: JsonValue | undefined;
+	/** Whether its attempt went live: before, a `failed` call is the activation's failure, as a `failed` end. */
+	#live = false;
 	/** Its failure while it is a failed member (a `failed` call), its last value kept. */
 	#failed: { readonly error: unknown } | undefined;
 	/** Calls not applied yet: before the attachment resolved, and outside a batch until the next microtask. */
@@ -112,8 +112,9 @@ export class FollowSource extends Source {
 
 	/**
 	 * Attaches (activation, after the natives opened): the calls that came meanwhile apply on the attachment's value,
-	 * and an end that came meanwhile takes effect then (the value stays). A rejected attachment, or `undefined` (an
-	 * absent address), throws; an attachment arriving after its attempt detached the source is detached at once.
+	 * and an end that came meanwhile takes effect then (the value stays). A rejected attachment, `undefined` (an absent
+	 * address), or a last call before it that failed throws; an attachment arriving after its attempt detached the
+	 * source is detached at once.
 	 */
 	async attach(context: Context): Promise<void> {
 		const observer: FollowObserver<JsonValue> = {
@@ -131,11 +132,24 @@ export class FollowSource extends Source {
 			return;
 		}
 		this.#value = attached.value;
-		// Nothing watches it yet (members are checked after this): the queued calls only move the value on (a failed
-		// one never queues while its attempt activates: `#advance`).
-		for (const call of this.#queued) if (call.kind === "value") this.#value = call.value;
+		// Nothing watches it yet (members are checked after this): the queued calls only move the value on, the last
+		// one deciding. Failed: the activation's failure (R4: transient, retried), never a member failed from the start.
+		let failure: { readonly error: unknown } | undefined;
+		for (const call of this.#queued) {
+			if (call.kind === "value") this.#value = call.value;
+			failure = call.kind === "value" ? undefined : { error: call.error };
+		}
 		this.#queued = [];
+		if (failure !== undefined) {
+			detach();
+			throw failure.error;
+		}
 		this.#state = state.end?.kind === "ended" ? { kind: "ended", detach } : { kind: "attached", detach };
+	}
+
+	/** Its attempt went live: a `failed` call fails the member from now on (a flag here: a closure per follow costs 61 B). */
+	live(): void {
+		this.#live = true;
 	}
 
 	/** Its attempt ended: the observer is detached (also after the runtime ended it) and its watches end `ended`. */
@@ -189,7 +203,8 @@ export class FollowSource extends Source {
 		const { kind } = this.#state;
 		if (kind === "ended" || kind === "detached") return;
 		// Never a member failed from the start (a derive over it would break the activation): the activation fails.
-		if (call.kind === "failed" && !this.#owner.live()) {
+		// Before the attachment resolved the last call decides, as it is folded (`attach`).
+		if (call.kind === "failed" && !this.#live && kind !== "attaching") {
 			this.#owner.ended({ kind: "failed", error: call.error });
 			return;
 		}
