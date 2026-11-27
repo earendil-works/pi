@@ -3897,12 +3897,15 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   still activates (also after this follow's first attachment, another one not yet), a failure is the activation's
   (R4); a sealed attempt starts, reports and retries nothing more. Activation takes the first attachment current when
   it resolves: each new value starts its own, one overtaken never holds up the newest. A call of the current
-  attachment in the batch that changed `over`, before its call came, counts only while `over` still gives its value
-  (the attachment watches `over` as a dependent). The same value again while attached changes nothing. A pending
-  attachment keeps only its newest value. The runtime's `detach` runs outside any batch. Attachments are counted
-  (`chord.follow.attaches`, by reason `value` or `retry`). (Review round 1: Opus, Astra, Fable.)
-  **Built as an attach of its own** (`host/follow-over.ts`; main session, 2026-11-27, decision 140, from Fable's
-  review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
+  attachment in the batch that changed `over` counts only while `over` still gives its value: the follow is a
+  dependent of `over`, marked in the batch, and reconciles with `over`'s value after it (not with its frame: A, B, A
+  in one batch delivers none, and a registry failing without a last good value none either). A registry's last good
+  value counts while it is failed; with none it gives nothing to follow, as `undefined`. The same value again while
+  attached changes nothing, and while its retry waits it waits for the retry. A pending attachment keeps only its
+  newest state, folded: a value, or a failure with the last value before it (round 2, Astra). The runtime's `detach` runs outside any batch. Attachments are counted
+  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 and 2: Opus, Astra, Fable.)
+  **Built as an attach of its own** (`host/follow-over.ts`; main session, 2026-11-27, decision 140, reversible, from
+  Fable's review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
   it; its one new rule: a `failed` call fails the member until the next value, which replaces it whole (Durable
   never sends one: it ends its observer). `self.follow(attach)` keeps R4 otherwise.
 

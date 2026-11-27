@@ -5,7 +5,7 @@
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { type Context, BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { int, local, obj, str } from "../../src/contracts/index.ts";
+import { int, local, obj, str, unknown } from "../../src/contracts/index.ts";
 import { ChordError } from "../../src/data/index.ts";
 import { applyImmutable, type Op } from "../../src/delta/index.ts";
 import { FollowSource } from "../../src/host/follow.ts";
@@ -572,6 +572,42 @@ describe("over a changing source: activation (ERNDL-1191)", () => {
 			await host.close(context);
 		}
 	});
+
+	// Astra, round 2 of this change (M4), Opus nit 1: a failed call before the attachment resolved was dropped (decision 140).
+	it.each(["plain", "over"])(
+		"a failed call before the first %s attachment resolves is not silently healthy",
+		async (form) => {
+			const lost = new Error("failed while attaching");
+			let resume = () => {};
+			const { host } = await loaded((h) =>
+				h.serve(Follower, (_, self) => {
+					const attach: FollowAttach<Count> = async (observer, ctx) => {
+						observer.advance({ kind: "failed", error: lost }, ctx);
+						resume = () =>
+							observer.advance({ kind: "value", value: { n: 8 }, ops: [["s", ["n"], 8]], retired: false }, ctx);
+						return { value: { n: 7 }, detach() {} };
+					};
+					return {
+						a:
+							form === "plain"
+								? self.follow(attach)
+								: self.follow(self.writable(1), (_, observer, ctx) => attach(observer, ctx)),
+					};
+				}),
+			);
+			try {
+				const ref = await host.get(Follower, { id: "1" }, context);
+				const calls = changesOf(await ref.a.watch(context));
+				await delivered();
+				expect(() => ref.a.value).toThrow(lost);
+				resume();
+				await delivered();
+				expect(calls).toEqual([{ kind: "failed", error: lost }, replaced(8)]);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
 });
 
 describe("over a changing source: replacement", () => {
@@ -887,6 +923,93 @@ describe("over a changing source: replacement", () => {
 		]);
 		await host.close(context);
 		expect(b.runtime.observers.size).toBe(0);
+	});
+
+	// Astra, round 2 of this change (M1): A, B, A in one batch dropped the attachment and no frame came to attach it again.
+	it("an intermediate move within a batch never orphans the follow when the batch gives A again", async () => {
+		const a = new Runtime(1),
+			b = new Runtime(2);
+		const { host, errors, give, hold } = await overRuntimes(a);
+		try {
+			const ref = hold();
+			await waitLive(ref);
+			(host as unknown as ChordHost).batch.commit(() => {
+				give(b);
+				a.set(99);
+				give(a);
+			}, context);
+			await delivered();
+			a.set(7);
+			await delivered();
+			expect([a.observers.size, ref.a.value, errors]).toEqual([1, { n: 7 }, []]);
+		} finally {
+			await host.close(context);
+		}
+	});
+
+	// Astra, round 2 of this change (M3): a held `null` was taken for no held value.
+	it("a held null replaces a non-null attachment snapshot, on first attach and on replacement", async () => {
+		const Nullable = local("app.nullable", { version: 1, params: { id: str() }, members: { a: unknown() } });
+		let replace = () => {};
+		const { host } = await loaded((h) =>
+			h.serve(Nullable, (_, self) => {
+				const given = self.writable(1);
+				replace = () => given.set(2);
+				return {
+					a: self.follow(given, async (n, observer) => {
+						observer.advance({ kind: "value", value: null, ops: [["r", null]], retired: false }, context);
+						return { value: n, detach() {} };
+					}),
+				};
+			}),
+		);
+		try {
+			const ref = await host.get(Nullable, { id: "1" }, context);
+			const initial = ref.a.value;
+			const calls = changesOf(await ref.a.watch(context));
+			replace();
+			await delivered();
+			expect([initial, ref.a.value, calls]).toEqual([
+				null,
+				null,
+				[{ kind: "value", value: null, ops: [["r", null]], retired: false }],
+			]);
+		} finally {
+			await host.close(context);
+		}
+	});
+
+	// Astra, round 2 of this change (M4): a failed call while a replacement attached was dropped.
+	it("a failed call while a replacement attaches is held, not discarded", async () => {
+		const lost = new Error("lost B");
+		let replace = () => {},
+			recover = () => {};
+		const { host } = await loaded((h) =>
+			h.serve(Follower, (_, self) => {
+				const s = self.writable(1);
+				replace = () => s.set(2);
+				return {
+					a: self.follow(s, async (n, observer, ctx) => {
+						if (n === 2) observer.advance({ kind: "failed", error: lost }, ctx);
+						recover = () =>
+							observer.advance({ kind: "value", value: { n: 8 }, ops: [["s", ["n"], 8]], retired: false }, ctx);
+						return { value: { n }, detach() {} };
+					}),
+				};
+			}),
+		);
+		try {
+			const ref = await host.get(Follower, { id: "1" }, context);
+			const calls = changesOf(await ref.a.watch(context));
+			replace();
+			await delivered();
+			expect(() => ref.a.value).toThrow(lost);
+			recover();
+			await delivered();
+			expect(calls).toEqual([{ kind: "failed", error: lost }, replaced(8)]);
+		} finally {
+			await host.close(context);
+		}
 	});
 });
 
@@ -1213,6 +1336,39 @@ describe("over a changing source: declaration and counts", () => {
 		expect([by("value"), by("retry"), b.attachments]).toEqual([2, 1, 2]);
 		await host.close(context);
 	});
+
+	// Astra, round 2 of this change (S1): staging took a factory's derive for a writable.
+	it("staging a follow over a factory's derive rejects the reload, preserving working code", async () => {
+		const { host } = await loaded((h) =>
+			h.serve(View, (_, self) => {
+				const a = self.follow(new Runtime(7).attach);
+				return { a, sum: self.derive([a], ([x]) => x.n) };
+			}),
+		);
+		try {
+			const ref = await host.get(View, {}, context);
+			const result = await host.reload(
+				[
+					{
+						name: "@test/app",
+						facet: defineFacet((h) =>
+							h.serve(View, (_, self) => {
+								const a = self.follow(new Runtime().attach);
+								const sum = self.derive([a], ([x]) => x.n);
+								self.follow(sum, async (n) => ({ value: n, detach() {} }));
+								return { a, sum };
+							}),
+						),
+					},
+				],
+				context,
+			);
+			await delivered();
+			expect([result.plugins.changed, ref.state.value.kind, ref.sum.value]).toEqual([[], "live", 7]);
+		} finally {
+			await host.close(context);
+		}
+	});
 });
 
 describe("GC", () => {
@@ -1249,5 +1405,112 @@ describe("GC", () => {
 		await host.close(context);
 		expect(a.observers.size).toBe(0);
 		await expectCollected(...followed.splice(0));
+	});
+});
+
+/**
+ * A registry that fails without a last good value once its one contributor leaves (its decision 5): the giver's own
+ * follow fails it (`failGiver`); with `pause`, the follower's native waits for it before its follow attaches.
+ */
+async function failingRegistry(pause?: Promise<void>) {
+	const a = new Runtime(1);
+	const started = Promise.withResolvers<void>();
+	let failGiver = () => {};
+	const { host } = await loaded((h) => {
+		h.serve(Runtimes, {
+			compose: (table) => {
+				if (!table.length) throw new Error("giver gone");
+				return table[0]!.value;
+			},
+		});
+		h.serve(Giver, (_, self) => {
+			self.contribute(Runtimes, a);
+			self.follow(async (observer) => {
+				failGiver = () => observer.end({ kind: "failed", error: new Error("giver failed") });
+				return { value: 1, detach() {} };
+			});
+			return {};
+		});
+		h.serve(Follower, (_, self) => {
+			const registry = self.registry(Runtimes);
+			if (pause)
+				self.open(
+					async () => {
+						started.resolve();
+						await pause;
+						return 0;
+					},
+					async () => {},
+				);
+			const view = self.follow(registry, (runtime, observer, ctx) => runtime.attach(observer, ctx));
+			return { a: view };
+		});
+	});
+	return { host, a, failGiver: () => failGiver(), started: started.promise };
+}
+
+// Astra, round 2 of this change (M2): `over` failing with no last good value threw from Chord's observer and leaked.
+describe("over a changing source: a registry with no usable value", () => {
+	it("a failed registry with no last good value detaches the unavailable runtime; its calls cannot throw", async () => {
+		const { host, a, failGiver } = await failingRegistry();
+		try {
+			const ref = await host.get(Follower, { id: "1" }, context);
+			const registry = await host.registry(Runtimes, context);
+			failGiver();
+			await delivered();
+			expect(() => registry.value).toThrow("giver gone");
+			expect(() => a.set(9)).not.toThrow();
+			expect([a.observers.size, ref.a.value]).toEqual([0, { n: 1 }]);
+		} finally {
+			await host.close(context);
+		}
+	});
+
+	it("a registry that loses its value between the dependency check and first attach keeps no ended follow", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { host, failGiver, started } = await failingRegistry(gate.promise);
+		const source = (host as unknown as ChordHost).registryRecord(Runtimes.name).value(Runtimes.version);
+		try {
+			const ref = host.hold(Follower, { id: "1" }, context);
+			await started;
+			failGiver();
+			await delivered();
+			gate.resolve();
+			await delivered();
+			// No usable value is waited for under the activation's deadline, as `undefined` is.
+			expect(ref.state.value.kind).toBe("loading");
+			await ref.release();
+			await delivered();
+			expect([source.dependents.size, source.watched]).toEqual([0, false]);
+		} finally {
+			gate.resolve();
+			await host.close(context);
+		}
+	});
+
+	it("attaches again once the registry has a usable value", async () => {
+		const { host, a, failGiver } = await failingRegistry();
+		try {
+			const ref = await host.get(Follower, { id: "1" }, context);
+			const calls = changesOf(await ref.a.watch(context));
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			failGiver();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(a.observers.size).toBe(0);
+			// The giver's object retries after its backoff and contributes the runtime again.
+			await vi.advanceTimersByTimeAsync(1_000);
+			vi.useRealTimers();
+			await delivered();
+			a.set(5);
+			await delivered();
+			expect([a.observers.size, ref.a.value, calls]).toEqual([
+				1,
+				{ n: 5 },
+				[replaced(1), { kind: "value", value: { n: 5 }, ops: [["s", ["n"], 5]], retired: false }],
+			]);
+		} finally {
+			vi.useRealTimers();
+			await host.close(context);
+		}
 	});
 });

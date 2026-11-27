@@ -1,15 +1,16 @@
 // A follow over a changing source (ERNDL-1191; decision "A follow re-attaches over a changing source"): the attach of
 // `self.follow(over, attach)`. To the followed source (`follow.ts`) it is one attachment for its attempt; behind it,
 // it attaches to each value of `over` (a registry value, a writable), each attachment with its own observer, so that
-// only the current one's calls and end count. A new value is one replacement, with no failure in between; a failure of
-// the value still given while live is a failure call (a failed member), retried after a backoff.
+// only the current one's calls and end count; it is a dependent of `over` and reconciles with its value after each
+// batch that changed it. A new value is one replacement, with no failure in between; a failure of the value still
+// given while live is a failure call (a failed member), retried after a backoff.
 
 import { awaitWithContext, type Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
 import type { JsonValue } from "../json.ts";
-import { type Dependent, FollowedSource, handedOut, type NativeObserver } from "../state/internal.ts";
+import { type Dependent, FollowedSource, handedOut } from "../state/internal.ts";
 import type { ChordMetrics } from "../telemetry.ts";
-import type { NativeWatchCall, WatchEnd } from "../watch.ts";
+import type { WatchCall, WatchEnd } from "../watch.ts";
 import { nextDelay } from "./backoff.ts";
 import type { FollowAttach, FollowAttachment, FollowObserver } from "./follow.ts";
 
@@ -55,15 +56,25 @@ export function followOver(
 }
 
 /**
- * One attachment of the runtime's observer: the value of `over` it is for, the newest value its calls gave while it
- * attached (only that one is kept: the rest is replaced by it), and the runtime's observation once it resolved (its
- * calls held until then).
+ * One attachment of the runtime's observer: the value of `over` it is for, what its calls gave while it attached
+ * (folded: only the newest state is kept), and the runtime's observation once it resolved (its calls held until then).
  */
 type Attachment = {
 	readonly for: unknown;
-	newest: JsonValue | undefined;
+	held: Held;
 	observation: FollowAttachment<JsonValue> | undefined;
 };
+
+/**
+ * What an attachment's calls gave before it resolved, folded: nothing, a value, or a failure with the last value
+ * before it (`undefined`: none came; JSON has no `undefined`).
+ */
+type Held =
+	| { readonly kind: "none" }
+	| { readonly kind: "value"; readonly value: JsonValue }
+	| { readonly kind: "failed"; readonly error: unknown; readonly last: { readonly value: JsonValue } | undefined };
+
+const NOTHING_HELD: Held = { kind: "none" };
 
 /** One followed source's attachments over the values of `over`, for one attempt. */
 class FollowOver implements Dependent {
@@ -73,8 +84,6 @@ class FollowOver implements Dependent {
 	/** The followed source's observer, and the context of its activation, whose signal is its attempt's. */
 	readonly #observer: FollowObserver<JsonValue>;
 	readonly #activation: Context;
-	/** What follows `over`: a call per new value, delivered after the batch that changed it. */
-	readonly #moves: NativeObserver<unknown> = { advance: (call) => this.#moved(call), end: () => {} };
 	/**
 	 * The detach the followed source gets. Made here, not where the first attachment resolves: a closure there would
 	 * keep that scope, and with it the first attachment and its value of `over`, for the attempt's life.
@@ -86,6 +95,10 @@ class FollowOver implements Dependent {
 	#current: Attachment | undefined;
 	/** Set when `over` changed in a batch, until its new value was read: calls of the current one are checked then. */
 	#moving = false;
+	/** Whether a reconciliation with `over`'s value is queued (once per change, outside the batch). */
+	#reconciling = false;
+	/** The value of `over` whose attachment failed, while its retry waits: the same value again waits for it too. */
+	#retrying: unknown;
 	/** From a failure while live to the next attachment taken: the episode is reported once. */
 	#failing = false;
 	/** Its attempt ended, or its activation failed. */
@@ -117,10 +130,9 @@ class FollowOver implements Dependent {
 	async first(): Promise<FollowAttachment<JsonValue>> {
 		const first = Promise.withResolvers<FollowAttachment<JsonValue>>();
 		this.#first = first;
-		this.#over.subscribe(this.#moves);
-		this.#over.dependents.add(this);
-		this.#follow("value");
 		try {
+			this.#over.dependents.add(this);
+			this.#follow("value");
 			return await awaitWithContext(first.promise, this.#activation);
 		} catch (error) {
 			this.#detach();
@@ -128,9 +140,16 @@ class FollowOver implements Dependent {
 		}
 	}
 
-	/** `over` changed in the current batch (marking only): its value is read before the current attachment's next call counts. */
+	/**
+	 * `over` changed in the current batch (marking only): the current attachment's next call counts only once `over`'s
+	 * value was read, and the follow reconciles with that value outside the batch. Not its frame: one that ends where it
+	 * started (A, B, A in one batch) delivers none, and a registry failing without a last value none either.
+	 */
 	invalidate(): void {
 		this.#moving = true;
+		if (this.#reconciling) return;
+		this.#reconciling = true;
+		queueMicrotask(() => this.#reconcile());
 	}
 
 	sourceRetired(): void {}
@@ -140,18 +159,51 @@ class FollowOver implements Dependent {
 		return this.#detached || this.#activation.abortSignal?.aborted === true;
 	}
 
+	/** Whether its attempt still activates (also after this follow's first attachment): a failure is the activation's. */
+	get #activating(): boolean {
+		return this.#first !== undefined || !this.#owner.live();
+	}
+
+	/**
+	 * What `over` gives now: its value, its last good one while it is failed, `undefined` for none (also a registry
+	 * failing with no last good value, its decision 5).
+	 */
+	#given(): unknown {
+		const start = this.#over.start();
+		return start.kind === "value" ? start.value : start.last?.value;
+	}
+
 	/**
 	 * Attaches to the value of `over` now, read in the same turn (unless sealed, attached already, or `over` has none);
 	 * `reason` is counted: a new value, or a retry after a failure.
 	 */
 	#follow(reason: "value" | "retry"): void {
 		if (this.#sealed || this.#current !== undefined) return;
-		const value = this.#over.value;
+		const value = this.#given();
 		this.#moving = false;
 		if (value === undefined) return;
-		const attachment: Attachment = { for: value, newest: undefined, observation: undefined };
+		const attachment: Attachment = { for: value, held: NOTHING_HELD, observation: undefined };
 		this.#current = attachment;
 		void this.#run(attachment, reason);
+	}
+
+	/**
+	 * After a batch that changed `over` (outside it: the runtime may not be called inside one): its value now, the same
+	 * one as attached changes nothing (a registry recovering from a failure); another drops the current attachment and
+	 * attaches the new one at once, a pending retry dropped unless it is for this value.
+	 */
+	#reconcile(): void {
+		this.#reconciling = false;
+		if (this.#sealed) return;
+		const value = this.#given();
+		this.#moving = false;
+		if (this.#current !== undefined && this.#current.for === value) return;
+		if (this.#timer !== undefined && this.#retrying === value) return;
+		this.#letGo();
+		clearTimeout(this.#timer);
+		this.#timer = undefined;
+		this.#retrying = undefined;
+		this.#follow("value");
 	}
 
 	/**
@@ -160,6 +212,7 @@ class FollowOver implements Dependent {
 	 */
 	async #run(attachment: Attachment, reason: "value" | "retry"): Promise<void> {
 		const context = this.#first === undefined ? this.#owner.context : this.#activation;
+		// The host's instruments: the object's context carries its first caller's telemetry, not the host's adapter.
 		this.#owner.metrics.counter("chord.follow.attaches").add(1, { reason });
 		let attached: FollowAttachment<JsonValue> | undefined;
 		try {
@@ -179,27 +232,36 @@ class FollowOver implements Dependent {
 			);
 			return;
 		}
-		const value = attachment.newest ?? attached.value;
-		attachment.newest = undefined;
+		const held = attachment.held;
+		attachment.held = NOTHING_HELD;
 		attachment.observation = attached;
+		const value =
+			held.kind === "value"
+				? held.value
+				: held.kind === "failed" && held.last !== undefined
+					? held.last.value
+					: attached.value;
+		this.#retrying = undefined;
 		const first = this.#first;
 		if (first !== undefined) {
 			this.#first = undefined;
 			first.resolve({ value, detach: this.#release });
-			return;
+		} else {
+			this.#failing = false;
+			this.#delay = undefined;
+			this.#observer.advance({ kind: "value", value, ops: [["r", value]], retired: false }, context);
 		}
-		this.#failing = false;
-		this.#delay = undefined;
-		this.#observer.advance({ kind: "value", value, ops: [["r", value]], retired: false }, context);
+		// A failure it gave while it attached follows its value: the followed source still queues it after a first.
+		if (held.kind === "failed") this.#observer.advance({ kind: "failed", error: held.error }, context);
 	}
 
-	/** The observer of `attachment`: while it attaches only its newest value is kept, then its calls are passed on. */
+	/** The observer of `attachment`: while it attaches its calls are folded (`Held`), then they are passed on. */
 	#observerOf(attachment: Attachment): FollowObserver<JsonValue> {
 		return {
 			advance: (call, context) => {
 				if (!this.#counts(attachment)) return;
 				if (attachment.observation !== undefined) this.#observer.advance(call, context);
-				else if (call.kind === "value") attachment.newest = call.value;
+				else attachment.held = folded(attachment.held, call);
 			},
 			end: (end) => {
 				if (this.#counts(attachment)) this.#ended(end);
@@ -215,28 +277,12 @@ class FollowOver implements Dependent {
 	#counts(attachment: Attachment): boolean {
 		if (attachment !== this.#current) return false;
 		if (!this.#moving) return true;
-		if (this.#over.value === attachment.for) {
+		if (this.#given() === attachment.for) {
 			this.#moving = false;
 			return true;
 		}
 		this.#letGo();
 		return false;
-	}
-
-	/**
-	 * `over` has another value (after the batch that changed it): the current attachment counts no more, and the newest
-	 * is attached outside the batch (the runtime may not be called inside it), at once, a pending retry dropped. The
-	 * same value again (a registry recovering from a failure) changes nothing while it is attached.
-	 */
-	#moved(call: NativeWatchCall<unknown>): void {
-		// A failed composition changes nothing: the value followed is still its last good one.
-		if (call.kind !== "value" || this.#sealed) return;
-		this.#moving = false;
-		if (this.#current !== undefined && call.value === this.#current.for) return;
-		this.#letGo();
-		clearTimeout(this.#timer);
-		this.#timer = undefined;
-		queueMicrotask(() => this.#follow("value"));
 	}
 
 	/**
@@ -250,7 +296,7 @@ class FollowOver implements Dependent {
 			return;
 		}
 		this.#letGo();
-		if (this.#first !== undefined || !this.#owner.live()) this.#observer.end(end);
+		if (this.#activating) this.#observer.end(end);
 	}
 
 	/**
@@ -259,18 +305,17 @@ class FollowOver implements Dependent {
 	 * after the backoff or at the next value of `over`. Sealed: nothing more.
 	 */
 	#fail(error: unknown): void {
+		const failed = this.#current?.for;
 		this.#letGo();
 		if (this.#sealed) return;
-		const first = this.#first;
-		if (first !== undefined) {
+		if (this.#activating) {
+			const first = this.#first;
 			this.#first = undefined;
-			first.reject(error);
+			if (first !== undefined) first.reject(error);
+			else this.#observer.end({ kind: "failed", error });
 			return;
 		}
-		if (!this.#owner.live()) {
-			this.#observer.end({ kind: "failed", error });
-			return;
-		}
+		this.#retrying = failed;
 		this.#delay = nextDelay(this.#delay);
 		clearTimeout(this.#timer);
 		this.#timer = setTimeout(() => {
@@ -291,7 +336,7 @@ class FollowOver implements Dependent {
 		const current = this.#current;
 		if (current === undefined) return;
 		this.#current = undefined;
-		current.newest = undefined;
+		current.held = NOTHING_HELD;
 		const observation = current.observation;
 		if (observation !== undefined) queueMicrotask(() => observation.detach());
 	}
@@ -301,11 +346,18 @@ class FollowOver implements Dependent {
 		this.#detached = true;
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
-		this.#over.unsubscribe(this.#moves);
+		this.#retrying = undefined;
 		this.#over.dependents.delete(this);
 		const current = this.#current;
 		this.#current = undefined;
 		// As a plain follow's at its attempt's end.
 		current?.observation?.detach();
 	}
+}
+
+/** `held` with one more call of an attachment still attaching: a value replaces it, a failure keeps the last value. */
+function folded(held: Held, call: WatchCall<JsonValue>): Held {
+	if (call.kind === "value") return { kind: "value", value: call.value };
+	const last = held.kind === "value" ? { value: held.value } : held.kind === "failed" ? held.last : undefined;
+	return { kind: "failed", error: call.error, last };
 }

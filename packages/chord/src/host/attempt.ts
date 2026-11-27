@@ -186,8 +186,8 @@ export interface Self<P extends Principal = Principal> extends RoutineDeclaratio
 	 * one overtaken while it attaches never shows; `undefined` keeps the last value. A failure of the source still
 	 * given while live (its attach rejecting, its runtime failing) makes the member failed (`follow_failed`), retried
 	 * after a backoff or at the next value; the object stays live. A failure while the object activates fails it
-	 * `transient`, as a plain follow's: declare `self.retryOn(over)` so that the next value wakes it (else it waits for
-	 * its backoff, up to 60 s).
+	 * `transient`, as a plain follow's: over a registry value, declare `self.retryOn(over)` so that its next value wakes
+	 * it (else it waits for its backoff, up to 60 s); a writable is the attempt's own and wakes nothing.
 	 */
 	follow<S, T>(over: NativeWatchable<S | undefined>, attach: FollowOverAttach<S, T>): Watchable<T>;
 	/**

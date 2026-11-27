@@ -128,8 +128,12 @@ export class FollowSource extends Source {
 			return;
 		}
 		this.#value = attached.value;
-		// Nothing watches it yet (members are checked after this): the queued calls only move the value on.
-		for (const call of this.#queued) if (call.kind === "value") this.#value = call.value;
+		// Nothing watches it yet (members are checked after this): the queued calls only move the value on, a failure
+		// keeping the last value (decision 140).
+		for (const call of this.#queued) {
+			if (call.kind === "value") this.#value = call.value;
+			this.#failed = call.kind === "value" ? undefined : { error: call.error };
+		}
 		this.#queued = [];
 		this.#state = state.end?.kind === "ended" ? { kind: "ended", detach } : { kind: "attached", detach };
 	}

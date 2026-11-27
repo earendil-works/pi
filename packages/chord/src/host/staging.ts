@@ -295,6 +295,9 @@ const INERT_TABLE = inert(() => INERT);
 /** What `self.queries` returns and each named query of it: what readers take, and `self.query` does not. */
 const INERT_NAMED = inert();
 
+/** A writable's handle: one source `self.follow(over, attach)` takes, as the registry values staging has. */
+const INERT_WRITABLE = inert(() => INERT);
+
 /** A factory's `self` during staging: it records declarations and checks them; it activates nothing. */
 class RecordingSelf {
 	declaring = true;
@@ -434,7 +437,7 @@ class RecordingSelf {
 
 	writable(): never {
 		this.#assertDeclaring("writable");
-		return INERT;
+		return INERT_WRITABLE;
 	}
 
 	events(): never {
@@ -470,8 +473,8 @@ class RecordingSelf {
 
 	follow(first?: unknown, attach?: unknown): never {
 		this.#assertDeclaring("follow");
-		// Over a changing source: a registry value is checked; a writable is inert here, so it is checked when served.
-		if (attach !== undefined && first !== INERT) followedOver(first, this.#object.label);
+		// Over a changing source: a registry value (the host's own) or a writable; anything else is refused.
+		if (attach !== undefined && first !== INERT_WRITABLE) followedOver(first, this.#object.label);
 		return INERT;
 	}
 
