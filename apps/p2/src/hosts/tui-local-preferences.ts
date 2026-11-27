@@ -19,6 +19,7 @@ import { BUILTIN_THEMES, SYSTEM_THEME_NAME, type ThemeJson } from "../tui/theme/
 import { validateThemeJson } from "../tui/theme/theme-schema.ts";
 import { configDirectory } from "./tui-config.ts";
 import type { MousePolicy } from "./tui-modes.ts";
+import { isWSL } from "./tui-wsl.ts";
 
 const MAX_THEME_BYTES = 1024 * 1024;
 
@@ -210,7 +211,7 @@ export function launcherCapabilities(
 		trueColor: getCapabilities().trueColor,
 		platform,
 		// coding-agent useWindowsKeybindings: Windows and WSL terminals.
-		windowsKeys: platform === "win32" || (platform === "linux" && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP)),
+		windowsKeys: platform === "win32" || isWSL(platform, env),
 	};
 }
 

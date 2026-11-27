@@ -1,3 +1,4 @@
+import type * as FsModule from "node:fs";
 import { existsSync, readFileSync } from "node:fs";
 import type * as OsModule from "node:os";
 import type { NativeClipboard } from "@earendil-works/pi-tui";
@@ -23,6 +24,15 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@earendil-works/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
+// Tests select WSL through its variables; hide the host's /proc/version so a WSL host behaves like any Linux host.
+vi.mock("node:fs", async () => {
+	const actual = await vi.importActual<typeof FsModule>("node:fs");
+	const readFileSync = ((path: FsModule.PathOrFileDescriptor, options?: Parameters<typeof actual.readFileSync>[1]) => {
+		if (path === "/proc/version") throw new Error("ENOENT");
+		return actual.readFileSync(path, options);
+	}) as typeof actual.readFileSync;
+	return { ...actual, readFileSync };
+});
 vi.mock("node:os", async () => ({
 	...(await vi.importActual<typeof OsModule>("node:os")),
 	platform: mocks.platform,
@@ -41,6 +51,7 @@ beforeEach(() => {
 		"TERMUX_VERSION",
 		"WT_SESSION",
 		"WSL_DISTRO_NAME",
+		"WSL_INTEROP",
 		"WSLENV",
 		"PI_CLIPBOARD_OSC52",
 	])
