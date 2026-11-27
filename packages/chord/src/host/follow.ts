@@ -16,7 +16,8 @@ import type { Watch, WatchCall, WatchEnd } from "../watch.ts";
 export type FollowObserver<T> = {
 	/**
 	 * One change, synchronously and quickly: Chord only records it. A `failed` call makes the source a failed member
-	 * (its last value kept) until its next value, which replaces the value whole (`[["r", value]]`).
+	 * (its last value kept) until its next value, which replaces the value whole (`[["r", value]]`); while its object
+	 * activates, it fails the activation `transient` instead (R4).
 	 */
 	advance(call: WatchCall<T>, context: Context): void;
 	/** The followed source ended: `failed` (its runtime failed), or `ended` for good. */
@@ -45,6 +46,8 @@ export type FollowOwner = {
 	 * ended); `ended` while live is final for the source only.
 	 */
 	ended(end: WatchEnd): void;
+	/** Whether its attempt is live: before, a `failed` call is the activation's failure, as a `failed` end. */
+	live(): boolean;
 };
 
 /**
@@ -128,12 +131,9 @@ export class FollowSource extends Source {
 			return;
 		}
 		this.#value = attached.value;
-		// Nothing watches it yet (members are checked after this): the queued calls only move the value on, a failure
-		// keeping the last value (decision 140).
-		for (const call of this.#queued) {
-			if (call.kind === "value") this.#value = call.value;
-			this.#failed = call.kind === "value" ? undefined : { error: call.error };
-		}
+		// Nothing watches it yet (members are checked after this): the queued calls only move the value on (a failed
+		// one never queues while its attempt activates: `#advance`).
+		for (const call of this.#queued) if (call.kind === "value") this.#value = call.value;
 		this.#queued = [];
 		this.#state = state.end?.kind === "ended" ? { kind: "ended", detach } : { kind: "attached", detach };
 	}
@@ -188,6 +188,11 @@ export class FollowSource extends Source {
 	#advance(call: WatchCall<JsonValue>): void {
 		const { kind } = this.#state;
 		if (kind === "ended" || kind === "detached") return;
+		// Never a member failed from the start (a derive over it would break the activation): the activation fails.
+		if (call.kind === "failed" && !this.#owner.live()) {
+			this.#owner.ended({ kind: "failed", error: call.error });
+			return;
+		}
 		if (kind === "attaching" || !this.batch.running) {
 			this.#queued.push(call);
 			if (kind === "attached") this.#schedule();

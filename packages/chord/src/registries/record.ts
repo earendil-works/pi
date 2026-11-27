@@ -193,6 +193,8 @@ export class RegistryRecord {
 	start(): NativeStart<unknown> {
 		if (this.#composing) throw invalid("cycle", `registry ${this.name} is read while it composes`);
 		if (this.#provider === undefined) {
+			// Read since the change: the next one (a provider served again) marks its dependents (a follow over it).
+			this.#dirty = false;
 			const error = new ChordError({
 				code: "unavailable",
 				reason: "undeclared",

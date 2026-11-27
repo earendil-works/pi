@@ -8,6 +8,7 @@
 import { awaitWithContext, type Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
 import type { JsonValue } from "../json.ts";
+import { RegistryValueSource } from "../registries/internal.ts";
 import { type Dependent, FollowedSource, handedOut } from "../state/internal.ts";
 import type { ChordMetrics } from "../telemetry.ts";
 import type { WatchCall, WatchEnd } from "../watch.ts";
@@ -35,6 +36,8 @@ export type FollowOverOwner = {
 	live(): boolean;
 	/** A failure while live (`follow_failed`), once per failure episode. */
 	report(error: unknown): void;
+	/** What the activation waits for (a value of `over`), named in its deadline's error; `undefined`: nothing. */
+	waiting(what: string | undefined): void;
 };
 
 /**
@@ -97,8 +100,13 @@ class FollowOver implements Dependent {
 	#moving = false;
 	/** Whether a reconciliation with `over`'s value is queued (once per change, outside the batch). */
 	#reconciling = false;
-	/** The value of `over` whose attachment failed, while its retry waits: the same value again waits for it too. */
-	#retrying: unknown;
+	/**
+	 * A value of `over` with no attachment that waits: its attachment failed (`retry`: the same value again waits for
+	 * the retry) or its runtime ended it (`ended`: only another value attaches). Let go of at the next other value.
+	 */
+	#idle: { readonly for: unknown; readonly why: "retry" | "ended" } | undefined;
+	/** Observations let go of, to detach outside the batch, and before anything attaches again. */
+	#leaving: FollowAttachment<JsonValue>[] = [];
 	/** From a failure while live to the next attachment taken: the episode is reported once. */
 	#failing = false;
 	/** Its attempt ended, or its activation failed. */
@@ -179,8 +187,12 @@ class FollowOver implements Dependent {
 	 */
 	#follow(reason: "value" | "retry"): void {
 		if (this.#sealed || this.#current !== undefined) return;
+		// The runtime gets its old observation back before a new one: it may hold one at a time.
+		this.#left();
 		const value = this.#given();
 		this.#moving = false;
+		if (this.#first !== undefined)
+			this.#owner.waiting(value === undefined ? `a value of ${this.#named()}` : undefined);
 		if (value === undefined) return;
 		const attachment: Attachment = { for: value, held: NOTHING_HELD, observation: undefined };
 		this.#current = attachment;
@@ -198,11 +210,11 @@ class FollowOver implements Dependent {
 		const value = this.#given();
 		this.#moving = false;
 		if (this.#current !== undefined && this.#current.for === value) return;
-		if (this.#timer !== undefined && this.#retrying === value) return;
+		if (this.#current === undefined && this.#idle !== undefined && this.#idle.for === value) return;
 		this.#letGo();
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
-		this.#retrying = undefined;
+		this.#idle = undefined;
 		this.#follow("value");
 	}
 
@@ -218,10 +230,11 @@ class FollowOver implements Dependent {
 		try {
 			attached = await this.#attach(attachment.for, this.#observerOf(attachment), context);
 		} catch (error) {
-			if (this.#current === attachment) this.#fail(error);
+			// Overtaken (also by a change of `over` in this turn, before its reconciliation): dropped.
+			if (this.#counts(attachment)) this.#fail(error);
 			return;
 		}
-		if (this.#current !== attachment || this.#sealed) {
+		if (!this.#counts(attachment) || this.#sealed) {
 			if (this.#current === attachment) this.#current = undefined;
 			attached?.detach();
 			return;
@@ -241,8 +254,8 @@ class FollowOver implements Dependent {
 				: held.kind === "failed" && held.last !== undefined
 					? held.last.value
 					: attached.value;
-		this.#retrying = undefined;
 		const first = this.#first;
+		this.#idle = undefined;
 		if (first !== undefined) {
 			this.#first = undefined;
 			first.resolve({ value, detach: this.#release });
@@ -251,7 +264,7 @@ class FollowOver implements Dependent {
 			this.#delay = undefined;
 			this.#observer.advance({ kind: "value", value, ops: [["r", value]], retired: false }, context);
 		}
-		// A failure it gave while it attached follows its value: the followed source still queues it after a first.
+		// A failure it gave while it attached follows its value (while the object activates, its activation's failure).
 		if (held.kind === "failed") this.#observer.advance({ kind: "failed", error: held.error }, context);
 	}
 
@@ -295,8 +308,10 @@ class FollowOver implements Dependent {
 			this.#fail(end.error);
 			return;
 		}
+		const ended = this.#current?.for;
 		this.#letGo();
 		if (this.#activating) this.#observer.end(end);
+		else this.#idle = { for: ended, why: "ended" };
 	}
 
 	/**
@@ -315,11 +330,12 @@ class FollowOver implements Dependent {
 			else this.#observer.end({ kind: "failed", error });
 			return;
 		}
-		this.#retrying = failed;
+		this.#idle = { for: failed, why: "retry" };
 		this.#delay = nextDelay(this.#delay);
 		clearTimeout(this.#timer);
 		this.#timer = setTimeout(() => {
 			this.#timer = undefined;
+			this.#idle = undefined;
 			this.#follow("retry");
 		}, this.#delay);
 		if (this.#failing) return;
@@ -338,7 +354,23 @@ class FollowOver implements Dependent {
 		this.#current = undefined;
 		current.held = NOTHING_HELD;
 		const observation = current.observation;
-		if (observation !== undefined) queueMicrotask(() => observation.detach());
+		if (observation === undefined) return;
+		this.#leaving.push(observation);
+		if (this.#leaving.length === 1) queueMicrotask(() => this.#left());
+	}
+
+	/** Detaches the observations let go of (outside any batch). */
+	#left(): void {
+		const leaving = this.#leaving;
+		if (leaving.length === 0) return;
+		this.#leaving = [];
+		for (const observation of leaving) observation.detach();
+	}
+
+	/** What `over` is, for the activation deadline's error. */
+	#named(): string {
+		const over = this.#over;
+		return over instanceof RegistryValueSource ? `registry ${over.name}` : "its writable";
 	}
 
 	/** Its attempt ended, or its activation failed: `over` is followed no more, a pending retry dropped. */
@@ -346,11 +378,12 @@ class FollowOver implements Dependent {
 		this.#detached = true;
 		clearTimeout(this.#timer);
 		this.#timer = undefined;
-		this.#retrying = undefined;
+		this.#idle = undefined;
 		this.#over.dependents.delete(this);
 		const current = this.#current;
 		this.#current = undefined;
 		// As a plain follow's at its attempt's end.
+		this.#left();
 		current?.observation?.detach();
 	}
 }

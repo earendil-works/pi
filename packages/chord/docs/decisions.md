@@ -3902,8 +3902,16 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   in one batch delivers none, and a registry failing without a last good value none either). A registry's last good
   value counts while it is failed; with none it gives nothing to follow, as `undefined`. The same value again while
   attached changes nothing, and while its retry waits it waits for the retry. A pending attachment keeps only its
-  newest state, folded: a value, or a failure with the last value before it (round 2, Astra). The runtime's `detach` runs outside any batch. Attachments are counted
-  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 and 2: Opus, Astra, Fable.)
+  newest state, folded: a value, or a failure with the last value before it (round 2, Astra). Round 3 (Astra, Opus):
+  an attachment settling in the turn its source changed is checked against `over`'s value as its calls are (a stale
+  success is detached, a stale rejection dropped); the old observation is detached before the next one attaches (a
+  runtime may hold one at a time); a value whose runtime ended its observation stays ended until another value; a
+  registry read while no provider serves it counts as read, so a provider served again marks its dependents
+  (`registries/record.ts`). A `failed` call while the object activates (also a plain follow's, also after this
+  follow's first attachment) fails the activation `transient`, never a member failed from the start, which a derive
+  over it would break. The first wait for a usable value fails at the deadline as any activation, its error naming
+  what it waited for ("waiting for a value of registry …"). The runtime's `detach` runs outside any batch. Attachments are counted
+  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 to 3: Opus, Astra, Fable.)
   **Built as an attach of its own** (`host/follow-over.ts`; main session, 2026-11-27, decision 140, reversible, from
   Fable's review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
   it; its one new rule: a `failed` call fails the member until the next value, which replaces it whole (Durable

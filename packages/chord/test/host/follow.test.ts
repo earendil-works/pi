@@ -243,7 +243,7 @@ describe("ends during activation and in one batch (review regressions)", () => {
 				observer.end({ kind: "ended" });
 				return { value: { n: 7 }, detach() {} };
 			},
-			{ label: "early end", context, ended() {} },
+			{ label: "early end", context, ended() {}, live: () => true },
 			new Batch(() => {}, undefined),
 		);
 		await source.attach(context);
@@ -309,7 +309,7 @@ describe("ends during activation and in one batch (review regressions)", () => {
 				observer = attached;
 				return { value: { n: 7 }, detach() {} };
 			},
-			{ label: "retirement", context, ended() {} },
+			{ label: "retirement", context, ended() {}, live: () => true },
 			batch,
 		);
 		await source.attach(context);
@@ -330,7 +330,7 @@ describe("ends during activation and in one batch (review regressions)", () => {
 				observer = attached;
 				return { value: { n: 0 }, detach() {} };
 			},
-			{ label: "unwatched", context, ended() {} },
+			{ label: "unwatched", context, ended() {}, live: () => true },
 			new Batch(() => {}, undefined),
 		);
 		await source.attach(context);
@@ -573,36 +573,34 @@ describe("over a changing source: activation (ERNDL-1191)", () => {
 		}
 	});
 
-	// Astra, round 2 of this change (M4), Opus nit 1: a failed call before the attachment resolved was dropped (decision 140).
+	// Astra, round 2 of this change (M4), Opus nit 1: a failed call before the attachment resolved was dropped; Opus,
+	// round 3 (M4): kept as a failed member, a derive over it broke the activation for good.
 	it.each(["plain", "over"])(
-		"a failed call before the first %s attachment resolves is not silently healthy",
+		"a failed call before the first %s attachment resolves fails the activation transient, and its retry attaches",
 		async (form) => {
 			const lost = new Error("failed while attaching");
-			let resume = () => {};
-			const { host } = await loaded((h) =>
-				h.serve(Follower, (_, self) => {
+			let attaches = 0;
+			const { host, errors } = await loaded((h) =>
+				h.serve(View, (_, self) => {
 					const attach: FollowAttach<Count> = async (observer, ctx) => {
-						observer.advance({ kind: "failed", error: lost }, ctx);
-						resume = () =>
-							observer.advance({ kind: "value", value: { n: 8 }, ops: [["s", ["n"], 8]], retired: false }, ctx);
+						if (attaches++ === 0) observer.advance({ kind: "failed", error: lost }, ctx);
 						return { value: { n: 7 }, detach() {} };
 					};
-					return {
-						a:
-							form === "plain"
-								? self.follow(attach)
-								: self.follow(self.writable(1), (_, observer, ctx) => attach(observer, ctx)),
-					};
+					const a =
+						form === "plain"
+							? self.follow(attach)
+							: self.follow(self.writable(1), (_, observer, ctx) => attach(observer, ctx));
+					return { a, sum: self.derive([a], ([x]) => x.n) };
 				}),
 			);
 			try {
-				const ref = await host.get(Follower, { id: "1" }, context);
-				const calls = changesOf(await ref.a.watch(context));
+				const ref = host.hold(View, {}, context);
 				await delivered();
-				expect(() => ref.a.value).toThrow(lost);
-				resume();
-				await delivered();
-				expect(calls).toEqual([{ kind: "failed", error: lost }, replaced(8)]);
+				expect(ref.state.value).toMatchObject({ kind: "failed", cause: { kind: "transient" } });
+				expect(errors).toMatchObject([{ kind: "activation_failed", failure: { kind: "transient" } }]);
+				ref.retry();
+				await waitLive(ref);
+				expect([ref.a.value, ref.sum.value, attaches]).toEqual([{ n: 7 }, 7, 2]);
 			} finally {
 				await host.close(context);
 			}
@@ -1412,11 +1410,11 @@ describe("GC", () => {
  * A registry that fails without a last good value once its one contributor leaves (its decision 5): the giver's own
  * follow fails it (`failGiver`); with `pause`, the follower's native waits for it before its follow attaches.
  */
-async function failingRegistry(pause?: Promise<void>) {
+async function failingRegistry(pause?: Promise<void>, options: { readyTimeout?: number } = {}) {
 	const a = new Runtime(1);
 	const started = Promise.withResolvers<void>();
 	let failGiver = () => {};
-	const { host } = await loaded((h) => {
+	const { host, errors } = await loaded((h) => {
 		h.serve(Runtimes, {
 			compose: (table) => {
 				if (!table.length) throw new Error("giver gone");
@@ -1445,8 +1443,8 @@ async function failingRegistry(pause?: Promise<void>) {
 			const view = self.follow(registry, (runtime, observer, ctx) => runtime.attach(observer, ctx));
 			return { a: view };
 		});
-	});
-	return { host, a, failGiver: () => failGiver(), started: started.promise };
+	}, options);
+	return { host, errors, a, failGiver: () => failGiver(), started: started.promise };
 }
 
 // Astra, round 2 of this change (M2): `over` failing with no last good value threw from Chord's observer and leaked.
@@ -1510,6 +1508,246 @@ describe("over a changing source: a registry with no usable value", () => {
 			]);
 		} finally {
 			vi.useRealTimers();
+			await host.close(context);
+		}
+	});
+});
+
+// Astra, round 3 of this change (M1): an attachment settling in the turn its source changed, before the reconciliation.
+describe("over a changing source: settling in the turn its source changed", () => {
+	it.each(["resolve", "reject"])(
+		"a superseded %s cannot finish the activation while the actual current source is still attaching",
+		async (outcome) => {
+			const first = Promise.withResolvers<{ value: Count; detach(): void }>(),
+				second = Promise.withResolvers<{ value: Count; detach(): void }>();
+			let give = (_n: number) => {},
+				starts = 0;
+			const { host, errors } = await loaded((h) =>
+				h.serve(Follower, (_, self) => {
+					const s = self.writable(1);
+					give = (n) => s.set(n);
+					return {
+						a: self.follow(s, (n) => {
+							starts++;
+							return n === 1 ? first.promise : second.promise;
+						}),
+					};
+				}),
+			);
+			try {
+				const ref = host.hold(Follower, { id: "1" }, context);
+				await delivered();
+				expect(starts).toBe(1);
+				// A's promise queues Chord's await reaction; the source has changed before that reaction runs.
+				if (outcome === "resolve") first.resolve({ value: { n: 1 }, detach() {} });
+				else first.reject(new Error("A closed"));
+				give(2);
+				await delivered();
+				const whilePending = [ref.state.value.kind, errors.map((e) => e.kind)];
+				second.resolve({ value: { n: 2 }, detach() {} });
+				await delivered();
+				expect(whilePending).toEqual(["loading", []]);
+				expect([ref.state.value.kind, ref.a.value]).toEqual(["live", { n: 2 }]);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+
+	it.each(["resolve", "reject"])(
+		"a superseded live re-attach's %s cannot publish or report after its withdrawal",
+		async (outcome) => {
+			const b = Promise.withResolvers<{ value: Count; detach(): void }>();
+			let give = (_n: number | undefined) => {},
+				starts = 0;
+			const { host, errors } = await loaded((h) =>
+				h.serve(Follower, (_, self) => {
+					const s = self.writable<number | undefined>(1);
+					give = (n) => s.set(n);
+					return {
+						a: self.follow(s, (n) => {
+							starts++;
+							return n === 2 ? b.promise : Promise.resolve({ value: { n }, detach() {} });
+						}),
+					};
+				}),
+			);
+			try {
+				const ref = await host.get(Follower, { id: "1" }, context);
+				const calls = changesOf(await ref.a.watch(context));
+				give(2);
+				await delivered();
+				expect(starts).toBe(2);
+				if (outcome === "resolve") b.resolve({ value: { n: 2 }, detach() {} });
+				else b.reject(new Error("withdrawn B"));
+				give(undefined);
+				await delivered();
+				expect([calls, errors.map((e) => e.kind)]).toEqual([[], []]);
+				expect(ref.a.value).toEqual({ n: 1 });
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+});
+
+// Astra, round 3 of this change (M3, S1): the old observation is detached before the next attaches, and one its
+// runtime ended stays ended until another value.
+describe("over a changing source: the old observation", () => {
+	it("releases a settled observation before its replacement needs the observation slot", async () => {
+		let occupied = false,
+			give = (_n: number) => {};
+		const log: string[] = [];
+		const { host, errors } = await loaded((h) =>
+			h.serve(Follower, (_, self) => {
+				const s = self.writable(1);
+				give = (n) => s.set(n);
+				return {
+					a: self.follow(s, async (n) => {
+						log.push(`attach ${n}`);
+						if (occupied) throw new Error("observation still in use");
+						occupied = true;
+						return {
+							value: { n },
+							detach() {
+								occupied = false;
+								log.push(`detach ${n}`);
+							},
+						};
+					}),
+				};
+			}),
+		);
+		try {
+			const ref = await host.get(Follower, { id: "1" }, context);
+			const calls = changesOf(await ref.a.watch(context));
+			give(2);
+			await delivered();
+			expect([log, errors.map((e) => e.kind), calls]).toEqual([
+				["attach 1", "detach 1", "attach 2"],
+				[],
+				[replaced(2)],
+			]);
+		} finally {
+			await host.close(context);
+		}
+	});
+
+	it("a registry recomposing to the same value does not restart an ended observation", async () => {
+		const a = new Runtime(1);
+		let poke = () => {};
+		const { host } = await loaded((h) => {
+			h.serve(Runtimes, { compose: () => a });
+			h.serve(Giver, (_, self) => {
+				const other = self.writable(a);
+				self.contribute(Runtimes, other);
+				poke = () => other.set(new Runtime(2));
+				return {};
+			});
+			h.serve(Follower, (_, self) => ({
+				a: self.follow(self.registry(Runtimes), (r, observer, ctx) => r.attach(observer, ctx)),
+			}));
+		});
+		try {
+			const ref = await host.get(Follower, { id: "1" }, context);
+			const calls = changesOf(await ref.a.watch(context));
+			a.end({ kind: "ended" });
+			await delivered();
+			poke();
+			await delivered();
+			expect([a.attachments, a.observers.size, calls]).toEqual([1, 0, []]);
+		} finally {
+			await host.close(context);
+		}
+	});
+});
+
+// Astra, round 3 of this change: the first wait for a registry with no usable value is bounded by the deadline (the
+// decided expectation), its error naming the registry (Opus, round 3).
+describe("over a changing source: the first wait under the deadline", () => {
+	it("an unusable registry does not extend the attempt's deadline or leave a dependent afterwards", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { host, errors, failGiver, started } = await failingRegistry(gate.promise, { readyTimeout: 200 });
+		const source = (host as unknown as ChordHost).registryRecord(Runtimes.name).value(Runtimes.version);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+		try {
+			const ref = host.hold(Follower, { id: "1" }, context);
+			await started;
+			failGiver();
+			await vi.advanceTimersByTimeAsync(0);
+			gate.resolve();
+			await vi.advanceTimersByTimeAsync(199);
+			expect([ref.state.value.kind, source.dependents.size]).toEqual(["loading", 1]);
+			await vi.advanceTimersByTimeAsync(1);
+			expect([ref.state.value.kind, source.dependents.size]).toEqual(["failed", 0]);
+			expect(errors.find((error) => error.kind === "activation_failed")).toMatchObject({
+				failure: {
+					error: {
+						message:
+							"app.follower(1): did not become live within 200 ms (waiting for a value of registry app.runtimes)",
+					},
+				},
+			});
+		} finally {
+			gate.resolve();
+			vi.useRealTimers();
+			await host.close(context);
+		}
+	});
+
+	it("waits for a newly usable value under the same attempt, without an activation failure", async () => {
+		const gate = Promise.withResolvers<void>();
+		const { host, failGiver, started, a } = await failingRegistry(gate.promise);
+		try {
+			const ref = host.hold(Follower, { id: "1" }, context);
+			await started;
+			failGiver();
+			await delivered();
+			gate.resolve();
+			await delivered();
+			expect([ref.state.value.kind, a.attachments]).toEqual(["loading", 0]);
+			const giver = host.hold(Giver, {}, context);
+			giver.retry();
+			await waitLive(ref);
+			expect([ref.a.value, a.attachments]).toEqual([{ n: 1 }, 1]);
+		} finally {
+			gate.resolve();
+			await host.close(context);
+		}
+	});
+});
+
+// Astra, round 3 of this change (M2): a registry whose provider was removed and served again woke no follower.
+describe("over a changing source: its registry provider removed and served again", () => {
+	it("a live follower resumes when a removed registry provider is installed again", async () => {
+		const a = new Runtime(1),
+			b = new Runtime(2);
+		const consumer = { name: "@test/consumer", facet: follower() };
+		const provider = (runtime: Runtime) => ({
+			name: "@test/provider",
+			facet: defineFacet((h) => h.serve(Runtimes, { compose: () => runtime })),
+		});
+		const host = createHost({ onError() {} });
+		try {
+			await host.load([provider(a), consumer], context);
+			const ref = await host.get(Follower, { id: "1" }, context);
+			const registry = await host.registry(Runtimes, context);
+			const calls = changesOf(await ref.a.watch(context));
+			await host.reload([consumer], context);
+			await delivered();
+			expect(() => registry.value).toThrow("no plugin serves");
+			expect(ref.a.value).toEqual({ n: 1 });
+			await host.reload([provider(b), consumer], context);
+			await delivered();
+			expect(registry.value).toBe(b);
+			expect([ref.state.value.kind, ref.a.value, a.observers.size, b.observers.size, calls]).toEqual([
+				"live",
+				{ n: 2 },
+				0,
+				1,
+				[replaced(2)],
+			]);
+		} finally {
 			await host.close(context);
 		}
 	});

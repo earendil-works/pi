@@ -377,8 +377,9 @@ export type Activated =
 	| { readonly kind: "ended" };
 
 /** The error of an object, or a getter, that waited `ms` without the object going live. */
-export function notLive(label: string, ms: number): ChordError {
-	return new ChordError({ code: "unavailable", message: `${label}: did not become live within ${ms} ms` });
+export function notLive(label: string, ms: number, waitingFor?: string): ChordError {
+	const waiting = waitingFor === undefined ? "" : ` (waiting for ${waitingFor})`;
+	return new ChordError({ code: "unavailable", message: `${label}: did not become live within ${ms} ms${waiting}` });
 }
 
 /**
@@ -405,6 +406,8 @@ type AttemptExtras = {
 	runs: Work | undefined;
 	/** A followed source's end while this attempt activated: it fails as it goes live (if its activation returned). */
 	endedEarly: ChordError | undefined;
+	/** What a follow over a changing source waits for while it activates (a value of its source), for the deadline's error. */
+	followWaitingFor: string | undefined;
 	/** Its registry reads, contributions, wake signals and writables, made by the first. */
 	registryDeclarations: RegistryDeclarations | undefined;
 	/** What its own event sources check (its seal) and count with, made by the first `self.events()`. */
@@ -791,9 +794,17 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 						context: withAbortSignal(this.#abort.signal, this.#context),
 						metrics: host.metrics,
 						live: () => this.#isLive,
+						waiting: (what) => {
+							if (what !== undefined || this.#extras !== undefined) this.#more().followWaitingFor = what;
+						},
 						report: (error) => host.report({ kind: "follow_failed", object: label, error }),
 					});
-		const owner = { label, context: this.#context, ended: (end: WatchEnd) => this.#followEnded(end) };
+		const owner = {
+			label,
+			context: this.#context,
+			ended: (end: WatchEnd) => this.#followEnded(end),
+			live: () => this.#isLive,
+		};
 		const source = new FollowSource(attached, owner, host.batch);
 		this.#follows = appended(this.#follows, source);
 		return source as unknown as Watchable<T>;
@@ -858,7 +869,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#startActivation(this.#trace.trigger);
 		const { ready } = this.#object.host.timeouts;
 		const deadline = new Deadline(ready, () => {
-			this.abandon({ kind: "failed", cause: { kind: "transient", error: notLive(this.#object.label, ready) } });
+			const error = notLive(this.#object.label, ready, this.#extras?.followWaitingFor);
+			this.abandon({ kind: "failed", cause: { kind: "transient", error } });
 		});
 		try {
 			const served = this.#served;
@@ -1918,6 +1930,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			listed: undefined,
 			runs: undefined,
 			endedEarly: undefined,
+			followWaitingFor: undefined,
 			registryDeclarations: undefined,
 			sourceOwner: undefined,
 			sources: undefined,

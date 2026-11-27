@@ -23,7 +23,7 @@
 
 ### Changed
 
-- A `failed` call to a `self.follow` observer fails the member until its next value, which replaces the value whole; it was ignored (Durable never sends one) ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
+- A `failed` call to a `self.follow` observer fails the member until its next value, which replaces the value whole; while the object activates it fails the activation `transient`; it was ignored (Durable never sends one) ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - A commit files a read only under the row keys that came or went since its last run, and a live window that moved by k rows is diffed by identity: a 500-item checklist read by 100 unshared lists 54 → 45 ms per write, a shifted window of 500 rows diffed in about 3 µs instead of 80 (`docs/benchmarks.md`, "Identical live reads", step 4).
 - Identical live reads share one source: `self.liveQuery` and `self.count` readers of the same provider instance's named query with the same arguments and window (or count) share one read: one run, one decode and one value per write, their frames diffed once. 100 callers each holding their own object over a link with the same window of 50 notes: 1.6 ms to the last delivery per write instead of 8.1 ms, a 500-item checklist 1.8 ms instead of 46 ms; one query run instead of 100 (`docs/benchmarks.md`, "Identical live reads"). Lists do not share their pages yet.
 - A reference makes its named queries' handles on first use: a reference to a store with 23 named queries, none read, takes 1.3 KiB instead of 6.4 KiB.
@@ -35,6 +35,7 @@
 
 ### Fixed
 
+- A registry whose defining plugin was removed and served again marks the derives and follows reading it again; they stayed on what they read while no provider served it ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - A transaction cancelled by its own object's end (the object ended, failed, was denied at a re-admission or replaced by a reload, a reload stopped the routine that ran it, or the seal cut off the job run that ran it) is no longer reported as `transaction_cancelled`: it is the object's end, not a lost change. Chord tells it by where the abort came from, not by its reason: a caller's cancel (also with the same reason object), a caller object's end, a settled root and a transaction's own exception still report ([ERNDL-1190](https://linear.app/earendil/issue/ERNDL-1190)).
 - A page or terminal reconnecting to a restarted server before its surface built no longer reloads: it took the scripts object's set with no base (shown until the first build) for another base. It skips that set and applies the first set that follows, so a plugin that kept its old code loads in place (`test/node/web/styles.test.ts`' reconnect case failed most runs).
 - A reference of an older version its provider refuses a member waits unbound (`failed { waiting }`, `contract_mismatch`) also when its object is denied (it showed the denial), and reads nothing from an instance that refuses its version: during a restart whose old attempt refuses it, it shows `loading` and its reads throw `not_ready` until the successor serves it (it showed `live` with the old attempt's values); its named queries throw `not_ready` meanwhile. A failed activation also leaves such holders waiting unbound (they showed the failure).
