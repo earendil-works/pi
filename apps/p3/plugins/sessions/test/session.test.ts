@@ -26,7 +26,7 @@ import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { seeded } from "../../environments/test/seeded.ts";
 import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
-import { makeTick, type Party, type Source } from "../../things/contract.ts";
+import { makeTick, OPEN, type Party, type Source } from "../../things/contract.ts";
 import { Board, SESSION, SPACES } from "../../things/test/kinds.ts";
 import { type World, world } from "../../things/test/world.ts";
 import { Workspace } from "../../things/workspace.ts";
@@ -170,6 +170,20 @@ describe("making a session (1)", () => {
 			makeSession(leo, fam, "two", { location: { environment: "nowhere", folder: "/tmp" } }),
 			/no machine nowhere/,
 		);
+	});
+
+	// Opus, round 5: a session on a machine its maker is not let in on could not show them its files or terminals.
+	it("refuses a location on a machine its maker is not let in on where the session is made", async () => {
+		const { leo, fam } = await family();
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		const at = { location: { environment: machine, folder: "/tmp" } };
+		await makeSession(leo, fam, "one", at);
+		const party = { kind: "person", person: leo.id } as const;
+		await store.setGrants(
+			{ source: BY, grants: [{ workspace: fam, thing: machine, party, tick: OPEN, gives: false }] },
+			context,
+		);
+		await assert.rejects(makeSession(leo, fam, "two", at), /no machine/);
 	});
 });
 

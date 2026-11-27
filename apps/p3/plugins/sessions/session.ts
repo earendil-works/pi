@@ -6,13 +6,23 @@
 // above hidden), and the view it opens with (decision 93, item 74). Its delete hook drops the row with the workspace.
 // Archiving changes the row only (one commit): what kinds keep for the session stays until it is unlinked.
 
-import { type FacetHost, invalid, type P3Principal, type Self, type Watchable } from "@earendil-works/p3/v1";
-import type { CreateAnswer } from "../things/contract.server.ts";
+import {
+	type Ctx,
+	callerKey,
+	type FacetHost,
+	invalid,
+	type P3Principal,
+	type Self,
+	type Watchable,
+} from "@earendil-works/p3/v1";
+import { type CreateAnswer, ThingsStore } from "../things/contract.server.ts";
+import type { Source } from "../things/contract.ts";
 import { serveThing } from "../things/serve.ts";
 import { SessionsStore } from "./contract.server.ts";
 import type { SessionRow } from "./contract.ts";
 import { nearestDefaults } from "./defaults.ts";
 import { SessionKind } from "./kind.ts";
+import { messages } from "./messages.ts";
 
 /**
  * A private session's default grants: the kind's, with no entry for everyone (decision 93). An empty list would be a
@@ -41,7 +51,8 @@ export function serveSessionKind(host: FacetHost<P3Principal>): void {
 				},
 			};
 		},
-		create: async ({ thing: session, input, workspace }, ctx) => {
+		create: async ({ thing: session, input, workspace, by }, ctx) => {
+			if (input.location !== undefined) await mayWorkOn(input.location.environment, workspace, by, ctx);
 			const defaults = await nearestDefaults(workspace, ctx);
 			await (await ctx.get(SessionsStore, {})).insert({ id: session, ...input, model: defaults.model }, ctx);
 			return {
@@ -53,6 +64,24 @@ export function serveSessionKind(host: FacetHost<P3Principal>): void {
 			await (await ctx.get(SessionsStore, {})).remove({ session }, ctx);
 		},
 	});
+}
+
+/**
+ * Refuses a location on machine `machine` that the maker `by` (a person or an agent) is not let in on in `workspace`,
+ * where the session is made: their session could not show it to them (Opus, round 5). A plugin makes where it says.
+ */
+async function mayWorkOn(machine: string, workspace: string, by: Source, ctx: Ctx<P3Principal>): Promise<void> {
+	if (by.kind !== "person" && by.kind !== "agent") return;
+	const caller =
+		by.kind === "person"
+			? callerKey({ kind: "person", id: by.person, name: "" })
+			: callerKey({ kind: "worker", session: by.session });
+	const answer = await (await ctx.get(ThingsStore, {})).answerOf({ workspace, thing: machine, caller }, ctx);
+	if (answer === null) {
+		throw invalid("args", `sessions: no machine ${machine} here`, {
+			message: messages.message("noMachine", machine),
+		});
+	}
 }
 
 /** Session `session`'s row as its holders and its worker see it, live (`null`: a session the server does not know). */
