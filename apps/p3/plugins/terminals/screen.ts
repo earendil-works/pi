@@ -18,8 +18,13 @@ export type ScreenFeed = {
 	 * (one screen per terminal does; none by default).
 	 */
 	answer(yes: boolean, at: number): void;
-	/** The connection was lost: nothing typed can be delivered until the next `restart`. */
-	lost(): void;
+	/**
+	 * The connection was lost: nothing typed can be delivered until the next `restart`, which comes only `again` (not
+	 * after the terminal ended or the person was refused).
+	 */
+	lost(again: boolean): void;
+	/** Where in the terminal's output the output that follows starts (before the first, and after bytes skipped). */
+	from(offset: number): void;
 };
 
 /** One terminal as a screen reaches it. */

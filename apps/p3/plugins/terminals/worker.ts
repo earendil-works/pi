@@ -58,7 +58,8 @@ function terminalTool(held: Held, session: HarnessSession) {
 			`Ctrl-C, \\r is Enter); \`read\` the output of \`terminal\` so far as plain text (its last ${READ} ` +
 			`characters), once it printed nothing for ${QUIET} ms or its program ended, waiting at most \`wait_ms\` ` +
 			`(at most ${MAX_WAIT}; none by default); \`close\` ends its program and closes it ` +
-			"for everyone. `terminal` is an id `list` or `open` answered.",
+			"for everyone. `terminal` is an id `list` or `open` answered. A program started in the background (`&`) ends " +
+			"with its terminal's shell, as in a closed terminal window.",
 		parameters: obj({ action: Action }),
 		execute: async ({ action }, api, context) => {
 			const ref = usable(held);

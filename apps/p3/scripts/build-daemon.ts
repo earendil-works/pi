@@ -6,7 +6,7 @@
 
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The daemon's Cargo manifest in the checkout. */
@@ -29,4 +29,12 @@ if (CARGO === undefined) {
 	);
 	process.exit(1);
 }
-execFileSync(CARGO, ["build", "--release", "--locked", "--quiet", "--manifest-path", MANIFEST], { stdio: "inherit" });
+// Into the checkout's `daemon/target`, where `terminalDaemon` looks, whatever `CARGO_TARGET_DIR` says.
+const TARGET = join(dirname(MANIFEST), "target");
+execFileSync(
+	CARGO,
+	["build", "--release", "--locked", "--quiet", "--manifest-path", MANIFEST, "--target-dir", TARGET],
+	{
+		stdio: "inherit",
+	},
+);

@@ -44,7 +44,8 @@ export function GhosttyScreen({ link, label }: TerminalScreenProps) {
 	const [ctrl, setCtrl] = useState(false);
 	const [alt, setAlt] = useState(false);
 	const [failed, setFailed] = useState(false);
-	const [ready, setReady] = useState(false);
+	const [typing, setTyping] = useState<InputState>("connecting");
+	const ready = typing === "ready";
 	const modifiers = useRef({ ctrl, alt });
 	modifiers.current = { ctrl, alt };
 	const typable = link.type !== undefined;
@@ -63,7 +64,7 @@ export function GhosttyScreen({ link, label }: TerminalScreenProps) {
 				return value;
 			},
 			failed: () => setFailed(true),
-			ready: setReady,
+			typing: setTyping,
 		});
 		drawn.current = terminal;
 		terminal.start();
@@ -72,15 +73,18 @@ export function GhosttyScreen({ link, label }: TerminalScreenProps) {
 			drawn.current = undefined;
 		};
 	}, [link]);
-	// A tap or click focuses the input and opens the on-screen keyboard, unless it selected text to copy. On click, not
-	// pointerup: a tap's mousedown follows its pointerup and took the focus away again.
+	// A tap or click focuses the input and opens the on-screen keyboard, unless it selected output to copy (a selection
+	// elsewhere on the page is no reason: it kept a click from focusing, Astra, round 3). On click, not pointerup: a
+	// tap's mousedown follows its pointerup and took the focus away again.
 	useEffect(() => {
 		const area = frame.current;
 		if (area === null || !typable) return;
 		const focus = () => {
 			const element = input.current;
 			if (element === null || element.hasAttribute("data-native-menu")) return;
-			if (window.getSelection()?.isCollapsed === false) return;
+			const selection = window.getSelection();
+			const selected = selection !== null && !selection.isCollapsed && selection.rangeCount > 0;
+			if (selected && content.current !== null && selection.getRangeAt(0).intersectsNode(content.current)) return;
 			// Focused already, maybe with the keyboard hidden (Android's Back): focusing again brings it back.
 			if (document.activeElement === element) element.blur();
 			element.focus({ preventScroll: true });
@@ -112,7 +116,7 @@ export function GhosttyScreen({ link, label }: TerminalScreenProps) {
 						autoComplete="off"
 						autoCorrect="off"
 						className={styles.input}
-						data-terminal-input={ready ? "ready" : "waiting"}
+						data-terminal-input={typing}
 						readOnly={!ready}
 						ref={input}
 						spellCheck={false}
@@ -120,7 +124,9 @@ export function GhosttyScreen({ link, label }: TerminalScreenProps) {
 				) : null}
 			</div>
 			{failed ? <p className={styles.failed}>{t("screenFailed")}</p> : null}
-			{!failed && typable && !ready ? <p className={styles.waiting}>{t("screenConnecting")}</p> : null}
+			{!failed && typable && typing === "connecting" ? (
+				<p className={styles.waiting}>{t("screenConnecting")}</p>
+			) : null}
 			{typable ? (
 				// Keycaps (Ctrl, Alt, Esc, Tab, arrows) are printed on keyboards in every language: not messages.
 				<div aria-label={t("screenKeys")} className={styles.keys} role="toolbar">
@@ -211,9 +217,15 @@ type DrawnOptions = {
 	readonly modifiers: () => { ctrl: boolean; alt: boolean };
 	/** The emulator could not load. */
 	readonly failed: () => void;
-	/** Whether what is typed can be delivered now: connected, the terminal made (and again after each change). */
-	readonly ready: (ready: boolean) => void;
+	/** Whether what is typed can be delivered now (and again after each change). */
+	readonly typing: (state: InputState) => void;
 };
+
+/**
+ * Whether what is typed can be delivered: `ready` (connected, the terminal made), `connecting` (a connection is being
+ * made, the first or again), `closed` (the terminal ended, or the person is no longer let in: none comes).
+ */
+type InputState = "ready" | "connecting" | "closed";
 
 /** A touch on the screen: where it went down, whether it moved, its last position and speed (for the fling). */
 type Touch = {
@@ -236,7 +248,7 @@ class DrawnTerminal {
 	readonly #input: HTMLTextAreaElement | undefined;
 	readonly #modifiers: () => { ctrl: boolean; alt: boolean };
 	readonly #failed: () => void;
-	readonly #ready: (ready: boolean) => void;
+	readonly #typing: (state: InputState) => void;
 	readonly #rows: HTMLElement;
 	readonly #cursor: HTMLElement;
 	/** Where the shown rows are in the scrollback, while scrolled up. */
@@ -255,16 +267,18 @@ class DrawnTerminal {
 	#size: { columns: number; rows: number } | undefined;
 	/** Whether this screen answers the program's queries (the socket says: one screen per terminal does). */
 	#answering = false;
-	/** Changes of `#answering` still to come, each from an output byte of this connection on (`at`). */
+	/** Changes of `#answering` still to come, each from an offset of the terminal's output on (`at`). */
 	#answers: { readonly yes: boolean; readonly at: number }[] = [];
-	/** Output bytes of this connection parsed so far. */
-	#parsed = 0;
+	/** The offset in the terminal's output of the next byte parsed. */
+	#offset = 0;
 	/** Whether a connection is open (from its `restart` until it is lost). */
 	#connected = false;
+	/** Whether a lost connection is made again (else the terminal ended, or the person is no longer let in). */
+	#reconnecting = true;
 	/** How many bytes of replayed output are still to parse, whose queries go unanswered. */
 	#replay = 0;
-	/** Output waiting to be parsed. */
-	#queue: Uint8Array[] = [];
+	/** Output waiting to be parsed, and where in the terminal's output the bytes after a mark start. */
+	#queue: (Uint8Array | { readonly offset: number })[] = [];
 	/** Output parsed and not told to the link yet. */
 	#undrawn = 0;
 	#drawnTimer: ReturnType<typeof setTimeout> | undefined;
@@ -295,7 +309,7 @@ class DrawnTerminal {
 		this.#input = options.input;
 		this.#modifiers = options.modifiers;
 		this.#failed = options.failed;
-		this.#ready = options.ready;
+		this.#typing = options.typing;
 		this.#rows = document.createElement("div");
 		this.#cursor = element(styles.cursor);
 		this.#cursor.hidden = true;
@@ -330,13 +344,15 @@ class DrawnTerminal {
 				this.#queue.push(bytes);
 				this.#pump();
 			},
+			from: (offset) => this.#queue.push({ offset }),
 			size: (columns, rows) => this.#sized(columns, rows),
 			answer: (yes, at) => {
 				this.#answers.push({ yes, at });
 				this.#pump();
 			},
-			lost: () => {
+			lost: (again) => {
 				this.#connected = false;
+				this.#reconnecting = again;
 				this.#readiness();
 			},
 		};
@@ -492,7 +508,7 @@ class DrawnTerminal {
 		this.#replay = kept;
 		this.#answering = false;
 		this.#answers = [];
-		this.#parsed = 0;
+		this.#offset = 0;
 		this.#connected = true;
 		this.#vt?.free();
 		this.#vt = undefined;
@@ -547,7 +563,8 @@ class DrawnTerminal {
 
 	/** Tells the view whether typing can be delivered now. */
 	#readiness(): void {
-		this.#ready(this.#connected && this.#vt !== undefined);
+		if (this.#connected && this.#vt !== undefined) this.#typing("ready");
+		else this.#typing(this.#connected || this.#reconnecting ? "connecting" : "closed");
 	}
 
 	/** The colours of the page's theme, again after it changed. */
@@ -874,10 +891,11 @@ class DrawnTerminal {
 	/** Types `bytes`: back to the bottom, as a terminal does, and a fling stops. */
 	#send(bytes: Uint8Array): void {
 		const type = this.#link.type;
+		const vt = this.#vt;
 		// Nothing typed before it can be delivered goes later to a connection that did not exist then.
-		if (type === undefined || bytes.length === 0 || !this.#connected || this.#vt === undefined) return;
+		if (type === undefined || bytes.length === 0 || !this.#connected || vt === undefined) return;
 		cancelAnimationFrame(this.#fling);
-		this.#vt?.scroll("bottom");
+		vt.scroll("bottom");
 		this.#schedule();
 		type(bytes);
 	}
@@ -913,14 +931,20 @@ class DrawnTerminal {
 		const deadline = performance.now() + OUTPUT_BUDGET_MS;
 		let parsed = 0;
 		while (this.#queue.length > 0 && performance.now() < deadline) {
-			// Who answers changes at the output byte the socket named.
-			while (this.#answers[0] !== undefined && this.#answers[0].at <= this.#parsed) {
+			const head = this.#queue[0]!;
+			if (!(head instanceof Uint8Array)) {
+				this.#offset = head.offset;
+				this.#queue.shift();
+				continue;
+			}
+			// Who answers changes at the output offset the socket named.
+			while (this.#answers[0] !== undefined && this.#answers[0].at <= this.#offset) {
 				this.#answering = this.#answers.shift()!.yes;
 			}
-			let bytes = this.#queue[0]!;
+			let bytes = head;
 			// The replay's end and the next change of who answers end a piece, so the queries before them are answered
 			// as they were then.
-			const change = this.#answers[0] === undefined ? OUTPUT_SLICE_BYTES : this.#answers[0].at - this.#parsed;
+			const change = this.#answers[0] === undefined ? OUTPUT_SLICE_BYTES : this.#answers[0].at - this.#offset;
 			const replay = this.#replay > 0 ? this.#replay : OUTPUT_SLICE_BYTES;
 			const slice = Math.min(OUTPUT_SLICE_BYTES, replay, change);
 			if (bytes.length > slice) {
@@ -929,7 +953,7 @@ class DrawnTerminal {
 			} else this.#queue.shift();
 			vt.write(bytes);
 			this.#replay = Math.max(0, this.#replay - bytes.length);
-			this.#parsed += bytes.length;
+			this.#offset += bytes.length;
 			parsed += bytes.length;
 		}
 		if (parsed > 0) {

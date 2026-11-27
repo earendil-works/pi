@@ -46,6 +46,7 @@ describe("a viewer's stream", () => {
 			assert.deepEqual(socket.told, [
 				{ kind: "kept", bytes: 4 },
 				{ kind: "size", ...SIZE },
+				{ kind: "from", offset: 0 },
 			]);
 			started()[0]!.say("live");
 			assert.equal(await socket.next(), "live");
@@ -224,13 +225,14 @@ describe("flow", () => {
 				socket.tell({ kind: "drawn", bytes: socket.take() });
 			}
 			assert.ok(socket.most <= WINDOW, `${socket.most} bytes in the buffer`);
-			const told = socket.told.length;
+			const sizes = () => socket.told.filter((told) => (told as { kind: string }).kind === "size").length;
+			const told = sizes();
 			socket.release();
 			await eventually(
 				() => socket.told.at(-1),
 				(last) => JSON.stringify(last) === JSON.stringify({ kind: "size", columns: 249, rows: 20 }),
 			);
-			assert.ok(socket.told.length - told <= 2, "the sizes that waited went as one");
+			assert.ok(sizes() - told <= 1, "the sizes that waited went as one");
 		});
 	});
 

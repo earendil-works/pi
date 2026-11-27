@@ -160,6 +160,8 @@ not exist yet.
   page shows (`wait`), never sleep; before a screenshot of a dialog or a popup, `settled` waits until its animations
   ended and checks it is on top. The last case asserts that the server reported nothing and the page logged no error.
   Screenshots go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory) for a person to look at.
+- **A quiet machine:** the page's waits give up after 20 s; at a load near 100 (others' suites on slayer) a real shell's
+  case can miss one. Rerun it before reading a failure as a bug.
 - **Run only when asked,** never in a plain `npm test`: `P3_BROWSER_TESTS=1` and `CHROMIUM_BIN` (on slayer
   `CHROMIUM_BIN=/home/badlogic/.local/bin/chromium-docker`, the Playwright image's Chromium), else the suite is
   skipped:

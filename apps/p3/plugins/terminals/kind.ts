@@ -112,13 +112,15 @@ export const SocketMessage = union([
 export type SocketMessage = Static<typeof SocketMessage>;
 
 /**
- * What the attach socket tells a page as text: how much kept output comes first (`kept`), the terminal's size, and
- * whether this page answers the program's queries (`answer`: one viewer that may type per terminal does), from the
- * output byte `at` on (counted from this socket's first output byte), so a page that draws late answers what it drew
- * as it was then.
+ * What the attach socket tells a page as text: how much kept output comes first (`kept`); where in the terminal's
+ * output the next binary frame starts (`from`, an offset counted from the terminal's first byte: before the first
+ * frame, and again after bytes a page that fell behind skipped); the terminal's size; and whether this page answers the
+ * program's queries (`answer`: one viewer that may type per terminal does) from the output offset `at` on, one offset
+ * for every viewer of the terminal, so each answers the output it drew as it was then, however late it draws.
  */
 export type SocketTold =
 	| { readonly kind: "kept"; readonly bytes: number }
+	| { readonly kind: "from"; readonly offset: number }
 	| { readonly kind: "size"; readonly columns: number; readonly rows: number }
 	| { readonly kind: "answer"; readonly yes: boolean; readonly at: number };
 

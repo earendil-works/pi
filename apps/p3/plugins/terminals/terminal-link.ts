@@ -78,6 +78,8 @@ function follow(
 			switch (told.kind) {
 				case "kept":
 					return feed.restart(told.bytes);
+				case "from":
+					return feed.from(told.offset);
 				case "size":
 					return feed.size(told.columns, told.rows);
 				case "answer":
@@ -86,8 +88,10 @@ function follow(
 		};
 		socket.onclose = (event) => {
 			if (open.socket === socket) open.socket = undefined;
-			if (!stopped) feed.lost();
-			if (!stopped && event.code !== SOCKET_ENDED && event.code !== SOCKET_REFUSED) again();
+			if (stopped) return;
+			const reconnects = event.code !== SOCKET_ENDED && event.code !== SOCKET_REFUSED;
+			feed.lost(reconnects);
+			if (reconnects) again();
 		};
 	};
 	const start = () => {

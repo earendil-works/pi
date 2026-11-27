@@ -93,9 +93,12 @@ async function attach(socket: WebSocketHandle, request: HttpRequest, reach: Reac
 	loss.signal.addEventListener("abort", () => viewer.end("lost"), { once: true });
 	abortWhenLost(ref, "attach", loss, ctx);
 	abortWhen(list, (rows) => !rows.some((row) => row.id === terminal), loss, ctx);
-	const election = reach.answering.get(terminal) ?? new Answering();
+	const election = reach.answering.get(terminal) ?? new Answering(() => terminals.tail(terminal, 0).end);
 	reach.answering.set(terminal, election);
-	const answerer: Answerer = { typable: () => ref.type !== undefined, answer: (yes) => viewer.answer(yes) };
+	const answerer: Answerer = {
+		typable: () => ref.type !== undefined,
+		answer: (yes, at) => viewer.tell({ kind: "answer", yes, at }),
+	};
 	received = (bytes, binary) => {
 		// Use withheld since: what is typed, a size, an answer go nowhere.
 		if (binary) {
@@ -110,7 +113,7 @@ async function attach(socket: WebSocketHandle, request: HttpRequest, reach: Reac
 			terminals.resize(terminal, message.columns, message.rows);
 		} else if (message?.kind === "reply" && ref.type !== undefined) terminals.write(terminal, message.text);
 	};
-	viewer.tell({ kind: "kept", bytes: Math.min(terminals.tail(terminal, 0).end, TERMINAL_BACKLOG) });
+	viewer.kept(Math.min(terminals.tail(terminal, 0).end, TERMINAL_BACKLOG));
 	const stop = terminals.followSize(terminal, ({ columns, rows }) => viewer.tell({ kind: "size", columns, rows }));
 	election.add(answerer);
 	for (const [data, binary] of early.splice(0)) received(data, binary);

@@ -352,6 +352,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		const line = async (text: string) => {
 			await browser.wait(`document.querySelector('[data-terminal-input="ready"]') !== null`);
 			await browser.click("[data-terminal-screen]");
+			await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`, 5_000);
 			await browser.call("Input.insertText", { text });
 			await browser.enter();
 		};
@@ -390,7 +391,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			);
 			await browser.wait(`/replies-[12]/.test(${screen}?.textContent)`);
 			assert.equal(await browser.evaluate(`/replies-[12]/.exec(${screen}.textContent)[0]`), "replies-1");
-			// Astra, round 2, S1: the second page draws late (its frames held, its socket still reading), then becomes
+			// Astra, rounds 2 and 3: the second page draws late (its frames held, its socket still reading), then becomes
 			// the one that answers by typing: the query it draws afterwards was the first page's, answered once.
 			await second.evaluate(`(() => {
 				const frame = window.requestAnimationFrame;
@@ -399,7 +400,9 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 				window.drawAgain = () => { window.requestAnimationFrame = frame; for (const fn of held) frame(fn); };
 			})()`);
 			await line(
-				"printf '\\033[c'; read -rs -t 2 -d c a; echo first-$((5*5)); read -rs -t 4 -n1 key; echo next-$((4*4)); read -rs -t 2 -d c b; [ -n \"$b\" ] && echo handover-$((1+1)) || echo handover-$((0+1))",
+				// 320,000 bytes first, more than the window: the second page's socket still has the query to send when it
+				// becomes the one that answers (Astra, round 3, M1): one point of the output decides for both.
+				'head -c 320000 /dev/zero; printf \'\\033[c\'; read -rs -t 2 -d c a; [ -n "$a" ] && echo first-$((5*5)); read -rs -t 4 -n1 key; echo next-$((4*4)); read -rs -t 2 -d c b; [ -n "$b" ] && echo handover-$((1+1)) || echo handover-$((0+1))',
 			);
 			await shows("first-25");
 			await second.evaluate(`document.querySelector('[data-terminal-input]').focus()`);
@@ -415,7 +418,12 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-terminal-input="ready"]') !== null`);
 		// A phone's keyboard composes a word, then corrects it: the field's change is what the shell gets (Opus, round
 		// 1, S4): "ehco" typed, corrected to "echo", sends three Backspaces and "cho".
-		await browser.click("[data-terminal-screen]");
+		// A finger's tap on the output focuses the field the keyboard types into (Astra, round 3: wait for the focus).
+		const output = await browser.box(`[data-terminal-screen] [role=log]`);
+		const finger = { x: output.x + output.width / 2, y: output.y + output.height / 3 };
+		await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [finger] });
+		await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`);
 		await browser.call("Input.imeSetComposition", { text: "ehco", selectionStart: 4, selectionEnd: 4 });
 		await browser.call("Input.insertText", { text: "echo" });
 		await browser.call("Input.insertText", { text: " typed-$((2*21))" });
@@ -428,6 +436,16 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await shots("terminals-phone");
 		await browser.size(DESKTOP);
 		await shots("terminals");
+		// An ended terminal takes no input and says it ended, never "Connecting…" (Astra, round 3).
+		await line("exit 7");
+		await browser.wait(`document.querySelector("[data-terminals]")?.textContent.includes("Ended with code 7.")`);
+		await browser.wait(`document.querySelector('[data-terminal-input="closed"]') !== null`);
+		assert.equal(
+			await browser.evaluate<boolean>(
+				`document.querySelector("[data-terminals]").textContent.includes("Connecting…")`,
+			),
+			false,
+		);
 		await press("[data-terminal-close]");
 		await browser.wait(
 			`document.querySelector("[data-terminals]")?.textContent.includes("No terminals are open here.")`,
