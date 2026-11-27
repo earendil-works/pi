@@ -1,8 +1,8 @@
 // The machine kinds' numbers (ERNDL-1172, ERNDL-1173, ERNDL-1174): the heap per held thing of a machine, Files and
 // Terminals, against the things plugin's test kind (a board with one constant state member: the things admission and
 // Chord's own cost, nothing of a kind's), each held by 200 persons put into Pi, each hold a root scope of its own on the
-// server's host (the plugin tier: `testPlugin` of the terminals plugin beside the things, environments, files and
-// people plugins and a stand-in machine whose programs are fakes, with one terminal open). Measured after GC, the
+// server's host (the plugin tier: `testPlugin` of the terminals plugin beside the things, environments and files
+// plugins and a stand-in machine whose programs are fakes, with one terminal open). Measured after GC, the
 // median of 5 rounds per kind after a first round apart, the kinds alternated. Run from apps/p3 with Node 26:
 // node --expose-gc --conditions=source --disable-warning=ExperimentalWarning bench/machine-kinds.ts
 
@@ -16,7 +16,6 @@ import { fakeMachine, fakeType } from "../plugins/environments/test/fake-machine
 import { seeded } from "../plugins/environments/test/seeded.ts";
 import { Files, FilesKind } from "../plugins/files/kind.ts";
 import filesServer from "../plugins/files/server.ts";
-import peopleServer from "../plugins/people/server.ts";
 import { Terminals, TerminalsKind } from "../plugins/terminals/kind.ts";
 import { OneThing, ThingsStore } from "../plugins/things/contract.server.ts";
 import thingsServer from "../plugins/things/server.ts";
@@ -41,7 +40,6 @@ const t = await testPlugin(
 			{ name: "@earendil-works/p3-things", facet: thingsServer },
 			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 			{ name: "@earendil-works/p3-files", facet: filesServer },
-			{ name: "@earendil-works/p3-people", facet: peopleServer },
 			BOARD,
 		],
 	},

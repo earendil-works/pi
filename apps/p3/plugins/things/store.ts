@@ -26,6 +26,7 @@ import {
 	type TableItem,
 	type Tx,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { AccessIndex, type Asks, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
@@ -131,6 +132,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const gone = self.table(Gone);
 		const kinds = self.registry(ThingKinds);
 		const hooks = self.registry(ThingHooks);
+		// The machine's user names the owner's person at the first start.
+		const runtime = self.registry(ServerRuntime);
 		const q = namedQueries(self, t);
 		const people = new PeopleWrites(t);
 		// The kinds as the store's index and writes see them: one snapshot, installed inside the index's queue when the
@@ -170,7 +173,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				).items[0];
 				if (pi === undefined || owner === undefined) {
 					await self.tx(async (tx) => {
-						await people.ensureOwner(tx);
+						await people.ensureOwner(tx, runtime.value.machine.user);
 						return ensurePi(tx, t);
 					}, ctx);
 				}
@@ -503,16 +506,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
-			adoptOwner: async (seed, ctx) => {
-				// Adopted already (every start but the first, every reload): no write, so nothing a reload could cancel.
-				if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return null;
-				return write(
-					(tx, touched) =>
-						people.adoptOwner(tx, touched, seed, (persons) =>
-							cleanup.somethingLeftOf(tx, persons, touched.retiring),
-						),
-					ctx,
-				);
+			ownerLink: async (_args, ctx) => {
+				const marked = (await t.marks.get({ bridge: "owner" }, ctx))?.person;
+				const [mine] = marked === undefined ? [] : (await q.persons.one.page({ person: marked }, 1, ctx)).items;
+				// A handover took the flag from the machine's owner (or they went): the first person with it.
+				const owner = mine?.owner === true ? mine : (await q.persons.owners.page({}, 1, ctx)).items[0];
+				return owner === undefined ? null : { person: owner.person, name: owner.name };
 			},
 			picker: async ({ workspace, caller, query: text }, ctx) => {
 				const at = workspace === undefined ? {} : { workspace };

@@ -69,7 +69,7 @@ export type Pointer = Static<typeof Pointer>;
 
 /**
  * What one caller does on the board, as everyone holding it sees it: a pointer that moved (with the shape drawn so
- * far), or one that left. `who` is the caller's author key, `name` how the people plugin names them now.
+ * far), or one that left. `who` is the caller's author key, `name` how the things store names them now.
  */
 export const Motion = union([
 	obj({ kind: lit("point"), who: str(), name: str(), x: num(), y: num(), draft: union([Shape, nul()]) }),

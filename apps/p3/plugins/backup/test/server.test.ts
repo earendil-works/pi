@@ -10,11 +10,9 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal, until } from "@earendil-works/p3/v1";
-import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { within } from "../../../test/until.ts";
 import environmentsServer from "../../environments/server.ts";
-import peopleServer from "../../people/server.ts";
 import { SessionKind } from "../../sessions/kind.ts";
 import sessionsServer from "../../sessions/server.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
@@ -29,15 +27,14 @@ const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
 const WORKER: P3Principal = { kind: "worker", session: "s1" };
 
 /**
- * The plugin's server facet, with the people plugin (who the owner is), the things and sessions plugins (which
- * sessions exist: session workspaces) and the environments plugin (where a new session works); `test` gets the owner
+ * The plugin's server facet, with the things plugin (who the owner is; which sessions exist: session workspaces), the
+ * sessions plugin and the environments plugin (where a new session works); `test` gets the owner
  * and the ids of two new sessions.
  */
 async function withServerFacet(
 	test: (t: Awaited<ReturnType<typeof testPlugin>>, owner: P3Principal, sessions: [string, string]) => Promise<void>,
 ): Promise<void> {
 	const stubs = [
-		{ name: "@earendil-works/p3-people", facet: peopleServer },
 		{ name: "@earendil-works/p3-things", facet: thingsServer },
 		{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
@@ -45,7 +42,7 @@ async function withServerFacet(
 	const t = await testPlugin(PLUGIN, { kind: "server", stubs }, context);
 	try {
 		const [person] = await t.root(
-			async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
+			async (ctx) => (await (await ctx.get(ThingsStore, {})).persons.owners.page({}, 1, ctx)).items,
 			context,
 		);
 		// Sessions are workspaces in Pi, made as server code does (no Make tick checked).
@@ -57,7 +54,7 @@ async function withServerFacet(
 				return make(SessionKind, { name: title, workspace: pi!.workspace, by, input: {} }, ctx);
 			}, context);
 		const sessions: [string, string] = [await create("one"), await create("two")];
-		await test(t, { kind: "person", id: person!.id, name: person!.name }, sessions);
+		await test(t, { kind: "person", id: person!.person, name: person!.name }, sessions);
 	} finally {
 		await t.close(context);
 	}

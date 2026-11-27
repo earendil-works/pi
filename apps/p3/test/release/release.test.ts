@@ -210,7 +210,7 @@ const HELLO = {
 		'import { testPlugin } from "@earendil-works/p3/v1/testing";',
 		'import { Hello } from "../contract.ts";',
 		"",
-		"/** Who the owner is, as the people plugin answers `admitOwner`: a stand-in, Olga. */",
+		"/** Who the owner is, as the things plugin answers `admitOwner`: a stand-in, Olga. */",
 		'const OWNER = { kind: "person", id: "o", name: "Olga" } as const;',
 		"const owner = defineFacet((host) =>",
 		'	host.serve(OwnerAccess, ({ caller }) => ({ owner: constant(caller === "person:o") })),',

@@ -18,7 +18,6 @@ import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import { fakeMachine, fakeType } from "../plugins/environments/test/fake-machine.ts";
 import { seeded } from "../plugins/environments/test/seeded.ts";
-import peopleServer from "../plugins/people/server.ts";
 import { Terminals, TerminalsKind } from "../plugins/terminals/kind.ts";
 import terminalsServer from "../plugins/terminals/server.ts";
 import { OneThing, ThingsStore } from "../plugins/things/contract.server.ts";
@@ -45,7 +44,6 @@ describe("a reload of the terminals plugin", () => {
 			{ name: "p3.server", facet: serverCoreFacet(runtime) },
 			{ name: "@earendil-works/p3-a-fake", facet: fakeType(() => device.host) },
 			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-			{ name: "@earendil-works/p3-people", facet: peopleServer },
 			{ name: "@earendil-works/p3-terminals", facet: terminalsServer },
 			{ name: "@earendil-works/p3-things", facet: thingsServer },
 		];

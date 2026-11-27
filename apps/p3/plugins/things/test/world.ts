@@ -22,6 +22,7 @@ import {
 	Server,
 	sqliteBackend,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { SignIns } from "../../sign-in/contract.ts";
 import thingsServer from "../server.ts";
@@ -29,6 +30,24 @@ import { BOARD } from "./kinds.ts";
 
 /** The things plugin as a host loads it. */
 export const THINGS: PluginFacet<P3Principal> = { name: "@earendil-works/p3-things", facet: thingsServer };
+
+/** The machine's user, as the tests' `ServerRuntime` says (it names the owner's person at the first start). */
+export const MACHINE_USER = "ann";
+
+/**
+ * The base's `ServerRuntime` as far as the things plugin reads it (the machine's user), which a test host serves in
+ * the base's place (as `p3.server`, the base's name: `world` loads it unless `more` brings a `p3.server` of its own);
+ * loaded beside `THINGS`.
+ */
+export const RUNTIME: PluginFacet<P3Principal> = {
+	name: "p3.server",
+	facet: defineFacet((host) =>
+		host.serve(ServerRuntime, {
+			// The things plugin reads its machine only.
+			compose: () => ({ machine: { user: MACHINE_USER, hostname: "test" } }) as unknown as ServerRuntime,
+		}),
+	),
+};
 
 /** A running test host. */
 export type World = {
@@ -47,8 +66,9 @@ export type World = {
 };
 
 /**
- * A host at `Server()` with the things plugin, the test kind and `more` loaded, on a store in a file of its own, or in
- * the file at `at` (a store an older version wrote: the caller removes it).
+ * A host at `Server()` with the things plugin, the base's runtime (`RUNTIME`, unless `more` brings one), the test kind
+ * and `more` loaded, on a store in a file of its own, or in the file at `at` (a store an older version wrote: the
+ * caller removes it).
  */
 export async function world(
 	context: Context,
@@ -68,7 +88,8 @@ export async function world(
 		readyTimeout: 5000,
 		onError: (error) => errors.push(error),
 	});
-	let facets: readonly PluginFacet<P3Principal>[] = [THINGS, BOARD, ...more];
+	const base = more.some(({ name }) => name === RUNTIME.name) ? [] : [RUNTIME];
+	let facets: readonly PluginFacet<P3Principal>[] = [THINGS, ...base, BOARD, ...more];
 	const loaded = await host.load(facets, context);
 	if (loaded.failed.length > 0) throw new Error("world: plugins failed", { cause: loaded.failed[0]!.error });
 	return {

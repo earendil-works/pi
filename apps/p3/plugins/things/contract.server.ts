@@ -322,10 +322,11 @@ export const ThingsStore = local("things.store", {
 		 */
 		removeMember: method(obj({ group: str(), person: str() })),
 		/**
-		 * The people plugin's owner made the owner here, with the same id, once (the bridge, ERNDL-1144 push B removes
-		 * it): `owner-bridge.ts` calls it with the people plugin's seed.
+		 * Whom the owner link signs in as: the machine's owner (the first start's person, or on a Pi from before the
+		 * people plugin went the owner it handed over, with the same id) while they have the owner flag, else the first
+		 * person with it; `null` only before the store first opened.
 		 */
-		adoptOwner: method(obj({ person: str(), name: str() })),
+		ownerLink: method(obj({}), union([Invited, nul()])),
 		/**
 		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the
 		 * groups it manages with all naming them, and the persons it made of whom nothing else is left.
@@ -495,16 +496,6 @@ export const OneThing = local("things.one", {
 	params: { kind: str() },
 	members: { thing: str() },
 });
-
-/** The people plugin's owner as it hands it over (see `OwnerSeeds`): their person, `null` while there is none. */
-export type OwnerSeed = { readonly person: string; readonly name: string } | null;
-
-/**
- * A bridge until the people plugin goes (ERNDL-1144's push B removes it): the people plugin contributes its owner's
- * person, and the things store makes that person, with the same id, its owner, so the owner the owner link signs in
- * as has the owner flag in the access index. Composed: the people plugin's contribution, `null` without one.
- */
-export const OwnerSeeds = defineRegistry<OwnerSeed, OwnerSeed>("things.owner-seed", { version: 1 });
 
 /**
  * Whether group `group` is present for person `person`: present where they are present (the picker's rule, R18), so

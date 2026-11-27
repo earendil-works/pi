@@ -2,22 +2,30 @@
 // grant names, what a switch is about, who manages a group), the one function per value that makes its key column,
 // and who calls a thing's object, as its admission hands the factory. A thing's own contract comes from `defineThing`
 // (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`). And a group's object
-// (`Group`): its members and the calls its own tick gives; and `MyAnswer`, a caller's answer for admissions off the
-// server (a session's objects on its worker, the route to a worker).
+// (`Group`): its members and the calls its own tick gives; `MyAnswer`, a caller's answer for admissions off the server
+// (a session's objects on its worker, the route to a worker); who the caller is (`Me`) and the admission of the
+// owners' objects (`admitOwner`, from `OwnerAccess`).
 
 import {
+	type Admission,
+	type AdmitSelf,
+	allow,
 	arr,
 	bool,
+	callerKey,
+	deny,
 	grantable,
 	lit,
 	method,
 	nul,
 	obj,
+	type P3Principal,
 	remote,
 	Server,
 	type Static,
 	str,
 	union,
+	type Watchable,
 } from "@earendil-works/p3/v1";
 
 /** The prefix of the reserved tick names (item 113): a kind's own tick names cannot start with it. */
@@ -244,3 +252,44 @@ export const MyAnswer = remote("things.answer", {
 	hostAddress: () => Server(),
 	state: { answer: union([obj({ kind: str(), ticks: arr(str()) }), nul()]) },
 });
+
+/** Who the caller is: a person (`owner`: whether they have the owner flag, read live), or a session's agent. */
+export const Me = remote("things.me", {
+	version: 1,
+	params: {},
+	hostAddress: () => Server(),
+	state: {
+		me: union([
+			obj({ kind: lit("person"), id: str(), name: str(), owner: bool() }),
+			obj({ kind: lit("agent"), session: str() }),
+		]),
+	},
+});
+
+/**
+ * Whether a caller (`callerKey`) is an owner: a person with the owner flag (several may have it), read live. Asked by
+ * the server and workers about anyone (an admission on a worker asks for its object's caller), by anyone else about
+ * themselves only.
+ */
+export const OwnerAccess = remote("things.owner-access", {
+	version: 1,
+	params: { caller: str() },
+	hostAddress: () => Server(),
+	state: { owner: bool() },
+});
+
+/** The admission value of the owners' objects: none (an owner is admitted, anyone else denied). */
+export const OwnerAdmission = obj({});
+
+/**
+ * The admission of an object for the owners only (`admission: OwnerAdmission`), on the server or a worker: allowed
+ * while the caller has the owner flag (`OwnerAccess`, live), denied for anyone else.
+ */
+export function admitOwner(
+	_params: unknown,
+	principal: P3Principal,
+	self: AdmitSelf,
+): Watchable<Admission<Record<string, never>>> {
+	const answer = self.get(OwnerAccess, { caller: callerKey(principal) });
+	return self.derive([answer.owner], ([owner]) => (owner ? allow({}) : deny("the owner's only")));
+}

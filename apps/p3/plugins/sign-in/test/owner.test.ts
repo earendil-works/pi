@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
-import { PeopleStore, ServerCommands } from "@earendil-works/p3/v1/server";
+import { ServerCommands, ThingsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { SignIns } from "../contract.ts";
 
@@ -39,9 +39,9 @@ async function commandLink(t: TestServer): Promise<string> {
 /** The owner's person on `t` (made at its first start), as a principal. */
 async function ownerOf(t: TestServer): Promise<P3Principal> {
 	const [found] = (
-		await t.host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+		await t.host.root(async (ctx) => (await ctx.get(ThingsStore, {})).persons.owners.page({}, 1, ctx), context)
 	).items;
-	return { kind: "person", id: found!.id, name: found!.name };
+	return { kind: "person", id: found!.person, name: found!.name };
 }
 
 /** Posts `body` to the owner link's route as its page does. */

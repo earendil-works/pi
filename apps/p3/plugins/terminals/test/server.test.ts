@@ -1,4 +1,4 @@
-// The terminals plugin on the server (`testPlugin`, beside the things, environments and people plugins' server
+// The terminals plugin on the server (`testPlugin`, beside the things and environments plugins' server
 // facets, and a stand-in machine host whose terminals are fake programs): Terminals is made in Pi once and gives the
 // agents Use, people nothing until Who may gives them a tick; Watch is for people, Use gives the list and the bytes too. One terminal, many
 // viewers: what is typed reaches the program, its bytes reach every viewer at the address `attach` answers (kept
@@ -25,7 +25,6 @@ import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
 import { seeded } from "../../environments/test/seeded.ts";
-import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Party, Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
@@ -50,7 +49,6 @@ const STUBS = [
 	{ name: "@earendil-works/p3-a-fake-machine", facet: fakeType(() => fake.host) },
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-	{ name: "@earendil-works/p3-people", facet: peopleServer },
 ];
 
 /** The size the tests open terminals with. */

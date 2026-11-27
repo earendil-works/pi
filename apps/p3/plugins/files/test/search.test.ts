@@ -16,7 +16,6 @@ import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
 import { seeded } from "../../environments/test/seeded.ts";
-import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import thingsServer from "../../things/server.ts";
 import { Files, FilesKind } from "../kind.ts";
@@ -81,7 +80,6 @@ describe("Files' search", () => {
 			{ name: "@earendil-works/p3-a-hiding-machine", facet: hiding },
 			{ name: "@earendil-works/p3-things", facet: thingsServer },
 			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-			{ name: "@earendil-works/p3-people", facet: peopleServer },
 		];
 		t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs }, context);
 		const things = await t.host.get(ThingsStore, {}, context);

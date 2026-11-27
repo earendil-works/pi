@@ -57,7 +57,7 @@ afterEach(async () => {
 async function served(answer: Parameters<FakePiDev["answer"]>[1]) {
 	fake = await fakePiDev();
 	fake.answer("anthropic", answer);
-	const world = await providersWorld(context, new Set(), [], fake.baseUrl);
+	const world = await providersWorld(context, [], fake.baseUrl);
 	w = world;
 	const things = await world.host.get(ThingsStore, {}, context);
 	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
@@ -302,7 +302,7 @@ describe("the built-in types' catalogs", () => {
 			return original(input, init);
 		};
 		try {
-			w = await providersWorld(context, new Set());
+			w = await providersWorld(context);
 			// An absence (testing.md 2): the loops start with the host, a request would come at once.
 			await new Promise((resolve) => setTimeout(resolve, 300));
 		} finally {

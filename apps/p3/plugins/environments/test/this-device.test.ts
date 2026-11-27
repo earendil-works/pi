@@ -11,7 +11,6 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, type P3Principal, withCancel } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import peopleServer from "../../people/server.ts";
 import { OneThing } from "../../things/contract.server.ts";
 import thingsServer from "../../things/server.ts";
 import { type MachineHost, MachineHosts, type StagedFile } from "../contract.server.ts";
@@ -24,10 +23,7 @@ describe("this device's host", () => {
 	let root: string;
 
 	before(async () => {
-		const stubs = [
-			{ name: "@earendil-works/p3-people", facet: peopleServer },
-			{ name: "@earendil-works/p3-things", facet: thingsServer },
-		];
+		const stubs = [{ name: "@earendil-works/p3-things", facet: thingsServer }];
 		t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs }, context);
 		const machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 		at = (await (await t.host.registry(MachineHosts, context)).value(machine, context))!;
