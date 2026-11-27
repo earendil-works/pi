@@ -18,7 +18,8 @@ import { messages } from "./messages.ts";
  * `everyone` default is the session defaults thing's (`shared`, decision 93): the create hook answers it.
  */
 export const SessionKind = defineWorkspace("sessions.session", {
-	version: 1,
+	// Version 2: its model choice names a login (decision 118).
+	version: 2,
 	leaf: true,
 	makers: "anyone",
 	state: { row: SessionRow },
@@ -51,7 +52,8 @@ export const SessionObject = SessionKind.contract;
  * ticks); the agents' Use is a flag. The plugin seeds one in Pi.
  */
 export const SessionDefaultsKind = defineThing("sessions.defaults", {
-	version: 1,
+	// Version 2: its model choice names a login (decision 118).
+	version: 2,
 	makers: "people",
 	stacking: "nearest",
 	state: { defaults: SessionDefaults },

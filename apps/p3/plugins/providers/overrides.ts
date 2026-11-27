@@ -1,0 +1,75 @@
+// The model settings things' overrides as a session gets them (decision 118b), as pure steps: indexed by model id,
+// nearest thing first (`overridesOf`), and applied to a login's models (`applied`): each field from the nearest
+// override that sets it, a hidden model left out. An override names its model's provider type, or none (every type's
+// model of that id).
+
+import type { Api, Model } from "@earendil-works/p3/v1";
+import type { ModelOverride } from "./contract.ts";
+
+/** The overrides that reach a session, by model id, each list nearest first. */
+export type Overrides = ReadonlyMap<string, readonly ModelOverride[]>;
+
+/** No overrides. */
+export const NO_OVERRIDES: Overrides = new Map();
+
+/** The overrides of model settings things `settings`, nearest first, by model id. */
+export function overridesOf(settings: readonly (readonly ModelOverride[])[]): Overrides {
+	const byModel = new Map<string, ModelOverride[]>();
+	for (const overrides of settings) {
+		for (const override of overrides) {
+			const list = byModel.get(override.model);
+			if (list === undefined) byModel.set(override.model, [override]);
+			else list.push(override);
+		}
+	}
+	return byModel.size === 0 ? NO_OVERRIDES : byModel;
+}
+
+/**
+ * The models `models` of provider type `provider` with `overrides` applied: each field the nearest override of the
+ * model sets; a model the nearest override that says so hides is left out. `models` itself when no override names
+ * one of them.
+ */
+export function applied(provider: string, models: readonly Model<Api>[], overrides: Overrides): readonly Model<Api>[] {
+	if (overrides.size === 0) return models;
+	let changed = false;
+	const result: Model<Api>[] = [];
+	for (const model of models) {
+		const mine = overrides
+			.get(model.id)
+			?.filter((override) => override.provider === undefined || override.provider === provider);
+		if (mine === undefined || mine.length === 0) {
+			result.push(model);
+			continue;
+		}
+		changed = true;
+		if (nearest(mine, "hidden") === true) continue;
+		result.push(overridden(model, mine));
+	}
+	return changed ? result : models;
+}
+
+/** `model` with the fields of `overrides` (nearest first) set, each from the nearest that sets it. */
+function overridden(model: Model<Api>, overrides: readonly ModelOverride[]): Model<Api> {
+	const name = nearest(overrides, "name");
+	const cost = nearest(overrides, "cost");
+	const contextWindow = nearest(overrides, "contextWindow");
+	const maxTokens = nearest(overrides, "maxTokens");
+	const thinkingLevelMap = nearest(overrides, "thinkingLevelMap");
+	const maxRequestBytes = nearest(overrides, "maxRequestBytes");
+	return {
+		...model,
+		...(name === undefined ? {} : { name }),
+		...(cost === undefined ? {} : { cost }),
+		...(contextWindow === undefined ? {} : { contextWindow }),
+		...(maxTokens === undefined ? {} : { maxTokens }),
+		...(thinkingLevelMap === undefined ? {} : { thinkingLevelMap }),
+		...(maxRequestBytes === undefined ? {} : { inputLimits: { ...model.inputLimits, maxRequestBytes } }),
+	};
+}
+
+/** The value of field `field` in the nearest of `overrides` that sets it. */
+function nearest<F extends keyof ModelOverride>(overrides: readonly ModelOverride[], field: F): ModelOverride[F] {
+	for (const override of overrides) if (override[field] !== undefined) return override[field];
+	return undefined as ModelOverride[F];
+}

@@ -236,7 +236,11 @@ export function standIns(
 			ThingHarnessParts,
 			thingHarnessPart(LoginKind, (all, session) => {
 				count(LoginKind.name);
-				const providers = all.map(({ ref }) => scripted(ref.provider.value, ref.script.value, control.requests));
+				// Each provider with its login: a session's model choice names the login.
+				const providers = all.map(({ thing, ref }) => ({
+					thing,
+					provider: scripted(ref.provider.value, ref.script.value, control.requests),
+				}));
 				if (!all.some(({ ref }) => ref.tool.value)) return { providers };
 				const tool = defineTool({
 					name: "test_session",

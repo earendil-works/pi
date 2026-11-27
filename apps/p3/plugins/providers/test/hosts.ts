@@ -3,6 +3,7 @@
 // answering for `owners` (the people plugin's, stubbed) and the server's runtime as far as the providers plugin reads
 // it (its host and catalog base: the base's, stubbed).
 
+import { tmpdir } from "node:os";
 import {
 	type Context,
 	constant,
@@ -42,13 +43,16 @@ export function providerFacets(
 			name: "p3-base",
 			facet: defineFacet((facetHost) =>
 				facetHost.serve(ServerRuntime, {
-					// The providers plugin reads the runtime's host and catalog base only; the host is made after this facet loads.
+					// The providers plugin reads the runtime's host and catalog base only, the sessions plugin (a session's
+					// models' tests) its data directory and machine; the host is made after this facet loads.
 					compose: () =>
 						({
 							get host() {
 								return host();
 							},
 							catalogBaseUrl,
+							dataDir: tmpdir(),
+							machine: { user: "test", hostname: "test" },
 						}) as unknown as ServerRuntime,
 				}),
 			),

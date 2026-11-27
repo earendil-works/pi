@@ -43,7 +43,8 @@ const ROW = {
 	state: str(),
 	lastTouch: int(),
 	archivedAt: int(),
-	model: json(union([ModelChoice, nul()]), { version: 1 }),
+	// Version 2: a choice names a login, not a provider; one of version 1 reads as none (decision 71: no compatibility).
+	model: json(union([ModelChoice, nul()]), { version: 2, migrate: () => null }),
 };
 
 /** Every session, one row each; by state for the waker. */

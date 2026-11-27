@@ -206,7 +206,7 @@ describe("archiving and unlinking (2)", () => {
 	it("archives and restores in one commit each, telling no kind; the model is set with Manage", async () => {
 		const { leo, fam } = await family();
 		const session = await makeSession(leo, fam, "one");
-		const model = { provider: "anthropic", model: "claude", thinking: "high" } as const;
+		const model = { login: "a-login", model: "claude", thinking: "high" } as const;
 		await as(leo, async (ctx) => {
 			const held = withGranted(
 				await ctx.get(SessionObject, { workspace: session, thing: session }),
@@ -289,7 +289,7 @@ describe("the session defaults", () => {
 
 	it("the nearest of two applies (75), its model copied into the row and its view into the session's own", async () => {
 		const { leo, fam } = await family();
-		const model = { provider: "anthropic", model: "claude", thinking: "high" } as const;
+		const model = { login: "a-login", model: "claude", thinking: "high" } as const;
 		await defaultsIn(pi, { model: null, shared: true, opensWith: null });
 		await defaultsIn(fam, { model, shared: true, opensWith: "transcript.session" });
 		const near = await makeSession(leo, fam, "near");

@@ -1,17 +1,20 @@
 // The sessions store (`store.ts`) as server code calls it: a row written by the session kind's create hook (this
 // device in a folder of its own, or a location on a machine there is), its writes refused for a session there is
-// not, an archived session's report of working refused, and the waker's `working` without archived sessions.
+// not, an archived session's report of working refused, the waker's `working` without archived sessions, and a model
+// choice of version 1 read as none (in a session's row and in session defaults).
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, defineFacet, type Reference, THIS_DEVICE } from "@earendil-works/p3/v1";
 import { type ServerRuntime, ServerRuntime as ServerRuntimeRegistry } from "@earendil-works/p3/v1/server";
 import environmentsServer from "../../environments/server.ts";
 import { type World, world } from "../../things/test/world.ts";
 import { SessionsStore } from "../contract.server.ts";
+import { DefaultsSettings } from "../defaults.ts";
 import sessionsServer from "../server.ts";
 
 let w: World;
@@ -53,6 +56,32 @@ describe("the sessions store", () => {
 			store.insert({ id: "s3", location: { environment: "nowhere", folder: "/tmp" }, model: null }, context),
 			/no machine nowhere/,
 		);
+	});
+
+	it("reads a stored model choice of version 1 (a provider, not a login) as none (decision 125)", async () => {
+		await store.insert({ id: "s1", model: { login: "l1", model: "m", thinking: "high" } }, context);
+		// The cell as version 1 wrote it, through a connection of its own (the row key as the file has it).
+		const file = new DatabaseSync(w.path, { timeout: 5000 });
+		file
+			.prepare('UPDATE "sessions.store:sessions.sessions" SET "model" = ?, "model$v" = 1 WHERE "id" = ?')
+			.run(JSON.stringify({ provider: "anthropic", model: "m", thinking: "high" }), "session|s1");
+		file.close();
+		assert.equal((await row("s1"))?.model, null);
+	});
+
+	it("reads session defaults of version 1 with everything but their model (decision 125)", async () => {
+		const settings = await w.host.get(DefaultsSettings, {}, context);
+		const kept = { shared: false, opensWith: "transcript.session" };
+		// A row as version 1 wrote it, through a connection of its own.
+		const file = new DatabaseSync(w.path, { timeout: 5000 });
+		file
+			.prepare(
+				'INSERT INTO "sessions.defaults-settings:sessions.settings" ("thing", "defaults", "defaults$v", "$v") VALUES (?, ?, 1, 1)',
+			)
+			.run("d1", JSON.stringify({ ...kept, model: { provider: "anthropic", model: "m", thinking: "high" } }));
+		file.close();
+		const [read] = (await settings.settings.of.page({ thing: "d1" }, 1, context)).items;
+		assert.deepEqual(read?.defaults, { ...kept, model: null });
 	});
 
 	it("refuses every write for a session there is not", async () => {

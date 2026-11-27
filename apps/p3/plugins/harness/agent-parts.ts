@@ -13,7 +13,6 @@ import {
 	type ExecutionEnv,
 	type Extension,
 	type Models,
-	type Provider,
 	type Registry,
 } from "@earendil-works/p3/v1/worker";
 import type {
@@ -23,6 +22,7 @@ import type {
 	Held,
 	HeldThing,
 	ThingHarnessPart,
+	ThingProvider,
 } from "../things/contract.worker.ts";
 
 /** The kinds' parts by kind name (the composed `ThingHarnessParts`). */
@@ -36,7 +36,7 @@ type Given = {
 	readonly things: readonly HeldThing[];
 	readonly part: ThingHarnessPart;
 	readonly extension: Extension | undefined;
-	readonly providers: readonly Provider[];
+	readonly providers: readonly ThingProvider[];
 	readonly env: HarnessContribution["env"];
 };
 
@@ -109,10 +109,26 @@ export class AgentParts {
 	/** The first model of the first kind that gives providers (a login), in the order of the held things. */
 	firstModel(): ModelRef | undefined {
 		for (const given of this.#given.values()) {
-			const provider = given.providers[0];
+			const provider = given.providers[0]?.provider;
 			if (provider === undefined) continue;
 			const model = this.#models.getModels(provider.id)[0];
 			return model === undefined ? undefined : { provider: model.provider, modelId: model.id };
+		}
+		return undefined;
+	}
+
+	/**
+	 * Model `model` of the provider held thing `thing` gives (a login's: a session's model choice), as the agent names
+	 * it; `undefined` while no held thing gives it.
+	 */
+	modelOf(thing: string, model: string): ModelRef | undefined {
+		for (const given of this.#given.values()) {
+			// A kind gives few providers: its list is looked over.
+			const provider = given.providers.find((one) => one.thing === thing)?.provider;
+			if (provider === undefined) continue;
+			return this.#models.getModel(provider.id, model) === undefined
+				? undefined
+				: { provider: provider.id, modelId: model };
 		}
 		return undefined;
 	}
@@ -151,7 +167,7 @@ export class AgentParts {
 		const models = createModels();
 		const taken = new Map<string, string>();
 		for (const [kind, { providers }] of given) {
-			for (const provider of providers) {
+			for (const { provider } of providers) {
 				const first = taken.get(provider.id);
 				if (first !== undefined) {
 					this.#report(

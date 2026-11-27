@@ -87,7 +87,16 @@ export const DefaultsSettings = local("sessions.defaults-settings", {
 /** Each defaults thing's settings, by thing (none set: `DEFAULTS`). */
 const Settings = defineTable("sessions.settings", {
 	version: 1,
-	columns: { thing: str(), defaults: json(SessionDefaults, { version: 1 }) },
+	// Version 2: the model choice names a login; a default of version 1 keeps everything but its model (decisions 71,
+	// 125: stored data survives the update).
+	columns: {
+		thing: str(),
+		defaults: json(SessionDefaults, {
+			version: 2,
+			// Version 1 cells are this plugin's own writes of the same object; the column checks the result once.
+			migrate: (old) => ({ ...(old as SessionDefaults), model: null }),
+		}),
+	},
 	key: ["thing"],
 });
 

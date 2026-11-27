@@ -1,7 +1,8 @@
 // The providers plugin on a session's worker: what the logins the agent may use give it. Each login it holds with Use
 // gives one model provider of its own (`<provider>~<login>`: two logins of one provider are two providers), whose
-// models are the login's `catalog` (from the server: the worker loads no catalog) and whose requests take their auth
-// from the login's `authorize` (as the agent: a grant taken back refuses the next request). The request code is, at
+// models are the login's entry in the session's `SessionModels.catalog` (from the server, the overrides of the model
+// settings that reach the session applied; the worker loads no catalog) and whose requests take their auth from the
+// login's `authorize` (as the agent: a grant taken back refuses the next request). The request code is, at
 // each request, a provider another plugin adds (`LoginProviders`: a test's faux one), else pi-ai's built-in one,
 // loaded on the first request (`loadProvider`), so a worker holds only the providers it uses.
 
@@ -14,8 +15,9 @@ import {
 	type Provider,
 	type RegistryValue,
 } from "@earendil-works/p3/v1";
-import { lazyStream, loadProvider } from "@earendil-works/p3/v1/worker";
+import { lazyStream, loadProvider, WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { type LoginCatalog, SessionModels } from "./contract.ts";
 import { type Login, LoginKind } from "./kind.ts";
 import { LoginProviders, type ProviderMap, serveLoginProviders } from "./login-providers.ts";
 
@@ -23,6 +25,13 @@ export default defineFacet((host) => {
 	serveLoginProviders(host);
 	contribute(host, "providers.harness", (self) => {
 		const added = self.registry(LoginProviders);
+		const runtime = self.registry(WorkerRuntime);
+		// The session's models, held as its worker: the one holder its `catalog` is granted to.
+		const models = self.open(
+			async (context) => runtime.value.host.hold(SessionModels, { session: runtime.value.session }, context),
+			(held) => held.release(),
+		);
+		const catalogOf = (): readonly LoginCatalog[] => models.value.catalog?.value ?? [];
 		self.contribute(
 			ThingHarnessParts,
 			thingHarnessPart(LoginKind, (things) => ({
@@ -30,25 +39,29 @@ export default defineFacet((host) => {
 					const shown = held.ref.login.value;
 					return held.ref.authorize === undefined || shown === null
 						? []
-						: [loginProvider(held, shown.provider, added)];
+						: [{ thing: held.thing, provider: loginProvider(held, shown.provider, added, catalogOf) }];
 				}),
 			})),
 		);
 	});
 });
 
+/** No models (a login the session's catalog does not list yet). */
+const NONE: readonly unknown[] = [];
+
 /** The separator of a login's provider id: `<provider>~<login thing>`. */
 const SEPARATOR = "~";
 
 /**
- * Login `held`'s own provider: its id `<provider>~<thing>`, the login's catalog under that id, its requests made by
- * the provider's request code with the model's provider restored (request code checks it: `anthropic`,
- * `github-copilot`), its auth the login's `authorize` on the server.
+ * Login `held`'s own provider: its id `<provider>~<thing>`, its models the login's entry in the session's catalog
+ * (`catalogOf`) under that id, its requests made by the provider's request code with the model's provider restored
+ * (request code checks it: `anthropic`, `github-copilot`), its auth the login's `authorize` on the server.
  */
 function loginProvider(
 	{ thing, ref }: HeldThing<typeof Login>,
 	base: string,
 	added: RegistryValue<ProviderMap>,
+	catalogOf: () => readonly LoginCatalog[],
 ): Provider {
 	const id = `${base}${SEPARATOR}${thing}`;
 	/** pi-ai's built-in request code, loaded on the first request that needs it; a failed load is tried again. */
@@ -86,8 +99,9 @@ function loginProvider(
 			},
 		},
 		getModels: () => {
-			const from = ref.catalog?.value ?? [];
-			// Mapped once per catalog the server sent: a request asks for the models more than once.
+			// A session holds few logins: its entry is found by a look over them.
+			const from = catalogOf().find(({ login }) => login === thing)?.models ?? NONE;
+			// Mapped once per entry the server sent (it keeps its identity while unchanged): a request asks more than once.
 			if (catalog?.from !== from) {
 				// The server's catalog is pi-ai's own definitions of the account's models.
 				catalog = { from, models: (from as unknown as Model<Api>[]).map((model) => ({ ...model, provider: id })) };

@@ -203,6 +203,23 @@ describe("the harness plugin on a worker", () => {
 		await reported(server, ["working", "failed"]);
 	});
 
+	it("asks the session's chosen model with its thinking level (Astra, slice 5 round 1)", async () => {
+		const a = login("a", "faux-a", [says("", "A")]);
+		const b = login("b", "faux-b", [says("", "B")]);
+		await start([a, b], { model: { login: "b", model: "faux-b-model", thinking: "high" } });
+		await ask("one");
+		assert.equal(requests()[0]?.provider, "faux-b");
+		const agent = await (await (await harness()).durable.root(context)).agent(context);
+		assert.equal(agent.thinkingLevel, "high");
+	});
+
+	it("falls back to the first login's model while the chosen one is not given (decision 118)", async () => {
+		const a = login("a", "faux-a", [says("", "A")]);
+		await start([a], { model: { login: "gone", model: "faux-gone-model", thinking: "off" } });
+		await ask("one");
+		assert.equal(requests()[0]?.provider, "faux-a");
+	});
+
 	it("gives a conversation without a model the first login's, and keeps a set model when another login comes", async () => {
 		const a = login("a", "faux-a", [says("", "from a")]);
 		const b = login("b", "faux-b", [says("", "from b")]);

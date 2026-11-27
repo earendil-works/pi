@@ -54,11 +54,14 @@ export type HarnessSession = {
 /** A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. */
 export type HarnessExtension = Omit<Extension, "name">;
 
+/** A model provider a held thing gives, with that thing (a login's provider: a model choice names the login). */
+export type ThingProvider = { readonly thing: string; readonly provider: Provider };
+
 /**
  * What the things of one kind give the agent together: an extension (its tools take the thing they act on as an
  * argument, and a list tool names the things, so descriptions stay fixed text), the execution environment at a
  * conversation's location (a machine's: `undefined` for a location on a machine it does not give, at each use) and
- * model providers (a login's, one per thing).
+ * model providers (a login's, one per thing, with it).
  */
 export type HarnessContribution = {
 	readonly extension?: HarnessExtension;
@@ -66,7 +69,7 @@ export type HarnessContribution = {
 		location: HarnessLocation,
 		context: Context,
 	) => ExecutionEnv | undefined | Promise<ExecutionEnv | undefined>;
-	readonly providers?: readonly Provider[];
+	readonly providers?: readonly ThingProvider[];
 };
 
 /**

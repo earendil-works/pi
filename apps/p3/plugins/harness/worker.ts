@@ -15,6 +15,7 @@ import {
 	forbidden,
 	invalid,
 	local,
+	type ModelChoice,
 	type Reference,
 	type RegistryValue,
 	reportError,
@@ -142,7 +143,7 @@ export default defineFacet((host, facet) => {
 						? await durable.root(context)
 						: await durable.conversation(Number(conversation) as ConversationId, context);
 				if (target === undefined) throw invalid("args", `harness: no conversation ${conversation}`);
-				await offerModel(target, things, context);
+				await offerModel(target, things, facts.session.value?.model ?? null, context);
 				await serial(async () => {
 					// An archive seen during the waits above takes nothing (Astra, round 1); the server refuses `working` for an
 					// archived session besides, so a worker that sees it later still starts no run the waker would wake.
@@ -220,12 +221,28 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 }
 
 /**
- * Gives `conversation` the first model of the session's first login when its model is unset or no longer offered; a
- * model still offered is kept, and without a login nothing changes (its run fails `no_model`). A placeholder for
- * ERNDL-705's choice of models.
+ * Gives `conversation` the session's chosen model (`choice`, the session row's: a login and its model) and thinking
+ * level when the login it names gives that model (decision 118; Astra, slice 5 round 1). Without a choice, or with one
+ * no held login gives, the decided behaviour: a model still offered is kept, else the first model of the session's
+ * first login; without a login nothing changes (its run fails `no_model`).
  */
-async function offerModel(conversation: Conversation, things: AgentParts, context: Context): Promise<void> {
-	const model = (await conversation.agent(context)).model;
+async function offerModel(
+	conversation: Conversation,
+	things: AgentParts,
+	choice: ModelChoice | null,
+	context: Context,
+): Promise<void> {
+	const agent = await conversation.agent(context);
+	const chosen = choice === null ? undefined : things.modelOf(choice.login, choice.model);
+	if (chosen !== undefined && choice !== null) {
+		const same =
+			agent.model?.provider === chosen.provider &&
+			agent.model.modelId === chosen.modelId &&
+			agent.thinkingLevel === choice.thinking;
+		if (!same) await conversation.configure({ model: chosen, thinkingLevel: choice.thinking }, context);
+		return;
+	}
+	const model = agent.model;
 	if (model !== undefined && things.models.getModel(model.provider, model.modelId) !== undefined) return;
 	const first = things.firstModel();
 	if (first !== undefined) await conversation.configure({ model: first }, context);

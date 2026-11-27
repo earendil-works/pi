@@ -42,8 +42,11 @@ export type Location = Static<typeof Location>;
 /** How hard the model thinks (Durable's levels). */
 export const ThinkingLevel = oneOf("off", "minimal", "low", "medium", "high", "xhigh", "max");
 
-/** A model choice: the provider, the model's id there and the thinking level. */
-export const ModelChoice = obj({ provider: str({ max: 200 }), model: str({ max: 200 }), thinking: ThinkingLevel });
+/**
+ * A model choice: the login (its thing's id) and the model's id in its account, as `SessionModels` lists them, and
+ * the thinking level (decision 118; version 2 of the columns that store it).
+ */
+export const ModelChoice = obj({ login: str({ max: 200 }), model: str({ max: 200 }), thinking: ThinkingLevel });
 
 /** A model choice (see `ModelChoice`). */
 export type ModelChoice = Static<typeof ModelChoice>;
@@ -86,7 +89,8 @@ export type SessionDefaults = Static<typeof SessionDefaults>;
  * know), and `report`, which says what its agent is doing now.
  */
 export const SessionFacts = remote("sessions.facts", {
-	version: 1,
+	// Version 2: the row's model choice names a login (decision 118).
+	version: 2,
 	params: {},
 	hostAddress: () => Server(),
 	state: { session: union([SessionRow, nul()]) },
@@ -119,7 +123,8 @@ export const SessionStart = remote("sessions.start", {
 
 /** A session's worker as anyone let into the session sees it: the row it follows from the server (`null` before). */
 export const SessionWorker = remote("sessions.worker", {
-	version: 1,
+	// Version 2: the row's model choice names a login (decision 118).
+	version: 2,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: obj({}),
