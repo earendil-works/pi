@@ -1,0 +1,185 @@
+// Files' search walk (files/server.ts `searched`) and a folder's pages (`paged`), over a stand-in machine whose host
+// hides one folder of the test's own and counts its reads: a hidden folder and `.git` are not entered, a search that
+// found more than it answers says so, a cancelled search fails rather than answering what it found so far, and a page
+// of a big folder costs one listing and one read per entry shown (the time it takes: bench/files-page.ts).
+
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { type Context, BACKGROUND_CONTEXT as context, type P3Principal, withCancel } from "@earendil-works/p3/v1";
+import { FileError, NodeExecutionEnv } from "@earendil-works/p3/v1/server";
+import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
+import { MACHINE_KIND } from "../../environments/contract.ts";
+import environmentsServer from "../../environments/server.ts";
+import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
+import { seeded } from "../../environments/test/seeded.ts";
+import peopleServer from "../../people/server.ts";
+import { OneThing, ThingsStore } from "../../things/contract.server.ts";
+import thingsServer from "../../things/server.ts";
+import { Files, FilesKind } from "../kind.ts";
+
+/** The folder the stand-in host hides. */
+let hiddenFolder = "";
+
+/** While set, a listing of this folder waits until its call is cancelled; `entered` resolves when it began. */
+let stuck = "";
+let entered = Promise.withResolvers<void>();
+
+/** The folders listed, in order. */
+const listed: string[] = [];
+
+/** The entries read one by one (`fileInfo`), in order. */
+const read: string[] = [];
+
+/** Node's environment, its `fileInfo` reads recorded in `read`. */
+class CountingEnv extends NodeExecutionEnv {
+	override fileInfo(path: string, context: Context) {
+		read.push(path);
+		return super.fileInfo(path, context);
+	}
+}
+
+/** A stand-in for this device's host: Node's files, `hiddenFolder` hidden, a listing of `stuck` waiting. */
+const hiding = fakeType(
+	() =>
+		fakeMachine({
+			env: new CountingEnv({ cwd: "/" }),
+			hidden: [hiddenFolder],
+			listNames: async (folder, max, context) => {
+				listed.push(folder);
+				if (folder === stuck) {
+					entered.resolve();
+					await new Promise((resolve) => context.abortSignal?.addEventListener("abort", resolve, { once: true }));
+					return { ok: false, error: new FileError("aborted", "aborted") };
+				}
+				const names = (await readdir(folder, { withFileTypes: true })).map((entry) => ({
+					name: entry.name,
+					kind: entry.isDirectory() ? ("directory" as const) : ("file" as const),
+				}));
+				return { ok: true, value: { names: names.slice(0, max), more: names.length > max } };
+			},
+		}).host,
+);
+
+describe("Files' search", () => {
+	let t: TestedPlugin<P3Principal>;
+	let root: string;
+	let entries: (path: string, after?: string) => Promise<{ entries: { name: string }[]; next?: string }>;
+	let search: (
+		path: string,
+		query: string,
+		call?: Context,
+	) => Promise<{ hits: { path: string; kind: string }[]; truncated: boolean }>;
+
+	before(async () => {
+		root = await mkdtemp(join(tmpdir(), "p3-files-search-"));
+		hiddenFolder = join(root, "private");
+		const stubs = [
+			{ name: "@earendil-works/p3-a-hiding-machine", facet: hiding },
+			{ name: "@earendil-works/p3-things", facet: thingsServer },
+			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+			{ name: "@earendil-works/p3-people", facet: peopleServer },
+		];
+		t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs }, context);
+		const things = await t.host.get(ThingsStore, {}, context);
+		const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const thing = await seeded(await t.host.get(OneThing, { kind: FilesKind.name }, context), context);
+		const machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		const by = { kind: "plugin", plugin: "test" } as const;
+		const id = await things.createPerson({ name: "Ann", madeBy: by }, context);
+		await things.putParty({ workspace: pi, party: { kind: "person", person: id }, source: by }, context);
+		const browse = {
+			workspace: pi,
+			thing,
+			party: { kind: "person", person: id },
+			tick: "browse",
+			gives: true,
+		} as const;
+		await things.setGrants({ source: by, grants: [browse] }, context);
+		entries = (path, after) =>
+			t.root(
+				async (ctx) =>
+					(await ctx.get(Files, { workspace: pi, thing }, { readyTimeout: 500 })).entries!(
+						{ machine, path, ...(after === undefined ? {} : { after }) },
+						ctx,
+					),
+				context,
+				{ principal: { kind: "person", id, name: "Ann" } },
+			);
+		search = (path, query, call = context) =>
+			t.root(
+				async (ctx) =>
+					(await ctx.get(Files, { workspace: pi, thing }, { readyTimeout: 500 })).search!(
+						{ machine, path, query },
+						ctx,
+					),
+				call,
+				{ principal: { kind: "person", id, name: "Ann" } },
+			);
+	});
+
+	after(async () => {
+		await t.close(context);
+		await rm(root, { recursive: true, force: true });
+	});
+
+	it("does not enter a hidden folder or .git, and does not answer them", async () => {
+		for (const folder of ["private", ".git", "src"]) {
+			await mkdir(join(root, folder, "needle-folder"), { recursive: true });
+			await writeFile(join(root, folder, "needle-folder", "needle-file"), "");
+		}
+		const found = await search(root, "needle");
+		assert.deepEqual(found.hits.map(({ path }) => path).sort(), [
+			join(root, "src", "needle-folder"),
+			join(root, "src", "needle-folder", "needle-file"),
+		]);
+		assert.equal(found.truncated, false);
+		assert.deepEqual((await search(root, "private")).hits, [], "the hidden folder itself is no hit");
+	});
+
+	it("answers 200 hits of more and says it was truncated; exactly 200 are not", async () => {
+		const many = join(root, "many");
+		await mkdir(many);
+		await Promise.all(Array.from({ length: 200 }, (_, i) => writeFile(join(many, `hit-${i}`), "")));
+		assert.deepEqual(await search(many, "hit-").then(({ hits, truncated }) => [hits.length, truncated]), [
+			200,
+			false,
+		]);
+		await writeFile(join(many, "hit-200"), "");
+		assert.deepEqual(await search(many, "hit-").then(({ hits, truncated }) => [hits.length, truncated]), [200, true]);
+	});
+
+	it("fails when it is cancelled while a folder is being read, and reads no folder after (astra round 2, should 11)", async () => {
+		stuck = join(root, "a-slow");
+		await mkdir(stuck, { recursive: true });
+		await mkdir(join(root, "z-after"), { recursive: true });
+		const { context: call, cancel } = withCancel(context);
+		entered = Promise.withResolvers<void>();
+		const searching = search(root, "anything", call);
+		await entered.promise;
+		const before = listed.length;
+		cancel(new Error("the person went away"));
+		await assert.rejects(searching);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		assert.deepEqual(listed.slice(before), [], "no folder read after the cancellation");
+		stuck = "";
+	});
+
+	// Fable, round 5: a wall-clock budget failed under load; the work is what the page costs.
+	it("reads a page of a folder of 1,000 entries with one listing and 200 entry reads, the next after it", async () => {
+		const big = join(root, "big");
+		await mkdir(big);
+		await Promise.all(
+			Array.from({ length: 1000 }, (_, i) => writeFile(join(big, `f${String(i).padStart(4, "0")}`), "")),
+		);
+		const [listedBefore, readBefore] = [listed.length, read.length];
+		const first = await entries(big);
+		assert.deepEqual([listed.length - listedBefore, read.length - readBefore], [1, 200]);
+		assert.deepEqual([first.entries.length, first.entries[0]?.name], [200, "f0000"]);
+		const second = await entries(big, first.next);
+		assert.equal(second.entries[0]?.name, "f0200");
+	});
+});

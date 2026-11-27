@@ -1,19 +1,26 @@
-// A writer's composer: the message being written, sent with Enter (Shift+Enter for a new line) or the send button,
-// and a stop button while the agent works. A failed send keeps the text.
+// The composer of a holder with Send: the message being written, sent with Enter (Shift+Enter for a new line) or the
+// send button, and with Stop a stop button while the agent works. The draft lives in page state under its key: a
+// reload of a plugin keeps it, and only a successful send clears it; a failed send keeps the text.
 
 import { Button, TextArea } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/p3/v1";
-import { SendIcon, StopIcon } from "@earendil-works/p3/v1/web";
+import { SendIcon, StopIcon, useMessages, usePageState } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import styles from "./composer.module.css";
+import { messages } from "./messages.ts";
 
-/** The composer: `send` takes the text and a request id; `stop` is shown while `working`. */
+/**
+ * The composer: `draft` keys the text in page state; `send` takes the text and a request id; `stop` (given with Stop)
+ * is shown while `working`.
+ */
 export function Composer(props: {
+	readonly draft: string;
 	readonly working: boolean;
 	readonly send: (message: { readonly text: string; readonly requestId: string }, context: Context) => Promise<null>;
-	readonly stop: (context: Context) => Promise<null>;
+	readonly stop?: (context: Context) => Promise<null>;
 }) {
-	const [text, setText] = useState("");
+	const { t } = useMessages(messages);
+	const [text, setText] = usePageState(props.draft, "");
 	const [sending, setSending] = useState(false);
 	const [error, setError] = useState<string | undefined>(undefined);
 	const failed = (failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure));
@@ -45,7 +52,7 @@ export function Composer(props: {
 			{error === undefined ? null : <p className={styles.error}>{error}</p>}
 			<div className={styles.row}>
 				<TextArea
-					aria-label="Message"
+					aria-label={t("message")}
 					className={styles.input}
 					data-message=""
 					onKeyDown={(event) => {
@@ -55,18 +62,18 @@ export function Composer(props: {
 						}
 					}}
 					onValueChange={setText}
-					placeholder="Message"
+					placeholder={t("message")}
 					rows={1}
 					value={text}
 				/>
-				{props.working ? (
+				{props.working && props.stop !== undefined ? (
 					<Button
 						data-stop=""
 						iconStart={<StopIcon />}
-						onClick={() => void props.stop(BACKGROUND_CONTEXT).catch(failed)}
+						onClick={() => void props.stop?.(BACKGROUND_CONTEXT).catch(failed)}
 						semantic="negative"
 					>
-						Stop
+						{t("stop")}
 					</Button>
 				) : null}
 				<Button
@@ -77,7 +84,7 @@ export function Composer(props: {
 					pending={sending}
 					type="submit"
 				>
-					Send
+					{t("send")}
 				</Button>
 			</div>
 		</form>

@@ -1,0 +1,56 @@
+// The notes store (`NotesStore`) on its own: a note's `at` is unique in its notebook and the last written is the
+// newest, also for writes within one millisecond and with the clock gone back (the list's order is `at`: the last
+// written stays first); an edit makes a note the last written, by its editor; `clear` removes one notebook's notes
+// only and marks it gone, so a later add or order is refused.
+
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
+import { kindServer } from "../../things/test/kind-server.ts";
+import { NotesKind } from "../kind.ts";
+import notesServer from "../server.ts";
+import { NotesStore } from "../store.ts";
+
+/** A person as an author. */
+const ANN = { kind: "person", person: "ann" } as const;
+
+describe("the notes store", () => {
+	it("gives each note a unique `at`, the last written newest, in one millisecond or the clock back", async (t) => {
+		const root = fileURLToPath(new URL("../", import.meta.url));
+		const n = await kindServer({ name: "@earendil-works/p3-notes", root, server: notesServer }, NotesKind, context);
+		try {
+			const now = Date.now();
+			const clock = t.mock.method(Date, "now", () => now);
+			const store = await n.host.get(NotesStore, {}, context);
+			const first = await store.add({ notebook: "a", text: "1", author: ANN }, context);
+			await store.add({ notebook: "a", text: "2", author: ANN }, context);
+			clock.mock.mockImplementation(() => now - 1000);
+			await store.add({ notebook: "a", text: "3", author: ANN }, context);
+			await store.edit(
+				{ notebook: "a", id: first, text: "1 edited", author: { kind: "agent", session: "s1" } },
+				context,
+			);
+			await store.add({ notebook: "b", text: "other", author: ANN }, context);
+			const { items } = await store.notes.of.page({ notebook: "a", order: "newest" }, 10, context);
+			assert.deepEqual(
+				items.map(({ text, at }) => [text, at - now]),
+				[
+					["1 edited", 3],
+					["3", 2],
+					["2", 1],
+				],
+			);
+			assert.deepEqual(items[0]?.author, { kind: "agent", session: "s1" });
+			await store.clear({ notebook: "a" }, context);
+			assert.deepEqual((await store.notes.of.page({ notebook: "a", order: "newest" }, 10, context)).items, []);
+			// A notebook cleared is gone: a write that comes later (begun before the clear) is refused.
+			await assert.rejects(store.add({ notebook: "a", text: "late", author: ANN }, context), /is gone/);
+			await assert.rejects(store.configure({ notebook: "a", order: "oldest" }, context), /is gone/);
+			assert.deepEqual((await store.settings.of.page({ notebook: "a" }, 1, context)).items, []);
+			assert.equal((await store.notes.of.page({ notebook: "b", order: "newest" }, 10, context)).items.length, 1);
+		} finally {
+			await n.close();
+		}
+	});
+});

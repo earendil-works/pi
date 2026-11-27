@@ -1,6 +1,6 @@
 // Benchmark of what a held object keeps on its host (the hold-memory pass after slice 15): the heap one more object
 // adds once it is live, for the shapes an app's objects are made of. On the server: a local object with its reference;
-// with one derive; with a reference to a store; with one live query. Held over a link by a client in another process
+// with one derive; with a reference to a store; with one live query of its own; with one live query every object shares. Held over a link by a client in another process
 // (so the server's heap is the server's alone): a remote object without an admission; with a constant admission
 // granting members; with an admission that derives from one reference; with three state members derived from its
 // document (each followed by its hold); for these the client's heap per held reference too (its references, remote
@@ -48,13 +48,16 @@ const Store = local("bench.store", {
 const Roles = local("bench.roles", { version: 1, params: {}, members: { names: arr(str()) } });
 const Count = defineState("count", { schema: obj({ n: int() }), version: 1, initial: () => ({ n: 0 }) });
 
+/** The flag's label: a message as data, declared here (the test support would load Vitest into the benchmark). */
+const EXPORT = { namespace: "bench", key: "export", params: [] };
+
 const thing = {
 	version: 1,
 	params: { id: str() },
 	hostAddress: () => Server(),
 	state: { name: str(), history: grantable(arr(str())) },
 	methods: { use: method(str(), str()), add: grantable(method(str(), str())) },
-	flags: { export: "Export" },
+	flags: { export: EXPORT },
 } as const;
 const Bare = remote("bench.bare", {
 	version: 1,
@@ -82,9 +85,15 @@ const Reading = local("bench.reading", {
 	params: { id: str() },
 	members: { rows: obj({ rows: arr(Item), more: bool() }) },
 });
-const LOCAL = { Plain, Derived, Referring, Reading } as const;
+/** A reader of the one read every object of it shares (the same query, arguments and window). */
+const Sharing = local("bench.sharing", {
+	version: 1,
+	params: { id: str() },
+	members: { rows: obj({ rows: arr(Item), more: bool() }) },
+});
+const LOCAL = { Plain, Derived, Referring, Reading, Sharing } as const;
 
-const CASES = 8;
+const CASES = 9;
 
 if (process.argv[2] === "client") await client();
 else if (process.argv[2] === "case") await server(Number(process.argv[3]));
@@ -168,7 +177,11 @@ async function server(number: number): Promise<void> {
 			self.get(Store, {});
 			return { v: constant(id) };
 		});
-		h.serve(Reading, (_params, self) => ({
+		// Each object its own window (identical reads share one read: decision "Identical live reads share one source").
+		h.serve(Reading, ({ id }, self) => ({
+			rows: self.liveQuery(self.get(Store, {}).rows.one, { id: "r1" }, { first: 10 + Number(id.slice(7)) }),
+		}));
+		h.serve(Sharing, (_params, self) => ({
 			rows: self.liveQuery(self.get(Store, {}).rows.one, { id: "r1" }, { first: 10 }),
 		}));
 	});
@@ -230,6 +243,7 @@ async function server(number: number): Promise<void> {
 		["the same, a constant admission granting two names", held("Granted")],
 		["the same, its admission a derive over one reference", held("Admitted")],
 		["a remote object held over a link, three state members derived from its document", held("Followed")],
+		["a local object with one live query that every object of it shares", here("Sharing")],
 	];
 	const [title, make] = cases[number - 1]!;
 	console.log(`${number}. ${title}: ${await perObject(make)}`);

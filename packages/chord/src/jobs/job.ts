@@ -228,7 +228,11 @@ export class Job implements JobHandle<JsonValue, unknown, JsonValue | undefined>
 		this.#sealed = { error, reason };
 		this.#records.detach(this, this.#finishing);
 		this.#finishing.clear();
-		for (const run of this.#invocations) this.#records.cut(run, error, reason);
+		// Their signals are remembered by the attempt's token first: a transaction a cut run had open is not reported.
+		for (const run of this.#invocations) {
+			this.#owner.token.endsWith(run.invocation!.abort.signal);
+			this.#records.cut(run, error, reason);
+		}
 		this.#invocations.clear();
 	}
 

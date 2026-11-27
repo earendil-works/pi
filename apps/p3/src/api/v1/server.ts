@@ -1,6 +1,6 @@
 // p3's API v1 for server facets (`@earendil-works/p3/v1/server`): Chord's HTTP surface, the registries the base
 // serves, what a runner needs (the worker's control messages, Chord's process locks), and the built-in plugins' server
-// contracts p3 promises (the stores apps manage their sessions and people with, the apps and thing kinds registries).
+// contracts p3 promises (the sessions' and people's stores, the things store and `serveThing`, a kind's server side).
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
@@ -15,6 +15,7 @@ import type { Context } from "@earendil-works/chord/context";
 import type { HttpRequest, ListenAddress } from "@earendil-works/chord/http";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { PluginScript, RolloutResult, RolloutStep } from "@earendil-works/chord/plugins";
+import { registerLazyOAuthFlows } from "@earendil-works/pi-ai/lazy-oauth";
 import type { P3Principal } from "../../app.ts";
 import type { Session } from "./index.ts";
 
@@ -35,16 +36,36 @@ export {
 	/** Takes the lock of a name (a session's), owned by the kernel for the holder's life; waits while another holds it. */
 	processLock,
 } from "@earendil-works/chord/workers/child";
-export * from "../../../plugins/apps/contract.server.ts";
+// A machine's files and commands, for the machine plugins' server facets (this device's host) and Files.
+export type { BinaryReader, ExecutionEnv, Result } from "@earendil-works/pi-durable/env";
+export { FileError } from "@earendil-works/pi-durable/env";
+export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
+// The things plugin's store and what a kind's server side needs; the index's handles and the owner bridge stay out.
+export {
+	type CreateAnswer,
+	Gives,
+	type Made,
+	OneThing,
+	type ThingHook,
+	ThingRow,
+	ThingsStore,
+	WorkspaceRow,
+} from "../../../plugins/things/contract.server.ts";
+export { serveThing, type ThingCaller, type ThingImplementation } from "../../../plugins/things/serve.ts";
 export * from "./control.ts";
 
 /** The server's process values, for plugins: what only the base has. */
 export type ServerRuntime = {
 	/** The Pi's data directory (a real path, private). */
 	readonly dataDir: string;
+	/**
+	 * Where sessions work when they name no folder, outside the data directory: each Pi in `<workRoot>/<Pi's id>`, a
+	 * folder per session there, so Pis on one machine never share one.
+	 */
+	readonly workRoot: string;
 	/** The machine the server runs on: its OS user's name and its host name (what the owner and this device are first named). */
 	readonly machine: { readonly user: string; readonly hostname: string };
 	readonly host: Host<P3Principal>;
@@ -55,11 +76,22 @@ export type ServerRuntime = {
 	readonly worker: { readonly entry: string; readonly execArgv: readonly string[] };
 	/** How long a worker idles before it stops itself. */
 	readonly workerIdleMs: number;
+	/**
+	 * Where the providers' types request their model catalogs (pi.dev unless `P3_CATALOG_URL` names another place;
+	 * empty or `off`: none); `undefined`: nowhere, no catalog request leaves the server (a test's host unless it sets
+	 * its own). The catalog server is trusted with model metadata only (names, limits, prices, new models): a model's
+	 * endpoint, headers and API stay the shipped provider's, so it never chooses where a login's key is sent.
+	 */
+	readonly catalogBaseUrl: string | undefined;
 	/** The worker plugins' current scripts: what a worker starts with, and what a reload ships. */
 	workerScripts(context: Context): Promise<readonly PluginScript[]>;
 	/** Where the server listens, once it does. */
 	listening(): ListenAddress | undefined;
-	/** Builds the changed plugins and rolls them out: the server, then the running workers (the runner's step). */
+	/**
+	 * Builds the changed plugins and rolls them out: the server, the running workers (the runner's step), then the page.
+	 * Applies run one at a time: a call waits for the previous one; one whose context aborts while it waits stops
+	 * waiting and builds nothing.
+	 */
 	apply(context: Context): Promise<RolloutResult>;
 	/** Stops the server, as `SIGTERM` does (the control plugin's command `stop`). */
 	stop(): void;
@@ -76,6 +108,17 @@ export type WorkerRunner = {
 	stop(id: string): Promise<void>;
 	/** Clears session `id`'s failure: it starts again on its next hold (now, when held). */
 	retry(id: string): void;
+	/**
+	 * Stops session `id`'s worker, if one runs, and deletes what its workers keep here (their directory): the session
+	 * is gone. Resolves once it is deleted; a failure rejects, and the caller tries again. An id that names no session
+	 * (empty, a path) is refused (`invalid`) before anything stops or is deleted.
+	 */
+	remove(id: string): Promise<void>;
+	/**
+	 * The ids of the sessions whose workers keep something here (a directory each, named by a session id): what a sweep
+	 * of sessions gone reads.
+	 */
+	stored(): Promise<readonly string[]>;
 	/** What runs: each session's worker by id, `running` or `failed` with the reason. */
 	state(): Readonly<Record<string, WorkerState>>;
 	/**
@@ -161,3 +204,21 @@ export function matchesHash(token: string, hash: string): boolean {
 	const kept = Buffer.from(hash, "hex");
 	return given.length === kept.length && timingSafeEqual(given, kept);
 }
+// pi-ai for the providers plugin's server facet: the built-in providers people sign in to, their sign-in flows and
+// the request auth a login's credential resolves to (refreshed on the server only); `makeLogin`, `setCredential` and
+// `ensureLogin` for server code making logins of its own (a deployment's at every start, a key found at start).
+// pi-ai's types are `/v1`'s.
+export {
+	createModels,
+	// pi-ai's faux provider, for plugins' tests: a provider people sign in to without a network.
+	fauxProvider,
+	// The `User-Agent` of pi-ai's own version: what a catalog is requested as.
+	formatUserAgent,
+	ModelsError,
+} from "@earendil-works/pi-ai";
+export { builtinProviders, getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
+export { ensureLogin, makeLogin, type ServerLogin, setCredential } from "../../../plugins/providers/logins.ts";
+
+// The OAuth flows inside the server's bundle, each loaded on its first use: without it pi-ai imports them through a
+// variable specifier, which a bundle cannot follow (a sign-in or a refresh fails on its first use).
+registerLazyOAuthFlows();

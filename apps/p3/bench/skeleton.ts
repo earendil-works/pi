@@ -20,10 +20,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ownerClient } from "@earendil-works/p3/v1/testing";
-import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
+import { SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
 import { askServer, type Reply, type ServerAnswer } from "../src/local-socket.ts";
-import { childrenOf, coding } from "../test/support.ts";
+import { childrenOf, newSession, TMP } from "../test/support.ts";
 import { launchTracked, withServer } from "./launched.ts";
 
 /** Node's arguments that run the `p3` command: the release installed in `--release`, else this checkout's source. */
@@ -60,11 +60,10 @@ try {
 	const server = await launchTracked(P3, join(root, "pi"), env);
 	try {
 		const client = await ownerClient(server.dataDir, server.port, context, 30_000);
-		const sessions = await client.get(Sessions, {}, context);
 		const starts: number[] = [];
 		const held: { release(): void }[] = [];
 		for (let i = 0; i <= RUNS; i++) {
-			const id = await sessions.create(coding(`s${i}`), context);
+			const id = await newSession(client, `s${i}`, context, TMP);
 			const started = performance.now();
 			held.push(await client.get(SessionWorker, { session: id }, context));
 			starts.push(performance.now() - started);

@@ -1,34 +1,12 @@
-// The canvas plugin's contract: shared drawing boards as a kind of thing (`canvas.board`, content: any writer of a
-// session or its agent makes one there), their shapes, and one canvas in a session as its members and its agent see
-// it (`Canvas`). A canvas is a thing with one id: kept by someone and linked into another session, it shows the same
-// drawing there, while who may draw stays each session's (access and options). Committed shapes are rows on the
-// server; cursors and the shapes people are drawing travel as events, lossy and never stored, so everyone in the
-// session sees everyone draw as it happens.
+// The canvas plugin's contract: shared drawing boards as a kind of thing (`canvas.board`, made by anyone, people and
+// agents, linked in any number of workspaces), their shapes, and one canvas held in a workspace by a person or an
+// agent (`Canvas`, `CanvasKind`'s contract). Who may do what is the things plugin's: the ticks Draw (add shapes,
+// remove one's own) and Moderate (people only: clear the board, remove anyone's shapes). Committed shapes are rows on
+// the server; cursors and the shapes people are drawing travel as events, lossy and never stored.
 
-import {
-	arr,
-	bool,
-	defineThing,
-	grantable,
-	lit,
-	method,
-	nul,
-	num,
-	obj,
-	remote,
-	Server,
-	type Static,
-	str,
-	thingAdmission,
-	union,
-} from "@earendil-works/p3/v1";
-
-/** A board in a session; `draw: false` leaves whoever it applies to (a member, the agent) looking only. */
-export const CanvasKind = defineThing("canvas.board", {
-	version: 1,
-	options: obj({ draw: bool() }),
-	initial: { draw: true },
-});
+import { arr, bool, lit, method, nul, num, obj, opt, type Static, str, union } from "@earendil-works/p3/v1";
+import { defineThing } from "../things/kind.ts";
+import { messages } from "./messages.ts";
 
 /** The board's width in its own units: every client draws in these, whatever its screen. */
 export const BOARD_WIDTH = 1200;
@@ -77,9 +55,7 @@ export const Shape = union([
 /** A shape on the board (see `Shape`). */
 export type Shape = Static<typeof Shape>;
 
-/**
- * A committed shape: its id, who drew it (`person:<id>`, the owner's too; `agent`: the session's agent) and the shape.
- */
+/** A committed shape: its id, who drew it (`person:<id>`, `agent:<session>`) and the shape. */
 export const PlacedShape = obj({ id: str(), author: str(), shape: Shape });
 
 /** A committed shape (see `PlacedShape`). */
@@ -104,33 +80,47 @@ export const Motion = union([
 export type Motion = Static<typeof Motion>;
 
 /**
- * One board of a session (`thing`, a thing of `CanvasKind`), for its members and its agent: a viewer sees the shapes
- * and everyone's pointers; a drawer (who writes in the session and whose options say `draw`) also adds and removes
- * shapes and clears the board. `thing` is the canvas's id, its shapes' key.
+ * A board (`canvas.board`): its name (its thing's; "Canvas" while it has none), its shapes loaded so far, oldest
+ * first, with `more` for the next page, and everyone's motion where it is held as events; `point` and `leave` show
+ * the caller's own pointer to the others there. Draw gives `add`, `remove` (one's own shapes) and the flag `export`
+ * (exporting the board as an image, the page's); Moderate, for people, gives `clear` and the flag `removeAny`
+ * (anyone's shapes). A new link starts with Draw for everyone and the agents.
  */
-export const Canvas = remote("canvas.board", {
-	version: 1,
-	params: { session: str(), thing: str() },
-	hostAddress: () => Server(),
-	admission: thingAdmission(CanvasKind),
-	// The canvas's name (its thing's; "Canvas" while it has none), its shapes loaded so far, oldest first, and `more`
-	// for the next page; everyone's motion in the session as events; `point` and `leave`, which show the caller's own
-	// pointer to the others. A drawer is also granted `add`, `remove` and `clear` (`CANVAS_DRAWS`).
+export const CanvasKind = defineThing("canvas.board", {
+	version: 2,
+	makers: "anyone",
 	state: { name: str(), shapes: obj({ rows: arr(PlacedShape), moreAfter: bool() }) },
 	methods: {
 		more: method(),
+		/**
+		 * A page of the shapes read now, oldest first, from the start or `after` (a page's `next`), not followed: what an
+		 * agent's tool reads without growing the caller's loaded pages.
+		 */
+		page: method(obj({ after: opt(str()) }), obj({ rows: arr(PlacedShape), next: opt(str()) })),
 		/** Shows the caller's pointer at `x`, `y` to everyone on the board (a viewer's draft is dropped). */
 		point: method(Pointer),
 		/** Takes the caller's pointer off the board. */
 		leave: method(),
 		/** Adds shapes, drawn now by the caller, in order; answers their ids. */
-		add: grantable(method(obj({ shapes: arr(Shape, { min: 1, max: 100 }) }), arr(str()))),
-		remove: grantable(method(obj({ id: str() }))),
+		add: method(obj({ shapes: arr(Shape, { min: 1, max: 100 }) }), arr(str())),
+		/** Removes a shape: the caller's own, anyone's with `removeAny`. */
+		remove: method(obj({ id: str() })),
 		/** Removes every shape of the board. */
-		clear: grantable(method()),
+		clear: method(),
 	},
 	events: { motion: Motion },
+	ticks: {
+		draw: { label: messages.message("tickDraw"), gives: ["add", "remove", "export"] },
+		moderate: { label: messages.message("tickModerate"), for: "people", gives: ["clear", "removeAny"] },
+		// Flag ticks (decision 97): rights that are no member, given by the ticks above or on their own.
+		export: { label: messages.message("tickExport") },
+		removeAny: { label: messages.message("tickRemoveAny"), for: "people" },
+	},
+	defaultGrants: { everyone: ["draw"], agents: ["draw"] },
 });
 
-/** What a drawer of a board is granted. */
-export const CANVAS_DRAWS = ["add", "remove", "clear"] as const;
+/** One board held in a workspace: `CanvasKind`'s contract. */
+export const Canvas = CanvasKind.contract;
+
+/** What a drawer of a board is granted (Draw). */
+export const CANVAS_DRAWS = ["add", "remove"] as const;

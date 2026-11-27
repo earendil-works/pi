@@ -9,22 +9,24 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { BACKGROUND_CONTEXT as context, until } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, until, withGranted } from "@earendil-works/p3/v1";
 import { WorkerRunners } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
-import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
+import { SessionWorker } from "../plugins/sessions/contract.ts";
+import { SessionObject } from "../plugins/sessions/kind.ts";
 import { askServer } from "../src/local-socket.ts";
 import { Probe } from "./plugins/probe/contract.ts";
 import {
 	alive,
-	coding,
 	constantContract,
 	constantPlugin,
 	FAUX,
 	gatedSession,
+	newSession,
 	openGate,
 	PROBE,
 	startRun,
+	TMP,
 } from "./support.ts";
 import { eventually, within } from "./until.ts";
 
@@ -42,8 +44,7 @@ afterEach(async () => {
 async function withSession(): Promise<{ readonly t: TestServer; readonly id: string }> {
 	running = await testServer({ plugins: [PROBE] }, context);
 	const client = await running.client(context);
-	const sessions = await client.get(Sessions, {}, context);
-	return { t: running, id: await sessions.create(coding("one"), context) };
+	return { t: running, id: await newSession(client, "one", context, TMP) };
 }
 
 /** Whether the session store in worker directory `dir` records an outbox (Chord's `chord_meta.outbox`), read aside. */
@@ -72,9 +73,9 @@ describe("session workers", () => {
 		const pid = (await probe(t, id)).pid.value;
 		assert.notEqual(pid, process.pid);
 		assert.ok(alive(pid));
-		const sessions = await (await t.client(context)).get(Sessions, {}, context);
-		await sessions.rename({ session: id, title: "two" }, context);
-		await until(worker.session, (row) => row?.title === "two", within("the renamed row", context));
+		const session = await (await t.client(context)).get(SessionObject, { workspace: id, thing: id }, context);
+		await withGranted(session, "archive")!.archive(context);
+		await until(worker.session, (row) => row?.archivedAt !== null, within("the archived row", context));
 	});
 
 	it("a worker nobody holds stops itself after its idle time, cleanly", async () => {
@@ -155,7 +156,7 @@ describe("session workers", () => {
 			await rm(folder, { recursive: true, force: true });
 		});
 		const client = await t.client(context);
-		const id = await gatedSession(client, "one", folder, context);
+		const id = await gatedSession(t.host, client, "one", folder, context);
 		// The harness reports the run `working` (a report by the test would race the harness's own).
 		await startRun(client, id, context);
 		running = await t.restart(context);

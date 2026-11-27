@@ -14,6 +14,7 @@ import {
 } from "./contract.ts";
 import { fingerprintOf, materialize } from "./fingerprint.ts";
 import { type Address, type KindShape, kindParams } from "./host-kind.ts";
+import { isMessageData, type MessageData } from "./message.ts";
 import { checkName } from "./names.ts";
 import { type Params, type RequiredFields, readParams } from "./params.ts";
 import { EventDeclaration, Grantable, KeyedMember, Method, QueriesMember, type Schema, type Static } from "./schema.ts";
@@ -23,7 +24,7 @@ type StateDeclarations = { readonly [member: string]: Schema | Grantable<Schema>
 
 type MethodDeclarations = { readonly [member: string]: Method | Grantable<Method> };
 
-type FlagDeclarations = { readonly [flag: string]: string };
+type FlagDeclarations = { readonly [flag: string]: MessageData };
 
 type LocalMembers<M extends { readonly [member: string]: LocalMember }> = {
 	state: { [K in keyof M as M[K] extends Marker ? never : K]: Exclude<M[K], Marker> };
@@ -78,7 +79,10 @@ export function remote<
 		readonly state?: S & NoInfer<Distinct<S, M & E & F>>;
 		readonly methods?: M & NoInfer<Distinct<M, S & E & F>>;
 		readonly events?: E & NoInfer<Distinct<E, S & M & F>>;
-		/** Rights that are no member, each with its label (English, for the access UI); never part of the fingerprint. */
+		/**
+		 * Rights that are no member, each with its label: a message (`messages.message("flagExport")` of the plugin's
+		 * `defineMessages`), which the access UI renders in the viewer's language; never part of the fingerprint.
+		 */
 		readonly flags?: F & NoInfer<Distinct<F, S & M & E>>;
 	},
 ): Contract<
@@ -98,7 +102,9 @@ export function remote<
 	const { members, grantable } = readRemoteMembers(declaration, name);
 	const flags = new Map(
 		entriesOf(declaration.flags ?? {}, `${name}.flags`).map(([flag, label]) => {
-			if (typeof label !== "string") throw new Error(`${name}.flags.${flag}: expected its label`);
+			if (!isMessageData(label)) {
+				throw new Error(`${name}.flags.${flag}: expected its label as a message ({ namespace, key, params })`);
+			}
 			return [flag, label] as const;
 		}),
 	);
@@ -211,7 +217,7 @@ export function local<
 	return declare(base, declaration, { state, methods, keyed, events, queries }, NO_GRANTS);
 }
 
-const NO_FLAGS: ReadonlyMap<string, string> = new Map();
+const NO_FLAGS: ReadonlyMap<string, MessageData> = new Map();
 
 /** An event member's snapshot: JSON only (declaration policy: no `bytes()` leaf, events travel as JSON parts). */
 export function eventSnapshot(schema: unknown, path: string): Snapshot {
@@ -234,9 +240,20 @@ export function keyedSnapshot(schema: unknown, key: KindShape | undefined, path:
 /** A `queries` member as Chord-owned snapshots: its items' schema, and each named query's arguments, closed. */
 function readQueries(member: QueriesMember, path: string): QueriesData {
 	const args = entriesOf(member.args, `${path}.args`).map(
-		([query, schema]) => [query, snapshotArguments(schema, `${path}.args.${query}`)] as const,
+		([query, schema]) => [query, queryArguments(schema, `${path}.args.${query}`)] as const,
 	);
 	return { item: snapshotSchema(member.item, `${path}.item`), args: new Map(args) };
+}
+
+/**
+ * A named query's argument schema (a contract's or a private query's): closed, and JSON only (declaration policy: no
+ * `bytes()` leaf). Readers with equal arguments share one read, told apart by the arguments' canonical JSON, which
+ * writes bytes as an object of their indexes.
+ */
+export function queryArguments(schema: unknown, path: string): Snapshot {
+	const snapshot = snapshotArguments(schema, path);
+	if (snapshot.bytes) throw new Error(`${path}: a query's arguments are JSON only (no bytes())`);
+	return snapshot;
 }
 
 /** One method declaration as Chord-owned snapshots; its arguments must be closed. */
@@ -253,7 +270,7 @@ type Base = {
 	readonly name: string;
 	readonly hostAddress: HostAddress | undefined;
 	readonly admission: AdmissionData | undefined;
-	readonly flags: ReadonlyMap<string, string>;
+	readonly flags: ReadonlyMap<string, MessageData>;
 };
 
 function declare<C extends Contract>(

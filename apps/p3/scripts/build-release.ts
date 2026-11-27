@@ -22,8 +22,11 @@ export const REPOSITORY = join(P3, "..", "..");
 /** The package the bundle leaves to `node_modules`: esbuild runs a binary of its own. */
 const EXTERNAL = ["esbuild"];
 
-/** Imports that may stay unresolved: `ws`'s optional native accelerators, which it does without when absent. */
-const OPTIONAL = ["bufferutil", "utf-8-validate"];
+/**
+ * Imports that may stay unresolved: `ws`'s optional native accelerators, which it does without when absent, and
+ * `kerberos`, which a provider SDK's proxy agent imports only for a Negotiate proxy (it says to install it otherwise).
+ */
+const OPTIONAL = ["bufferutil", "utf-8-validate", "kerberos"];
 
 /** What `buildRelease` made. */
 export type Built = {
@@ -232,31 +235,59 @@ export function checkPlacement(metafile: Pick<Metafile, "outputs">, input: strin
 	}
 }
 
-/** What a worker's or the supervisor's bundle must not import: the server's packages, and Node's HTTP. */
-const SERVER_IMPORTS = ["esbuild", "http", "https", "node:http", "node:https"];
+/** What a worker's or the supervisor's bundle must not import anywhere: the server's packages. */
+const SERVER_IMPORTS = ["esbuild"];
 
-/** The modules of the server's that a worker's or the supervisor's bundle must not hold. */
+/** What their start must not load (a chunk loaded lazily may: a provider SDK's HTTP client, on its first request). */
+const EAGER_IMPORTS = ["http", "https", "node:http", "node:https"];
+
+/** The modules of the server's that a worker's or the supervisor's bundle must not hold anywhere. */
 const SERVER_INPUTS = [
-	/\/node_modules\/(ws|esbuild)\//,
+	/\/node_modules\/esbuild\//,
 	/\/chord\/src\/node\/(http\/http|http\/upgrades|workers\/workers|workers\/base|plugins\/build)\.ts$/,
 ];
 
+/** What their start must not hold (a chunk loaded lazily may: `ws` in a provider SDK's chunk). */
+const EAGER_INPUTS = [/\/node_modules\/ws\//];
+
 /**
- * Fails when the build of `output` (`worker.js`, `supervisor.js`), the entry or a chunk it loads lazily, imports or
- * holds the server's code: esbuild's JS API, `ws`, Node's HTTP, Chord's HTTP component, the server side of its workers
- * or its plugin builds. Every session worker would load it for nothing.
+ * Fails when the build of `output` (`worker.js`, `supervisor.js`) imports or holds the server's code anywhere, the
+ * chunks it loads lazily included (esbuild's JS API, Chord's HTTP component, the server side of its workers or its
+ * plugin builds), or loads at its start (the entry and the chunks it imports statically) Node's HTTP or `ws`: every
+ * session worker would load them for nothing. A chunk loaded lazily may hold them (a provider SDK's, loaded on the
+ * first request to its provider).
  */
 export function checkLean(metafile: Pick<Metafile, "outputs">, output: string): void {
-	if (!Object.keys(metafile.outputs).some((path) => path.endsWith(`/${output}`))) {
-		throw new Error(`build-release: no output ${output}`);
-	}
-	const server = Object.values(metafile.outputs).flatMap((found) => [
-		...found.imports.filter(({ path }) => SERVER_IMPORTS.includes(path)).map(({ path }) => path),
-		...Object.keys(found.inputs).filter((input) => SERVER_INPUTS.some((pattern) => pattern.test(input))),
-	]);
+	const entry = Object.keys(metafile.outputs).find((path) => path.endsWith(`/${output}`));
+	if (entry === undefined) throw new Error(`build-release: no output ${output}`);
+	const eager = eagerOutputs(metafile, entry);
+	const server = Object.entries(metafile.outputs).flatMap(([path, found]) => {
+		const imports = eager.has(path) ? [...SERVER_IMPORTS, ...EAGER_IMPORTS] : SERVER_IMPORTS;
+		const inputs = eager.has(path) ? [...SERVER_INPUTS, ...EAGER_INPUTS] : SERVER_INPUTS;
+		return [
+			...found.imports
+				.filter(({ path: imported }) => imports.includes(imported))
+				.map(({ path: imported }) => imported),
+			...Object.keys(found.inputs).filter((input) => inputs.some((pattern) => pattern.test(input))),
+		];
+	});
 	if (server.length > 0) {
 		throw new Error(`build-release: ${output} holds the server's ${[...new Set(server)].sort().join(", ")}`);
 	}
+}
+
+/** The outputs a start of `entry` loads: it and every chunk reached through static imports. */
+function eagerOutputs(metafile: Pick<Metafile, "outputs">, entry: string): ReadonlySet<string> {
+	const eager = new Set([entry]);
+	const queue = [entry];
+	for (let path = queue.pop(); path !== undefined; path = queue.pop()) {
+		for (const { path: imported, kind } of metafile.outputs[path]!.imports) {
+			if (kind !== "import-statement" || !Object.hasOwn(metafile.outputs, imported) || eager.has(imported)) continue;
+			eager.add(imported);
+			queue.push(imported);
+		}
+	}
+	return eager;
 }
 
 if (import.meta.main) {

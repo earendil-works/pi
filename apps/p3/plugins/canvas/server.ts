@@ -1,22 +1,26 @@
-// The canvas plugin on the server: its kind (`serveThing`: content, which any writer of a session or its agent makes
-// there; its shapes dropped with it), the store of the canvases' shapes (`store.ts`), each canvas's motion in a
-// session (`BoardMotion`: pointers and drafts as events) and `Canvas`, admitted by the thing's admission: a viewer
-// sees the shapes and the pointers, a drawer (writes, and `draw` applies to them) also changes the shapes. A canvas
-// is a thing: its shapes are keyed by the thing's id, its name is the thing's.
+// The canvas plugin on the server: its kind (`serveThing`: the things plugin admits every caller and registers the
+// kind; the shapes go with the thing), the store of the canvases' shapes (`store.ts`), each canvas's motion where it
+// is held (`BoardMotion`: pointers and drafts as events), and the board's members for one caller: a viewer sees the
+// shapes and the pointers; Draw adds shapes and removes one's own; Moderate clears and removes anyone's.
 
 import {
 	type Context,
 	type Ctx,
+	constant,
 	defineFacet,
 	event,
 	local,
-	Me,
 	method,
 	type P3Principal,
+	type Reference,
+	type Self,
 	str,
+	type Watchable,
 } from "@earendil-works/p3/v1";
-import { SessionsStore, serveThing } from "@earendil-works/p3/v1/server";
-import { CANVAS_DRAWS, Canvas, CanvasKind, Motion, type Pointer } from "./contract.ts";
+import { ThingsStore } from "../things/contract.server.ts";
+import type { Caller } from "../things/contract.ts";
+import { serveThing } from "../things/serve.ts";
+import { CanvasKind, Motion, type Pointer } from "./contract.ts";
 import { CanvasStore, serveStore } from "./store.ts";
 
 /** How many shapes a page of a canvas's list holds. */
@@ -26,13 +30,13 @@ const PAGE = 500;
 const CANVAS = "Canvas";
 
 /**
- * One canvas's motion in one session: what everyone there does on it (`motion`, events), and `send`, which every
- * holder's `Canvas` calls with its caller's motion. Per session, not per canvas: a canvas used in two sessions shows
- * each session's people only to that session's.
+ * One canvas's motion in one workspace: what everyone holding it there does on it (`motion`, events), and `send`,
+ * which each holder's object calls with its caller's motion. Per workspace: a canvas linked in two shows each
+ * workspace's people only to that workspace's.
  */
 const BoardMotion = local("canvas.motion", {
 	version: 1,
-	params: { session: str(), thing: str() },
+	params: { workspace: str(), thing: str() },
 	members: { motion: event(Motion), send: method(Motion) },
 });
 
@@ -51,57 +55,66 @@ export default defineFacet((host) => {
 	});
 
 	serveThing(host, CanvasKind, {
-		title: CANVAS,
-		creation: "content",
 		// A new canvas starts empty: nothing to set up. Its shapes go with it.
 		delete: async (thing, ctx) => {
 			await (await ctx.get(CanvasStore, {})).clear({ canvas: thing }, ctx);
 		},
-		object: {
-			contract: Canvas,
-			// A drawer writes in the session and its options say `draw`.
-			grants: ({ access, options }) => (access === "write" && options.draw ? CANVAS_DRAWS : []),
-			factory: ({ session, thing }, { granted }, self) => {
-				const store = self.get(CanvasStore, {});
-				const board = self.get(BoardMotion, { session, thing });
-				const named = self.liveQuery(self.get(SessionsStore, {}).things.one, { id: thing }, { first: 1 });
-				const list = self.list("shapes", [[store.shapes.of, { canvas: thing }]], { first: PAGE });
-				const point = async (pointer: Pointer, ctx: Ctx<P3Principal>) => {
-					const { who, name } = await caller(ctx);
-					await board.send({ kind: "point", who, name, ...pointer }, ctx);
+		implement: ({ workspace, thing }, { caller, granted }, self) => {
+			const store = self.get(CanvasStore, {});
+			const things = self.get(ThingsStore, {});
+			const board = self.get(BoardMotion, { workspace, thing });
+			const named = self.liveQuery(things.things.one, { thing }, { first: 1 });
+			const list = self.list("shapes", [[store.shapes.of, { canvas: thing }]], { first: PAGE });
+			const who = authorOf(caller);
+			const name = nameOf(caller, things, self);
+			const point = async (pointer: Pointer, ctx: Ctx<P3Principal>) => {
+				await board.send({ kind: "point", who, name: name.value, ...pointer }, ctx);
+				return null;
+			};
+			return {
+				name: self.derive([named], ([{ rows }]) => rows[0]?.name || CANVAS),
+				shapes: list.value,
+				more: (ctx: Context) => list.more(ctx),
+				page: async ({ after }, ctx) => {
+					const found = await store.shapes.of.page(
+						{ canvas: thing },
+						PAGE,
+						ctx,
+						after === undefined ? {} : { after },
+					);
+					return { rows: found.items, ...(found.next === undefined ? {} : { next: found.next }) };
+				},
+				leave: async (ctx: Ctx<P3Principal>) => {
+					await board.send({ kind: "leave", who }, ctx);
 					return null;
-				};
-				return {
-					name: self.derive([named], ([{ rows }]) => rows[0]?.name || CANVAS),
-					shapes: list.value,
-					more: (ctx: Context) => list.more(ctx),
-					leave: async (ctx: Ctx<P3Principal>) => {
-						await board.send({ kind: "leave", who: (await caller(ctx)).who }, ctx);
-						return null;
-					},
-					motion: board.motion,
-					// A viewer shows where it looks, never a shape it could not commit.
-					point: granted.has("add") ? point : (pointer, ctx) => point({ ...pointer, draft: null }, ctx),
-					add: async ({ shapes }, ctx) =>
-						store.add({ canvas: thing, shapes, author: (await caller(ctx)).who }, ctx),
-					remove: ({ id }, ctx) => store.remove({ canvas: thing, id }, ctx),
-					clear: (ctx) => store.clear({ canvas: thing }, ctx),
-				};
-			},
+				},
+				motion: board.motion,
+				// A viewer shows where it looks, never a shape it could not commit.
+				point: granted.has("add") ? point : (pointer, ctx) => point({ ...pointer, draft: null }, ctx),
+				add: ({ shapes }, ctx) => store.add({ canvas: thing, shapes, author: who }, ctx),
+				remove: ({ id }, ctx) =>
+					store.remove({ canvas: thing, id, ...(granted.has("removeAny") ? {} : { author: who }) }, ctx),
+				clear: (ctx) => store.clear({ canvas: thing }, ctx),
+			};
 		},
 	});
 });
 
-/**
- * Who the caller of a method is, as the people plugin answers them (asked as the caller): their author key
- * (`person:<id>`, the owner's too; `agent` for the session's agent) and their name now.
- */
-async function caller(ctx: Ctx<P3Principal>): Promise<{ readonly who: string; readonly name: string }> {
-	const me = (await ctx.get(Me, {})).me.value;
-	switch (me.kind) {
+/** Who drew a shape, as the shapes store it: `person:<id>`, `agent:<session>`, `server`. */
+function authorOf(caller: Caller): string {
+	switch (caller.kind) {
 		case "person":
-			return { who: `person:${me.id}`, name: me.name };
+			return `person:${caller.person}`;
 		case "agent":
-			return { who: "agent", name: "Agent" };
+			return `agent:${caller.session}`;
+		case "server":
+			return "server";
 	}
+}
+
+/** How the others see the caller named: a person by their name in the things store, live; an agent as "Agent". */
+function nameOf(caller: Caller, things: Reference<typeof ThingsStore>, self: Self<P3Principal>): Watchable<string> {
+	if (caller.kind !== "person") return constant(caller.kind === "agent" ? "Agent" : "Pi");
+	const found = self.liveQuery(things.persons.one, { person: caller.person }, { first: 1 });
+	return self.derive([found], ([{ rows }]) => rows[0]?.name ?? "");
 }

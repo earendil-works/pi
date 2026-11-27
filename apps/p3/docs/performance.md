@@ -59,11 +59,31 @@ tool: never compare the two.
   after a start include it, the warm starts and the apply with workers running do not. A package with large facets says
   what it adds to the start, on the phone too. The old base's `NODE_DEBUG=p3` (what a start spends building) does
   not exist in the skeleton: the new base never had it.
+- **The server holds every pi-ai provider** (the providers plugin's `builtinProviders`, to offer every sign-in).
+  - **Measured at the push of the login kind** (`c417ecec7` against `17580b384`, releases, `bench/skeleton.ts
+    --release`, slayer, Node 26.11.1, 2026-11-26, alternating runs, a busy machine): the settled server went from 72.5
+    to 78.1 MiB USS (medians of 3 and 4 runs), and an idle worker from 18.4 to 18.8 MiB (nothing of a provider loads
+    before a login's first request). The launch showed no change beyond the noise.
+  - **Round 1's figures** (66 MiB without the plugin, 84 and 86 MiB in two runs with it) were measured on an older base.
+  - **Where the cost sits:** `/v1/server` itself imports pi-ai's `providers/all` (`export { builtinProviders }`). So the
+    base server bundle holds every provider whether the providers plugin is installed or not: removing
+    `plugins/providers` from a release install left the server at 80.8 and 87.3 MiB.
+  - **A later improvement, which also has to take that import out of `/v1/server`:** offer the choices from a list of
+    names, and load a provider only when a person signs in to it or a login of it authorizes.
 - **Many workers at once:** the waker starts the worker of every `working` session together after a restart, and
   nothing caps live workers. On Android that meets the 32-child-process limit unless it is lifted (`testing.md`,
   Android).
 - **Telemetry:** a healthy turn should store no spans; at most 1 KB of metrics per process per 10 s; the store
   bounded by size (slice 28's targets, `slices/28-telemetry.md`).
+- **The access index (things plugin):** its first question about a workspace reads it and every ancestor not loaded
+  (five reads each) and a person (two); after a commit only the touched workspaces and persons are read again. A
+  kinds change (a plugin with a kind loaded, reloaded or removed) reads every loaded workspace again, up to the
+  forgetting budget (1,000 unwatched) plus the watched ones and their ancestors, in the index's queue: the writes and
+  questions behind it wait for it. `bench/things.ts` times the root and leaf changes, one worker's start and the cold
+  first question; a kind's plugin reload under load is not timed yet. Since slice 2 (ERNDL-1143) a workspace's own thing is answered at
+  itself (its own grants, with `makes`, `above` and each answer's `depth`), and the page's lists are probes over the
+  index: a probe is asked again after every commit at or above its workspace (lists of children and roots: after every
+  commit), so a page holds few of them; each runs its `prepare` reads (names, children) when asked.
 - **Bytes on the wire:** none measured per action yet. A UI package sets a budget for its common actions (opening a
   session, switching conversations, a streamed answer) and measures it with `chord.link.bytes`. The page bundle starts
   at about 140 KB gzipped for Chord's web client alone.
@@ -108,3 +128,4 @@ tool: never compare the two.
 | a list cost measured once after a start | 2.3 ms reported, 0.7 ms real | medians, cold run apart |
 | a build credited to the wrong phase (the worker plugins' build is in whichever of the first worker and the first apply comes first) | an 8 ms "no-change apply" that was the build; a first worker that built nothing | time the phases in the order a Pi meets them, the first of each apart, and count the builds when unsure |
 | an ordered `inArray`, a count behind a hot column, one index for two lists | every row read, every page sorted | see `chord-practices.md`, Rules |
+| every pi-ai provider loaded in a worker (`builtinProviders`, its generated catalog 7.4 MiB of it) | 12 to 14 MiB per worker, against 1.6 to 2 MiB for one provider (slayer, Node 26, pi-ai's dist, settled USS, 2026-11-26) | a worker loads only the providers of its logins, on the first request (`loadProvider` of `/v1/worker`); their models come from the login's `catalog` |

@@ -1,8 +1,27 @@
-// The transcript plugin's web facet: it offers apps the transcript view (`TranscriptView`).
+// The transcript plugin's web facet: the session kind's view (`Views`, decision 59: the transcript and the session's
+// things as panes), and its texts as `Translations` for whoever renders its view's title.
 
-import { defineFacet } from "@earendil-works/p3/v1";
-import { Views, viewOf } from "@earendil-works/p3/v1/web";
-import { TranscriptView } from "./contract.web.ts";
-import { TranscriptPane } from "./transcript-pane.tsx";
+import { defineFacet, Translations } from "@earendil-works/p3/v1";
+// Other plugins' web contracts by path, never through `/v1/web` (see `session-view.tsx`).
+import { Views } from "../things/contract.web.tsx";
+import { messages } from "./messages.ts";
+import { SessionView } from "./session-view.tsx";
 
-export default defineFacet((_host, self) => self.contribute(Views, [viewOf(TranscriptView, TranscriptPane)]));
+/**
+ * The session kind's name (the sessions plugin's `SessionKind`), whose view this is. By name: its contract file imports
+ * the things plugin's files, and a file copied into this plugin's bundle may import only its own plugin's.
+ */
+const SESSION_KIND = "sessions.session";
+
+export default defineFacet((_host, self) => {
+	self.contribute(Views, [
+		{
+			view: "transcript.session",
+			title: messages.message("view"),
+			area: "main",
+			for: { kind: "thing", thingKind: SESSION_KIND },
+			View: SessionView,
+		},
+	]);
+	self.contribute(Translations, messages.translations);
+});

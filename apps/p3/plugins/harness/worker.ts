@@ -1,10 +1,12 @@
-// The harness plugin on a session's worker: Durable's harness on the session's store, which gets exactly the session's
-// things. One host-lifetime object opens it once the session's facts arrived (`SessionFacts`), with a registry and
-// models kept in step with the session's things and content kinds (`agent-things.ts`, `thing-create.ts`) and the
-// environment of the session's location; it resumes the work left only for a session that is not archived. It
-// contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the
-// session's state to the server on each transition (`activity.ts`) and keeps the worker alive while working
-// (`WorkerBusy`). It serves `ThingExtensions`, the kinds' gifts, and `SessionHarness`.
+// The harness plugin on a session's worker: Durable's harness on the session's store, which gets exactly what the
+// session's agent holds. One host-lifetime object opens it once the session's row arrived (`SessionFacts`), with a
+// registry, models and an environment kept in step with the things the worker holds as the agent (`HeldThings`) and
+// the kinds' parts (`ThingHarnessParts`, `agent-parts.ts`); the environment at the session's location is a kind's (a
+// machine's: none where no held thing gives one). It resumes the work left only for a session that is not archived. It
+// contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
+// state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
+// It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always; once Use is
+// withheld from the agent, it withdraws the messages to subagents still queued.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -13,54 +15,63 @@ import {
 	defineFacet,
 	forbidden,
 	invalid,
-	keyedEntries,
 	local,
+	type ModelChoice,
 	type Reference,
 	type RegistryValue,
 	reportError,
 	SessionFacts,
 	type SessionState,
+	until,
 	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import {
 	type Conversation,
 	type ConversationId,
-	type EnvironmentResolver,
-	ExecutionEnvironments,
+	type ConversationRecord,
 	Harness,
 	LiveDoc,
 	type OpenHarness,
 	ROOT_CONVERSATION_ID,
 	SessionHarness,
 	StoreStorage,
-	ThingExtensions,
 	WorkerBusy,
 	WorkerRuntime,
 } from "@earendil-works/p3/v1/worker";
+import { type HarnessLocation, type Held, HeldThings, ThingHarnessParts } from "../things/contract.worker.ts";
 import { activityOf, serialized } from "./activity.ts";
-import { AgentThings, type Kinds } from "./agent-things.ts";
+import { AgentParts, type ModelRef, type Parts } from "./agent-parts.ts";
+import { SubagentsKind } from "./kind.ts";
+import { recordUse, SUBAGENT_TASKS } from "./reporter.ts";
+import { adoptConversationRosters } from "./roster.ts";
+import { hasUse, subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
 const SessionAgent = local("harness.agent", { version: 1, params: {}, members: {} });
 
+/** How long resume and submit wait for the holding to be ready before they go on without it (open does not wait). */
+const READY_MS = 10_000;
+
 /** The owner name of Durable's tables and documents in the session's store. */
 const STORAGE_OWNER = "harness";
 
-export default defineFacet((host) => {
-	host.serve(ThingExtensions, {
-		compose: (table, { report }) => keyedEntries(table, (gift) => ({ [gift.kind.name]: gift }), report),
-	});
+export default defineFacet((host, facet) => {
+	facet.contribute(ThingHarnessParts, subagentsPart);
 	// Only this plugin contributes: the first is the one.
 	host.serve(SessionHarness, { compose: (table) => table[0]?.value });
 	host.serve(SessionAgent, (_params, self) => {
 		const runtime = self.registry(WorkerRuntime);
-		const kinds = self.registry(ThingExtensions);
-		const environments = self.registry(ExecutionEnvironments);
-		// Declared, so the harness opens only once the session's row and things are known.
+		const parts = self.registry(ThingHarnessParts);
+		const held = self.registry(HeldThings);
+		// Declared, so the harness opens only once the session's row is known.
 		const facts = self.get(SessionFacts, {});
 		const opened = self.open(
-			(opening) => openAgent({ runtime: runtime.value, facts, kinds, environments }, opening),
-			({ durable }, _reason, context) => durable.close(context),
+			(opening) => openAgent({ runtime: runtime.value, facts, parts, held }, opening),
+			async ({ durable, things, uses }, _reason, context) => {
+				await uses.stop();
+				things.close();
+				await durable.close(context);
+			},
 		);
 		const graph = self.follow((observer, context) => opened.value.durable.observeTaskGraph(observer, context));
 		const live = self.follow((observer, context) =>
@@ -75,20 +86,69 @@ export default defineFacet((host) => {
 			const row = facts.session.value;
 			if (row !== null && row.state !== now) await facts.report({ state: now }, context);
 		};
-		const apply = (): void => opened.value.things.apply(facts.things.value, kinds.value, facts.kinds.value);
+		/** Applies what the agent holds now; not ready yet: what was given stays. */
+		const apply = (): void => {
+			const now = held.value;
+			if (now !== undefined) opened.value.things.apply(now, parts.value);
+		};
+		/**
+		 * Waits until the holding is ready and the kinds' contributions are complete (a login's models), then applies;
+		 * bounded, as a holding or models that never get ready must not stop the agent: past the bound it goes on with
+		 * what was given, reports, and answers `loading`.
+		 */
+		const ready = async (context: Context): Promise<Readiness> => {
+			const bound = withAbortSignal(AbortSignal.timeout(READY_MS), context);
+			try {
+				await until(held, (value) => value !== undefined, bound);
+			} catch (error) {
+				// The caller's own cancellation goes on as one; the bound is reported.
+				if (context.abortSignal?.aborted === true) throw error;
+				reportError(
+					`p3 harness: session ${runtime.value.session}: the things held not ready in ${READY_MS} ms`,
+					error,
+					BACKGROUND_CONTEXT,
+				);
+			}
+			apply();
+			try {
+				await opened.value.things.ready(bound);
+				return "complete";
+			} catch (error) {
+				if (context.abortSignal?.aborted === true) throw error;
+				reportError(
+					`p3 harness: session ${runtime.value.session}: the models not complete in ${READY_MS} ms`,
+					error,
+					BACKGROUND_CONTEXT,
+				);
+				return "loading";
+			}
+		};
 		self.contribute(
 			WorkerBusy,
 			self.derive([state], ([now]) => (now === "working" ? 1 : 0)),
 		);
 		self.on(state, ({ value }, ctx) => serial(() => push(value, ctx)));
-		self.on(facts.things, () => apply());
-		self.on(facts.kinds, () => apply());
-		self.on(kinds, () => apply());
-		// The work a previous worker left runs once the registry holds the current things, never for an archived session.
-		self.on(archived, ({ value }) => {
-			if (value) return;
-			apply();
-			opened.value.durable.resume();
+		self.on(held, () => apply());
+		self.on(parts, () => apply());
+		// The work a previous worker left runs once the registry has what the agent holds, never for an archived session.
+		// An archive stops the run under way as Stop does (decision 122; Astra, round 2): a tool already running may
+		// finish, no next model call is made. A restore resumes nothing by itself: the next send does.
+		let seen = false;
+		self.on(archived, async ({ value }, ctx) => {
+			const { durable } = opened.value;
+			const first = !seen;
+			seen = true;
+			if (value) {
+				// Only a scheduler that runs has a run to stop: an abort would enable a paused one (the cut-off run of an
+				// archived session's fresh worker).
+				if ((await durable.inspect(ctx)).scheduling === "running") await (await durable.root(ctx)).abort(ctx);
+				return;
+			}
+			if (!first) return;
+			await ready(ctx);
+			// An archive seen while the holding got ready (Astra, round 1): nothing resumes.
+			if (archived.value) return;
+			durable.resume();
 		});
 		const harness: OpenHarness = {
 			get durable() {
@@ -97,14 +157,17 @@ export default defineFacet((host) => {
 			submit: async (conversation, { text, requestId }, context) => {
 				if (archived.value) throw forbidden("harness: the session is archived");
 				const { durable, things } = opened.value;
-				apply();
+				const models = await ready(context);
 				const target =
 					conversation === undefined
 						? await durable.root(context)
 						: await durable.conversation(Number(conversation) as ConversationId, context);
 				if (target === undefined) throw invalid("args", `harness: no conversation ${conversation}`);
-				await offerModel(target, things, context);
+				await offerModel(target, things, chosenModel(facts.session.value?.model ?? null, things, models), context);
 				await serial(async () => {
+					// An archive seen during the waits above takes nothing (Astra, round 1); the server refuses `working` for an
+					// archived session besides, so a worker that sees it later still starts no run the waker would wake.
+					if (archived.value) throw forbidden("harness: the session is archived");
 					// Working before Durable takes the input: a crash in between leaves a `working` row, which the waker starts.
 					await push("working", context);
 					try {
@@ -121,46 +184,180 @@ export default defineFacet((host) => {
 	});
 });
 
-/** What the harness is opened from: the worker, the session's facts, the kinds' gifts and the environments. */
+/**
+ * What the harness is opened from: the worker, the session's facts, the kinds' parts and what the worker holds.
+ */
 type Sources = {
 	readonly runtime: WorkerRuntime;
 	readonly facts: Reference<typeof SessionFacts>;
-	readonly kinds: RegistryValue<Kinds>;
-	readonly environments: RegistryValue<EnvironmentResolver>;
+	readonly parts: RegistryValue<Parts>;
+	readonly held: RegistryValue<Held | undefined>;
 };
 
-/** The session's agent: its things applied, then Durable opened over them (paused). */
-async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentThings }> {
-	const { runtime, facts, kinds, environments } = sources;
+/** The opened agent: Durable's harness, what the agent holds applied, and the watch recording its Use of subagents. */
+type OpenedAgent = { durable: Harness; things: AgentParts; uses: HeldWatch };
+
+/** A watch of what the agent holds (p3's API names no watch type). */
+type HeldWatch = Awaited<ReturnType<RegistryValue<Held | undefined>["watch"]>>;
+
+/**
+ * The session's agent: what it holds applied, then Durable opened over it (paused), then its Use of the subagents
+ * followed.
+ */
+async function openAgent(sources: Sources, opening: Context): Promise<OpenedAgent> {
+	const { runtime, facts, parts, held } = sources;
 	const { session, host: worker, store } = runtime;
-	const things = new AgentThings({ session, call: (fn, context) => worker.root(fn, context) }, (thing, context) =>
-		facts.create(thing, context),
-	);
-	things.apply(facts.things.value, kinds.value, facts.kinds.value);
-	const durable = await openHarness(
-		store,
-		{
-			models: () => things.models,
-			registry: things.registry,
-			// The location is the session's, read at each use; it never changes while a tool call runs.
-			env: (_target, context) => {
-				const row = facts.session.value;
-				return row === null ? undefined : environments.value(row.location, context);
-			},
-			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
+	// Set once Durable is open; a location asked before (a part at its apply) is the session's.
+	let durable: Harness | undefined;
+	/** Conversation `conversation`'s record in the session's store (`undefined`: none, or Durable not open yet). */
+	const record = async (conversation: ConversationId, context: Context) =>
+		durable === undefined ? undefined : durable.commit((tx) => tx.conversation(conversation), context);
+	const location = locations(facts, record);
+	const things = new AgentParts({
+		session,
+		// The session's workspace has the session's id (slice 5); the parts take it from here, never assume it.
+		workspace: session,
+		call: (fn, context) => worker.root(fn, context),
+		location,
+		moveLocation: async (conversation, location, context) => {
+			// A move only for a conversation the session has (Opus): any other key would hold one of the session's moved
+			// places. An undo always goes through: it frees a place, also one whose record is gone (Astra, round 3).
+			if (location !== null && (await record(conversation, context)) === undefined) {
+				throw invalid("args", `harness: no conversation ${conversation}`);
+			}
+			await facts.moveLocation({ conversation: String(conversation), location }, context);
 		},
-		opening,
-	);
-	return { durable, things };
+	});
+	// The subagents' tasks, whatever the agent holds: a reporter under way finishes when Use is withheld.
+	things.registry.install(SUBAGENT_TASKS);
+	// Not ready yet: nothing to give before the first submit or resume waits for it.
+	if (held.value !== undefined) things.apply(held.value, parts.value);
+	try {
+		durable = await openHarness(
+			store,
+			{
+				models: () => things.models,
+				registry: things.registry,
+				// The environment at the conversation's location, read at each use; it never changes while a tool call
+				// runs. Only kinds give environments (a machine's): a location on no machine the agent holds with what that
+				// machine asks (Work here) has none, and nothing falls back.
+				env: async ({ conversationId }, context) => {
+					const at = await location(conversationId, context);
+					return at === undefined ? undefined : things.env(at, context);
+				},
+				onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
+			},
+			opening,
+		);
+	} catch (error) {
+		// A harness that does not open leaves nothing following what the parts asked to follow.
+		things.close();
+		throw error;
+	}
+	const uses = await followUse(durable, held, session);
+	return { durable, things, uses };
 }
 
 /**
- * Gives `conversation` the first model of the session's first login when its model is unset or no longer offered; a
- * model still offered is kept, and without a login nothing changes (its run fails `no_model`). A placeholder for
- * ERNDL-705's choice of models.
+ * Records whether the agent has Use of the subagents (`recordUse`: withheld, the messages to subagents still queued
+ * are withdrawn) from every value the holding publishes, the current one first, then each in order: a routine would
+ * fold the values published during a call into the newest, so a withhold a hide follows at once was lost (Astra,
+ * round 5 of the port). Only a value holding the thing says it: one let go of (hidden, unlinked, its reference failed
+ * or its kind reloaded) takes the tool, records nothing and withdraws nothing, so the messages sent before it went
+ * are still delivered (Opus, check of the port's explainer; decision 116's spirit).
  */
-async function offerModel(conversation: Conversation, things: AgentThings, context: Context): Promise<void> {
-	const model = (await conversation.agent(context)).model;
+async function followUse(durable: Harness, held: RegistryValue<Held | undefined>, session: string): Promise<HeldWatch> {
+	let recorded: boolean | undefined;
+	const record = async (now: Held | undefined): Promise<void> => {
+		const things = now?.get(SubagentsKind.name);
+		const offered = things === undefined ? recorded : hasUse(things);
+		if (offered === undefined || offered === recorded) return;
+		recorded = offered;
+		// A failure is reported, not thrown: a listener that throws ends its watch.
+		await recordUse(durable, offered, BACKGROUND_CONTEXT).catch((error: unknown) =>
+			reportError(`p3 harness: session ${session}: subagents' Use`, error, BACKGROUND_CONTEXT),
+		);
+	};
+	const watch = await held.watch(BACKGROUND_CONTEXT);
+	await record(watch.value);
+	watch.start(async (call) => {
+		if (call.kind === "value") await record(call.value);
+	});
+	return watch;
+}
+
+/**
+ * Where each conversation works (decision 24), read at each use: its own location once moved (`SessionFacts`'
+ * `detail`), else its owner conversation's (a subagent works where its caller works, and follows its moves),
+ * else the session's (its row); `undefined` for an unknown session or one on no machine. A conversation's owner never
+ * changes: read once from its record (`record`, with a commit, which is why it is never asked on Durable's Session
+ * line: the environment is built off it, and a request's prompt sections render off it right after, the owner already
+ * read), kept for the harness's life (one entry per conversation that ever asked), and not kept while there is no
+ * record yet.
+ */
+function locations(
+	facts: Reference<typeof SessionFacts>,
+	record: (conversation: ConversationId, context: Context) => Promise<ConversationRecord | undefined>,
+): (conversation: ConversationId, context: Context) => Promise<HarnessLocation | undefined> {
+	const owners = new Map<ConversationId, ConversationId | undefined>();
+	const ownerOf = async (conversation: ConversationId, context: Context) => {
+		if (owners.has(conversation)) return owners.get(conversation);
+		const found = await record(conversation, context);
+		if (found !== undefined) owners.set(conversation, found.owner?.conversationId);
+		return found?.owner?.conversationId;
+	};
+	const at = async (conversation: ConversationId, context: Context): Promise<HarnessLocation | undefined> => {
+		const own = facts.detail.value.locations[String(conversation)];
+		if (own !== undefined) return own;
+		const above = await ownerOf(conversation, context);
+		if (above !== undefined) return at(above, context);
+		return facts.session.value?.location ?? undefined;
+	};
+	return at;
+}
+
+/** Whether the kinds' contributions were complete when a submit picked its model, or still loading past the bound. */
+type Readiness = "complete" | "loading";
+
+/** A model the session's row chose, as the agent names it, and its thinking level. */
+type Chosen = { readonly model: ModelRef; readonly thinking: ModelChoice["thinking"] };
+
+/**
+ * The model the row's `choice` names (a login and its model), as the agent names it. With the models complete, only
+ * one a held login gives; still loading (past the bound), the one its held login would give, so the run fails
+ * `no_model` naming it rather than asking another login (round 1 of model settings, Astra 2). `undefined`: no choice,
+ * or one no held login gives.
+ */
+function chosenModel(choice: ModelChoice | null, things: AgentParts, models: Readiness): Chosen | undefined {
+	if (choice === null) return undefined;
+	const provider = things.providerOf(choice.login);
+	if (provider === undefined) return undefined;
+	const model = { provider, modelId: choice.model };
+	if (models === "complete" && things.models.getModel(provider, choice.model) === undefined) return undefined;
+	return { model, thinking: choice.thinking };
+}
+
+/**
+ * Gives `conversation` the session's chosen model and thinking level (`chosen`, decision 118; Astra, slice 5 round
+ * 1). Without one, the decided behaviour: a model still offered is kept, else the first model offered, in the order
+ * of the held things; without one nothing changes (its run fails `no_model`).
+ */
+async function offerModel(
+	conversation: Conversation,
+	things: AgentParts,
+	chosen: Chosen | undefined,
+	context: Context,
+): Promise<void> {
+	const agent = await conversation.agent(context);
+	if (chosen !== undefined) {
+		const same =
+			agent.model?.provider === chosen.model.provider &&
+			agent.model.modelId === chosen.model.modelId &&
+			agent.thinkingLevel === chosen.thinking;
+		if (!same) await conversation.configure({ model: chosen.model, thinkingLevel: chosen.thinking }, context);
+		return;
+	}
+	const model = agent.model;
 	if (model !== undefined && things.models.getModel(model.provider, model.modelId) !== undefined) return;
 	const first = things.firstModel();
 	if (first !== undefined) await conversation.configure({ model: first }, context);
@@ -186,6 +383,8 @@ async function openHarness(
 	try {
 		// The root conversation exists from the first open on: the transcript and the activity follow it.
 		await durable.root(base);
+		// Before anything runs: the subagents' reporters read the session's document.
+		await adoptConversationRosters(durable, base);
 		return durable;
 	} catch (error) {
 		await durable.close(base);

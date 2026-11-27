@@ -32,13 +32,69 @@ export {
 	withCancel,
 } from "@earendil-works/chord/context";
 export type { JsonValue } from "@earendil-works/chord/json";
+/** What `until` follows: a reference's state, a member, any watchable. */
+export type { NativeWatchable } from "@earendil-works/chord/watch";
+// pi-ai's types of providers and their auth, for every kind's facets (a value of them comes from `/v1/server` or
+// `/v1/worker`).
+export type {
+	Api,
+	AuthContext,
+	AuthEvent,
+	AuthPrompt,
+	AuthResult,
+	Credential,
+	CredentialStore,
+	Model,
+	OAuthAuth,
+	Provider,
+	ProviderAuth,
+} from "@earendil-works/pi-ai";
 // The contracts p3 promises to third-party plugins (Chord decision "The app kit, point 5"): the built-in plugins'
 // own files, re-exported; a plugin built against `/v1` keeps v1's contracts.
-export * from "../../../plugins/apps/contract.ts";
 export * from "../../../plugins/environments/contract.ts";
 export * from "../../../plugins/people/contract.ts";
-export * from "../../../plugins/sessions/contract.ts";
-export * from "../../../plugins/tools/contract.ts";
+export { LoginProviders } from "../../../plugins/providers/login-providers.ts";
+// The sessions plugin's: what a session is as data, its kinds, the admission of a session's objects on its worker;
+// what only its own facets use (`AgentThings`, `SessionStart`) stays out.
+export {
+	Location,
+	ModelChoice,
+	SessionDefaults,
+	SessionDetail,
+	SessionFacts,
+	SessionRow,
+	SessionState,
+	type SessionTick,
+	SessionWorker,
+	ThinkingLevel,
+} from "../../../plugins/sessions/contract.ts";
+export { followSession } from "../../../plugins/sessions/follow.ts";
+export { SessionDefaultsKind, SessionKind, SessionObject } from "../../../plugins/sessions/kind.ts";
+// The things plugin's: declaring a kind, whom a grant names, a caller's answer off the server, and what a page and an
+// agent hold of a workspace; its internals (the index's keys, the kinds' views) stay out. The people plugin's row
+// schema `Group` goes with that plugin (slice 3, push B): `/v1`'s `Group` is the things plugin's object.
+export {
+	Caller,
+	Group,
+	Item,
+	MAKE_ANY,
+	MyAnswer,
+	makeTick,
+	OPEN,
+	Party,
+	Source,
+} from "../../../plugins/things/contract.ts";
+export {
+	type DefaultGrants,
+	defineThing,
+	defineWorkspace,
+	type Makers,
+	type Stacking,
+	type ThingKind,
+	TickFor,
+	type Workspaces,
+} from "../../../plugins/things/kind.ts";
+export * from "../../../plugins/things/workspace.ts";
 export * from "../../../plugins/transcript/contract.ts";
 export { callerKey, P3Principal } from "../../app.ts";
 export { forward } from "./forward.ts";

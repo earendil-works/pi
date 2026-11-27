@@ -1,50 +1,45 @@
-// The canvas plugin on a session's worker: what the session's `canvas.board` things give the agent. `canvas_list` (the
-// session's boards: id, name, whether the agent may draw there) and `canvas_read({ canvas })` (a board's shapes as
-// JSON) always; `canvas_draw({ canvas, shapes })` when the agent may draw on at least one board, refused with an
-// error naming the board on the others. The tools take a board's id from `canvas_list`, so their descriptions stay
-// fixed whatever boards the session has. Both reach the board's `Canvas` on the server through the agent's `call`, as
-// the session's worker, so the server admits the agent with its own options there too.
+// The canvas plugin on a session's worker: the harness part of `canvas.board`, the agent's tools for the boards it
+// holds. `canvas_list` (the boards: id, name, whether the agent may draw there) and `canvas_read({ canvas, after? })`
+// (a page of a board's shapes as JSON) always; `canvas_draw({ canvas, shapes })` when the agent may draw on at least
+// one board, refused naming the board on the others. The tools take a board's id from `canvas_list`, so their
+// descriptions stay fixed whatever boards the agent holds. Every call goes through the agent's held reference: a Draw
+// withheld meanwhile refuses the draw, and a read is a page read now (`page`), so nothing stays loaded after it.
 
-import { arr, type Ctx, defineFacet, obj, type P3Principal, str } from "@earendil-works/p3/v1";
-import {
-	type Agent,
-	type AgentThing,
-	defineExtension,
-	defineTool,
-	ThingExtensions,
-	thingExtension,
-} from "@earendil-works/p3/v1/worker";
-import { BOARD_HEIGHT, BOARD_WIDTH, Canvas, CanvasKind, Shape } from "./contract.ts";
+import { arr, type Context, defineFacet, forbidden, invalid, obj, opt, str } from "@earendil-works/p3/v1";
+import { defineTool } from "@earendil-works/p3/v1/worker";
+import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { BOARD_HEIGHT, BOARD_WIDTH, type Canvas, CanvasKind, Shape } from "./contract.ts";
 
 export default defineFacet((_host, self) => {
-	self.contribute(
-		ThingExtensions,
-		thingExtension(CanvasKind, (things, agent) => {
-			const tools = [listTool(things), readTool(things, agent)];
-			return {
-				extension: defineExtension({
-					name: "canvas",
-					tools: things.some(({ options }) => options.draw) ? [...tools, drawTool(things, agent)] : tools,
-				}),
-			};
-		}),
-	);
+	self.contribute(ThingHarnessParts, canvasPart);
 });
 
-/** A board of the session as the canvas tools get it. */
-type Board = AgentThing<{ draw: boolean }>;
+/** A board the agent holds. */
+type Board = HeldThing<typeof Canvas>;
 
-/** The tool `canvas_list`: the session's boards, with whether the agent may draw on each. */
-function listTool(things: readonly Board[]) {
+/** The canvas's harness part. */
+const canvasPart = thingHarnessPart(CanvasKind, (boards) => {
+	const tools = [listTool(boards), readTool(boards)];
+	const draws = boards.some(({ ref }) => ref.granted.has("add"));
+	return { extension: { tools: draws ? [...tools, drawTool(boards)] : tools } };
+});
+
+/** The tool `canvas_list`: the boards, with whether the agent may draw on each. */
+function listTool(boards: readonly Board[]) {
 	return defineTool({
 		name: "canvas_list",
 		description:
 			"Lists the session's shared canvases as JSON: each one's `id` (what the other canvas tools take), its `name` " +
 			"and whether you may `draw` on it.",
 		parameters: obj({}),
+		replay: "safe",
 		execute: async () => {
-			const boards = things.map(({ thing, name, options }) => ({ id: thing, name, draw: options.draw }));
-			return { output: [{ type: "text", text: JSON.stringify(boards) }] };
+			const listed = boards.map(({ thing, ref }) => ({
+				id: thing,
+				name: ref.name.value,
+				draw: ref.granted.has("add"),
+			}));
+			return { output: [{ type: "text", text: JSON.stringify(listed) }] };
 		},
 	});
 }
@@ -53,29 +48,25 @@ function listTool(things: readonly Board[]) {
 const UNITS = `The board is ${BOARD_WIDTH} units wide and ${BOARD_HEIGHT} high; x grows to the right, y down.`;
 
 /** The tool `canvas_read`: every shape of a board, oldest first, as JSON. */
-function readTool(things: readonly Board[], agent: Agent) {
+function readTool(boards: readonly Board[]) {
 	return defineTool({
 		name: "canvas_read",
 		description:
-			"The shapes on one of the session's shared canvases (`canvas`: its id from `canvas_list`), oldest first, as " +
-			`JSON (each with its id and who drew it). ${UNITS}`,
-		parameters: obj({ canvas: str() }),
+			"A page of the shapes on one of the session's shared canvases (`canvas`: its id from `canvas_list`), oldest " +
+			"first. Answers JSON: `rows` (each shape with its id and who drew it) and, when there are more, `next`: pass " +
+			`it as \`after\` for the next page. ${UNITS}`,
+		parameters: obj({ canvas: str(), after: opt(str()) }),
 		replay: "safe",
-		execute: async ({ canvas: id }, _api, context) => {
-			const thing = boardOf(things, id);
-			const shapes = await agent.call(async (ctx) => {
-				const canvas = await board(thing, agent, ctx);
-				// Every page: the agent reads the whole board.
-				while (canvas.shapes.value.moreAfter) await canvas.more(ctx);
-				return canvas.shapes.value.rows;
-			}, context);
-			return { output: [{ type: "text", text: JSON.stringify(shapes) }] };
+		execute: async ({ canvas: id, after }, _api, context) => {
+			// A page read now through the held reference: nothing is kept loaded after the call (Astra, round 1).
+			const page = await boardOf(boards, id).ref.page({ ...(after === undefined ? {} : { after }) }, context);
+			return { output: [{ type: "text", text: JSON.stringify(page) }] };
 		},
 	});
 }
 
 /** The tool `canvas_draw`: adds shapes to a board the agent may draw on, in order. */
-function drawTool(things: readonly Board[], agent: Agent) {
+function drawTool(boards: readonly Board[]) {
 	return defineTool({
 		name: "canvas_draw",
 		description:
@@ -83,34 +74,26 @@ function drawTool(things: readonly Board[], agent: Agent) {
 			"on), which everyone in the session sees at once: lines (`points` is [x0, y0, x1, y1, ...]), rectangles and " +
 			`text, each with a colour \`#rrggbb\`. ${UNITS}`,
 		parameters: obj({ canvas: str(), shapes: arr(Shape, { min: 1, max: 100 }) }),
-		execute: async ({ canvas: id, shapes }, _api, context) => {
-			const thing = boardOf(things, id);
-			if (!thing.options.draw) throw new Error(`canvas: you may not draw on ${described(thing)}`);
-			const ids = await agent.call(async (ctx) => {
-				const canvas = await board(thing, agent, ctx);
-				// The server admits the agent with its own options: a `draw` taken back meanwhile leaves it a viewer.
-				if (canvas.add === undefined) throw new Error(`canvas: you may not draw on ${described(thing)} now`);
-				return canvas.add({ shapes }, ctx);
-			}, context);
-			return { output: [{ type: "text", text: `drew ${ids.length} shape(s): ${ids.join(", ")}` }] };
+		execute: async ({ canvas: id, shapes }, _api, context: Context) => {
+			const board = boardOf(boards, id);
+			// The held reference's `add` is there while Draw is granted: withheld since, it is gone.
+			const add = board.ref.add;
+			if (add === undefined) throw forbidden(`canvas: you may not draw on ${described(board)}`);
+			const ids = await add({ shapes }, context);
+			return { output: [{ type: "text", text: JSON.stringify({ ids }) }] };
 		},
 	});
 }
 
-/** The session's board `id`; an id that is none of them is the model's mistake, answered as its error result. */
-function boardOf(things: readonly Board[], id: string): Board {
-	const found = things.find(({ thing }) => thing === id);
+/** The board `id`; an id that is none of them is the model's mistake, answered as its error result. */
+function boardOf(boards: readonly Board[], id: string): Board {
+	const found = boards.find(({ thing }) => thing === id);
 	if (found === undefined)
-		throw new Error(`canvas: the session has no canvas ${JSON.stringify(id)} (see canvas_list)`);
+		throw invalid("args", `canvas: the session has no canvas ${JSON.stringify(id)} (see canvas_list)`);
 	return found;
 }
 
 /** A board as an error names it: its name and id. */
-function described({ thing, name }: Board): string {
-	return name === "" ? `the canvas ${thing}` : `the canvas "${name}" (${thing})`;
-}
-
-/** The board of `thing` as the session's worker gets it. */
-function board(thing: Board, agent: Agent, ctx: Ctx<P3Principal>) {
-	return ctx.get(Canvas, { session: agent.session, thing: thing.thing });
+function described({ thing, ref }: Board): string {
+	return `the canvas "${ref.name.value}" (${thing})`;
 }

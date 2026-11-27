@@ -686,7 +686,7 @@ export const NoteStore = local("notes.store", { version, params, members });
 // One shape for every caller (slice 15 §1): a grantable member exists for a caller only if its admission granted it.
 state: { notes: arr(PublicNote), authored: grantable(arr(Note)) },
 methods: { add: grantable(method(AddArgs, NoteId)), remove: grantable(method(RemoveArgs)), read: method() },
-flags: { export: "Export the notes" },               // a right that is no member; its label is the access UI's
+flags: { export: messages.message("flagExport") },  // a right that is no member; its label a message of the plugin's
 host.serve(Notes, ({ session }, principal, admitted, self) => ({
   notes, authored: () => authoredNotes, add, remove, read,   // grantable state and events are builders
 }), { admit: (params, principal) => constant(principal.kind === "owner" ? allow({ granted: ["authored", "add", "remove", "export"] }) : allow({})) });
@@ -695,7 +695,12 @@ host.serve(Notes, ({ session }, principal, admitted, self) => ({
 - **Grantable members and flags** (slice 15 §1; decision "Grantable members and flags replace variants", 2026-11-25):
   a remote contract declares one shape for every caller; a member marked `grantable(...)` (state, event or method)
   exists for a caller only if its admission granted it, a plain one for everyone admitted. `flags: { name: label }`
-  are rights that are no member (the label English, for the access UI). A name is one member or one flag, never two
+  are rights that are no member; the label is a message as data (`MessageData`, §23: `messages.message("flagExport")`
+  of the plugin's `defineMessages`, typed by its catalog), which the access UI renders in the viewer's language
+  (decision "Flag labels are messages", 2026-11-26); declaration refuses a label that is no message
+  (`MessageSchema`): the declaration checks only the label's shape, `messages.message(key)` checks the key against
+  the catalog (by its type). A contract file may import its plugin's `messages.ts` (`plugin-authoring.md`, "What a
+  plugin may import"). A name is one member or one flag, never two
   (types and declaration). `GrantableName<C>` is the union of a contract's grantable members and flags. A contract
   with grantable members or flags takes an admission (`admit` required, §6). `local` contracts have neither.
 - **Admission** (slice 14; slice 15 §1.2): a remote contract may declare `admission: obj(...)`, the data its factory
@@ -1216,7 +1221,15 @@ settles, a handler's context aborts when its caller cancels or its object ends, 
 change or transaction (`handle.change`, `retire`, `self.tx`, `job.start`) that did not commit because its context
 ended first (it waited on its object's line, or `fn` returned before it committed) rejects with that context's abort
 reason, and is also reported through `onError` as `transaction_cancelled { object, error }` (`error` the abort
-reason, naming the scope that ended): an empty `catch` cannot hide a change that never happened.
+reason, naming the scope that ended): an empty `catch` cannot hide a change that never happened. Not reported: one its
+own object's end cancelled (ERNDL-1190; decision (e) as changed by the owner, 2026-11-27). The check compares
+origins, not reasons: Chord's linked signals (a call's context, linked to its caller's and to its attempt's) remember
+which source aborted them first (`context/abort-origin.ts`), the attempt's seal token remembers the signals it aborted
+to end its own work (any end of the attempt, a reload stopping its routines, the job runs its seal cut off), and the
+failure must be the cancellation (refused or cut at the seal, or the abort's reason itself; an exception of the
+transaction's own still reports). The object, ending, aborts its attempt's contexts before it ends its references, so
+a call's context finds the attempt's end first. That loss is the object's end, as a crash, and its successor starts
+from what was committed; a root that settled, a caller's cancel and a caller object's end (on the callee) still report.
 `host.root(async (ctx) => { void handle.change(fn, ctx).catch(() => {}); }, context)` loses the change and reports it;
 `await handle.change(fn, ctx)` inside `fn` commits it. Only the cancelled path pays (the check runs where the
 transaction failed); Chord's own transactions run under contexts that never abort.
@@ -1687,6 +1700,18 @@ use, and every run blocks its host (the store's backend is synchronous). 100 row
 watched (`benchmarks.md`). **There may be dragons** for a table written hundreds of times a second with many live
 queries the skip test cannot skip. Maintaining a page from the written rows instead of running it again is left for
 when a case needs it.
+
+**Identical live reads share one source** (decision of the same name, 2026-11-26): readers of the same provider
+instance's named query with the same arguments (canonical JSON, made once per read) and shape (a `{ first }` window,
+or a count) share one open read (`store/shared-read.ts`), reference-counted by the readers: one entry in the store's
+index and commit index, one skip test, one run, one decode and one value per write, which every reader takes (their
+frames diff it once in the commit). A later reader takes the read's current value at once, with no run. Arguments
+that change move a reader to the read of its new key; the provider's restart moves every reader to one read of its
+successor; the last reader to leave closes the read. A shared read keeps nothing of the reader that made it (its
+site, its context, its signal): each load has its own signal, and an overtaken or closed read's loads are aborted. So
+that equal arguments are one key, **a query's arguments are JSON only** (a `bytes()` leaf in their schema is refused
+at declaration, a value that is not strict JSON when the key is made) and **a builder reads them as canonical JSON does**: the order of an object's keys is no part of them
+(an order that matters is an array), and `-0` is `0`. Lists do not share their pages yet (`slices.md`, "Carry-over").
 
 **Named queries** (slice 14, `slice-14.md` §3): a `local` contract lists them, `members: { sessions:
 queries(SessionRow, { visible: argsSchema, one: argsSchema }) }`, the argument schemas part of the fingerprint. The

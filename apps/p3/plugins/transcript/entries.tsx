@@ -10,7 +10,9 @@ import type {
 	ToolResultMessage,
 	UserMessage,
 } from "@earendil-works/p3/v1/web";
+import { useMessages } from "@earendil-works/p3/v1/web";
 import styles from "./entries.module.css";
+import { messages } from "./messages.ts";
 
 /** The entries, oldest first, then what `live` shows of the running run. */
 export function Entries(props: { readonly entries: readonly EntryRecord[]; readonly live: LiveState }) {
@@ -47,6 +49,7 @@ function EntryItem(props: {
 	readonly running: ReadonlyMap<string, string>;
 }) {
 	const message = props.entry.model?.[0];
+	const { t } = useMessages(messages);
 	switch (props.entry.kind) {
 		case "pi.user":
 			return message?.role === "user" ? (
@@ -68,9 +71,9 @@ function EntryItem(props: {
 				</li>
 			) : null;
 		case "pi.compaction":
-			return <Marker text="Earlier messages were summarized." />;
+			return <Marker text={t("summarized")} />;
 		case "pi.reset":
-			return <Marker text="A new context starts here." />;
+			return <Marker text={t("newContext")} />;
 		default:
 			return null;
 	}
@@ -92,6 +95,7 @@ function Answer(props: {
 	readonly running: ReadonlyMap<string, string>;
 }) {
 	const { message } = props;
+	const { t } = useMessages(messages);
 	return (
 		<>
 			{message.content.map((part, index) => (
@@ -100,7 +104,7 @@ function Answer(props: {
 			))}
 			{message.stopReason === "error" || message.stopReason === "aborted" ? (
 				<p className={styles.error}>
-					{message.errorMessage ?? (message.stopReason === "aborted" ? "Stopped." : "Failed.")}
+					{message.errorMessage ?? (message.stopReason === "aborted" ? t("stopped") : t("failed"))}
 				</p>
 			) : null}
 		</>
@@ -114,13 +118,14 @@ function Part(props: {
 	readonly running: ReadonlyMap<string, string>;
 }) {
 	const { part } = props;
+	const { t } = useMessages(messages);
 	switch (part.type) {
 		case "text":
 			return part.text === "" ? null : <p className={styles.text}>{part.text}</p>;
 		case "thinking":
 			return part.thinking === "" ? null : (
 				<details className={styles.thinking}>
-					<summary>Thinking</summary>
+					<summary>{t("thinking")}</summary>
 					<p className={styles.text}>{part.thinking}</p>
 				</details>
 			);

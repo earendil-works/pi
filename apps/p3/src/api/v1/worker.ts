@@ -2,9 +2,10 @@
 // what keeps it alive (`WorkerBusy`), both served by the base; the built-in plugins' worker contracts p3 promises; and
 // the parts of Durable and pi-ai worker plugins build on (one instance per worker, the versions p3 ships: a plugin
 // inlines neither). `Harness`, `StoreStorage`, `createRegistry` and `createModels` are for p3's own harness plugin and
-// outside v1's promise: a plugin gives the agent tools only through a thing (`ThingExtensions`).
+// outside v1's promise: a plugin gives the agent tools only through a thing (the things plugin's `ThingHarnessParts`).
 
 import { type ChordStore, defineRegistry, type Host } from "@earendil-works/chord";
+import { registerLazyBedrockProvider } from "@earendil-works/pi-ai/lazy-bedrock-provider";
 import type { P3Principal } from "../../app.ts";
 
 // Chord's sync layer, for the backup plugin's worker facet: uploads from a store's outbox.
@@ -19,6 +20,8 @@ export {
 	uploadSession,
 } from "@earendil-works/chord/sync";
 export {
+	// For the subagents' part: a subagent's thinking level, clamped to its model.
+	clampThinkingLevel,
 	createModels,
 	createProvider,
 	// pi-ai's faux provider, for plugins' tests: a model login that answers what the test scripts.
@@ -26,19 +29,28 @@ export {
 	fauxProvider,
 	fauxText,
 	fauxToolCall,
+	// For the providers plugin's worker facet: a login's requests, their request code loaded on the first one.
+	lazyStream,
 	type Message,
 	type Models,
+	type ModelThinkingLevel,
 	type MutableModels,
 	type Provider,
 } from "@earendil-works/pi-ai";
-// Until real provider logins (ERNDL-705): a deployment's own login plugin builds on it. Outside v1's promise.
-export { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 export {
+	type Agent,
+	type AgentChange,
+	AssistantEntry,
 	type Conversation,
+	type ConversationHandle,
 	type ConversationId,
+	type ConversationRecord,
 	type ConversationView,
+	configure,
 	createRegistry,
+	defineDoc,
 	defineExtension,
+	defineTask,
 	defineTool,
 	type EntryId,
 	type Extension,
@@ -46,17 +58,28 @@ export {
 	hook,
 	LiveDoc,
 	type LiveState,
+	type PromptSection,
 	type Registry,
 	ROOT_CONVERSATION_ID,
+	type SettledSubmissionRecord,
+	type Submission,
 	section,
 	type TaskGraph,
+	type TaskId,
+	type TaskRuntime,
+	type ToolExecutionApi,
+	type Tx,
 } from "@earendil-works/pi-durable";
 export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 export { StoreStorage } from "@earendil-works/pi-durable/storage/store";
 export { createCodingTools } from "@earendil-works/pi-durable/tools";
-export * from "../../../plugins/environments/contract.worker.ts";
 export * from "../../../plugins/harness/contract.worker.ts";
+export { loadProvider } from "./providers.ts";
+
+// Bedrock's request code inside the worker's bundle, loaded on its first request: without it pi-ai imports it through
+// a variable specifier, which a bundle cannot follow.
+registerLazyBedrockProvider();
 
 /** A session worker's process values, for plugins: what only the base has. */
 export type WorkerRuntime = {

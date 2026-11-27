@@ -30,6 +30,9 @@ export const PHONE: Viewport = { width: 390, height: 844, phone: true };
 /** The desktop's viewport. */
 export const DESKTOP: Viewport = { width: 1280, height: 900, phone: false };
 
+/** How long one DevTools call may take: longer than any wait a test makes (`wait` gives up after 20 s). */
+const CALL_TIMEOUT_MS = 60_000;
+
 /** One headless Chromium with one page. */
 export class Browser {
 	readonly #child: ChildProcess;
@@ -46,6 +49,13 @@ export class Browser {
 		this.#profile = profile;
 		this.#socket = socket;
 		socket.addEventListener("message", (event) => this.#received(JSON.parse(String(event.data)) as Message));
+		// A closed socket answers nothing more: every call still waiting fails, so no test waits for it forever.
+		socket.addEventListener("close", () => {
+			for (const [id, waiting] of this.#pending) {
+				this.#pending.delete(id);
+				waiting.reject(new Error("Browser: the DevTools socket closed"));
+			}
+		});
 	}
 
 	/** Starts Chromium (`CHROMIUM`) with a fresh profile and attaches to its page. */
@@ -102,10 +112,34 @@ export class Browser {
 
 	/** One DevTools command. */
 	call(method: string, params: object = {}): Promise<unknown> {
+		// A socket that is closing or closed answers nothing: fail at once instead of after the call's timeout.
+		if (this.#socket.readyState !== WebSocket.OPEN) {
+			return Promise.reject(new Error(`Browser: ${method}: the DevTools socket closed`));
+		}
 		const id = ++this.#next;
 		return new Promise((resolve, reject) => {
-			this.#pending.set(id, { resolve, reject });
-			this.#socket.send(JSON.stringify({ id, method, params }));
+			// A page that never answers (stuck in a render loop, Chromium gone) fails the call after a while instead
+			// of keeping the test, and with it the whole run, waiting forever.
+			const timer = setTimeout(() => {
+				this.#pending.delete(id);
+				reject(new Error(`Browser: ${method} got no answer within ${CALL_TIMEOUT_MS} ms`));
+			}, CALL_TIMEOUT_MS);
+			this.#pending.set(id, {
+				resolve: (value) => {
+					clearTimeout(timer);
+					resolve(value);
+				},
+				reject: (error) => {
+					clearTimeout(timer);
+					reject(error);
+				},
+			});
+			try {
+				this.#socket.send(JSON.stringify({ id, method, params }));
+			} catch (error) {
+				this.#pending.get(id)?.reject(error as Error);
+				this.#pending.delete(id);
+			}
 		});
 	}
 

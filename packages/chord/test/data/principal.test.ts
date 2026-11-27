@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/context/index.ts";
-import { canonicalJson, principalJson, principalKey, samePrincipal } from "../../src/data/internal.ts";
+import {
+	canonicalJson,
+	canonicalJsonOnly,
+	principalJson,
+	principalKey,
+	samePrincipal,
+} from "../../src/data/internal.ts";
+import { isJsonValue } from "../../src/json.ts";
 import { counted, expectCollected, metered } from "../support.ts";
 
 describe("canonicalJson", () => {
@@ -26,6 +33,54 @@ describe("canonicalJson", () => {
 			validations: 0,
 			compilations: 0,
 		});
+	});
+});
+
+describe("canonicalJsonOnly", () => {
+	it("writes JSON as canonicalJson does, and refuses in the same walk what is none (a query's arguments)", () => {
+		expect(canonicalJsonOnly({ b: 1, a: [{ d: -0, c: null }] }, BACKGROUND_CONTEXT)).toBe(
+			canonicalJson({ b: 1, a: [{ d: -0, c: null }] }, BACKGROUND_CONTEXT),
+		);
+		const refused = (value: unknown): string => {
+			try {
+				canonicalJsonOnly(value, BACKGROUND_CONTEXT);
+				return "taken";
+			} catch (error) {
+				return (error as Error).message;
+			}
+		};
+		expect(refused(new Uint8Array([7]))).toContain("not bytes");
+		expect(refused({ deep: [1, new Uint8Array([7])] })).toContain("not bytes");
+		expect(refused([1, undefined])).toContain("not undefined");
+		expect(refused({ f: () => {} })).toContain("JSON only");
+		expect(refused({ n: Number.NaN })).toContain("not NaN");
+		expect(refused({ at: new Date(0) })).toContain("not an object of a class");
+		expect(refused({ fine: [1, "a", true, null, {}] })).toBe("taken");
+	});
+
+	it("agrees with isJsonValue: a dictionary without a prototype is JSON, an array with more properties is none (Astra, round 3)", () => {
+		const fields: Record<string, string> = Object.assign(Object.create(null), { board: "a" });
+		expect(isJsonValue(fields)).toBe(true);
+		expect(canonicalJsonOnly(fields, BACKGROUND_CONTEXT)).toBe('{"board":"a"}');
+		// A regexp's match has `index`, `input` and `groups` besides its items: had it been taken, it was `["a"]`'s key.
+		const match = /a/.exec("ba")!;
+		expect(isJsonValue(match)).toBe(false);
+		expect(canonicalJsonOnly(["a"], BACKGROUND_CONTEXT)).toBe('["a"]');
+		expect(() => canonicalJsonOnly(match, BACKGROUND_CONTEXT)).toThrow("an array with other properties");
+		const cyclic: Record<string, unknown> = {};
+		cyclic.self = { back: cyclic };
+		expect(() => canonicalJsonOnly(cyclic, BACKGROUND_CONTEXT)).toThrow("a cycle");
+		const shared = { x: 1 };
+		expect(canonicalJsonOnly({ a: shared, b: [shared] }, BACKGROUND_CONTEXT)).toBe('{"a":{"x":1},"b":[{"x":1}]}');
+		const getter = Object.defineProperty({}, "board", { get: () => "a", enumerable: true });
+		expect(() => canonicalJsonOnly(getter, BACKGROUND_CONTEXT)).toThrow(
+			'a property "board" that is no enumerable data',
+		);
+		expect(() => canonicalJsonOnly({ [Symbol("s")]: 1 }, BACKGROUND_CONTEXT)).toThrow("a symbol key");
+		// An array with holes: fewer properties than its length says.
+		const sparse = new Array<number>(3);
+		sparse[0] = 1;
+		expect(() => canonicalJsonOnly(sparse, BACKGROUND_CONTEXT)).toThrow("an array with other properties");
 	});
 });
 

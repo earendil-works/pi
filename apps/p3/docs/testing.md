@@ -35,7 +35,7 @@ principal, address and API modules, beside the base's facet as the real host has
 and `WorkerBusy`. Each test gets a temporary directory of its own (the runtime's `dataDir` or `dir`), removed at its
 close. Chord's HTTP component is not there: its registries (`Http`, `Authenticators`) are collected for the test
 (`t.contributions`). The installed release runs a third-party plugin's own test this way. Model:
-`plugins/sessions/test/server.test.ts`.
+`plugins/sessions/test/session.test.ts`.
 
 ```ts
 import { testPlugin } from "@earendil-works/p3/v1/testing";
@@ -71,7 +71,8 @@ server's host: `root`, the base's registries), `plugins` (the watcher's marks), 
 `apply(ctx)`, `restart(ctx)`, `stop(ctx)` (the data directory kept) and `close(ctx)`; workers idle 300 ms by default
 (`idleMs`). `ownerClient` and `ownerCookie` sign in to any running p3 server (a launched one too). The tests' own
 `test/support.ts` adds the probe (`PROBE`: a plugin under test that drives a session's worker, and whose server route
-`GET /_probe/principal` answers who a request signed in as), `constantPlugin(name, value)` (a single-file worker
+`GET /_probe/principal` answers who a request signed in as), `workerReports(client, session, context)` (what a
+session's worker reported, through the probe: `t.errors` has the server's only), `constantPlugin(name, value)` (a single-file worker
 plugin serving one value), `alive`, and for launched processes `launch` (a foreground `p3 server`) and `childrenOf`.
 Models: `test/skeleton.test.ts`, `plugins/sign-in/test/sign-ins.test.ts`.
 
@@ -80,7 +81,7 @@ import { testServer } from "@earendil-works/p3/v1/testing";
 const t = await testServer({ plugins: [fileURLToPath(new URL("../", import.meta.url))] }, context);
 try {
 	const client = await t.client(context);
-	const session = await (await client.get(Sessions, {}, context)).create({ title: "one" }, context);
+	const session = await newSession(client, "one", context);           // `test/support.ts`: `Workspace.make` in Pi
 	const held = await client.get(MyWorkerContract, { session }, context);      // the session's worker starts
 } finally {
 	await t.close(context);
@@ -145,9 +146,10 @@ not exist yet.
   size the viewport, wait for an expression, click and type with real input events, take screenshots, keep the page's
   console). The model is `plugins/chrome/test/page.test.ts`: `testServer` with a copy of the built-in plugins the test
   edits and the tests' faux login (`test/plugins/faux-login/`), the owner's cookie set in the browser, then the page as
-  a person uses it: the bar, a session made through the form, a scripted answer with a tool call, the session's
-  dialog, the phone's screens, a reload of a plugin while the page is open (the page keeps its state, it does not load
-  again), apps a test writes into the user root, an invited person and their refusal. Every case looks at the phone's
+  a person uses it: the bar and the navigator, the Settings view and its who may, things and sessions made through the
+  picker, a scripted answer, the phone's screens, a reload of a plugin while the page is open (the page keeps its
+  state and unsent work, it does not load again), views a test writes into the user root, invited people and what they
+  may not do. Every case looks at the phone's
   viewport (390x844, touch emulated) and the desktop's (1280x900), light and dark (`colorScheme`). Wait for what the
   page shows (`wait`), never sleep; before a screenshot of a dialog or a popup, `settled` waits until its animations
   ended and checks it is on top. The last case asserts that the server reported nothing and the page logged no error.

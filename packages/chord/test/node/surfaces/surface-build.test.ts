@@ -146,3 +146,36 @@ describe("a failed build", () => {
 		}
 	});
 });
+
+describe("a failed first push", () => {
+	// Round 2 of the perf pass (Astra): a push of the first set that failed once was cached as a failed build: the next
+	// step failed too and the surface's files answered 503.
+	it("leaves the build standing: the files are served and the next step pushes the set", async () => {
+		const dir = await tempDir();
+		await writeFile(join(dir, "main.ts"), "globalThis.started = true;\n");
+		const { server, plugins, building, close } = await surface(join(dir, "main.ts"));
+		const get = server.get.bind(server);
+		let failed = false;
+		server.get = ((type, params, ctx, options) => {
+			if (type.name === "chord.web.current" && !failed) {
+				failed = true;
+				return Promise.reject(new Error("the push failed once"));
+			}
+			return get(type, params, ctx, options);
+		}) as typeof server.get;
+		try {
+			const outcome = await building.build();
+			expect(failed).toBe(true);
+			const base = outcome.kind === "built" ? outcome.base : "";
+			expect((await building.file(`${WEB_PREFIX}base.${base}.js`)).kind).not.toBe("error");
+			const scripts = await server.get(WebScripts, {}, context);
+			expect(scripts.set.value.base).toBe("");
+			const { hosts } = await building.step("web").reload(await plugins.build([], context), context);
+			expect(hosts.map(({ kind }) => kind)).toEqual(["reloaded"]);
+			expect(scripts.set.value.base).toBe(base);
+			scripts.release();
+		} finally {
+			await close();
+		}
+	});
+});

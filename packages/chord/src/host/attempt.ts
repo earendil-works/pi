@@ -39,8 +39,9 @@ import type { Writable } from "../state/index.ts";
 import { type Dependent, Derive, type DeriveSource, WritableSource } from "../state/internal.ts";
 import { checkExposedOnce } from "../store/column-set.ts";
 import type { Columns, RowOf } from "../store/columns.ts";
-import { checkLiveQuery, LiveQuery, type LiveTarget } from "../store/live-query.ts";
+import { checkLiveQuery, LiveQuery } from "../store/live-query.ts";
 import type { Query } from "../store/query.ts";
+import type { LiveTarget } from "../store/shared-read.ts";
 import type { Order } from "../store/sql.ts";
 import { tableSqlName } from "../store/sql.ts";
 import type { ChordStore } from "../store/store.ts";
@@ -574,6 +575,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const target: LiveTarget = {
 			// The query is of `handle`'s table (checked above); every column of the row is read.
 			spec: { query: q as unknown as Query, table: handle.sql.table, projection: {}, owner: handle },
+			// The owner's own window: nobody shares it.
+			sharing: undefined,
 			// A table's rows hold its columns' values: scalars and JSON.
 			decode: (stored, context) => rows.decode(stored, context) as JsonValue,
 		};
@@ -995,11 +998,15 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#parkedAt = undefined;
 	}
 
-	/** Abandons the activation with `outcome` (once): its waits stop and the openers' contexts are aborted. */
+	/**
+	 * Abandons the activation with `outcome` (once): its waits stop and the openers' and calls' contexts are aborted,
+	 * their signal remembered by its token first: a transaction its own end cancels is not reported.
+	 */
 	abandon(outcome: NotLive): void {
 		if (this.#abandoned !== undefined) return;
 		this.#abandoned = outcome;
 		const reason = outcome.kind === "ended" ? outcome.error : outcome.cause.error;
+		this.#token.endsWith(this.#abort.signal);
 		this.#abort.abort(reason);
 		this.#stopRoutines(reason);
 	}
@@ -1053,9 +1060,15 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		});
 	}
 
-	/** Its routines stop with `reason` (or may not start any more: `#startRoutines` asks the abandonment too). */
+	/**
+	 * Its routines stop with `reason` (or may not start any more: `#startRoutines` asks the abandonment too), their
+	 * signal remembered by its token first: a transaction this stop cancels is not reported.
+	 */
 	#stopRoutines(reason: unknown): void {
-		this.#extras?.routineRun?.abort.abort(reason);
+		const run = this.#extras?.routineRun;
+		if (run === undefined || run.abort.signal.aborted) return;
+		this.#token.endsWith(run.abort.signal);
+		run.abort.abort(reason);
 	}
 
 	/** Its routines stop (their ctx aborted); their running calls are waited for by the drain. */

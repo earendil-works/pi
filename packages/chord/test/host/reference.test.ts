@@ -34,6 +34,7 @@ import {
 	desk,
 	EDITOR,
 	expectCollected,
+	flagLabel,
 	flushed,
 	framesOf,
 	instancesOf,
@@ -361,7 +362,7 @@ describe("remote references", () => {
 			hostAddress: () => Server(),
 			state: { n: grantable(int()), m: int() },
 			methods: { bump: grantable(method()) },
-			flags: { export: "Export" },
+			flags: { export: flagLabel("export") },
 		});
 		const Holder = local("app.holder", { version: 1, params: {}, members: { n: int() } });
 		const seen: unknown[] = [];
@@ -428,7 +429,7 @@ describe("remote reference types (slice 15 §1.4)", () => {
 		hostAddress: () => Server(),
 		state: { n: grantable(int()), m: int() },
 		methods: { bump: grantable(method()), read: method() },
-		flags: { export: "Export" },
+		flags: { export: flagLabel("export") },
 	});
 
 	it("have the plain members, the grantable ones optional, and granted", () => {
@@ -908,7 +909,7 @@ describe("a reference's grant is its own binding's (review round 2, granttest F4
 		params: {},
 		hostAddress: Server,
 		state: { s0: grantable(str()) },
-		flags: { f0: "Flag" },
+		flags: { f0: flagLabel("f0") },
 	});
 	const serveFlagged = (h: FacetHost<TestPrincipal>): void =>
 		h.serve(Flagged, () => ({ s0: () => constant("s0") }), {

@@ -1665,6 +1665,10 @@ export class ChordObject implements Target {
 		this.#settleFirstOutcome();
 		// Sealed: its instance stops changing; its references take their last values from it.
 		this.#following = false;
+		// Its attempt's contexts abort before its references end: a call's context links both, and a transaction its
+		// end cancels then finds the attempt's end as what aborted it, not its caller's (ERNDL-1190). The seal below
+		// finishes the attempt's end.
+		if (state.kind === "activating" || state.kind === "live") state.attempt.abandon({ kind: "ended", error });
 		const holders = this.#holders.snapshot();
 		this.#holders.clear();
 		this.host.unreferenced(this, holders, this.#context);

@@ -23,6 +23,10 @@ is the owner's or root's and not writable by every user without the sticky bit; 
 that parent is checked, no ancestor above it: ERNDL-1059). Every Pi but the default takes a free port at its first start and keeps it
 (`pi.json`). `--port <n>` names the port for one start.
 
+A session that names no folder works in `~/p3-work/<Pi's id>/<session id>`, outside the data directory (Files never
+shows the data directory); each Pi on the machine has its own folder there: p3 writes there too, not only in its data
+directory.
+
 Pis on one machine keep their own sessions, sign-ins and cookie, but a browser does not keep them apart: it sends the
 cookies of every Pi on `127.0.0.1` to every port there (cookies are scoped by host, not port), so any server on this
 machine the browser visits sees every Pi's sign-in cookie (ERNDL-706 redesigns the sign-in).

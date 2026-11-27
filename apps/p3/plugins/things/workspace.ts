@@ -1,0 +1,242 @@
+// The objects the page holds about a workspace and what is in it (ERNDL-1141 §6, §8, §9, and the page's additions
+// recorded there): the workspace itself (`Workspace`: its info, and every change a workspace tick allows), its lists
+// (the caller's roots, its children, what is here, who is here, what the caller may link here), one thing as it is
+// available here (`ThingInfo`) and who may do what with a thing here (`WhoMay`). Every list is live and bounded by one
+// workspace (no further pages until slice 6); a "from" never names a workspace the caller is not present in (item 96).
+
+import {
+	arr,
+	bool,
+	grantable,
+	int,
+	lit,
+	MessageSchema,
+	map,
+	method,
+	obj,
+	oneOf,
+	opt,
+	remote,
+	Server,
+	type Static,
+	str,
+	union,
+	unknown,
+} from "@earendil-works/p3/v1";
+import { Party, Source } from "./contract.ts";
+import { TickFor } from "./kind.ts";
+
+/** Where something comes from, as the caller may see it: here, a workspace above they are present in, or above. */
+export const Origin = union([
+	obj({ kind: lit("here") }),
+	obj({ kind: lit("above"), workspace: str(), name: str() }),
+	obj({ kind: lit("aboveUnnamed") }),
+]);
+
+/** Where something comes from (see `Origin`). */
+export type Origin = Static<typeof Origin>;
+
+/**
+ * What the person removed from a kind's default grants in the add dialog (item 93, review round 1): per party the ticks
+ * not to write. The store writes what the kind or its create hook offers minus these; a tick the offer lacks is
+ * ignored. Untouched: no `defaults` at all.
+ */
+export const DefaultsChoice = obj({ without: obj({ everyone: opt(arr(str())), agents: opt(arr(str())) }) });
+
+/** What the person removed from a kind's default grants (see `DefaultsChoice`). */
+export type DefaultsChoice = Static<typeof DefaultsChoice>;
+
+/** A party as the picker offers it: whom, and their name. */
+export const PartyInfo = obj({ party: Party, name: str() });
+
+/** A party as the picker offers it (see `PartyInfo`). */
+export type PartyInfo = Static<typeof PartyInfo>;
+
+/** A workspace as its holders see it; `parent` only if the caller is present there (else it is a root for them). */
+export const WorkspaceInfo = obj({
+	workspace: str(),
+	name: str(),
+	kind: str(),
+	view: opt(str()),
+	showsThings: bool(),
+	showsPeople: bool(),
+	parent: opt(obj({ workspace: str(), name: str() })),
+});
+
+/** A workspace as its holders see it (see `WorkspaceInfo`). */
+export type WorkspaceInfo = Static<typeof WorkspaceInfo>;
+
+/** How long an invite link lasts and how often it may be used. */
+export const InviteUses = oneOf("one", "several");
+
+/**
+ * A workspace, held by anyone present there: its info and what the caller may make here (`makes`, from its Make ticks),
+ * and every change one of its ticks allows: Make, Link, Hide, Configure, Manage people, Manage access.
+ */
+export const Workspace = remote("things.workspace", {
+	version: 1,
+	params: { workspace: str() },
+	hostAddress: () => Server(),
+	admission: obj({ makes: arr(str()) }),
+	state: { info: WorkspaceInfo, makes: grantable(arr(str())) },
+	methods: {
+		/**
+		 * Make: a thing of `kind` here (`kind` one of `makes`). For a workspace kind, `private` makes it with people
+		 * from above hidden in the same commit (its maker is put in); private wins over its kind's create hook.
+		 */
+		make: grantable(
+			method(
+				obj({
+					kind: str(),
+					name: opt(str()),
+					input: opt(unknown()),
+					defaults: opt(DefaultsChoice),
+					private: opt(bool()),
+				}),
+				str(),
+			),
+		),
+		link: grantable(method(obj({ thing: str(), defaults: opt(DefaultsChoice) }))),
+		unlink: grantable(method(obj({ thing: str() }))),
+		hide: grantable(method(obj({ thing: str(), shown: bool() }))),
+		setShowsThings: grantable(method(obj({ shown: bool() }))),
+		configure: grantable(method(obj({ thing: str(), name: opt(str()), view: opt(str()), settings: opt(unknown()) }))),
+		picker: grantable(method(obj({ query: str() }), arr(PartyInfo))),
+		/**
+		 * Manage people: an invite link to this workspace, as a member or a guest; valid for `expires` milliseconds
+		 * (7 days when left out), for one use or several, joining `group` too if given (slice 3).
+		 */
+		inviteLink: grantable(
+			method(
+				obj({
+					name: str(),
+					as: oneOf("member", "guest"),
+					expires: opt(int()),
+					uses: opt(InviteUses),
+					group: opt(str()),
+				}),
+				obj({ url: str() }),
+			),
+		),
+		putParty: grantable(method(obj({ party: Party }))),
+		removeParty: grantable(method(obj({ party: Party }))),
+		makeGroup: grantable(method(obj({ name: str() }), str())),
+		hideParty: grantable(method(obj({ party: Party, shown: bool() }))),
+		setShowsPeople: grantable(method(obj({ shown: bool() }))),
+		/** One checkbox, one grant row (item 112): `gives` true gives, false withholds, absent resets the cell. */
+		setTick: grantable(method(obj({ thing: str(), party: Party, tick: str(), gives: opt(bool()) }))),
+	},
+});
+
+/** The caller's topmost workspaces: those they are present in with none above that they are present in. */
+export const Roots = remote("things.roots", {
+	version: 1,
+	params: { view: str() },
+	hostAddress: () => Server(),
+	state: { list: obj({ rows: arr(obj({ workspace: str(), kind: str(), name: str() })), moreAfter: bool() }) },
+	methods: { more: method() },
+});
+
+/** The sub-workspaces of a workspace the caller is present in (sessions among them); held by anyone present. */
+export const WorkspaceChildren = remote("things.children", {
+	version: 1,
+	params: { workspace: str(), view: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: { list: obj({ rows: arr(obj({ workspace: str(), kind: str(), name: str() })), moreAfter: bool() }) },
+	methods: { more: method() },
+});
+
+/**
+ * What is here, for anyone present: the things they get anything for here (linked here, or from above), and for whoever
+ * has Hide here the things from above a switch or the default hides here.
+ */
+export const WorkspaceContents = remote("things.contents", {
+	version: 1,
+	params: { workspace: str(), view: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: {
+		list: obj({
+			rows: arr(obj({ thing: str(), kind: str(), name: str(), from: Origin, hidden: bool() })),
+			moreAfter: bool(),
+		}),
+	},
+	methods: { more: method() },
+});
+
+/** Who is here, for anyone present: parties put in here, and those from above with whether a switch hides them here. */
+export const WorkspacePeople = remote("things.people", {
+	version: 1,
+	params: { workspace: str(), view: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: {
+		list: obj({
+			rows: arr(obj({ party: Party, name: str(), from: Origin, hidden: bool(), outside: bool() })),
+			moreAfter: bool(),
+		}),
+	},
+	methods: { more: method() },
+});
+
+/**
+ * The things the caller may link here (Link where each is linked now: in the workspaces above where they have Link), by
+ * a name prefix; held by anyone present here (linking itself needs Link here, `Workspace.link`).
+ */
+export const Linkable = remote("things.linkable", {
+	version: 1,
+	params: { workspace: str(), query: str(), view: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: {
+		list: obj({ rows: arr(obj({ thing: str(), kind: str(), name: str(), from: Origin })), moreAfter: bool() }),
+	},
+	methods: { more: method() },
+});
+
+/**
+ * One thing as it is available here: its kind, name, own default view and where it is linked. Admitted by the caller's
+ * answer on it (any answer, one with no tick too).
+ */
+export const ThingInfo = remote("things.thing-info", {
+	version: 1,
+	params: { workspace: str(), thing: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: { info: obj({ thing: str(), kind: str(), name: str(), view: opt(str()), from: Origin }) },
+});
+
+/**
+ * One checkbox (item 112): the rows written here for this party and tick (each giving or withholding, its source,
+ * whether the kind's plugin wrote it, and whether it applies), and whether the party has the tick here by any route.
+ */
+export const Cell = obj({
+	here: arr(obj({ gives: bool(), source: Source, kindDefault: bool(), inEffect: bool() })),
+	has: bool(),
+});
+
+/** One checkbox (see `Cell`). */
+export type Cell = Static<typeof Cell>;
+
+/** Whom a tick is for (item 91): the one schema, `kind.ts`'s. */
+export { TickFor };
+
+/**
+ * Who may do what with a thing here: the kind's own ticks, where its grants are written, and per party the `@open`
+ * cell and one cell per tick. On a workspace `ticks` also has cells `@make:*` and `@make:<kind>` (item 114). Read by
+ * anyone present here; changing a cell is `Workspace.setTick` (Manage access).
+ */
+export const WhoMay = remote("things.who-may", {
+	version: 1,
+	params: { workspace: str(), thing: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: {
+		table: obj({
+			ticks: arr(obj({ name: str(), label: MessageSchema, for: TickFor })),
+			linkedIn: Origin,
+			rows: arr(obj({ party: Party, name: str(), open: Cell, ticks: map(Cell) })),
+		}),
+	},
+});

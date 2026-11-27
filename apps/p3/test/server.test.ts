@@ -10,9 +10,18 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, mock, type TestContext } from "node:test";
+import { setImmediate as tick } from "node:timers/promises";
 import { createHost, type HostError } from "@earendil-works/chord";
-import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
-import { contribute, defineFacet, type P3Principal, Session, Sessions, SessionWorker } from "@earendil-works/p3/v1";
+import { type Context, BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
+import {
+	contribute,
+	defineFacet,
+	type P3Principal,
+	Session,
+	SessionWorker,
+	until,
+	WebScripts,
+} from "@earendil-works/p3/v1";
 import {
 	type HttpRequest,
 	LinkOpened,
@@ -24,6 +33,7 @@ import {
 	WorkerRunners,
 	WorkerRunnerWraps,
 } from "@earendil-works/p3/v1/server";
+import { testServer } from "@earendil-works/p3/v1/testing";
 import { PLUGINS, WORKER } from "../src/install.ts";
 import { exchange, serverSocket } from "../src/local-socket.ts";
 import {
@@ -35,7 +45,7 @@ import {
 	startWorker,
 	usedRunner,
 } from "../src/server.ts";
-import { coding } from "./support.ts";
+import { makeSession, TMP } from "./support.ts";
 import { eventually } from "./until.ts";
 
 /** A host with the base's facet and one plugin per entry of `plugins`, each contributing what its facet does. */
@@ -164,8 +174,7 @@ async function startOne(running: RunningServer): Promise<string> {
 	).items;
 	return host.root(
 		async (ctx) => {
-			const sessions = await ctx.get(Sessions, {});
-			const id = await sessions.create(coding("one"), ctx);
+			const id = await makeSession(ctx, "one", TMP);
 			await ctx.get(SessionWorker, { session: id });
 			return id;
 		},
@@ -183,6 +192,8 @@ function passing(inner: WorkerRunner, seen: string[]): WorkerRunner {
 		},
 		stop: (id) => inner.stop(id),
 		retry: (id) => inner.retry(id),
+		remove: (id) => inner.remove(id),
+		stored: () => inner.stored(),
 		state: () => inner.state(),
 		pids: () => inner.pids(),
 		reload: (built, ctx) => {
@@ -367,6 +378,8 @@ describe("the runner the server uses", () => {
 			start: () => Promise.reject(new Error("the second runner was used")),
 			stop: async () => {},
 			retry: () => {},
+			remove: async () => {},
+			stored: async () => [],
 			state: () => ({}),
 			pids: () => [],
 			reload: async () => ({ hosts: [] }),
@@ -380,5 +393,93 @@ describe("the runner the server uses", () => {
 		assert.equal(conflicts.length, 1);
 		assert.equal(conflicts[0]?.registry, WorkerRunners.name);
 		assert.deepEqual(conflicts[0]?.plugins, ["@earendil-works/p3-runner", "test.runner"]);
+	});
+});
+
+describe("the apply", () => {
+	/** A test server with the runner's `reload` held at its first call until `finish` resolves. */
+	async function heldReload(t: TestContext) {
+		const running = await testServer({}, context);
+		t.after(() => running.close(context));
+		const runners = (await running.host.registry(WorkerRunners, context)).value;
+		assert.ok(runners !== undefined);
+		const reload = runners.reload.bind(runners);
+		const reached = Promise.withResolvers<void>();
+		const finish = Promise.withResolvers<void>();
+		t.after(() => finish.resolve());
+		let first = true;
+		t.mock.method(runners, "reload", async (built: Parameters<WorkerRunner["reload"]>[0], ctx: Context) => {
+			const result = await reload(built, ctx);
+			if (first) {
+				first = false;
+				reached.resolve();
+				await finish.promise;
+			}
+			return result;
+		});
+		return { running, reached, finish };
+	}
+
+	// Review of the perf pass (Astra, ERNDL-1060): apply A's workers step was delayed, an edit, apply B finished, then A:
+	// both reported success, the page went back to A's code, nothing was dirty, and a third apply did not repair it.
+	it("runs one build and rollout at a time: a newer apply is not undone by an older one finishing late", async (t) => {
+		const { running, reached, finish } = await heldReload(t);
+		const file = join(running.userRoot, "race.web.ts");
+		const write = (said: string) => writeFile(file, `export default { setup() { globalThis.said = "${said}"; } };`);
+		await write("a");
+		await until(running.plugins, ({ dirty, set }) => set || dirty.includes("race"), context);
+		const scripts = await running.host.get(WebScripts, {}, context);
+		t.after(() => scripts.release());
+		const older = running.apply(context);
+		await reached.promise;
+		await write("b");
+		await until(running.plugins, ({ dirty }) => dirty.includes("race"), context);
+		// Round 2 (Astra): the newer apply reads what is dirty when it builds; while the older one is held it reads nothing.
+		const reads = t.mock.getter(running.plugins, "value");
+		const newer = running.apply(context);
+		// Unheld, it reads within this turn's microtasks.
+		await tick();
+		const read = reads.mock.callCount();
+		reads.mock.restore();
+		finish.resolve();
+		assert.equal(read, 0, "the newer apply started while the older one was held");
+		assert.equal((await older).stopped, undefined);
+		assert.equal((await newer).stopped, undefined);
+		assert.deepEqual(running.plugins.value.dirty, []);
+		const shown = scripts.set.value.combined;
+		const headers = { cookie: await running.cookie(context) };
+		const combined = await (await fetch(`http://127.0.0.1:${running.port}${shown}`, { headers })).text();
+		assert.equal(/said\s*=\s*"(\w+)"/.exec(combined)?.[1], "b");
+		await running.apply(context);
+		assert.equal(scripts.set.value.combined, shown);
+	});
+
+	// Round 2 (Astra): a queued apply whose caller left waited for the one before it, and built once its turn came.
+	it("lets a queued apply's caller stop waiting: its apply builds nothing, the next one still waits", async (t) => {
+		const { running, reached, finish } = await heldReload(t);
+		const first = running.apply(context);
+		await reached.promise;
+		const controller = new AbortController();
+		const second = running.apply(withAbortSignal(controller.signal, context));
+		controller.abort(new Error("the caller left"));
+		// It rejects at the abort, while the first apply is still held.
+		const settled = await Promise.race([
+			second.then(
+				() => "applied",
+				(error: Error) => error.message,
+			),
+			tick(),
+		]);
+		assert.equal(settled, "the caller left");
+		const reads = t.mock.getter(running.plugins, "value");
+		const third = running.apply(context);
+		// Unheld, it reads within this turn's microtasks.
+		await tick();
+		const read = reads.mock.callCount();
+		reads.mock.restore();
+		finish.resolve();
+		assert.equal(read, 0, "the third apply started while the first was held");
+		assert.equal((await first).stopped, undefined);
+		assert.equal((await third).stopped, undefined);
 	});
 });

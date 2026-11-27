@@ -1,15 +1,19 @@
-// The board kind's view of one canvas in a session (`ThingViews`): its name, the shapes, live, on a board of fixed
-// units that scales to the screen, with everyone else's pointer and name and what they are drawing as they draw it. A
-// drawer (admitted with write access and options that say `draw`) draws with the pen (mouse, pen or finger),
-// rectangles and text in a few colours, undoes their own last shape and clears the board; a viewer only looks, their
-// pointer shown. The view follows the admission live: `draw` taken back turns it into the viewer's at once.
+// The board kind's view of one canvas (`Views`): its name, the shapes, live, on a board of fixed units that scales to
+// the screen, with everyone else's pointer and name and what they are drawing as they draw it. A drawer (granted Draw)
+// draws with the pen (mouse, pen or finger), rectangles and text in a few colours and undoes their own last shape; with
+// Moderate also clears the board; a viewer only looks, their pointer shown. The view follows the admission live: Draw
+// taken back turns it into the viewer's at once.
 
 import { Button, Input, SegmentedControl } from "@earendil-works/elanor-react";
 import { BACKGROUND_CONTEXT, type Context, Me, type Reference, type With, withGranted } from "@earendil-works/p3/v1";
-import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { type PointerEvent, useEffect, useRef, useState } from "react";
+// Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
+// its page started with, whose `/v1/web` may not have a newer contract yet.
+import type { ThingViewProps } from "../things/contract.web.tsx";
 import styles from "./board-view.module.css";
 import { BOARD_HEIGHT, BOARD_WIDTH, CANVAS_DRAWS, Canvas, type PlacedShape, type Shape } from "./contract.ts";
+import { messages } from "./messages.ts";
 import { type Other, useMotionSender, useOthers } from "./motion.ts";
 
 /** The drawer's members, as the view calls them. */
@@ -23,25 +27,26 @@ type Tool = "pen" | "rect" | "text";
 
 /** The colours a drawer picks from, by name. */
 const COLORS = [
-	{ name: "Ink", value: "#1f2328" },
-	{ name: "Red", value: "#cf222e" },
-	{ name: "Blue", value: "#0969da" },
-	{ name: "Green", value: "#1a7f37" },
-	{ name: "Orange", value: "#bc4c00" },
+	{ name: "ink", value: "#1f2328" },
+	{ name: "red", value: "#cf222e" },
+	{ name: "blue", value: "#0969da" },
+	{ name: "green", value: "#1a7f37" },
+	{ name: "orange", value: "#bc4c00" },
 ] as const;
 
-/** Board `thing` of session `session`, as the viewer's admission allows. */
-export function BoardView(props: { readonly session: string; readonly thing: string }) {
-	const ref = useHold(Canvas, { session: props.session, thing: props.thing });
+/** Board `thing` as it is available in `workspace`, as the viewer's admission there allows. */
+export function BoardView(props: ThingViewProps) {
+	const ref = useHold(Canvas, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const drawer = withGranted(live, ...CANVAS_DRAWS);
 	const state = useRefState(ref);
 	const shapes = useWatch(live?.shapes);
 	const name = useWatch(live?.name);
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
-	const myKey = me === undefined ? undefined : me.kind === "person" ? `person:${me.id}` : me.kind;
+	const myKey = me === undefined ? undefined : me.kind === "person" ? `person:${me.id}` : `agent:${me.session}`;
 	const others = useOthers(live?.motion, myKey);
 	const [failure, setFailure] = useState<string | undefined>(undefined);
+	const { t } = useMessages(messages);
 	const run = (call: (context: Context) => Promise<unknown>) => {
 		setFailure(undefined);
 		call(BACKGROUND_CONTEXT).catch((error: unknown) => setFailure(messageOf(error)));
@@ -52,23 +57,23 @@ export function BoardView(props: { readonly session: string; readonly thing: str
 		live.more(BACKGROUND_CONTEXT).catch((error: unknown) => setFailure(messageOf(error)));
 	}, [live, shapes]);
 	if (state?.kind === "failed" && state.cause.kind === "denied") {
-		return <p className={styles.note}>You may not see this canvas.</p>;
+		return <p className={styles.note}>{t("denied")}</p>;
 	}
 	if (state?.kind === "failed" || state?.kind === "ended") {
-		return <p className={styles.note}>This canvas cannot be shown now.</p>;
+		return <p className={styles.note}>{t("unavailable")}</p>;
 	}
 	return (
 		<section
-			aria-label="Canvas"
+			aria-label={t("canvas")}
 			className={styles.board}
 			data-canvas={live === undefined ? "loading" : drawer === undefined ? "viewer" : "drawer"}
 		>
 			<p className={styles.title} data-canvas-name="">
-				{name ?? "Canvas"}
+				{name ?? t("untitled")}
 				{live === undefined ? (
-					<span className={styles.hint}>Loading…</span>
+					<span className={styles.hint}>{t("loading")}</span>
 				) : drawer === undefined ? (
-					<span className={styles.hint}>View only</span>
+					<span className={styles.hint}>{t("viewOnly")}</span>
 				) : null}
 			</p>
 			<Board drawer={drawer} live={live} myKey={myKey} run={run} others={others} shapes={shapes?.rows ?? []} />
@@ -92,6 +97,7 @@ function Board(props: {
 	readonly run: (call: (context: Context) => Promise<unknown>) => void;
 }) {
 	const { drawer } = props;
+	const { t } = useMessages(messages);
 	const [tool, setTool] = useState<Tool>("pen");
 	const [color, setColor] = useState<string>(COLORS[0].value);
 	const [text, setText] = useState("");
@@ -183,26 +189,26 @@ function Board(props: {
 			{drawer === undefined ? null : (
 				<div className={styles.toolbar} data-canvas-tools="">
 					<SegmentedControl.Root
-						aria-label="Tool"
+						aria-label={t("tool")}
 						density="compact"
 						onValueChange={(value) => value[0] !== undefined && setTool(value[0])}
 						value={[tool]}
 					>
 						<SegmentedControl.Item data-tool="pen" value="pen">
-							Pen
+							{t("pen")}
 						</SegmentedControl.Item>
 						<SegmentedControl.Item data-tool="rect" value="rect">
-							Box
+							{t("box")}
 						</SegmentedControl.Item>
 						<SegmentedControl.Item data-tool="text" value="text">
-							Text
+							{t("text")}
 						</SegmentedControl.Item>
 					</SegmentedControl.Root>
-					<fieldset aria-label="Colour" className={styles.colors}>
+					<fieldset aria-label={t("colour")} className={styles.colors}>
 						{COLORS.map((choice) => (
 							<button
 								aria-pressed={color === choice.value}
-								aria-label={choice.name}
+								aria-label={t(choice.name)}
 								className={styles.color}
 								data-color={choice.value}
 								key={choice.value}
@@ -220,26 +226,28 @@ function Board(props: {
 							hierarchy="tertiary"
 							onClick={undo}
 						>
-							Undo
+							{t("undo")}
 						</Button>
-						<Button
-							data-canvas-clear=""
-							density="compact"
-							disabled={props.shapes.length === 0}
-							hierarchy="tertiary"
-							onClick={() => props.run((ctx) => drawer.clear(ctx))}
-							semantic="negative"
-						>
-							Clear
-						</Button>
+						{drawer.clear === undefined ? null : (
+							<Button
+								data-canvas-clear=""
+								density="compact"
+								disabled={props.shapes.length === 0}
+								hierarchy="tertiary"
+								onClick={() => props.run((ctx) => drawer.clear!(ctx))}
+								semantic="negative"
+							>
+								{t("clear")}
+							</Button>
+						)}
 					</div>
 					{tool === "text" ? (
 						<Input
-							aria-label="Text to place"
+							aria-label={t("textToPlace")}
 							className={styles.text}
 							data-canvas-text=""
 							onValueChange={setText}
-							placeholder="Type, then tap the board"
+							placeholder={t("textHint")}
 							value={text}
 						/>
 					) : null}
@@ -247,7 +255,7 @@ function Board(props: {
 			)}
 			<div className={styles.paper}>
 				<svg
-					aria-label="Drawing"
+					aria-label={t("drawing")}
 					className={drawer === undefined ? styles.surface : `${styles.surface} ${styles.drawing}`}
 					data-canvas-surface=""
 					onPointerCancel={up}

@@ -18,10 +18,10 @@ import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { processLock } from "@earendil-works/chord/workers/child";
 import { ownerClient } from "@earendil-works/p3/v1/testing";
-import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
+import { SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND, SUPERVISOR } from "../src/install.ts";
 import { exchange, serverSocket, supervisorSocket, takeSocket } from "../src/local-socket.ts";
-import { alive, coding, launch, startOf } from "./support.ts";
+import { alive, launch, newSession, offline, startOf, TMP } from "./support.ts";
 import { eventually } from "./until.ts";
 
 const run = promisify(execFile);
@@ -39,7 +39,7 @@ async function homeOf(t: TestContext) {
 	const home = await mkdtemp(join(tmpdir(), "p3-home-"));
 	const p3 = async (...args: string[]): Promise<Ran> => {
 		try {
-			const env = { ...process.env, HOME: home };
+			const env = offline({ ...process.env, HOME: home });
 			const { stdout } = await run(process.execPath, [...COMMAND, ...args], { env, timeout: 60_000 });
 			return { code: 0, out: stdout };
 		} catch (error) {
@@ -76,7 +76,7 @@ async function homeOf(t: TestContext) {
 		}
 		return found;
 	};
-	return { home, p3, pids, env: { ...process.env, HOME: home }, dataDir: join(home, ".pi", "p3", "default") };
+	return { home, p3, pids, env: offline({ ...process.env, HOME: home }), dataDir: join(home, ".pi", "p3", "default") };
 }
 
 /** A foreground `p3 server` on the default Pi of `home`, killed after the case `t` (continued first if stopped). */
@@ -293,8 +293,7 @@ describe("the p3 command", { concurrency: true }, () => {
 		const port = Number(/port (\d+)\./.exec(first.out)?.[1]);
 		const client = await ownerClient(dataDir, port, context);
 		t.after(() => client.close(context).catch(() => {}));
-		const sessions = await client.get(Sessions, {}, context);
-		const id = await sessions.create(coding("stuck"), context);
+		const id = await newSession(client, "stuck", context, TMP);
 		await client.get(SessionWorker, { session: id }, context);
 		const { workers } = await pids();
 		assert.equal(workers.length, 1);

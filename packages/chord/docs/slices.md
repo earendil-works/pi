@@ -85,7 +85,7 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   references, wire, React and TUI bindings); example 77.
 - **Slice 15, denials with a message** (built 2026-11-25, `slice-15.md` §2): `deny(reason, message?)`, the message
   as data in the `forbidden` error's `details.message` and part of the decision (`host/admission.ts`);
-  `MessageData` and `MessageSchema` in `data/message.ts` (re-exported by `surfaces`); example 78.
+  `MessageData` and `MessageSchema` (in `contracts/message.ts` since flag labels are messages; re-exported by `data` and `surfaces`); example 78.
 - **Slice 15, the commit index** (built 2026-11-25, `slice-15.md` §3): `store/read-index.ts` (buckets by the
   equalities a read's plan fixes, `ReadPlan.equalities`; kept keys, kept current by the read, `Read.kept`), used by
   `Reads.candidates` in a commit's refresh; the oracle's world shared by `test/store/skip.test.ts` and
@@ -447,9 +447,14 @@ Left by the first part itself:
 - **Small leftovers of code review round 1:** `QueryPage` (contracts) and `Page` (store) are one shape with two
   names; a list decodes every loaded row's identity on each page adoption (0.6 ms a message at 20 pages); a list's
   method is `more` beside the values `more` and `moreAfter`, as the spec has it.
-- **Reads are not shared between readers** (§3.1's last bullet; test 3): two readers of one query with equal
-  arguments are two reads. The case that brings it back: many readers of identical arguments measured in a commit
-  step.
+- **A shared read holds its subscribers strongly** (`store/shared-read.ts`; ERNDL-1176, Opus's explainer check): a
+  reader leaves it only through its attempt's end (`detach`), its failure or another read; an object dropped without
+  its attempt ending would stay subscribed. Every way an object ends today detaches (tested: release, failure, reload,
+  a subscriber leaving while a frame is delivered). Weak subscriptions only if a case drops objects without ending them.
+- **A list's pages are not shared between lists** (decision "Identical live reads share one source"; ERNDL-1176):
+  live queries and counts share one read per (provider instance, query, arguments, shape); two lists of one query
+  with equal arguments are still two tilings. Next: share pages keyed by (query, arguments, bookmarks), every fresh
+  list's first page, pages behind a list's own `more` its own.
 - **A failed migration's held reads** keep their rows and stay held; §5 asks for `failed unavailable` ("table X is
   not ready") with the rows as last values. The case: a screen that must say why it is stale.
 - **Staging knows a recorded handle as a table, a named query of the object, or anything else.** A table given to
@@ -474,6 +479,11 @@ Left by the first part itself:
 
 ### After slice 11
 
+- **A tagged "building" state for the scripts object** (review of f86677f79, Opus, 2026-11-26): before its surface
+  built, the scripts object shows `ScriptSet` with `base: ""`, which clients skip (`surfaces/client.ts`). A tagged
+  value (`{ kind: "building" } | { kind: "built", set }`) would say it in the type instead of a sentinel. With it, decide
+  what a client that reconnected during the build shows when the first push then fails: today it keeps its old code
+  silently until the next step's push sends the set.
 - **Small examples** (owner, 2026-10-30: the 7c examples are complete but complex): once HTTP, workers, web and TUI
   exist, a pass of small, easy-to-read examples, each showing one thing a plugin author or app does.
 
