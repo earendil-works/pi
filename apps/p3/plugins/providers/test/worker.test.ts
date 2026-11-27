@@ -3,9 +3,11 @@
 // its models the login's catalog; a login without Use gives none; a request through it takes its auth from the
 // login's `authorize` and reaches the provider's request code (another plugin's, else pi-ai's, loaded on first use)
 // with the provider's own id, at each request the provider contributed then (a plugin replaced while a login is held
-// answers with its new code). That `authorize` admits only agents with Use is the server's test (`server.test.ts`).
+// answers with its new code), and nothing sent for a model hidden while the code loads. That `authorize` admits only
+// agents with Use is the server's test (`server.test.ts`).
 
 import assert from "node:assert/strict";
+import { registerHooks } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -31,7 +33,13 @@ import {
 	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import { createModels, fauxAssistantMessage, fauxProvider, WorkerRuntime } from "@earendil-works/p3/v1/worker";
+import {
+	createModels,
+	fauxAssistantMessage,
+	fauxProvider,
+	type Provider,
+	WorkerRuntime,
+} from "@earendil-works/p3/v1/worker";
 import { FAUX_MODEL, FAUX_PROVIDER, keyOf, type Step } from "../../../test/plugins/faux-login/contract.ts";
 import fauxWorker from "../../../test/plugins/faux-login/worker.ts";
 import { eventually, within } from "../../../test/until.ts";
@@ -96,8 +104,9 @@ const CATALOGS: LoginDefinitions[] = [
 	{ login: "w", models: [...fauxProvider({ provider: "swap", api: "swap", models: [{ id: "m" }] }).models] },
 ];
 
-/** The stand-in server's `complete` of the case running (set by its object). */
+/** The stand-in server's `complete` and catalog of the case running (set by its object). */
 let complete: Writable<boolean> | undefined;
+let catalog: Writable<JsonValue> | undefined;
 
 /**
  * The stand-in server: `SessionModels` with `CATALOGS`, complete until a case says otherwise, its catalog granted to
@@ -109,10 +118,12 @@ const sessionModels = defineFacet((host) =>
 		SessionModels,
 		(_params, _principal, _admitted, self) => {
 			complete = self.writable(true);
+			catalog = self.writable(CATALOGS as unknown as JsonValue);
+			const current = self.derive([catalog], ([now]) => now);
 			return {
 				complete: self.derive([complete], ([now]) => now),
 				models: constant([]),
-				catalog: () => constant(CATALOGS as unknown as JsonValue) as unknown as Watchable<LoginDefinitions[]>,
+				catalog: () => current as unknown as Watchable<LoginDefinitions[]>,
 			};
 		},
 		{
@@ -240,6 +251,61 @@ describe("the providers of the logins the agent holds", () => {
 			messages: [{ role: "user", content: "hello", timestamp: 0 }],
 		});
 		assert.deepEqual(given, ["rec"]);
+	});
+
+	it("sends nothing for a model hidden while its built-in request code still loads (Astra, round 2 recheck)", async () => {
+		await catalogued();
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const sent: string[] = [];
+		const faux = fauxProvider({ provider: "openai", api: "faux", models: [{ id: FAUX_MODEL }] });
+		faux.setResponses([fauxAssistantMessage("received")]);
+		const recording: Provider = {
+			...faux.provider,
+			streamSimple: (model, context, options) => {
+				sent.push(model.id);
+				return faux.provider.streamSimple(model, context, options);
+			},
+		};
+		// pi-ai's OpenAI module, loaded on the first request, stands in by a module that waits until released.
+		const slow = { entered, release, provider: recording };
+		Object.assign(globalThis, { __slowProvider: slow });
+		const module = [
+			"const slow = globalThis.__slowProvider;",
+			"slow.entered.resolve();",
+			"await slow.release.promise;",
+			"export const openaiProvider = () => slow.provider;",
+		].join("\n");
+		const hooks = registerHooks({
+			resolve: (specifier, hookContext, next) =>
+				specifier === "@earendil-works/pi-ai/providers/openai"
+					? { url: `data:text/javascript,${encodeURIComponent(module)}`, shortCircuit: true }
+					: next(specifier, hookContext),
+		});
+		try {
+			const [{ provider }] = providers(held("a", SCRIPT, [], { ...FAUX, provider: "openai" }));
+			const models = createModels();
+			models.setProvider(provider);
+			const asked = models.completeSimple(provider.getModels()[0]!, {
+				messages: [{ role: "user", content: "hello", timestamp: 0 }],
+			});
+			await entered.promise;
+			// The model leaves the complete catalog while the code loads; the worker has the change before the load ends.
+			catalog!.set([]);
+			await eventually(
+				() => provider.getModels().length,
+				(count) => count === 0,
+				5_000,
+			);
+			release.resolve();
+			const answer = await asked;
+			assert.equal(answer.stopReason, "error");
+			assert.deepEqual(sent, []);
+		} finally {
+			release.resolve();
+			hooks.deregister();
+			Reflect.deleteProperty(globalThis, "__slowProvider");
+		}
 	});
 
 	it("answers a request with the login's auth, through the provider's own request code", async () => {

@@ -37,24 +37,34 @@ export default defineFacet((host) => {
 			async (context) => runtime.value.host.hold(SessionModels, { session: runtime.value.session }, context),
 			(held) => held.release(),
 		);
-		const catalogOf = (): readonly LoginDefinitions[] => models.value.catalog?.value ?? [];
 		self.contribute(
 			ThingHarnessParts,
 			thingHarnessPart(LoginKind, (things) => {
-				const ready = (context: Context) => completed(models.value, things, context);
+				const session: SessionCatalog = {
+					catalog: () => models.value.catalog?.value ?? [],
+					complete: () => models.value.complete.value,
+					ready: (context) => completed(models.value, things, context),
+				};
 				return {
 					providers: things.flatMap((held) => {
 						const shown = held.ref.login.value;
 						return held.ref.authorize === undefined || shown === null
 							? []
-							: [{ thing: held.thing, provider: loginProvider(held, shown.provider, added, catalogOf, ready) }];
+							: [{ thing: held.thing, provider: loginProvider(held, shown.provider, added, session) }];
 					}),
-					ready,
+					ready: session.ready,
 				};
 			}),
 		);
 	});
 });
+
+/** The session's models as a login's provider reads them: the catalog, whether it is complete, and the wait for it. */
+type SessionCatalog = {
+	readonly catalog: () => readonly LoginDefinitions[];
+	readonly complete: () => boolean;
+	readonly ready: (context: Context) => Promise<void>;
+};
 
 /**
  * Resolves once the session's models are complete (`SessionModels.complete`: every login and model settings thing in);
@@ -89,15 +99,14 @@ const SEPARATOR = "~";
 
 /**
  * Login `held`'s own provider: its id `<provider>~<thing>`, its models the login's entry in the session's catalog
- * (`catalogOf`) under that id, its requests made by the provider's request code with the model's provider restored
+ * (`session`) under that id, its requests made by the provider's request code with the model's provider restored
  * (request code checks it: `anthropic`, `github-copilot`), its auth the login's `authorize` on the server.
  */
 function loginProvider(
 	{ thing, ref }: HeldThing<typeof Login>,
 	base: string,
 	added: RegistryValue<ProviderMap>,
-	catalogOf: () => readonly LoginDefinitions[],
-	ready: (context: Context) => Promise<void>,
+	session: SessionCatalog,
 ): Provider {
 	const id = `${base}${SEPARATOR}${thing}`;
 	/** pi-ai's built-in request code, loaded on the first request that needs it; a failed load is tried again. */
@@ -118,11 +127,14 @@ function loginProvider(
 	 * is made on models that are not, not in a run under way either, since a model settings thing just given may hide
 	 * its model (round 2 of model settings, Astra; decided by the main session).
 	 */
-	const complete = (signal: AbortSignal | undefined): Promise<void> => {
+	const complete = async (signal: AbortSignal | undefined): Promise<void> => {
 		const bound = AbortSignal.timeout(COMPLETE_MS);
-		return ready(
-			withAbortSignal(signal === undefined ? bound : AbortSignal.any([signal, bound]), BACKGROUND_CONTEXT),
+		const waiting = withAbortSignal(
+			signal === undefined ? bound : AbortSignal.any([signal, bound]),
+			BACKGROUND_CONTEXT,
 		);
+		// Complete again when the wait ends: the lists may have changed once more meanwhile.
+		while (!session.complete()) await session.ready(waiting);
 	};
 	/**
 	 * A request of `model` made by the request code once it is there and the models are complete: the model as the
@@ -136,11 +148,14 @@ function loginProvider(
 		lazyStream(
 			model,
 			async () => {
+				// The request code first: its first load may take a while, and the catalog may change meanwhile. Then the
+				// complete catalog's model, read and sent with nothing awaited in between (Astra, round 2 recheck).
+				const provider = await code();
 				await complete(signal);
 				const now = models().find(({ id: offered }) => offered === model.id);
 				if (now === undefined)
 					throw new PluginError("providers.hidden", `providers: ${id} offers no model ${model.id}`);
-				return run(await code(), { ...now, provider: base });
+				return run(provider, { ...now, provider: base });
 			},
 			undefined,
 			signal,
@@ -149,7 +164,7 @@ function loginProvider(
 	/** The login's models in the session's catalog now, under this provider's id. */
 	const models = (): readonly Model<Api>[] => {
 		// A session holds few logins: its entry is found by a look over them.
-		const from = catalogOf().find(({ login }) => login === thing)?.models ?? NONE;
+		const from = session.catalog().find(({ login }) => login === thing)?.models ?? NONE;
 		// Mapped once per entry the server sent (it keeps its identity while unchanged): a request asks more than once.
 		if (catalog?.from !== from) {
 			// The server's catalog is pi-ai's own definitions of the account's models.
