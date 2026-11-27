@@ -4,10 +4,11 @@ import { type Context, BACKGROUND_CONTEXT as context, withCancel, withTelemetry 
 import { arr, int, local, method, obj, str } from "../../src/contracts/index.ts";
 import type { Tx } from "../../src/documents/index.ts";
 import { defineState, type KeyedHandle, type SingletonHandle } from "../../src/documents/index.ts";
+import { createHost, defineFacet, type HostError } from "../../src/host/index.ts";
 import { eq } from "../../src/store/expression.ts";
 import type { TableOf } from "../../src/store/index.ts";
 import { defineTable } from "../../src/store/table.ts";
-import { delivered, framesOf, loaded, memoryStore, rejection } from "../support.ts";
+import { delivered, framesOf, loaded, memoryStore, rejection, until } from "../support.ts";
 
 const List = defineState("list", { schema: obj({ items: arr(str()) }), version: 1, initial: () => ({ items: [] }) });
 const Drafts = defineState("drafts", {
@@ -173,6 +174,97 @@ describe('transactions their context\'s end cancelled (decision "Mistakes that w
 		} finally {
 			reads.mockRestore();
 		}
+		await host.close(context);
+	});
+});
+
+describe("transactions their own object's end cancelled (ERNDL-1190)", () => {
+	/**
+	 * A host serving `Owner` whose attempts each run one transaction under their own context that waits for `release`
+	 * before it drafts: in `self.open` (`where: "open"`, while the attempt activates) or `self.onLive` (once live).
+	 * `started` resolves once it holds the line, `aborted` once its context aborted, `outcomes` gets how each ended;
+	 * `facet()` is new code for the plugin (a reload restarts the object).
+	 */
+	async function gated(where: "open" | "onLive") {
+		const gate = Promise.withResolvers<void>();
+		const started = Promise.withResolvers<void>();
+		const aborted = Promise.withResolvers<void>();
+		const outcomes: unknown[] = [];
+		const facet = () =>
+			defineFacet((h) =>
+				h.serve(Owner, (_, self) => {
+					const list = self.state(List);
+					const run = async (ctx: Context): Promise<void> => {
+						await self
+							.tx(async (tx) => {
+								ctx.abortSignal?.addEventListener("abort", () => aborted.resolve());
+								started.resolve();
+								await gate.promise;
+								(await tx.draft(list)).items.push("lost");
+							}, ctx)
+							.then(
+								() => outcomes.push("committed"),
+								(error: unknown) => outcomes.push(error),
+							);
+					};
+					if (where === "open") self.open(run, () => {});
+					else self.onLive(run);
+					return { list, touch: async () => null };
+				}),
+			);
+		const errors: HostError[] = [];
+		const host = createHost({ onError: (error) => errors.push(error) });
+		await host.load([{ name: "@test/app", facet: facet() }], context);
+		return {
+			host,
+			errors,
+			outcomes,
+			facet,
+			started: started.promise,
+			aborted: aborted.promise,
+			release: () => gate.resolve(),
+		};
+	}
+
+	it("are not reported when the object ends: the transaction rejects, nothing reaches onError", async () => {
+		const { host, errors, outcomes, started, release } = await gated("onLive");
+		const reference = await host.get(Owner, { id: 1 }, context);
+		await started;
+		reference.release();
+		release();
+		await until(() => outcomes.length === 1);
+		expect(outcomes[0]).toMatchObject({ code: "released", reason: "discarded" });
+		expect(errors).toEqual([]);
+		await host.close(context);
+	});
+
+	it("are not reported when a reload stops the routine that ran them while the old attempt drains", async () => {
+		const { host, errors, outcomes, facet, started, aborted, release } = await gated("onLive");
+		const reference = await host.get(Owner, { id: 1 }, context);
+		await started;
+		const reloaded = host.reload([{ name: "@test/app", facet: facet() }], context);
+		await aborted;
+		release();
+		await reloaded;
+		await until(() => outcomes.length >= 1);
+		expect(outcomes[0]).toMatchObject({ message: "app.owner(1): reloaded" });
+		expect(errors).toEqual([]);
+		reference.release();
+		await host.close(context);
+	});
+
+	it("are not reported when a reload replaces the attempt that ran them", async () => {
+		const { host, errors, outcomes, facet, started, aborted, release } = await gated("open");
+		const reference = host.hold(Owner, { id: 1 }, context);
+		await started;
+		const reloaded = host.reload([{ name: "@test/app", facet: facet() }], context);
+		await aborted;
+		release();
+		await reloaded;
+		await until(() => outcomes.length >= 1);
+		expect(outcomes[0]).toMatchObject({ code: "released" });
+		expect(errors).toEqual([]);
+		reference.release();
 		await host.close(context);
 	});
 });

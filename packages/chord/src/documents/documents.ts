@@ -190,6 +190,7 @@ export class Documents {
 	 * Runs `fn` as one transaction on the line under `token` and commits what it drafted (§9): a throw, an abort of
 	 * `context`, the token's seal or the object's end discards everything; one that did not commit while `context` was
 	 * aborted is also reported (`transaction_cancelled`): an empty `catch` cannot hide a change that never happened.
+	 * Not when the abort was its own object's end (the token's owner ended its work with that reason, ERNDL-1190).
 	 * `persistence` defers storing a run state's change (D8).
 	 */
 	async tx<R>(
@@ -216,9 +217,10 @@ export class Documents {
 			return result;
 		} catch (error) {
 			tx.discard();
-			// Only a transaction that did not commit reads this; Chord's own run under contexts that never abort.
+			// Only a transaction that did not commit reads this; Chord's own run under contexts that never abort. One its
+			// own object's end cancelled (its context aborted with the reason that ended the token's work) is no mistake.
 			const signal = context.abortSignal;
-			if (signal?.aborted)
+			if (signal?.aborted && !token.endedBy(signal.reason))
 				this.#owner.report({ kind: "transaction_cancelled", object: this.label, error: signal.reason });
 			throw error;
 		} finally {

@@ -2511,7 +2511,10 @@ validation and copies the v2 kernel added around Delta.
   "add report"; p2 port footgun 10) Work a seal cancels before it ran (a document change or transaction waiting on its
   object's line, started with a root's, handler's or attempt's context that ended first) is also reported through
   `onError`, naming the object and the scope, besides rejecting: an empty `catch` cannot hide a change that never
-  happened. The rule itself stays: what is started with a context ends with it; await it.
+  happened. The rule itself stays: what is started with a context ends with it; await it. Refined (ERNDL-1190,
+  2026-11-26, for Mario to confirm): a transaction its own object's end cancelled (its context aborted with the reason
+  its attempt ended its own work with: an end, a failure, a replacement by a reload, a reload stopping its routines) is
+  not reported: it is the object's end, not a mistake (p3's stores reported one at every reload during their start).
 - **No limit on calls in progress per link; references in a method act as the caller (owner, 2026-11-03: "i guess
   it's fine without, guess we document it"; p2 port footguns 7, 11):** v1's `maxCalls` per link has no counterpart and
   gets none (the call window N bounds calls per origin; part limits bound sizes); documented. `ctx.get` in a method

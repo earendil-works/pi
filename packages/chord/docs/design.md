@@ -1221,7 +1221,10 @@ settles, a handler's context aborts when its caller cancels or its object ends, 
 change or transaction (`handle.change`, `retire`, `self.tx`, `job.start`) that did not commit because its context
 ended first (it waited on its object's line, or `fn` returned before it committed) rejects with that context's abort
 reason, and is also reported through `onError` as `transaction_cancelled { object, error }` (`error` the abort
-reason, naming the scope that ended): an empty `catch` cannot hide a change that never happened.
+reason, naming the scope that ended): an empty `catch` cannot hide a change that never happened. Not reported: one its
+own object's end cancelled (ERNDL-1190): its context aborted with the reason its attempt ended its own work with (the
+attempt's end, failure or replacement by a reload, a reload stopping its routines). That loss is the object's end, as
+a crash, and its successor starts from what was committed; a caller's cancel or a settled root still reports.
 `host.root(async (ctx) => { void handle.change(fn, ctx).catch(() => {}); }, context)` loses the change and reports it;
 `await handle.change(fn, ctx)` inside `fn` commits it. Only the cancelled path pays (the check runs where the
 transaction failed); Chord's own transactions run under contexts that never abort.

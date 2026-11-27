@@ -218,7 +218,8 @@ server.accept(webSocketLink(ws), { principal, limits: { part: 16 * MiB, decoded:
   refused here for a name, in the unbound index, and a registry value waited for while it has none, one wait per
   value; one timer per host, `unbound-clock.ts`), `transaction_cancelled` (`object`, `error`: the abort reason of the
   context a document change or transaction was started with, which ended before it committed: a root whose `fn`
-  returned, a caller that cancelled, its object's end; besides the rejection), `registry_undeclared` (`registry`,
+  returned, a caller that cancelled; besides the rejection; not when its own object's end, failure or reload cancelled
+  it, ERNDL-1190), `registry_undeclared` (`registry`,
   `plugins`: at a publication, or when a host-lifetime object's contributions enter, a registry with contributions and
   no provider here; again only once its contributing plugins change) (decision "Mistakes that wait are reported at
   once"), and
