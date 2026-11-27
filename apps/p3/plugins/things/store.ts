@@ -26,7 +26,7 @@ import {
 	type TableItem,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import { AccessIndex, type Touched } from "./access.ts";
+import { AccessIndex, type Asks, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
 import {
@@ -67,7 +67,7 @@ import {
 	Persons,
 	SignOuts,
 } from "./people.ts";
-import { namesOf, offeredTo, offers } from "./picker.ts";
+import { namesOf, offeredTo, offers, type PickerReads } from "./picker.ts";
 import { type Kinds, lookupOf, readerOf } from "./reader.ts";
 import { Gone, Removal, Removing } from "./removal.ts";
 import { audienceOf, isFor, makeTickFor } from "./rules.ts";
@@ -88,15 +88,30 @@ import {
 import type { DefaultsChoice } from "./workspace.ts";
 import { THINGS_PLUGIN, WorkspaceKind } from "./workspaces.ts";
 
-/** A write the picker checks first, in the same operation (R18): whom it names, for whom, where. */
-type Checked = {
-	readonly args: { readonly workspace?: string; readonly caller: Caller; readonly party: Party };
-};
+/** A write checked first, in the same operation of the index: whether it may run, and what it answers if not. */
+type Checked<R> = { allowed(asks: Asks): Promise<boolean>; refused(): R };
 
-/** The check of a write naming `party` for `caller` (none: server code, or no caller given, checks nothing). */
-function checkOf(caller: Caller | undefined, workspace: string | undefined, party: Party): Checked | undefined {
+/**
+ * The picker's check (R18) of a write naming `party` for `caller` in `workspace` (none: server code, or no caller
+ * given, checks nothing): refused with `notOffered`.
+ */
+function checkOf(
+	q: PickerReads,
+	caller: Caller | undefined,
+	workspace: string | undefined,
+	party: Party,
+	context: Context,
+): Checked<null> | undefined {
 	if (caller === undefined || caller.kind === "server") return undefined;
-	return { args: { ...(workspace === undefined ? {} : { workspace }), caller, party } };
+	const args = { ...(workspace === undefined ? {} : { workspace }), caller, party };
+	return {
+		allowed: (asks) => offers(q, asks.offered, args, context),
+		refused: () => {
+			throw invalid("args", "things: this party is not present where you are", {
+				message: messages.message("notOffered"),
+			});
+		},
+	};
 }
 
 /** Serves `ThingsStore` on `host`. */
@@ -181,7 +196,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const write = async <R>(
 			fn: (tx: Tx, changes: Changes) => Promise<R>,
 			ctx: Context,
-			checked?: Checked,
+			checked?: Checked<R>,
 		): Promise<R> => {
 			const retired: Retired[] = [];
 			const signedOut: string[] = [];
@@ -203,15 +218,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			const result =
 				checked === undefined
 					? await index!.commit(transaction)
-					: await index!.commitIf(
-							(offered) => offers(q, offered, checked.args, ctx),
-							transaction,
-							() => {
-								throw invalid("args", "things: this party is not present where you are", {
-									message: messages.message("notOffered"),
-								});
-							},
-						);
+					: await index!.commitIf(checked.allowed, transaction, checked.refused);
 			if (signedOut.length > 0 && live !== undefined) void signOut(signedOut, live);
 			for (const { thing, kind } of retired) {
 				lifecycle.retire(thing, kind);
@@ -470,7 +477,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				write(
 					(tx, touched) => writes.putParty(tx, touched, args),
 					ctx,
-					checkOf(caller, args.workspace, args.party),
+					checkOf(q, caller, args.workspace, args.party, ctx),
 				),
 			removeParty: ({ workspace, party }, ctx) =>
 				write(async (tx, touched) => {
@@ -492,7 +499,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				write(
 					(tx, touched) => people.addToGroup(tx, touched, args),
 					ctx,
-					checkOf(caller, undefined, { kind: "person", person: args.person }),
+					checkOf(q, caller, undefined, { kind: "person", person: args.person }, ctx),
 				),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
@@ -518,7 +525,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			},
 			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
 			redeemInvite: ({ secret, person }, ctx) =>
-				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx),
+				// The link's maker still has Manage people where it points (checked with the write; the group's own tick
+				// is checked in it).
+				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx, {
+					allowed: (asks) => invites.makerMay(secret, asks, ctx),
+					refused: () => null,
+				}),
 			deleteEverythingFrom: ({ source }, ctx) =>
 				write((tx, touched) => cleanup.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
 		};

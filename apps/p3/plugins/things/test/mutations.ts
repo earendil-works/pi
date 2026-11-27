@@ -22,6 +22,19 @@ import { join, resolve } from "node:path";
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- invite links at redemption ----
+	{
+		name: "a link's maker's Manage people is not checked at redemption",
+		file: "invites.ts",
+		find: 'return answer?.ticks.includes("managePeople") === true;',
+		put: "return true;",
+	},
+	{
+		name: "a link's group tick is not checked at redemption",
+		file: "invites.ts",
+		find: 'if (row.group !== "" && !(await this.#places.mayChange(tx, row.group, row.by))) return null;',
+		put: "",
+	},
 	// ---- a seeded thing's input ----
 	{
 		name: "a seed made after a reload takes the old generation's input",
@@ -57,7 +70,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a checked write is not checked",
 		file: "access.ts",
-		find: "if (!(await allowed(offered))) refused();",
+		find: "if (!(await allowed(asks))) return refused();",
 		put: "",
 	},
 	{

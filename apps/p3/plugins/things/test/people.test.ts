@@ -720,10 +720,7 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 	});
 
 	it("a redeemed link keeps an entry there already, spends nothing for a person who does not exist (Opus S3)", async () => {
-		const link = await store.createInvite(
-			{ workspace: f.family, name: "x", as: "member", by: { kind: "person", person: f.anna } },
-			context,
-		);
+		const link = await store.createInvite({ workspace: f.family, name: "x", as: "member", by: ADMIN }, context);
 		assert.equal(await store.redeemInvite({ secret: link, person: "nobody" }, context), null);
 		assert.notEqual(await store.redeemInvite({ secret: link, person: f.kim }, context), null);
 		const entry = (await store.workspaceMembers.here.page({ workspace: f.family }, 100, context)).items.find(
@@ -769,6 +766,38 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 		await store.removeGroup({ group: f.parents }, context);
 		assert.ok(!storedRows(w.path, "group-managers").some((row) => row.partyKey === `group/${f.parents}`));
 		assert.equal(await store.redeemInvite({ secret: link }, context), null);
+	});
+});
+
+describe("after push A (Opus's check of the explainer)", () => {
+	it("a link redeems only while its maker may still write it: Manage people where it points, its group's own tick", async () => {
+		const anna = { kind: "person", person: f.anna } as const;
+		const club = await store.createWorkspace(
+			{ kind: "things.workspace", name: "Club", parent: f.family, by: anna },
+			context,
+		);
+		const link = (group?: string) =>
+			store.createInvite(
+				{ workspace: club, name: "x", as: "member", by: anna, ...(group === undefined ? {} : { group }) },
+				context,
+			);
+		const plain = await link();
+		const grouped = await link(f.parents);
+		const managePeople = (gives: boolean) =>
+			store.setTick(
+				{ workspace: club, thing: club, party: person(f.anna), tick: "managePeople", gives, source: ADMIN },
+				context,
+			);
+		// Manage people withheld from Anna in Club: her link redeems nothing, and stays good.
+		await managePeople(false);
+		assert.equal(await store.redeemInvite({ secret: plain }, context), null);
+		await managePeople(true);
+		assert.notEqual(await store.redeemInvite({ secret: plain }, context), null);
+		// The group's own tick taken from her: the link naming the group redeems nothing, until she has it again.
+		await store.setGroupManagers({ group: f.parents, parties: [] }, context);
+		assert.equal(await store.redeemInvite({ secret: grouped }, context), null);
+		await store.setGroupManagers({ group: f.parents, parties: [person(f.anna)] }, context);
+		assert.notEqual(await store.redeemInvite({ secret: grouped }, context), null);
 	});
 });
 

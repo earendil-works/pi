@@ -601,7 +601,7 @@ describe("the index's own mechanics", () => {
 		const p = { kind: "person", person: "p" } as const;
 		const select = () =>
 			index.commitIf(
-				async (offered) => {
+				async ({ offered }) => {
 					const yes = (await offered(undefined, ["w"], p, context)).has("person/item");
 					checked.resolve();
 					await go.promise;

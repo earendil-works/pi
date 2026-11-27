@@ -2,13 +2,14 @@
 // `things.workspace-members` entry) or a guest (a membership in the workspace's own outside Guests group only, so the
 // guest counts as that group, not as themself or everyone here). A link is valid 7 days unless it says otherwise, used
 // up by its first use unless it is for several, and may put its redeemer into a group too. Its secret is kept hashed
-// in `things.invites`: the link is `<invite>.<secret>`, the secret never stored.
+// in `things.invites`: the link is `<invite>.<secret>`, the secret never stored. Its maker's rights are checked again
+// when it is redeemed: a link stays good only while its maker may still write it.
 
 import { and, type Context, eq, invalid, lte, query, type TableOf, type Tx } from "@earendil-works/p3/v1";
 import { hashToken, matchesHash, newToken } from "@earendil-works/p3/v1/server";
-import type { Touched } from "./access.ts";
+import type { Asks, Touched } from "./access.ts";
 import type { Invited, InviteInput } from "./contract.server.ts";
-import { managedByKey, type Party, type Source, sourceKey } from "./contract.ts";
+import { type Caller, managedByKey, type Party, type Source, sourceKey } from "./contract.ts";
 import { messages } from "./messages.ts";
 import { Groups, Invites, type PeopleTables, type PeopleWrites, THINGS } from "./people.ts";
 
@@ -91,8 +92,9 @@ export class InviteWrites {
 	/**
 	 * Redeems `link` for `person` (signed in) or a new person made by the link's maker: puts them in as the link says,
 	 * keeping an entry they have already (its source stays); a link for one use goes. `null` for a link that is
-	 * unknown, expired (it goes), whose secret does not match, into a workspace that is gone (it goes), or for a person
-	 * who does not exist (the link stays good).
+	 * unknown, expired (it goes), whose secret does not match, into a workspace that is gone (it goes), whose maker may
+	 * no longer put people into its group, or for a person who does not exist (the link stays good). Its maker's Manage
+	 * people is checked before, in the same operation (`makerMay`).
 	 */
 	async redeem(tx: Tx, touched: Touched, link: string, person: string | undefined): Promise<Invited | null> {
 		const dot = link.indexOf(".");
@@ -108,6 +110,8 @@ export class InviteWrites {
 			return null;
 		}
 		if (person !== undefined && (await tx.get(this.#t.persons, { person })) === undefined) return null;
+		// Its maker may still put people into its group: the group's own tick, or the owner flag (scenario 18).
+		if (row.group !== "" && !(await this.#places.mayChange(tx, row.group, row.by))) return null;
 		if (!row.several) tx.delete(this.#t.invites, { invite });
 		const who = await this.#redeemer(tx, person, row.name, row.by);
 		const party: Party = { kind: "person", person: who.person };
@@ -122,6 +126,22 @@ export class InviteWrites {
 			await this.#people.addToGroup(tx, touched, { group: row.group, person: who.person, source });
 		}
 		return who;
+	}
+
+	/**
+	 * Whether the maker of link `link` still has Manage people in the workspace it points into, as the index answers
+	 * now (`asks`, in the redeeming write's operation); server code (a plugin, a thing, a provider) always. A link
+	 * that is unknown answers true: the redeeming write refuses it.
+	 */
+	async makerMay(link: string, asks: Asks, context: Context): Promise<boolean> {
+		const dot = link.indexOf(".");
+		if (dot <= 0) return true;
+		const row = await this.#t.invites.get({ invite: link.slice(0, dot) }, context);
+		if (row === undefined) return true;
+		const caller = callerOfSource(row.by);
+		if (caller === undefined) return true;
+		const answer = await asks.answer(row.workspace, row.workspace, caller, context);
+		return answer?.ticks.includes("managePeople") === true;
 	}
 
 	/** Deletes up to `SWEEP` links expired by `now` (index `by_expiry`). */
@@ -152,5 +172,17 @@ export class InviteWrites {
 		const group = await this.#people.makeGroup(tx, { name: "Guests", managedBy, outside: true });
 		await this.#places.putParty(tx, touched, { workspace, party: { kind: "group", group }, source: THINGS });
 		return group;
+	}
+}
+
+/** The caller a link's maker is (a person, a session's agent); `undefined` for server code (a plugin, a thing, a provider). */
+function callerOfSource(source: Source): Caller | undefined {
+	switch (source.kind) {
+		case "person":
+			return { kind: "person", person: source.person };
+		case "agent":
+			return { kind: "agent", session: source.session };
+		default:
+			return undefined;
 	}
 }
