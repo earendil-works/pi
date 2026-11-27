@@ -159,6 +159,32 @@ describe("Models runtime", () => {
 		expect(long.cacheWrite).toBe(0.0000125);
 	});
 
+	it("prices image output tokens at the image rate and the rest of output at the output rate", () => {
+		const model = testModel("openrouter", "google/gemini-3-pro-image");
+		model.cost = { input: 2, output: 12, imageOutput: 120, cacheRead: 0.2, cacheWrite: 0.375 };
+		const createUsage = (imageOutput?: number): Usage => ({
+			input: 10,
+			output: 1370,
+			cacheRead: 0,
+			cacheWrite: 0,
+			reasoning: 250,
+			...(imageOutput === undefined ? {} : { imageOutput }),
+			totalTokens: 1380,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		});
+
+		// 1120 image tokens at $120/M and 250 reasoning tokens at $12/M, as OpenRouter bills them.
+		expect(calculateCost(model, createUsage(1120)).total).toBeCloseTo(0.13742, 9);
+		// Without the provider's split, all output counts as image tokens.
+		expect(calculateCost(model, createUsage()).output).toBeCloseTo(0.1644, 9);
+		// A count above output cannot price more tokens than were produced.
+		expect(calculateCost(model, createUsage(5000)).output).toBeCloseTo(0.1644, 9);
+
+		const { imageOutput: _, ...withoutImageRate } = model.cost;
+		model.cost = withoutImageRate;
+		expect(calculateCost(model, createUsage(1120)).output).toBeCloseTo(0.01644, 9);
+	});
+
 	it("marks catalog-derived totals as not provider-reported", () => {
 		const usage: Usage = {
 			input: 1_000_000,

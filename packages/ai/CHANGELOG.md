@@ -14,6 +14,7 @@
 - Added image model support to the `radius` provider: parses `images[]` from `/v1/config` into `ImageModel<"pi-image">`, persists/restores them offline, and wires `generateImages()`
 - Added Radius classifier and image models from the public `/v1/config` to the generated static catalog
 - Added `Usage.imageOutput`, the image output tokens as a subset of `output`. `openrouter-images` sets it from `completion_tokens_details.image_tokens`, and `pi-image` and `pi-decision` pass it through. It stays undefined when the provider does not report the split
+- Added `cost.imageOutput`, the image output rate of models that generate images. `calculateCost()` prices `usage.imageOutput` tokens at it and the rest of output at `cost.output`; without the provider's split, all output uses the image rate. Unset keeps pricing all output at `cost.output`
 
 ### Changed
 
@@ -28,6 +29,7 @@
 - Fixed Amazon Bedrock Kimi K3 and K3.1 multi-turn requests sending earlier reasoning back, which AWS documents as failing on Converse with `InternalServerException`. Earlier reasoning is no longer sent for these models
 - Fixed GitHub Copilot models on the `openai-completions` API losing their reasoning state between turns: Copilot's `reasoning_opaque` is now stored on the thinking block and sent back with `reasoning_text`, including when it arrives without reasoning text ([#12418](https://github.com/earendil-works/pi/issues/12418))
 - Fixed `openrouter-images`, `pi-image` and `pi-decision` usage dropping reasoning tokens: `usage.reasoning` is now set from OpenRouter's `completion_tokens_details.reasoning_tokens` and from the `pi-image` and `pi-decision` backends' `usage.reasoning`, as a subset of `output`
+- Fixed OpenRouter image models pricing image tokens at the text rate: the catalog took `cost.output` from OpenRouter's `completion` price and ignored `image_output`. The catalog now sets `cost.imageOutput` from `image_output`, and `openrouter-images` prices usage with `calculateCost()`, which also applies context tiers
 
 ## [1.6.1] - 2026-11-25
 

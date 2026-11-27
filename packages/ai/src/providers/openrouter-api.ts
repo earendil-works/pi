@@ -6,6 +6,8 @@ export interface OpenRouterPricing {
 	completion?: string;
 	input_cache_read?: string;
 	input_cache_write?: string;
+	/** Image output tokens; `completion` then prices the text and reasoning output of the same response. */
+	image_output?: string;
 	overrides?: OpenRouterPricingOverride[];
 }
 
@@ -74,4 +76,15 @@ export function openRouterCost(pricing: OpenRouterPricing | undefined): ModelCos
 		];
 	});
 	return tiers.length > 0 ? { ...base, tiers } : base;
+}
+
+/**
+ * `openRouterCost` for image models, adding `image_output` as `imageOutput`. Image tokens often cost
+ * 10x or more the `completion` rate that the same response's text and reasoning tokens cost.
+ */
+export function openRouterImageCost(pricing: OpenRouterPricing | undefined): ModelCost {
+	const cost = openRouterCost(pricing);
+	return pricing?.image_output === undefined
+		? cost
+		: { ...cost, imageOutput: perMillion(pricing.image_output, cost.output) };
 }

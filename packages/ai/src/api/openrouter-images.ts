@@ -6,6 +6,7 @@ import type {
 	ChatCompletionContentPartText,
 	ChatCompletionCreateParamsNonStreaming,
 } from "openai/resources/chat/completions.js";
+import { calculateCost } from "../models.ts";
 import type {
 	AssistantImages,
 	ImageApi,
@@ -16,6 +17,7 @@ import type {
 	ImagesOptions,
 	ProviderHeaders,
 	TextContent,
+	Usage,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
@@ -231,7 +233,7 @@ function parseUsage(
 		completion_tokens_details?: { reasoning_tokens?: number; image_tokens?: number };
 	},
 	model: ImageModel<ImageApi>,
-) {
+): Usage {
 	const promptTokens = rawUsage.prompt_tokens || 0;
 	const reportedCachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
 	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
@@ -239,7 +241,7 @@ function parseUsage(
 		cacheWriteTokens > 0 ? Math.max(0, reportedCachedTokens - cacheWriteTokens) : reportedCachedTokens;
 	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
 	const output = rawUsage.completion_tokens || 0;
-	const usage = {
+	const usage: Usage = {
 		input,
 		output,
 		cacheRead: cacheReadTokens,
@@ -251,16 +253,9 @@ function parseUsage(
 			? { imageOutput: rawUsage.completion_tokens_details.image_tokens }
 			: {}),
 		totalTokens: input + output + cacheReadTokens + cacheWriteTokens,
-		cost: {
-			input: (model.cost.input / 1000000) * input,
-			output: (model.cost.output / 1000000) * output,
-			cacheRead: (model.cost.cacheRead / 1000000) * cacheReadTokens,
-			cacheWrite: (model.cost.cacheWrite / 1000000) * cacheWriteTokens,
-			total: 0,
-			totalFromProvider: false,
-		},
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
-	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+	calculateCost(model, usage);
 	applyOpenRouterReportedCost(usage, rawUsage as typeof rawUsage & OpenRouterUsageAccounting);
 	return usage;
 }

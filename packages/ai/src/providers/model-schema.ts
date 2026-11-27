@@ -66,6 +66,12 @@ export const ModelCostTierSchema = object({
 });
 export const ModelCostSchema = object({
 	...ModelCostRatesProperties,
+	imageOutput: opt(
+		num({
+			description:
+				"Image output cost in USD per million tokens, for models that generate images. Image output tokens use this rate and the rest of output (text and reasoning) uses `output`. Unset means image tokens cost `output`.",
+		}),
+	),
 	tiers: opt(
 		arr(ModelCostTierSchema, {
 			description: "Request-wide pricing tiers. The highest matching input threshold applies to the full request.",

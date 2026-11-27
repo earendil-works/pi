@@ -251,6 +251,10 @@
                           "type": "number",
                           "description": "Cache-write cost in USD per million tokens."
                         },
+                        "imageOutput": {
+                          "type": "number",
+                          "description": "Image output cost in USD per million tokens, for models that generate images. Image output tokens use this rate and the rest of output (text and reasoning) uses `output`. Unset means image tokens cost `output`."
+                        },
                         "tiers": {
                           "type": "array",
                           "items": {
@@ -399,6 +403,10 @@
         "cacheWrite": {
           "type": "number",
           "description": "Cache-write cost in USD per million tokens."
+        },
+        "imageOutput": {
+          "type": "number",
+          "description": "Image output cost in USD per million tokens, for models that generate images. Image output tokens use this rate and the rest of output (text and reasoning) uses `output`. Unset means image tokens cost `output`."
         },
         "tiers": {
           "type": "array",

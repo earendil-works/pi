@@ -1,4 +1,4 @@
-import { type OpenRouterModel, openRouterCost } from "../../src/providers/openrouter-api.ts";
+import { type OpenRouterModel, openRouterCost, openRouterImageCost } from "../../src/providers/openrouter-api.ts";
 import type { ClassifierModel, ImageModel, Model, ThinkingLevel, ThinkingLevelMap } from "../../src/types.ts";
 import { getEffortThinkingLevelMap } from "../reasoning.ts";
 
@@ -101,7 +101,7 @@ export function buildOpenRouterCatalog(
 			baseUrl: "https://openrouter.ai/api/v1",
 			input: input.length > 0 ? input : ["text"],
 			output,
-			cost: openRouterCost(model.pricing),
+			cost: openRouterImageCost(model.pricing),
 		});
 	}
 

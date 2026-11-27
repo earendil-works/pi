@@ -357,7 +357,7 @@ describe("openrouter images", () => {
 			baseUrl: "https://openrouter.ai/api/v1",
 			input: ["text", "image"],
 			output: ["image", "text"],
-			cost: { input: 2, output: 120, cacheRead: 0.2, cacheWrite: 0.375 },
+			cost: { input: 2, output: 12, imageOutput: 120, cacheRead: 0.2, cacheWrite: 0.375 },
 		};
 
 		const output = await generateImages(
@@ -368,5 +368,8 @@ describe("openrouter images", () => {
 		expect(output.usage?.output).toBe(2290);
 		expect(output.usage?.reasoning).toBe(1000);
 		expect(output.usage?.imageOutput).toBe(1120);
+		// Without a reported cost, 1120 image tokens cost $120/M and the other 1170 output tokens $12/M.
+		expect(output.usage?.cost.output).toBeCloseTo((1120 * 120 + 1170 * 12) / 1_000_000, 9);
+		expect(output.usage?.cost.totalFromProvider).toBe(false);
 	});
 });

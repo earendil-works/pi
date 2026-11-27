@@ -44,6 +44,15 @@ const decisionModel: OpenRouterModelListItem = {
 };
 
 describe("OpenRouter catalog parsing", () => {
+	it("keeps the image output rate apart from the text output rate", () => {
+		const catalog = buildOpenRouterCatalog(
+			[],
+			[{ ...imageOnly, pricing: { prompt: "0.0000005", completion: "0.000003", image_output: "0.00006" } }],
+			[],
+		);
+		expect(catalog.images[0]?.cost).toEqual({ input: 0.5, output: 3, imageOutput: 60, cacheRead: 0, cacheWrite: 0 });
+	});
+
 	it("emits image-only models from the image listing as image models", () => {
 		const catalog = buildOpenRouterCatalog([], [imageOnly], []);
 		expect(catalog.chat).toEqual([]);

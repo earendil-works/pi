@@ -1300,8 +1300,12 @@ export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
 	// Anthropic charges 2x base input for 1h cache writes.
 	const longWrite = usage.cacheWrite1h ?? 0;
 	const shortWrite = usage.cacheWrite - longWrite;
+	// Image models price image tokens at `imageOutput` and the rest of output at `output`. Without the
+	// provider's split, all output counts as image tokens: the image price never undercharges.
+	const imageRate = model.cost.imageOutput;
+	const imageTokens = imageRate === undefined ? 0 : Math.min(usage.output, usage.imageOutput ?? usage.output);
 	usage.cost.input = (rates.input / 1000000) * usage.input;
-	usage.cost.output = (rates.output / 1000000) * usage.output;
+	usage.cost.output = (rates.output * (usage.output - imageTokens) + (imageRate ?? 0) * imageTokens) / 1000000;
 	usage.cost.cacheRead = (rates.cacheRead / 1000000) * usage.cacheRead;
 	usage.cost.cacheWrite = (rates.cacheWrite * shortWrite + rates.input * 2 * longWrite) / 1000000;
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
