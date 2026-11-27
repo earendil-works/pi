@@ -1,70 +1,36 @@
-// A subagent's conversation and the messages it is sent (the subagents' part, `subagents.ts`, starts and drives them):
-// the document listing a conversation's subagents (`Subagents`), the task owning each subagent's conversation
-// (`Anchor`) and the task delivering one message and reporting its answer back (`Reporter`). The tasks are an
-// extension of their own the harness installs always (`SUBAGENT_TASKS`), so a reporter under way when Use is withheld
-// still delivers its answer: the subagent finishes its step and gets no new message, since the tool is gone.
+// The messages to subagents (`subagents.ts` sends them): a reporter task per message, which delivers it to the
+// subagent and hands its answer back to the conversation that sent it, and the withdrawal of the queued ones when Use
+// is withheld. The tasks are an extension of their own the harness installs always (`SUBAGENT_TASKS`), so a reporter
+// under way when Use is withheld still reports: a subagent that runs finishes its step, and gets no new message.
 
 import type { Context } from "@earendil-works/p3/v1";
 import {
 	AssistantEntry,
+	type ConversationHandle,
 	type ConversationId,
-	type configure,
-	defineDoc,
+	configure,
 	defineExtension,
 	defineTask,
-	type EntryId,
 	type Extension,
+	type Harness,
 	type Message,
+	type SettledSubmissionRecord,
+	type Submission,
 	type TaskRuntime,
 } from "@earendil-works/p3/v1/worker";
+import { Anchor, SUBAGENT_TOOL, type Subagent, Subagents, toolsOf } from "./roster.ts";
 
 /**
- * A subagent: its conversation, the answers already reported (several messages may end in one answer), the model
- * (`provider/modelId`), thinking level and tools it was given (no `tools`: every tool the agent may give it, live), and
- * whether it is archived (hidden from `status`; still usable).
+ * What a reporter delivers: to which subagent (its name and conversation, and its generation when the message was
+ * sent), the message, and whether it waits for the current answer.
  */
-export type Subagent = {
-	readonly conversationId: ConversationId;
-	readonly reported: EntryId[];
-	model?: string;
-	thinkingLevel?: ThinkingLevel;
-	tools?: string[];
-	archived?: true;
+export type ReporterInput = {
+	name: string;
+	conversationId: ConversationId;
+	generation: number;
+	message: string;
+	followUp: boolean;
 };
-
-/** A thinking level, as a conversation's agent has it. */
-export type ThinkingLevel = NonNullable<Parameters<typeof configure>[2]["thinkingLevel"]>;
-
-/** A conversation's subagents by name: the ones the `subagent` tool started there. */
-export const Subagents = defineDoc<{ agents: Record<string, Subagent> }>({
-	checkpointWhen: () => false,
-	kind: "harness.subagents",
-	version: 1,
-	scope: "conversation",
-	history: "latest",
-	// A fork of the conversation starts without subagents.
-	fork: "initial",
-	initial: () => ({ agents: {} }),
-});
-
-/**
- * What owns a subagent's conversation: a background task that ends at once. A subagent outlives the agent's turns; a
- * background task is a boundary, so the agent's stop and idle waits do not reach it.
- */
-export const Anchor = defineTask<null, { phase: "done" }, null>({
-	name: "harness.subagent-anchor",
-	version: 1,
-	initial: () => ({ phase: "done" }),
-	phases: {
-		done: (_anchor, runtime, context) =>
-			runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), context),
-	},
-	abort: (_anchor, runtime, context) =>
-		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
-});
-
-/** What a reporter delivers: to which subagent, the message, and whether it waits for the current answer. */
-export type ReporterInput = { name: string; conversationId: ConversationId; message: string; followUp: boolean };
 
 /** A reporter's phases: deliver the message and wait for the answer, then report it (none: nothing to report). */
 type ReporterState = { phase: "deliver" } | { phase: "withdraw" } | { phase: "report"; report?: string };
@@ -72,13 +38,18 @@ type ReporterState = { phase: "deliver" } | { phase: "withdraw" } | { phase: "re
 /** What a reporter tells the agent when the message waited behind a subagent run that failed and was withdrawn. */
 const STRANDED = "its run failed before it took the message";
 
+/** What a reporter tells the agent when the message was withdrawn otherwise before it ran (Use withheld, a stop). */
+const WITHDRAWN = "the message was withdrawn before it ran (Use was withheld, or the subagent was stopped)";
+
 /**
- * Delivers one message to a subagent and reports its answer to the agent's conversation as a follow-up input, a
- * background task (the agent's stop and idle waits leave it alone). Request ids make a repeated submission return the
- * first: after a restart the subagent gets the message once and the agent the report once. A message left queued
- * behind a run that failed (Durable keeps it until the next input, which a subagent may never get) is withdrawn in a
- * phase of its own, `withdraw`, decided in a commit before the withdrawal: a restart in between withdraws it again and
- * still reports it (Astra, rounds 1, 2).
+ * Delivers one message to a subagent and reports its answer to the conversation that sent it as a follow-up input, a
+ * background task (the agent's stop and idle waits leave it alone). The message is admitted in the commit that checks
+ * the subagent is still the one it was sent to, in the same generation, and that the agent still has the `subagent`
+ * tool; the same commit gives the subagent the agent's tools as they are now. Request ids make a repeated submission
+ * return the first: after a restart the subagent gets the message once and the agent the report once. A message left
+ * queued behind a run that failed (Durable keeps it until the next input, which a subagent may never get) is withdrawn
+ * in a phase of its own, `withdraw`, decided in a commit before the withdrawal: a restart in between withdraws it again
+ * and still reports it (Astra, rounds 1, 2).
  */
 export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 	name: "harness.subagent-reporter",
@@ -86,9 +57,11 @@ export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 	initial: () => ({ phase: "deliver" }),
 	phases: {
 		deliver: async (reporter, runtime, context) => {
-			const sent = await send(reporter, runtime, context);
-			if (sent === undefined) return finish(runtime, context);
-			const settled = await settle(sent.subagent, sent.submission, context);
+			const subagent = await runtime.conversation(reporter.input.conversationId, context);
+			if (subagent === undefined) return finish(runtime, context);
+			if (!(await admit(reporter, subagent, runtime, context))) return;
+			const submission = await subagent.submit(draftOf(reporter), context);
+			const settled = await settle(subagent, submission, context);
 			if (settled === "stranded") {
 				await runtime.commit(() => ({ status: "running", checkpoint: { phase: "withdraw" } }), context);
 				return;
@@ -96,21 +69,24 @@ export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 			await decide(reporter.input, settled, undefined, runtime, context);
 		},
 		withdraw: async (reporter, runtime, context) => {
-			const sent = await send(reporter, runtime, context);
-			if (sent === undefined) return finish(runtime, context);
-			// Placed meanwhile after all, or settled: it reports as delivered; withdrawn by us: as stranded.
-			const outcome = await sent.submission.abort(context);
-			const settled = await sent.submission.wait(context);
-			const why = outcome === "already_placed" ? undefined : STRANDED;
-			await decide(reporter.input, settled, why, runtime, context);
+			const subagent = await runtime.conversation(reporter.input.conversationId, context);
+			if (subagent === undefined) return finish(runtime, context);
+			const submission = await subagent.submit(draftOf(reporter), context);
+			const outcome = await submission.abort(context);
+			const settled = await submission.wait(context);
+			// Withdrawn by this phase (now, or before a restart): stranded. Placed meanwhile, or settled otherwise: as it
+			// settled (Astra, round 1 of the port).
+			const ours = outcome !== "already_placed" && settled.status === "unanswered" && settled.reason === "aborted";
+			await decide(reporter.input, settled, ours ? STRANDED : undefined, runtime, context);
 		},
-		// A follow-up input: it starts a turn when the agent is idle, or waits for its current answer.
+		// A follow-up input: it starts a turn when the agent is idle, or waits for its current answer. Kept when the
+		// agent is stopped meanwhile (`onAbort: "keep"`): its next input takes it (Astra, round 1 of the port).
 		report: async (reporter, runtime, context) => {
 			const report = reporter.state.checkpoint.report;
 			if (report !== undefined) {
-				const main = await runtime.conversation(runtime.conversationId, context);
-				const input = { type: "input", content: report, whenBusy: "followUp" } as const;
-				await main?.submit({ ...input, requestId: `subagent-report:${reporter.id}` }, context);
+				const sender = await runtime.conversation(runtime.conversationId, context);
+				const input = { type: "input", content: report, whenBusy: "followUp", onAbort: "keep" } as const;
+				await sender?.submit({ ...input, requestId: `subagent-report:${reporter.id}` }, context);
 			}
 			await finish(runtime, context);
 		},
@@ -122,35 +98,75 @@ export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 /** A reporter's task runtime. */
 type ReporterRuntime = TaskRuntime<ReporterInput, ReporterState, null, object>;
 
-/** A subagent's conversation, as a task reaches it (Durable's `ConversationHandle`). */
-type Child = NonNullable<Awaited<ReturnType<ReporterRuntime["conversation"]>>>;
+/** A reporter as its phases get it. */
+type Reporting = { readonly id: string | number; readonly input: ReporterInput };
 
-/** A message submitted to a subagent (Durable's `Submission`). */
-type Sent = Awaited<ReturnType<Child["submit"]>>;
+/** The prefix of a message's request id: `subagent:<reporter>`. */
+const REQUEST = "subagent:";
 
-/** How a submitted message settled (Durable's `SettledSubmissionRecord`). */
-type Settled = Awaited<ReturnType<Sent["wait"]>>;
+/** The reporter's message as a submission: a steer reaches a busy subagent at its next step, a follow-up after it. */
+function draftOf({ id, input }: Reporting) {
+	const whenBusy = input.followUp ? "followUp" : "steer";
+	return { type: "input", content: input.message, whenBusy, requestId: `${REQUEST}${id}` } as const;
+}
 
-/** Submits the reporter's message (again: the request id returns the first submission); none: the subagent is gone. */
-async function send(
-	reporter: { readonly id: string | number; readonly input: ReporterInput },
+/**
+ * Admits the message in one commit with its checks, and gives the subagent the agent's tools as they are now; true:
+ * admitted (now, or before a restart). Refused, the same commit decides the report: nothing for a subagent stopped,
+ * archived or replaced since; the withdrawal for an agent without the `subagent` tool (Use withheld).
+ */
+async function admit(
+	reporter: Reporting,
+	subagent: ConversationHandle,
 	runtime: ReporterRuntime,
 	context: Context,
-): Promise<{ subagent: Child; submission: Sent } | undefined> {
-	const { conversationId, message, followUp } = reporter.input;
-	const subagent = await runtime.conversation(conversationId, context);
-	if (subagent === undefined) return undefined;
-	// While the subagent is busy, a steer reaches it at its next step and a follow-up after its current answer.
-	const request = { type: "input", content: message, whenBusy: followUp ? "followUp" : "steer" } as const;
-	const submission = await subagent.submit({ ...request, requestId: `subagent:${reporter.id}` }, context);
-	return { subagent, submission };
+): Promise<boolean> {
+	const own = await runtime.agent(context);
+	const draft = draftOf(reporter);
+	let admitted = false;
+	await runtime.commit(async (tx) => {
+		if ((await tx.submissionByRequest(subagent.id, draft.requestId)) !== undefined) {
+			admitted = true;
+			return undefined;
+		}
+		const agent = current(reporter.input, (await tx.doc(Subagents)).agents);
+		if (agent === undefined) return reportOf();
+		if (!own.tools.some((tool) => tool.name === SUBAGENT_TOOL)) return reportOf(failed(reporter.input, WITHDRAWN));
+		await configure(tx, subagent.id, toolsOf(agent, own));
+		await subagent.admit(tx, draft);
+		admitted = true;
+		return undefined;
+	}, context);
+	return admitted;
+}
+
+/** The subagent `input` was sent to, if it is still that one in the same generation (not stopped or archived since). */
+function current(input: ReporterInput, agents: Record<string, Subagent>): Subagent | undefined {
+	const agent = Object.hasOwn(agents, input.name) ? agents[input.name] : undefined;
+	if (agent?.conversationId !== input.conversationId || agent.generation !== input.generation) return undefined;
+	return agent;
+}
+
+/** The next state: the report phase, with `report` or nothing to report. */
+function reportOf(report?: string) {
+	const checkpoint = report === undefined ? { phase: "report" as const } : { phase: "report" as const, report };
+	return { status: "running", checkpoint } as const;
+}
+
+/** The report of a message to `input`'s subagent that failed, and why. */
+function failed({ name }: ReporterInput, why: string): string {
+	return `[subagent ${name} failed: ${why}]`;
 }
 
 /**
  * Answered or unanswered, or `stranded` when the subagent went idle with the message still queued: no run will take
  * it, so the reporter withdraws it (in its `withdraw` phase).
  */
-async function settle(subagent: Child, submission: Sent, context: Context): Promise<Settled | "stranded"> {
+async function settle(
+	subagent: ConversationHandle,
+	submission: Submission,
+	context: Context,
+): Promise<SettledSubmissionRecord | "stranded"> {
 	const settled = submission.wait(context);
 	const idle = subagent.waitForIdle(context).then(() => "idle" as const);
 	if ((await Promise.race([settled, idle])) !== "idle") return settled;
@@ -159,29 +175,27 @@ async function settle(subagent: Child, submission: Sent, context: Context): Prom
 
 /**
  * One commit decides the report and records the answer as delivered, so a restart does not decide again. Nothing is
- * reported for a subagent the document no longer has under that name with that conversation (Astra, rounds 1, 2), nor
- * for a message withdrawn by a stop or an archive (`aborted` without `stranded`); `stranded` reports the withdrawal.
+ * reported for a subagent stopped, archived or replaced since (`current`: Astra, rounds 1, 2), so a stop's withdrawal
+ * is silent; a message withdrawn otherwise reports why (`stranded`, or Use withheld).
  */
 async function decide(
-	{ name, conversationId }: ReporterInput,
-	settled: Settled,
+	input: ReporterInput,
+	settled: SettledSubmissionRecord,
 	stranded: string | undefined,
 	runtime: ReporterRuntime,
 	context: Context,
 ): Promise<void> {
 	await runtime.commit(async (tx) => {
-		const next = (report?: string) => ({ status: "running", checkpoint: { phase: "report", report } }) as const;
-		const agents = (await tx.doc(Subagents, runtime.conversationId)).agents;
-		const agent = Object.hasOwn(agents, name) ? agents[name] : undefined;
-		if (agent === undefined || agent.conversationId !== conversationId) return next();
+		const agent = current(input, (await tx.doc(Subagents)).agents);
+		if (agent === undefined) return reportOf();
 		if (settled.status === "unanswered") {
-			const why = stranded ?? (settled.reason === "aborted" ? undefined : settled.reason);
-			return next(why === undefined ? undefined : `[subagent ${name} failed: ${why}]`);
+			const why = stranded ?? (settled.reason === "aborted" ? WITHDRAWN : settled.reason);
+			return reportOf(failed(input, why));
 		}
-		if (settled.type !== "input" || agent.reported.includes(settled.answer)) return next();
+		if (settled.type !== "input" || agent.reported.includes(settled.answer)) return reportOf();
 		agent.reported.push(settled.answer);
 		const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0];
-		return next(`[subagent ${name} answered] ${textOf(answer)}`);
+		return reportOf(`[subagent ${input.name} answered] ${textOf(answer)}`);
 	}, context);
 }
 
@@ -194,6 +208,18 @@ function finish(runtime: ReporterRuntime, context: Context): Promise<void> {
 export function textOf(message: Message | undefined): string {
 	if (message?.role !== "assistant") return "";
 	return message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+}
+
+/**
+ * Withdraws every message to a subagent still queued (Use withheld: a subagent that runs takes no new message). Each
+ * reporter then reports the withdrawal to the conversation that sent it.
+ */
+export async function withdrawQueued(durable: Harness, context: Context): Promise<void> {
+	const { submissions } = await durable.inspect(context);
+	for (const queued of submissions) {
+		if (queued.status !== "queued" || queued.requestId?.startsWith(REQUEST) !== true) continue;
+		await (await durable.submission(queued.id, context))?.abort(context);
+	}
 }
 
 /** The subagents' tasks: installed always, so reporters under way finish whatever the agent's grants are now. */

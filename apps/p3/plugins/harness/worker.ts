@@ -5,7 +5,8 @@
 // machine's), and until a kind gives environments, the environments plugin's. It resumes the work left only for a session that is not archived. It
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
-// It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always.
+// It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always; once the agent no
+// longer has the subagents' tool, it withdraws the messages to subagents still queued.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -40,7 +41,8 @@ import {
 import { type HarnessLocation, type Held, HeldThings, ThingHarnessParts } from "../things/contract.worker.ts";
 import { activityOf, serialized } from "./activity.ts";
 import { AgentParts, type Parts } from "./agent-parts.ts";
-import { SUBAGENT_TASKS } from "./reporter.ts";
+import { SubagentsKind } from "./kind.ts";
+import { SUBAGENT_TASKS, withdrawQueued } from "./reporter.ts";
 import { subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
@@ -80,10 +82,23 @@ export default defineFacet((host, facet) => {
 			const row = facts.session.value;
 			if (row !== null && row.state !== now) await facts.report({ state: now }, context);
 		};
-		/** Applies what the agent holds; not ready yet: what was given stays. */
+		/** Whether the agent had the subagents' tool at the last apply (none yet: unknown). */
+		let subagents: boolean | undefined;
+		/**
+		 * Applies what the agent holds; not ready yet: what was given stays. The subagents' tool gone (Use withheld, or
+		 * the thing let go of): the messages to subagents still queued are withdrawn (once per change, and once at start).
+		 */
 		const apply = (): void => {
 			const now = held.value;
-			if (now !== undefined) opened.value.things.apply(now, parts.value);
+			if (now === undefined) return;
+			const { things, durable } = opened.value;
+			things.apply(now, parts.value);
+			const offered = things.registry.snapshot().extension(SubagentsKind.name) !== undefined;
+			if (!offered && subagents !== false)
+				withdrawQueued(durable, BACKGROUND_CONTEXT).catch((error: unknown) =>
+					reportError(`p3 harness: session ${runtime.value.session}: withdrawing`, error, BACKGROUND_CONTEXT),
+				);
+			subagents = offered;
 		};
 		/**
 		 * Waits until the holding is ready (bounded: a holding that never gets ready must not stop the agent), then

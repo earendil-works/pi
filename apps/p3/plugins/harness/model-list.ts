@@ -6,6 +6,9 @@ import type { Api, Model } from "@earendil-works/p3/v1";
 /** What the listing reads of a model. */
 export type ListedModel = Pick<Model<Api>, "provider" | "id" | "name">;
 
+/** How many models the `models` action lists one by one, at most. */
+const MAX_LISTED = 100;
+
 /**
  * The `models` action's answer: the models matching `query` (words each starting a word of the model's provider, id or
  * name), each as `model` (`provider/id`, what spawn and configure take) and `name`; when more than `MAX_LISTED` match,
@@ -23,7 +26,8 @@ export function listModels(
 	return { count: matching.length, providers };
 }
 
-const MAX_LISTED = 100;
+/** How many close matches a refused model gets. */
+const MAX_SUGGESTED = 5;
 
 /**
  * The available models whose provider, id or name have every word of `text` (a model nothing resolved), those of its
@@ -40,10 +44,8 @@ export function closeModels(available: readonly ListedModel[], text: string): st
 	return ordered.slice(0, MAX_SUGGESTED).map(refOf);
 }
 
-const MAX_SUGGESTED = 5;
-
 /** A model's reference as the tool takes it: `provider/id`. */
-export function refOf(model: Pick<ListedModel, "provider" | "id">): string {
+function refOf(model: Pick<ListedModel, "provider" | "id">): string {
 	return `${model.provider}/${model.id}`;
 }
 

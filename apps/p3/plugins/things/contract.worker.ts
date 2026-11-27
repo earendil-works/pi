@@ -50,18 +50,15 @@ export type HarnessSession = {
 };
 
 /**
- * Where a kind's tool works: `main`, only in the session's top-level conversations (a tool acting on the session itself,
- * or one starting agents), never in a subagent's; `subagent`, only in subagents, which get it without choosing it.
- * Unset: anywhere, and a subagent may be given it.
+ * A Durable tool as a kind gives it. `scope: "main"`: it works only in the session's top-level conversations (a tool
+ * acting on the session itself, or one starting agents), never in a subagent's. Unset: anywhere, and a subagent may be
+ * given it.
  */
-export type ToolScope = "main" | "subagent";
-
-/** A Durable tool as a kind gives it: with the scope it works in. */
-export type HarnessTool = NonNullable<Extension["tools"]>[number] & { readonly scope?: ToolScope };
+export type HarnessTool = NonNullable<Extension["tools"]>[number] & { readonly scope?: "main" };
 
 /**
- * A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. A scoped
- * tool refuses calls outside its scope; a `subagent` one is deferred, so a top-level conversation is not offered it.
+ * A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. A `main`
+ * tool refuses calls from a subagent.
  */
 export type HarnessExtension = Omit<Extension, "name" | "tools"> & { readonly tools?: readonly HarnessTool[] };
 

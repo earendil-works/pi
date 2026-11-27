@@ -1,8 +1,8 @@
 // The subagents' part on a worker (`harnessed`: the harness plugin beside stand-ins and a scripted login): the one
 // `subagent` tool for the main conversation while Use is granted, and never a subagent's; each action (spawn, send,
 // configure, stop, archive, restore, answer, status, models) and its refusals; answers reported back once each, a
-// message stranded behind a failed run reported, Use withheld giving a running subagent no new message; tool scopes
-// (`main` tools left out of a subagent's and refused there, `subagent` tools only a subagent's).
+// message stranded behind a failed run reported, Use withheld giving a running subagent no new message; `main` tools
+// left out of a subagent's and refused there.
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, obj } from "@earendil-works/p3/v1";
-import { defineTool } from "@earendil-works/p3/v1/worker";
+import { configure, defineTool } from "@earendil-works/p3/v1/worker";
 import { eventually } from "../../../test/until.ts";
 import type { HarnessTool } from "../../things/contract.worker.ts";
 import {
@@ -40,15 +40,15 @@ function on(when: string, action: string, more: object = {}): Step {
 	return calls(when, "subagent", { action, name: "reader", ...more });
 }
 
-/** A tool that answers `ran <name>`, with `scope`. */
-function scoped(name: string, scope: HarnessTool["scope"]): HarnessTool {
+/** A tool that answers `ran <name>`, a `main` one with `scope`. */
+function testTool(name: string, scope?: "main"): HarnessTool {
 	const tool = defineTool({
 		name,
 		description: `The test tool ${name}`,
 		parameters: obj({}),
 		execute: async () => ({ output: [{ type: "text", text: `ran ${name}` }] }),
 	});
-	return { ...tool, scope };
+	return scope === undefined ? tool : { ...tool, scope };
 }
 
 describe("the subagents' part", () => {
@@ -60,8 +60,8 @@ describe("the subagents' part", () => {
 	});
 
 	afterEach(async () => {
-		// A case that waits on the gate releases it, also when it failed.
-		await writeFile(join(folder, "gate"), "");
+		// A case that waits on a gate releases it, also when it failed.
+		for (const gate of ["gate", "gate2", "parent-gate"]) await writeFile(join(folder, gate), "");
 		await loaded?.t.close(context);
 		loaded = undefined;
 		await rm(folder, { recursive: true, force: true });
@@ -124,7 +124,7 @@ describe("the subagents' part", () => {
 	it("starts a subagent, a copy without the subagent tool, whose answer comes back; Use withheld: no tool", async () => {
 		const script = [
 			spawn("@spawn", "Summarize the plan"),
-			says('{"name":"reader"}', "started"),
+			says('"done":"started"', "started"),
 			says("Summarize the plan", "the summary"),
 			says("[subagent reader answered] the summary", "noted"),
 			calls("@status", "subagent", { action: "status" }),
@@ -150,7 +150,7 @@ describe("the subagents' part", () => {
 		const script = [
 			spawn("@spawn", "child-start"),
 			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo not-scripted"),
-			says('{"name":"reader"}', "ok"),
+			says('"done":', "ok"),
 			on("@queue", "send", { message: "later", followUp: true }),
 			says("[subagent reader failed:", "noted"),
 		];
@@ -245,7 +245,7 @@ describe("the subagents' part", () => {
 		const script = [
 			spawn("@spawn", "child-start"),
 			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo first done"),
-			says('{"name":"reader"}', "ok"),
+			says('"done":', "ok"),
 			on("@send", "send", { message: "a new message" }),
 			says("", "ok"),
 		];
@@ -268,7 +268,7 @@ describe("the subagents' part", () => {
 		const a = login("a", "faux-a", [
 			spawn("@spawn", "one"),
 			says("one", "first"),
-			on("@configure", "configure", { model: "faux-b/faux-b-model", thinkingLevel: "high", tools: ["READ"] }),
+			on("@configure", "configure", { model: "faux-b/faux-b-model", thinkingLevel: "high", tools: ["read"] }),
 			on("@send", "send", { message: "two" }),
 			says("", "ok"),
 		]);
@@ -284,7 +284,8 @@ describe("the subagents' part", () => {
 			name: "reader",
 			working: false,
 			model: "faux-b/faux-b-model",
-			thinkingLevel: "high",
+			// Clamped: the faux model has no reasoning.
+			thinkingLevel: "off",
 			tools: ["read"],
 		});
 		const [first, second] = [
@@ -352,13 +353,17 @@ describe("the subagents' part", () => {
 		);
 	});
 
-	it("answers a subagent's latest completed answer again, and refuses before there is one", async () => {
+	it("answers a subagent's latest answer again, and whether it is working on a newer one (Opus, round 1)", async () => {
 		const script = [
 			spawn("@spawn", "child-start"),
 			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo ran"),
 			says("ran", "the final answer"),
 			on("@early", "answer"),
 			on("@late", "answer"),
+			on("@more", "send", { message: "more-work" }),
+			runs("more-work", "touch more; until [ -e gate2 ]; do sleep 0.02; done; echo again"),
+			says("again", "a newer answer"),
+			on("@during", "answer"),
 			says("", "ok"),
 		];
 		const { ask } = await start([login("login", "faux", script), coding(), subagents()]);
@@ -368,12 +373,19 @@ describe("the subagents' part", () => {
 		await writeFile(join(folder, "gate"), "");
 		await reported("[subagent reader answered] the final answer");
 		await ask("@late");
-		assert.match(
-			seen((last) => last.includes("has not answered")),
-			/reader has not answered yet \(it is working\)/,
-		);
-		const late = requests().findIndex(({ last }) => last === "@late");
-		assert.equal(requests()[late + 1]?.last, "the final answer");
+		await ask("@more");
+		await eventually(() => existsSync(join(folder, "more")), Boolean);
+		await ask("@during");
+		await writeFile(join(folder, "gate2"), "");
+		await reported("[subagent reader answered] a newer answer");
+		const answers = requests()
+			.filter(({ last }) => last.startsWith('{"name":"reader","working"'))
+			.map(({ last }) => JSON.parse(last));
+		assert.deepEqual(answers, [
+			{ name: "reader", working: true, answer: null },
+			{ name: "reader", working: false, answer: "the final answer" },
+			{ name: "reader", working: true, answer: "the final answer" },
+		]);
 	});
 
 	it("lists the models with credentials, all or those a query matches", async () => {
@@ -391,33 +403,258 @@ describe("the subagents' part", () => {
 		assert.deepEqual(listed, [["faux-a/faux-a-model", "faux-b/faux-b-model"], ["faux-b/faux-b-model"]]);
 	});
 
-	it("leaves main tools out of a subagent's and refuses one given later there; subagent tools only a subagent's", async () => {
+	it("leaves main tools out of a subagent's, also one given after its spawn", async () => {
 		const script = [
 			spawn("@spawn", "child-hello"),
 			says("child-hello", "hi"),
 			on("@send", "send", { message: "use later" }),
-			calls("use later", "test_later", {}),
-			says("works only in", "refused seen"),
+			says("use later", "later done"),
 			says("", "ok"),
 		];
 		const held = [login("login", "faux", script), coding(), subagents(), other("test.scoped", "s")];
 		const extras: Extra[] = [
-			{ kind: "test.scoped", tools: [scoped("test_main", "main"), scoped("test_sub", "subagent")] },
-			{ kind: "test.later", tools: [scoped("test_later", "main")] },
+			{ kind: "test.scoped", tools: [testTool("test_main", "main")] },
+			{ kind: "test.later", tools: [testTool("test_later", "main")] },
 		];
 		const { ask, control } = await start(held, extras);
 		await ask("@spawn");
 		await reported("[subagent reader answered] hi");
 		assert.deepEqual(requests()[0]?.tools, ["bash", "edit", "read", "subagent", "test_main", "write"]);
 		const child = requests().find(({ last }) => last === "child-hello");
-		assert.deepEqual(child?.tools, ["bash", "edit", "read", "test_sub", "write"]);
-		// A main tool given after the spawn: the subagent's tools do not leave it out, the harness refuses it there.
+		assert.deepEqual(child?.tools, ["bash", "edit", "read", "write"]);
 		control.hold([...held, other("test.later", "l")]);
 		await ask("@send");
-		await reported("[subagent reader answered] refused seen");
-		assert.match(
-			seen((last) => last.includes("works only in")),
-			/test_later works only in the session's main conversation/,
+		await reported("[subagent reader answered] later done");
+		assert.deepEqual(requests().find(({ last }) => last === "use later")?.tools, ["bash", "edit", "read", "write"]);
+	});
+
+	it("gives a subagent the agent's tools again with each message: a new one, and none it let go of (Opus S1)", async () => {
+		const script = [
+			spawn("@spawn", "child-hello"),
+			says("child-hello", "hi"),
+			on("@send", "send", { message: "second message" }),
+			says("second message", "second done"),
+			says("", "ok"),
+		];
+		const held = [login("login", "faux", script), coding(), subagents()];
+		const { ask, control } = await start(held, [{ kind: "test.later", tools: [testTool("test_plain")] }]);
+		await ask("@spawn");
+		await reported("[subagent reader answered] hi");
+		// The coding tools let go of, a plain tool given.
+		control.hold([held[0]!, held[2]!, other("test.later", "l")]);
+		await ask("@send");
+		await reported("[subagent reader answered] second done");
+		assert.deepEqual(requests().find(({ last }) => last === "second message")?.tools, ["test_plain"]);
+	});
+
+	it("gives a default subagent only the tools its agent has, also when the agent's are a selection (Astra, must 1)", async () => {
+		const script = [spawn("@spawn", "child"), says("child", "done"), says("", "ok")];
+		const { ask, harness } = await start(
+			[login("a", "faux", script), subagents(), other("test.labels", "labels")],
+			[{ kind: "test.labels", tools: [testTool("red_label"), testTool("blue_label")] }],
 		);
+		const open = await harness();
+		const parent = await open.durable.root(context);
+		const keep = (await parent.agent(context)).tools.filter((t) => t.name === "subagent" || t.name === "red_label");
+		await open.durable.commit((tx) => configure(tx, parent.id, { tools: keep }), context);
+		await ask("@spawn");
+		await reported("[subagent reader answered] done");
+		assert.deepEqual(requests().find((r) => r.last === "@spawn")?.tools, ["red_label", "subagent"]);
+		assert.deepEqual(requests().find((r) => r.last === "child")?.tools, ["red_label"]);
+	});
+
+	it("withdraws a follow-up queued before Use is withheld and reports it; the subagent never gets it (Opus S2)", async () => {
+		const script = [
+			spawn("@spawn", "child-start"),
+			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo first done"),
+			says("first done", "first answer"),
+			on("@queue", "send", { message: "queued message", followUp: true }),
+			says("", "ok"),
+		];
+		const held = [login("login", "faux", script), coding(), subagents()];
+		const { ask, control, harness } = await start(held);
+		const open = await harness();
+		await ask("@spawn");
+		await started();
+		await ask("@queue");
+		await eventually(
+			() => open.durable.inspect(context),
+			(found) =>
+				found.submissions.some((s) => s.status === "queued" && s.requestId?.startsWith("subagent:") === true),
+		);
+		control.hold([held[0]!, held[1]!, subagents(false)]);
+		await eventually(
+			() =>
+				requests().filter(({ last }) => last.startsWith("[subagent reader failed: the message was withdrawn"))
+					.length,
+			(count) => count === 1,
+			5000,
+		);
+		await writeFile(join(folder, "gate"), "");
+		await reported("[subagent reader answered] first answer");
+		assert.ok(!requests().some(({ last }) => last.includes("queued message")));
+	});
+
+	it("takes two partial configurations in one model round both (Astra, must 4)", async () => {
+		const model = "faux-b/faux-b-model";
+		const script = [
+			spawn("@spawn", "initial"),
+			says("initial", "done"),
+			{
+				when: "@both",
+				reply: [...on("", "configure", { model }).reply, ...on("", "configure", { tools: ["read"] }).reply],
+			},
+			on("@status", "status"),
+			says("", "ok"),
+		];
+		const { ask } = await start([login("a", "faux-a", script), login("b", "faux-b", []), coding(), subagents()]);
+		await ask("@spawn");
+		await reported("[subagent reader answered] done");
+		await ask("@both");
+		await ask("@status");
+		const [
+			{
+				subagents: [reader],
+			},
+		] = statuses() as [{ subagents: [{ model: string; tools: string[] }] }];
+		assert.deepEqual({ model: reader.model, tools: reader.tools }, { model, tools: ["read"] });
+	});
+
+	it("gives a running subagent's next step its new model and tools (Astra, round 1 of the port)", async () => {
+		const script = [
+			spawn("@spawn", "start slow"),
+			runs("start slow", "touch started; until [ -e gate ]; do sleep 0.02; done; echo continued"),
+			on("@change", "configure", { model: "faux-b/faux-b-model", tools: [] }),
+			says("", "ok"),
+		];
+		const { ask } = await start([
+			login("a", "faux-a", script),
+			login("b", "faux-b", [says("continued", "done")]),
+			coding(),
+			subagents(),
+		]);
+		await ask("@spawn");
+		await started();
+		await ask("@change");
+		await writeFile(join(folder, "gate"), "");
+		await reported("[subagent reader answered] done");
+		const next = requests().find((r) => r.last.trim() === "continued");
+		assert.deepEqual([next?.provider, next?.tools], ["faux-b", []]);
+	});
+
+	it("keeps a subagent's queued report when the agent is stopped: its next input takes it (Astra, must 3)", async () => {
+		const script = [
+			spawn("@spawn", "child-start"),
+			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo child-released"),
+			says("child-released", "completed"),
+			runs("@parent-block", "touch parent-busy; until [ -e parent-gate ]; do sleep 0.02; done"),
+			says("", "ok"),
+		];
+		const { ask, harness } = await start([login("a", "faux", script), coding(), subagents()]);
+		const open = await harness();
+		await ask("@spawn");
+		await started();
+		try {
+			await open.submit(undefined, { text: "@parent-block", requestId: "block" }, context);
+			await eventually(() => existsSync(join(folder, "parent-busy")), Boolean);
+			await writeFile(join(folder, "gate"), "");
+			await eventually(
+				() => open.durable.inspect(context),
+				(info) =>
+					info.submissions.some(
+						(s) => s.status === "queued" && s.requestId?.startsWith("subagent-report:") === true,
+					),
+			);
+			const parent = await open.durable.root(context);
+			await parent.abort(context);
+			await ask("next input");
+			assert.equal(requests().filter((r) => r.last === "[subagent reader answered] completed").length, 1);
+		} finally {
+			await writeFile(join(folder, "parent-gate"), "");
+		}
+	});
+
+	it("never leaves an archived subagent running after a send and an archive in one round (Astra, must 2)", async () => {
+		const script = [
+			spawn("@spawn", "first task"),
+			says("first task", "ready"),
+			{ when: "@both", reply: [...on("", "send", { message: "second task" }).reply, ...on("", "archive").reply] },
+			runs("second task", "touch started; until [ -e gate ]; do sleep 0.02; done"),
+			on("@status", "status"),
+			says("", "ok"),
+		];
+		const { ask } = await start([login("a", "faux", script), coding(), subagents()]);
+		await ask("@spawn");
+		await reported("[subagent reader answered] ready");
+		await ask("@both");
+		await ask("@status");
+		const [
+			{
+				subagents: [reader],
+			},
+		] = statuses() as [{ subagents: [{ working: boolean; archived?: true }] }];
+		assert.ok(!reader.archived || !reader.working, JSON.stringify(reader));
+	});
+
+	it("shows the session's subagents in every top-level branch (Astra, round 1 of the port)", async () => {
+		const script = [
+			spawn("@spawn", "child-task"),
+			says("child-task", "ready"),
+			calls("@all", "subagent", { action: "status" }),
+			says("", "ok"),
+		];
+		const { ask, harness } = await start([login("a", "faux", script), subagents()]);
+		await ask("@spawn");
+		await reported("[subagent reader answered] ready");
+		const open = await harness();
+		const root = await open.durable.root(context);
+		const entry = (await root.entries({}, 1, undefined, context)).items[0]!;
+		const branch = await root.fork(entry.id, { ownership: { kind: "ownerless" } }, context);
+		await open.submit(String(branch.id), { text: "@all", requestId: "branch" }, context);
+		await branch.waitForIdle(context);
+		const [{ subagents: children }] = statuses() as [{ subagents: { name: string }[] }];
+		assert.deepEqual(
+			children.map((c) => c.name),
+			["reader"],
+		);
+	});
+
+	it("refuses a second reader from a duplicate spawn in one round and from an archived name (Astra)", async () => {
+		const duplicate = { when: "@two", reply: [...spawn("", "work one").reply, ...spawn("", "work two").reply] };
+		const script = [
+			duplicate,
+			says("work one", "done"),
+			says("work two", "done"),
+			on("@archive", "archive"),
+			spawn("@reuse", "work three"),
+			says("", "ok"),
+		];
+		const { ask } = await start([login("a", "faux", script), subagents()]);
+		await ask("@two");
+		await reported("[subagent reader answered] done");
+		await ask("@archive");
+		await ask("@reuse");
+		assert.equal(requests().filter((r) => ["work one", "work two", "work three"].includes(r.last)).length, 1);
+		assert.match(requests().at(-1)?.last ?? "", /reader exists already/);
+	});
+
+	it("shows the thinking level the model runs at (Astra, round 1 of the port)", async () => {
+		const script = [
+			spawn("@spawn", "child-task", { thinkingLevel: "max" }),
+			says("child-task", "done"),
+			on("@named", "status"),
+			says("", "ok"),
+		];
+		// The faux login's model has no reasoning: only off.
+		const { ask } = await start([login("a", "faux", script), subagents()]);
+		await ask("@spawn");
+		await reported("[subagent reader answered] done");
+		await ask("@named");
+		const [
+			{
+				subagents: [reader],
+			},
+		] = statuses() as [{ subagents: [{ thinkingLevel: string }] }];
+		assert.equal(reader.thinkingLevel, "off");
 	});
 });

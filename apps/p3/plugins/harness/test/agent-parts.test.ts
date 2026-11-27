@@ -1,8 +1,11 @@
 // What the harness gives the agent from what it holds (`AgentParts`) on its own (Astra, round 1): the previous held
-// list and its part are collected once replaced; an apply with the same held map and parts walks nothing.
+// list and its part are collected once replaced; an apply with the same held map and parts walks nothing; a `main`
+// tool is installed guarded: called from a conversation a task owns (a subagent's), it refuses and runs nothing.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { BACKGROUND_CONTEXT as context, isChordError, obj } from "@earendil-works/p3/v1";
+import { defineTool } from "@earendil-works/p3/v1/worker";
 import { collected } from "../../../test/until.ts";
 import { type Held, type HeldThing, thingHarnessPart } from "../../things/contract.worker.ts";
 import { defineThing } from "../../things/kind.ts";
@@ -53,5 +56,41 @@ describe("the agent's parts", () => {
 		visits = 0;
 		for (let i = 0; i < 100; i++) agent.apply(held, parts);
 		assert.equal(visits, 0);
+	});
+
+	it("installs a main tool guarded: a subagent's call refuses, the main conversation's runs", async () => {
+		let runs = 0;
+		const tool = defineTool({
+			name: "test_main",
+			description: "A main tool",
+			parameters: obj({}),
+			execute: async () => {
+				runs++;
+				return { output: [{ type: "text", text: "ran" }] };
+			},
+		});
+		const scoped = thingHarnessPart(defineThing("test.scoped", { version: 1, ticks: {} }), () => ({
+			extension: { tools: [{ ...tool, scope: "main" }] },
+		}));
+		const agent = new AgentParts(SESSION);
+		agent.apply(new Map([["test.scoped", [hold()]]]), new Map([["test.scoped", { plugin: "test", value: scoped }]]));
+		const installed = agent.registry.snapshot().tools()[0]?.tool;
+		assert.ok(installed !== undefined);
+		// The stand-in api gives what the guard reads: the calling conversation's record, owned by a task or not.
+		const call = (owner?: object) => {
+			const api = {
+				conversationId: 2,
+				commit: async (fn: (tx: unknown) => unknown) => fn({ conversation: async () => ({ id: 2, owner }) }),
+			};
+			return installed.execute({}, api as never, context);
+		};
+		await assert.rejects(
+			call({ conversationId: 1, taskId: 5 }),
+			(error) =>
+				isChordError(error) && error.code === "forbidden" && /only in the session's main/.test(error.message),
+		);
+		assert.equal(runs, 0);
+		await call();
+		assert.equal(runs, 1);
 	});
 });
