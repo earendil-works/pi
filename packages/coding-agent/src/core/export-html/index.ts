@@ -160,20 +160,23 @@ function generateHtml(sessionData: SessionData, themeName?: string): string {
 	// Base64 encode session data to avoid escaping issues
 	const sessionDataBase64 = Buffer.from(JSON.stringify(sessionData)).toString("base64");
 
+	// Every value is passed through a function: a replacement string expands "$$" and "$&", which the
+	// viewer script ("$${totalCost...}") and highlight.js contain, so they would be inserted changed.
+
 	// Build the CSS with theme variables injected
 	const css = templateCss
-		.replace("{{THEME_VARS}}", themeVars)
-		.replace("{{BODY_BG}}", bodyBg)
-		.replace("{{CONTAINER_BG}}", containerBg)
-		.replace("{{INFO_BG}}", infoBg);
+		.replace("{{THEME_VARS}}", () => themeVars)
+		.replace("{{BODY_BG}}", () => bodyBg)
+		.replace("{{CONTAINER_BG}}", () => containerBg)
+		.replace("{{INFO_BG}}", () => infoBg);
 
 	return template
-		.replace("{{CSS}}", css)
-		.replace("{{JS}}", templateJs)
-		.replace("{{SESSION_DATA}}", sessionDataBase64)
-		.replace("{{MARKED_JS}}", markedJs)
-		.replace("{{MARKED_CJK_FRIENDLY_JS}}", markedCjkFriendlyJs)
-		.replace("{{HIGHLIGHT_JS}}", hljsJs);
+		.replace("{{CSS}}", () => css)
+		.replace("{{JS}}", () => templateJs)
+		.replace("{{SESSION_DATA}}", () => sessionDataBase64)
+		.replace("{{MARKED_JS}}", () => markedJs)
+		.replace("{{MARKED_CJK_FRIENDLY_JS}}", () => markedCjkFriendlyJs)
+		.replace("{{HIGHLIGHT_JS}}", () => hljsJs);
 }
 
 /** Tools rendered directly by the HTML template (not pre-rendered via TUI→ANSI→HTML pipeline) */
