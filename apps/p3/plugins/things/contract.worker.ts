@@ -78,11 +78,6 @@ export type HarnessContribution = {
 export type ThingHarnessPart = {
 	readonly kind: ThingKind;
 	readonly part: (things: readonly HeldThing[], session: HarnessSession) => HarnessContribution;
-	/**
-	 * Whether the part gives environments (a machine's). Once one such part is registered, the agent's tools run only
-	 * in the environments parts give: a machine withheld or let go of leaves none (no fallback).
-	 */
-	readonly givesEnv: boolean;
 };
 
 /** The kinds' harness parts by kind name (the first by plugin name wins a kind; a second is reported). */
@@ -91,18 +86,14 @@ export const ThingHarnessParts = defineRegistry<ThingHarnessPart, ReadonlyMap<st
 	{ version: 1 },
 );
 
-/**
- * The harness part of `Kind`: `part` gets the things of it the agent holds, typed by the kind's contract. A part that
- * gives environments says so (`{ env: "gives" }`).
- */
+/** The harness part of `Kind`: `part` gets the things of it the agent holds, typed by the kind's contract. */
 export function thingHarnessPart<C extends Contract>(
 	Kind: ThingKind<C>,
 	part: (things: readonly HeldThing<C>[], session: HarnessSession) => HarnessContribution,
-	options: { readonly env?: "gives" } = {},
 ): ThingHarnessPart {
 	// The holding gives a kind's part only things of that kind, which are of its contract.
 	const typed = part as unknown as ThingHarnessPart["part"];
-	return { kind: Kind as unknown as ThingKind, part: typed, givesEnv: options.env === "gives" };
+	return { kind: Kind as unknown as ThingKind, part: typed };
 }
 
 /**

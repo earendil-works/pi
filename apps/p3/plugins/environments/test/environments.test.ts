@@ -208,7 +208,7 @@ describe("the environments plugin on the server", () => {
 			assert.equal(await hosts(box, context), undefined);
 		});
 
-		it("refuses a type that is not installed, and settings that do not fit", async () => {
+		it("refuses a type that is not installed, settings that do not fit, and no input", async () => {
 			const refusedWith = (input: unknown, key: string) =>
 				assert.rejects(
 					make(input),
@@ -216,7 +216,8 @@ describe("the environments plugin on the server", () => {
 				);
 			await refusedWith({ type: "ssh", settings: {} }, "noType");
 			await refusedWith({ type: "remote", settings: { port: 22 } }, "badSettings");
-			await refusedWith(undefined, "noType");
+			// The store checks the input's shape (the kind's `create.input`) before the hook.
+			await assert.rejects(make(undefined), (error) => isChordError(error, "invalid"));
 		});
 
 		it("keeps a machine whose type is gone, unavailable", async () => {
@@ -259,13 +260,13 @@ describe("the environments plugin on the server", () => {
 });
 
 describe("the environments plugin on a worker", () => {
-	it("contributes the machine kind's part, as giving environments, and nothing else gives one (round 1, must 3)", async () => {
+	it("contributes the machine kind's part, its one part (round 1, must 3)", async () => {
 		const t = await testPlugin(PLUGIN, { kind: "worker", session: "s1" }, context);
 		try {
 			const parts = t.contributions(ThingHarnessParts);
 			assert.deepEqual(
-				parts.map(({ value }) => [value.kind.name, value.givesEnv]),
-				[[MachineKind.name, true]],
+				parts.map(({ value }) => value.kind.name),
+				[MachineKind.name],
 			);
 		} finally {
 			await t.close(context);

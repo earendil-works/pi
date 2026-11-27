@@ -17,9 +17,6 @@ import { serveStore } from "./store.ts";
 import { serveTerminals } from "./terminal-host.ts";
 import { serveThisDevice, THIS_DEVICE, THIS_DEVICE_TYPE } from "./this-device.ts";
 
-/** This plugin's name: the maker of the seeded machine. */
-const ENVIRONMENTS_PLUGIN = "@earendil-works/p3-environments";
-
 export default defineFacet((host) => {
 	serveStore(host);
 	serveMachines(host);
@@ -28,10 +25,7 @@ export default defineFacet((host) => {
 
 	serveThing(host, MachineKind, {
 		implement: ({ thing }, _admitted, self) => ({ info: self.get(MachineInfoHere, { machine: thing }).info }),
-		// The seeded machine (made by this plugin, with no input) is this device's, which stores nothing (machines.ts),
-		// until the things plugin's `one` takes an input (things2): then it is a `local` machine with a row like any.
-		create: async ({ thing, input, by }, ctx) => {
-			if (input === undefined && by.kind === "plugin" && by.plugin === ENVIRONMENTS_PLUGIN) return undefined;
+		create: async ({ thing, input }, ctx) => {
 			await (await ctx.get(MachineKeeper, {})).make({ machine: thing, input }, ctx);
 			return undefined;
 		},
@@ -40,7 +34,8 @@ export default defineFacet((host) => {
 			await (await ctx.get(TerminalKeeper, {})).closeMachine({ machine: thing }, ctx);
 			await (await ctx.get(MachineKeeper, {})).forget({ machine: thing }, ctx);
 		},
-		one: { name: hostname() },
+		// This device's machine: the seeded thing, of this device's type, with no settings.
+		one: { name: hostname(), input: { type: THIS_DEVICE_TYPE, settings: {} } },
 	});
 
 	host.serve(
