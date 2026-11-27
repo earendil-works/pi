@@ -55,6 +55,8 @@ export class AgentParts {
 	#given: ReadonlyMap<string, Given> = new Map();
 	/** What the last apply was given; the same maps again change nothing. */
 	#applied: { readonly held: Held; readonly parts: Parts } | undefined;
+	/** Whether the harness these parts were given to closed (`close`). */
+	#closed = false;
 	/** The kinds whose part asked to be given again (`HarnessContribution.again`) since the last apply. */
 	readonly #stale = new Set<string>();
 	/** What was reported already (`<kind>:<why>`), so a kind that stays broken is reported once. */
@@ -179,10 +181,19 @@ export class AgentParts {
 		}
 	}
 
+	/**
+	 * Ends what the parts follow (`again`): the harness these parts were given to closed (a reload makes new ones; Astra,
+	 * round 7: the old harness kept following). Nothing is given again after it.
+	 */
+	close(): void {
+		this.#closed = true;
+		for (const given of this.#given.values()) given.stop?.();
+	}
+
 	/** Gives kind `kind` again at once, if `given` is still what it gives (its part asked: `again`). */
 	#refresh(kind: string, given: Given): void {
 		const applied = this.#applied;
-		if (applied === undefined || this.#given.get(kind) !== given) return;
+		if (this.#closed || applied === undefined || this.#given.get(kind) !== given) return;
 		this.#stale.add(kind);
 		this.apply(applied.held, applied.parts);
 	}
