@@ -3,6 +3,7 @@
 // the activation's loads and the residency of keyed documents; a commit's telemetry (its event, its duration, slice 9).
 
 import type { TelemetryContext } from "@earendil-works/pi-telemetry";
+import { abortOrigin } from "../context/abort-origin.ts";
 import type { Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
 import type { Batch } from "../state/internal.ts";
@@ -20,9 +21,9 @@ import { Transaction } from "./transaction.ts";
 
 /**
  * A transaction (a document change or retirement, `self.tx`, a job start) that did not commit because the context it
- * was started with ended first: a root whose `fn` settled, a handler or routine whose object ended, a caller that
- * cancelled. `error` is that context's abort reason, naming the scope that ended (decision "Mistakes that wait are
- * reported at once" (e)).
+ * was started with ended first: a root whose `fn` settled, a caller that cancelled (also a caller object's end). Not
+ * when its own object's end cancelled it (ERNDL-1190). `error` is that context's abort reason, naming the scope that
+ * ended (decision "Mistakes that wait are reported at once" (e)).
  */
 export type TransactionCancelled = {
 	readonly kind: "transaction_cancelled";
@@ -190,7 +191,7 @@ export class Documents {
 	 * Runs `fn` as one transaction on the line under `token` and commits what it drafted (§9): a throw, an abort of
 	 * `context`, the token's seal or the object's end discards everything; one that did not commit while `context` was
 	 * aborted is also reported (`transaction_cancelled`): an empty `catch` cannot hide a change that never happened.
-	 * Not when the abort was its own object's end (the token's owner ended its work with that reason, ERNDL-1190).
+	 * Not when its own object's end cancelled it (`#ownEnd`, ERNDL-1190).
 	 * `persistence` defers storing a run state's change (D8).
 	 */
 	async tx<R>(
@@ -203,8 +204,10 @@ export class Documents {
 		this.assertAdmitted(token);
 		const release = await this.line.acquire();
 		const tx = new Transaction(this, token, release, context, persistence);
+		let admitted = false;
 		try {
 			this.assertAdmitted(token);
+			admitted = true;
 			this.#holder = tx;
 			const result = await fn(tx);
 			// Timed only when something records: the commit's duration metric, its event on the enclosing span.
@@ -217,10 +220,9 @@ export class Documents {
 			return result;
 		} catch (error) {
 			tx.discard();
-			// Only a transaction that did not commit reads this; Chord's own run under contexts that never abort. One its
-			// own object's end cancelled (its context aborted with the reason that ended the token's work) is no mistake.
+			// Only a transaction that did not commit reads this; Chord's own run under contexts that never abort.
 			const signal = context.abortSignal;
-			if (signal?.aborted && !token.endedBy(signal.reason))
+			if (signal?.aborted && !this.#ownEnd(error, tx, admitted, token, signal))
 				this.#owner.report({ kind: "transaction_cancelled", object: this.label, error: signal.reason });
 			throw error;
 		} finally {
@@ -228,6 +230,17 @@ export class Documents {
 			release();
 			tx.settle();
 		}
+	}
+
+	/**
+	 * Whether `tx`, failed with `error` under the aborted `signal`, was cancelled by its own object's end (ERNDL-1190):
+	 * the abort came from a signal the token's owner aborted to end its work (followed back through linked signals: a
+	 * caller's cancel or a caller object's end is not it), and the failure is that cancellation (refused at the seal,
+	 * cut at it, or the abort's reason itself), not an exception of its own.
+	 */
+	#ownEnd(error: unknown, tx: Transaction, admitted: boolean, token: SealToken, signal: AbortSignal): boolean {
+		if (!token.endedBy(abortOrigin(signal))) return false;
+		return !admitted || tx.cutWith(error) || error === signal.reason;
 	}
 
 	/**

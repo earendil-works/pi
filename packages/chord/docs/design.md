@@ -1222,9 +1222,14 @@ change or transaction (`handle.change`, `retire`, `self.tx`, `job.start`) that d
 ended first (it waited on its object's line, or `fn` returned before it committed) rejects with that context's abort
 reason, and is also reported through `onError` as `transaction_cancelled { object, error }` (`error` the abort
 reason, naming the scope that ended): an empty `catch` cannot hide a change that never happened. Not reported: one its
-own object's end cancelled (ERNDL-1190): its context aborted with the reason its attempt ended its own work with (the
-attempt's end, failure or replacement by a reload, a reload stopping its routines). That loss is the object's end, as
-a crash, and its successor starts from what was committed; a caller's cancel or a settled root still reports.
+own object's end cancelled (ERNDL-1190, pending Mario's confirmation of decision (e)'s change). The check compares
+origins, not reasons: Chord's linked signals (a call's context, linked to its caller's and to its attempt's) remember
+which source aborted them first (`context/abort-origin.ts`), the attempt's seal token remembers the signals it aborted
+to end its own work (any end of the attempt, a reload stopping its routines, the job runs its seal cut off), and the
+failure must be the cancellation (refused or cut at the seal, or the abort's reason itself; an exception of the
+transaction's own still reports). The object, ending, aborts its attempt's contexts before it ends its references, so
+a call's context finds the attempt's end first. That loss is the object's end, as a crash, and its successor starts
+from what was committed; a root that settled, a caller's cancel and a caller object's end (on the callee) still report.
 `host.root(async (ctx) => { void handle.change(fn, ctx).catch(() => {}); }, context)` loses the change and reports it;
 `await handle.change(fn, ctx)` inside `fn` commits it. Only the cancelled path pays (the check runs where the
 transaction failed); Chord's own transactions run under contexts that never abort.
