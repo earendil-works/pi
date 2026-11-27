@@ -296,7 +296,12 @@ async function withPending(fn: (release: () => void) => Promise<void>): Promise<
 		const { account } = ref;
 		return {
 			release: () => ref.release(),
-			account: { watch: async (watching: Context) => (await gate.promise, account.watch(watching)) },
+			account: {
+				watch: async (watching: Context) => {
+					await gate.promise;
+					return account.watch(watching);
+				},
+			},
 		};
 	}) as unknown as typeof w.host.hold;
 	w.host.hold = delayed;
