@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import type { SqliteDatabase, SqliteExecutor } from "@earendil-works/chord/sqlite";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
 	type Context,
@@ -348,6 +349,170 @@ describe("a plugin's one thing", () => {
 		assert.ok(storedRows(at.path, "things").some(({ thing }) => thing === seeded));
 		assert.deepEqual(inputs, ["owner"]);
 		assert.deepEqual(at.errors, []);
+	});
+
+	/**
+	 * A host on a store whose first lookup of the things of kind `test.seed` waits until `go`; `reached` resolves when
+	 * it starts waiting. `generation(name, input)` is the kind's plugin, its `one` named `name` with `input`.
+	 */
+	const gatedSeed = async () => {
+		const reached = Promise.withResolvers<void>();
+		const go = Promise.withResolvers<void>();
+		let held = false;
+		const database = new NodeSqliteDatabase(new DatabaseSync(":memory:"));
+		const hold = async (sql: string, params: readonly unknown[]) => {
+			if (held || !sql.includes("things.store:things.things") || !params.includes("test.seed")) return;
+			held = true;
+			reached.resolve();
+			await go.promise;
+		};
+		const wrap = (on: SqliteExecutor): SqliteExecutor => ({
+			exec: (sql) => on.exec(sql),
+			run: (sql, ...params) => on.run(sql, ...params),
+			runCounted: (sql, ...params) => on.runCounted(sql, ...params),
+			get: async (sql, ...params) => {
+				await hold(sql, params);
+				return on.get(sql, ...params);
+			},
+			all: async (sql, ...params) => {
+				await hold(sql, params);
+				return on.all(sql, ...params);
+			},
+		});
+		const db: SqliteDatabase = {
+			...wrap(database),
+			transaction: (callback) => database.transaction((tx) => callback(wrap(tx))),
+			close: () => database.close(),
+		};
+		const opened = await openStore(sqliteBackend(db), context);
+		const host = createHost<P3Principal>({
+			address: Server(),
+			principal: { kind: "server" },
+			store: opened,
+			onError: (error) => assert.fail(error.kind),
+		});
+		const Seeded = defineThing("test.seed", { version: 1, ticks: { use: { label } }, create: { input: str() } });
+		const calls: unknown[][] = [];
+		const generation = (name: string, input: unknown) => ({
+			name: "seed",
+			facet: defineFacet((h) =>
+				serveThing(h, Seeded, {
+					implement: () => ({}),
+					create: async ({ input: given }) => void calls.push([name, given]),
+					one: { name, input: input as string },
+				}),
+			),
+		});
+		/** Loads v1, waits for the held lookup, reloads to v2 and lets the lookup go once v2's hooks are in. */
+		const reloadDuringLookup = async (v1: unknown, v2: unknown) => {
+			await host.load([THINGS, generation("v1", v1)], context);
+			await reached.promise;
+			const hooks = await host.registry(ThingHooks, context);
+			const reloaded = host.reload([THINGS, generation("v2", v2)], context);
+			await until(hooks, (table) => table.get(Seeded.name)?.value.one?.name === "v2", within("v2", context));
+			go.resolve();
+			await reloaded;
+			return host.get(ThingsStore, {}, context);
+		};
+		const close = async () => {
+			go.resolve();
+			await host.close(context);
+			await opened.close(context);
+		};
+		return { Seeded, calls, reloadDuringLookup, close };
+	};
+
+	it("a reload during the seed's lookup seeds with the new generation's input and hook (Astra)", async () => {
+		const at = await gatedSeed();
+		try {
+			const things = await at.reloadDuringLookup("v1", "v2");
+			const id = await things.ensure({ kind: at.Seeded.name }, context);
+			const row = (await things.things.one.page({ thing: id }, 1, context)).items[0];
+			assert.deepEqual([at.calls, row?.name], [[["v2", "v2"]], "v2"]);
+		} finally {
+			await at.close();
+		}
+	});
+
+	it("a reload to a bad input during the seed's lookup is reported once, for the new generation (Astra)", async (t) => {
+		const reports = t.mock.method(console, "error", () => {});
+		const at = await gatedSeed();
+		try {
+			const things = await at.reloadDuringLookup("v1", 22);
+			await assert.rejects(things.ensure({ kind: at.Seeded.name }, context), /input of test.seed/);
+			await new Promise((done) => setTimeout(done, 50));
+			assert.deepEqual([at.calls, reports.mock.callCount()], [[], 1]);
+		} finally {
+			await at.close();
+		}
+	});
+
+	it("a deleted seed whose input is now bad is reported once, also after another plugin reloads (Astra)", async (t) => {
+		const reports = t.mock.method(console, "error", () => {});
+		const Seeded = defineThing("test.seed", { version: 1, ticks: { use: { label } }, create: { input: str() } });
+		const facet = (input: unknown) =>
+			defineFacet((h) =>
+				serveThing(h, Seeded, { implement: () => ({}), one: { name: "seed", input: input as string } }),
+			);
+		const at = await world(context, [{ name: "seed", facet: facet("good") }]);
+		t.after(() => at.close(context));
+		const things = await at.host.get(ThingsStore, {}, context);
+		const root = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const id = await things.ensure({ kind: Seeded.name }, context);
+		// The plugin reloaded with a bad input: the seed there stands, nothing to report.
+		await at.reload("seed", context, facet(37));
+		assert.equal(await things.ensure({ kind: Seeded.name }, context), id);
+		assert.equal(reports.mock.callCount(), 0);
+		// Deleted, it is made again with the bad input: reported once, and not again when another plugin reloads.
+		await things.unlink({ workspace: root, thing: id }, context);
+		await eventually(
+			() => reports.mock.callCount(),
+			(n) => n > 0,
+		);
+		await at.reload(BOARD_PLUGIN, context);
+		await assert.rejects(things.ensure({ kind: Seeded.name }, context), /input of test.seed/);
+		await new Promise((done) => setTimeout(done, 50));
+		assert.equal(reports.mock.callCount(), 1);
+	});
+
+	it("a seed's bad input is reported once per generation; a corrected reload seeds, a later one keeps it (Astra)", async (t) => {
+		const reports = t.mock.method(console, "error", () => {});
+		const reported = () =>
+			reports.mock.calls.filter((call) => call.arguments.join(" ").includes("the seeded thing of test.seed")).length;
+		const Seeded = defineThing("test.seed", {
+			version: 1,
+			ticks: { use: { label } },
+			create: { input: obj({ value: str() }) },
+		});
+		const calls: unknown[] = [];
+		const facet = (input: unknown) =>
+			defineFacet((h) =>
+				serveThing(h, Seeded, {
+					implement: () => ({}),
+					create: async ({ input: given }) => void calls.push(given),
+					one: { name: "seed", input: input as { value: string } },
+				}),
+			);
+		const at = await world(context, [{ name: "seed", facet: facet({ value: 37 }) }]);
+		t.after(() => at.close(context));
+		const things = await at.host.get(ThingsStore, {}, context);
+		const seeds = () => at.rows("things").filter((row) => row.kind === Seeded.name);
+		await eventually(reported, (n) => n > 0);
+		// The start's three passes (live, the kinds, the hooks) and a refused ensure: one report.
+		await assert.rejects(things.ensure({ kind: Seeded.name }, context), /input of test.seed/);
+		await new Promise((done) => setTimeout(done, 50));
+		assert.equal(reported(), 1);
+		await at.reload("seed", context, facet(undefined));
+		await eventually(reported, (n) => n > 1);
+		await new Promise((done) => setTimeout(done, 50));
+		assert.equal(reported(), 2);
+		assert.deepEqual([calls, seeds()], [[], []]);
+		await at.reload("seed", context, facet({ value: "first" }));
+		await eventually(seeds, (rows) => rows.length === 1);
+		const first = await things.ensure({ kind: Seeded.name }, context);
+		await at.reload("seed", context, facet({ value: "second" }));
+		assert.equal(await things.ensure({ kind: Seeded.name }, context), first);
+		assert.deepEqual(calls, [{ value: "first" }]);
 	});
 
 	it("ensure refuses a kind that asks for none, and `OneThing` names none of its things", async (t) => {
