@@ -75,6 +75,23 @@ async function outboxOn(t: Awaited<ReturnType<typeof testPlugin>>): Promise<bool
 	return (await t.host.registry(WorkerRuntime, context)).value.store.outbox !== undefined;
 }
 
+/** Every `on` the worker passes to its store's `setOutbox`, in order, from now on. */
+async function recordSetOutbox(t: Awaited<ReturnType<typeof testPlugin>>): Promise<boolean[]> {
+	const store = (await t.host.registry(WorkerRuntime, context)).value.store;
+	const setOutbox = store.setOutbox.bind(store);
+	const calls: boolean[] = [];
+	store.setOutbox = (on, ctx) => {
+		calls.push(on);
+		return setOutbox(on, ctx);
+	};
+	return calls;
+}
+
+/** What `SessionBackup.enabled` shows on the worker now. */
+async function enabledOnWorker(t: Awaited<ReturnType<typeof testPlugin>>): Promise<boolean> {
+	return t.root(async (ctx) => (await ctx.get(SessionBackup, {})).enabled.value, context);
+}
+
 describe("the session store's outbox", () => {
 	it("is off until the session is backed up, then on", async () => {
 		await withWorkerFacet(async (t) => {
@@ -90,17 +107,26 @@ describe("the session store's outbox", () => {
 		});
 	});
 
-	it("stays on when backup is turned off: the session is only paused", async () => {
+	it("is never turned off when backup is turned off: the session is only paused", async () => {
 		await withWorkerFacet(async (t) => {
+			const calls = await recordSetOutbox(t);
 			await setEnabled(t, true);
 			await eventually(
-				() => outboxOn(t),
-				(on) => on,
+				() => calls.length,
+				(count) => count === 1,
 			);
 			await setEnabled(t, false);
-			// The switch is applied in order: once `true` again shows, the `false` before it was handled.
+			// The worker saw `false` once its own reference shows it: the facet's reference is on the same link.
+			await eventually(
+				() => enabledOnWorker(t),
+				(on) => !on,
+			);
 			await setEnabled(t, true);
-			assert.equal(await outboxOn(t), true);
+			await eventually(
+				() => calls.length,
+				(count) => count >= 2,
+			);
+			assert.deepEqual(calls, [true, true]);
 		});
 	});
 });
