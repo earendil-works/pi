@@ -177,7 +177,7 @@ describe("making a session (1)", () => {
 		const placed = (await store.workspaces.one.page({ workspace: session }, 1, context)).items[0];
 		assert.deepEqual([placed?.name, placed?.parent], ["one", fam]);
 		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
-		assert.deepEqual(row.location, { machine, folder: join(dataDir, "work", session) });
+		assert.deepEqual(row.location, { machine, folder: join(dataDir, "work", pi, session) });
 		assert.ok((await stat(row.location.folder)).isDirectory());
 		await assert.rejects(
 			makeSession(leo, fam, "two", { location: { machine: "nowhere", folder: "/tmp" } }),
@@ -342,7 +342,7 @@ describe("a location per conversation (8)", () => {
 			);
 			assert.deepEqual(Object.keys(moved.locations), ["2"]);
 			// The session's own location is untouched: where every conversation not moved works.
-			assert.deepEqual(facts.session.value?.location, { machine, folder: join(dataDir, "work", session) });
+			assert.deepEqual(facts.session.value?.location, { machine, folder: join(dataDir, "work", pi, session) });
 		});
 	});
 

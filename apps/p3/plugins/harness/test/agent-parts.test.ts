@@ -1,6 +1,8 @@
 // What the harness gives the agent from what it holds (`AgentParts`) on its own (Astra, round 1): the previous held
 // list and its part are collected once replaced; an apply with the same held map and parts walks nothing; a `main`
-// tool is installed guarded: called from a conversation a task owns (a subagent's), it refuses and runs nothing.
+// tool is installed guarded: called from a conversation a task owns (a subagent's), it refuses and runs nothing; a part
+// that follows what it read (`again`) is given again on its refresh, its replaced follower stopped, and every follower
+// stopped when the parts close, a refresh after it giving nothing.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -92,5 +94,34 @@ describe("the agent's parts", () => {
 		assert.equal(runs, 0);
 		await call();
 		assert.equal(runs, 1);
+	});
+
+	// Astra, round 7: a reloaded harness's parts kept following and giving again.
+	it("give a kind again on its part's refresh, stop the follower it replaced, and stop every follower on close", () => {
+		const followers: { refresh: () => void; stopped: boolean }[] = [];
+		let given = 0;
+		const following = thingHarnessPart(defineThing("test.following", { version: 1, ticks: {} }), () => {
+			given++;
+			return {
+				again: (refresh) => {
+					const follower = { refresh, stopped: false };
+					followers.push(follower);
+					return () => {
+						follower.stopped = true;
+					};
+				},
+			};
+		});
+		const agent = new AgentParts(SESSION);
+		agent.apply(
+			new Map([["test.following", [hold()]]]),
+			new Map([["test.following", { plugin: "test", type: "test", value: following }]]),
+		);
+		followers[0]!.refresh();
+		assert.deepEqual([given, followers.map(({ stopped }) => stopped)], [2, [true, false]]);
+		agent.close();
+		assert.equal(followers[1]!.stopped, true);
+		followers[1]!.refresh();
+		assert.equal(given, 2, "nothing is given again after the close");
 	});
 });

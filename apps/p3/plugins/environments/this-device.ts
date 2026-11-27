@@ -30,6 +30,8 @@ export function serveThisDevice(host: FacetHost<P3Principal>): void {
 			type: THIS_DEVICE_TYPE,
 			label: messages.message("thisDevice"),
 			settings: obj({}),
+			// What opens a PTY on this device is undecided (ERNDL-731): `openPty` refuses.
+			terminals: false,
 			connect: async () => thisDevice(dataDir),
 		};
 		self.contribute(MachineTypes, type);

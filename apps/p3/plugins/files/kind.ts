@@ -43,8 +43,8 @@ export const FILES_EDITS = ["upload", "rename", "remove"] as const;
 
 /**
  * Files (`files.browser`): one per Pi, made by this plugin, linked in Pi only (below it can only be hidden or have its
- * ticks withheld); the nearest one reaching a workspace applies. A new link gives everyone here Browse; Edit is the
- * owner's (the owner flag) and whoever it is granted to.
+ * ticks withheld); the nearest one reaching a workspace applies. A new link gives nobody anything (decision 126):
+ * Browse and Edit are the owner's (the owner flag) and whoever Who may gives them to.
  */
 export const FilesKind = defineThing("files.browser", {
 	version: 1,

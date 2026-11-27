@@ -1,11 +1,11 @@
 // The terminals plugin on the server (`testPlugin`, beside the things, environments and people plugins' server
-// facets, and a stand-in machine host whose terminals are fake programs): Terminals is made in Pi once and gives
-// everyone there Watch, the agents Use; Watch is for people, Use gives the list and the bytes too. One terminal, many
+// facets, and a stand-in machine host whose terminals are fake programs): Terminals is made in Pi once and gives the
+// agents Use, people nothing until Who may gives them a tick; Watch is for people, Use gives the list and the bytes too. One terminal, many
 // viewers: what is typed reaches the program, its bytes reach every viewer at the address `attach` answers (kept
 // output, then what follows) and the backlog; resize and close reach it, its exit shows in the list. Every call
 // reaches the machine as the caller: a machine withheld from a person is refused and its terminals are not listed;
 // closing needs only Use. A stream ends in the flush that withholds Watch and Use. A terminal outlives its viewers and
-// the agent's Use; it ends with its machine, its Terminals thing, or the environments plugin's host.
+// the agent's Use; it ends with its machine, its Terminals thing, its workspace, or the environments plugin's host.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -20,7 +20,7 @@ import {
 import { Http, type HttpRequest } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { collected, within } from "../../../test/until.ts";
-import { TERMINAL_BACKLOG, TerminalHosts } from "../../environments/contract.terminal-host.server.ts";
+import { TERMINAL_BACKLOG } from "../../environments/contract.terminal-host.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
@@ -153,7 +153,7 @@ describe("Terminals and its ticks", () => {
 		const id = await holding(ann, (a, ctx) => a.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		started()[0]!.say("hi");
 		await holding(kim, async (k, ctx) => {
-			await until(k.terminals!, (list) => list.length === 1, within("Kim's list", ctx));
+			await until(k.terminals!, ({ rows: list }) => list.length === 1, within("Kim's list", ctx));
 			assert.equal(await (await attached(k, id, ctx))(), "hi");
 			assert.equal(k.open, undefined);
 			assert.equal(k.type, undefined);
@@ -213,7 +213,7 @@ describe("the owner, guests and the one thing (slice 1's rules)", () => {
 			within("the new Terminals", context),
 		);
 		terminals = next;
-		assert.deepEqual(await holding(worker, async (w) => w.terminals!.value), []);
+		assert.deepEqual(await holding(worker, async (w) => w.terminals!.value.rows), []);
 	});
 });
 
@@ -241,11 +241,11 @@ describe("one terminal, many viewers", () => {
 			await a.resize!({ terminal: id, columns: 100, rows: 30 }, ctx);
 			assert.deepEqual(started()[0]!.size, [100, 30]);
 			started()[0]!.exit(3);
-			await until(a.terminals!, (list) => list[0]?.exitCode === 3, within("the exit", ctx));
+			await until(a.terminals!, ({ rows: list }) => list[0]?.exitCode === 3, within("the exit", ctx));
 			await refused(a.type!({ terminal: id, bytes: "x" }, ctx), "invalid", "notRunning");
 			await a.close!({ terminal: id }, ctx);
 			assert.equal(started()[0]!.closed, true);
-			await until(a.terminals!, (list) => list.length === 0, within("closed", ctx));
+			await until(a.terminals!, ({ rows: list }) => list.length === 0, within("closed", ctx));
 			await refused(a.type!({ terminal: id, bytes: "x" }, ctx), "invalid", "noTerminal");
 		});
 	});
@@ -275,7 +275,11 @@ describe("one terminal, many viewers", () => {
 		const id = await holding(ann, (a, ctx) => a.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		started()[0]!.say("still here");
 		await holding(ann, async (a, ctx) => {
-			await until(a.terminals!, (list) => list.some((terminal) => terminal.id === id), within("the list", ctx));
+			await until(
+				a.terminals!,
+				({ rows: list }) => list.some((terminal) => terminal.id === id),
+				within("the list", ctx),
+			);
 			const { data } = await a.backlog!({ terminal: id }, ctx);
 			assert.equal(Buffer.from(data, "base64").toString(), "still here");
 		});
@@ -329,7 +333,7 @@ describe("where a call may reach", () => {
 			await grant(pi, machine, { kind: "person", person: kim.id }, ["@open"], false);
 			await holding(kim, async (k, kctx) => {
 				await until(k.terminals!, () => true, within("Kim's list", kctx));
-				assert.deepEqual(k.terminals!.value, []);
+				assert.deepEqual(k.terminals!.value.rows, []);
 				await refused(k.open!({ machine, folder: "/tmp", ...SIZE }, kctx), "forbidden", "notHere");
 				await refused(k.type!({ terminal: id, bytes: "x" }, kctx), "forbidden", "notHere");
 				await refused(k.attach!({ terminal: id }, kctx), "forbidden", "notHere");
@@ -455,7 +459,7 @@ describe("a stream holds what lets its viewer in (round 2)", () => {
 			started()[0]!.say("before ");
 			assert.equal(await next(), "before ");
 			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
-			await until(a.terminals!, (rows) => rows.length === 0, within("the list without it", ctx));
+			await until(a.terminals!, ({ rows }) => rows.length === 0, within("the list without it", ctx));
 			await refused(a.attach!({ terminal: id }, ctx), "forbidden", "notHere");
 			started()[0]!.say("secret");
 			assert.equal(await next(), "", "the stream ended");
@@ -470,7 +474,7 @@ describe("a stream holds what lets its viewer in (round 2)", () => {
 			const next = await attached(a, id, ctx);
 			const waiting = next();
 			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
-			await until(a.terminals!, (rows) => !rows.some((row) => row.id === id), within("the list", ctx));
+			await until(a.terminals!, ({ rows }) => !rows.some((row) => row.id === id), within("the list", ctx));
 			assert.equal(await waiting, "");
 		});
 	});
@@ -497,7 +501,7 @@ describe("a stream holds what lets its viewer in (round 2)", () => {
 		await holding(ann, async (a, ctx) => {
 			const { url } = await a.attach!({ terminal: id }, ctx);
 			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
-			await until(a.terminals!, (rows) => rows.length === 0, within("the list", ctx));
+			await until(a.terminals!, ({ rows }) => rows.length === 0, within("the list", ctx));
 			const entry = t
 				.contributions(Http)
 				.flatMap(({ value }) => Object.entries(value.routes ?? {}))
@@ -510,20 +514,20 @@ describe("a stream holds what lets its viewer in (round 2)", () => {
 });
 
 describe("terminals of a workspace that went", () => {
-	it("are closed at the next open, and free their slots (opus round 2, S2)", async () => {
-		const worker = await agent("s1");
-		const host = (await t.host.registry(TerminalHosts, context)).value!;
-		const gone = await host.open(
-			{ owner: { thing: terminals, workspace: "a-workspace-that-went" }, machine, folder: "/tmp", ...SIZE, max: 20 },
+	// The things plugin tells the kind (`workspaceGone`, ERNDL-1143); nothing waits for the next open (deck2).
+	it("are closed once the workspace is removed, those of other workspaces kept", async () => {
+		const child = await things.createWorkspace(
+			{ kind: "things.workspace", name: "Family", parent: pi, by: BY },
 			context,
 		);
+		await things.putParty({ workspace: child, party: { kind: "agent", session: "s1" }, source: BY }, context);
+		const worker = await agent("s1");
+		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx), child);
 		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
-		assert.equal(started()[0]!.closed, true);
-		assert.equal(
-			host.owners().some((owner) => owner.workspace === "a-workspace-that-went"),
-			false,
-		);
-		assert.equal(host.write(gone, "x"), false);
+		const [there, here] = started();
+		await things.removeWorkspace({ workspace: child }, context);
+		await there!.ended;
+		assert.equal(here!.closed, false);
 	});
 });
 
@@ -533,7 +537,7 @@ describe("caches and holds", () => {
 		const worker = await agent("s1");
 		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		const list = await holding(ann, async (a, ctx) => {
-			await until(a.terminals!, (rows) => rows.length === 1, within("the list", ctx));
+			await until(a.terminals!, ({ rows }) => rows.length === 1, within("the list", ctx));
 			return new WeakRef(a.terminals!.value);
 		});
 		assert.ok(await collected([list]));

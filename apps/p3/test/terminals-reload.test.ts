@@ -67,7 +67,7 @@ describe("a reload of the terminals plugin", () => {
 			facets = facets.map((p) => (p.name === "@earendil-works/p3-terminals" ? { ...p, facet: { ...p.facet } } : p));
 			assert.deepEqual((await host.reload(facets, context)).failed, []);
 			await terminalsHere(({ terms, ctx }) =>
-				until(terms.terminals!, (list) => list.length === 1, within("the terminal listed again", ctx)),
+				until(terms.terminals!, ({ rows: list }) => list.length === 1, within("the terminal listed again", ctx)),
 			);
 			assert.deepEqual(killed(), []);
 			// This host serves no HTTP component: the routes' registry is the one thing missing.

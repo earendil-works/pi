@@ -61,7 +61,10 @@ export * from "./control.ts";
 export type ServerRuntime = {
 	/** The Pi's data directory (a real path, private). */
 	readonly dataDir: string;
-	/** Where a session works when it names no folder (one folder per session), outside the data directory. */
+	/**
+	 * Where sessions work when they name no folder, outside the data directory: each Pi in `<workRoot>/<Pi's id>`, a
+	 * folder per session there, so Pis on one machine never share one.
+	 */
 	readonly workRoot: string;
 	/** The machine the server runs on: its OS user's name and its host name (what the owner and this device are first named). */
 	readonly machine: { readonly user: string; readonly hostname: string };

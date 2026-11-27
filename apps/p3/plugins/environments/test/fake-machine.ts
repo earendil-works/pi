@@ -93,6 +93,8 @@ export function fakeType(connect: (settings: JsonValue) => MachineHost, type = "
 			type,
 			label: { namespace: "test", key: type, params: [] },
 			settings,
+			// Its programs are fakes: it opens terminals.
+			terminals: true,
 			connect: async (given) => connect(given as JsonValue),
 		});
 	});

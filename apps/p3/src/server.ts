@@ -63,7 +63,7 @@ import { type ServerAnswer, type ServerStatus, serverSocket, takeSocket } from "
 /** What the server's start takes. */
 export type ServerOptions = {
 	readonly dataDir: string;
-	/** Where sessions work by default (a folder each); `~/p3-work` unless given. */
+	/** Where sessions work by default (`<workRoot>/<Pi's id>/<session id>`); `~/p3-work` unless given. */
 	readonly workRoot?: string;
 	/** The plugin roots: p3's built-in one first (`required`: a plugin of it failing fails the start). */
 	readonly roots: readonly { readonly path: string; readonly required: boolean }[];
