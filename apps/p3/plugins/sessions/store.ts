@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import {
 	and,
 	bool,
+	type Context,
 	type Ctx,
 	defineState,
 	defineTable,
@@ -25,6 +26,7 @@ import {
 	type P3Principal,
 	query,
 	type RowOf,
+	reportError,
 	Session,
 	type SetOf,
 	str,
@@ -93,10 +95,17 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		// This device's machine: where a session works unless it says otherwise.
 		const device = self.get(OneThing, { kind: MACHINE_KIND });
 		const runtime = self.registry(ServerRuntime);
+		// Where this Pi's sessions get their own folders: `<work root>/<Pi's id>`, so Pis on one machine never share one
+		// (deck2, p3-base). Pi stays, so its id is read once.
+		let pi: Promise<string> | undefined;
+		const ownFolders = async (ctx: Ctx<P3Principal>) => {
+			pi ??= things.workspaces.children.page({ parent: "" }, 1, ctx).then(({ items }) => items[0]!.workspace);
+			return join(runtime.value.workRoot, await pi);
+		};
 		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now,
 		// and a session's own folder moves to where new sessions get theirs (one read of every row, no index on
-		// `environment`: it runs once, the marker says so after). The folders move outside a transaction: a copy may take
-		// long.
+		// `environment`: it runs once, the marker says so after). The folders move outside a transaction: the rows are
+		// written once every folder is where it stays.
 		self.onLive(async (ctx) => {
 			if (rewrites.value.thisDevice) return;
 			const machine = await until(device.thing, (id) => id !== "", ctx);
@@ -107,14 +116,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return all;
 			}, ctx);
 			const moved: typeof found = [];
+			const folders = await ownFolders(ctx);
 			for (const { id, folder } of found) {
 				const session = id.params.id;
 				const own = join(runtime.value.dataDir, "folders", session);
 				// A location the person chose stays where it is.
-				moved.push({
-					id,
-					folder: folder === own ? await movedFolder(own, join(runtime.value.workRoot, session)) : folder,
-				});
+				moved.push({ id, folder: folder === own ? await movedFolder(own, join(folders, session), ctx) : folder });
 			}
 			await self.tx(async (tx) => {
 				for (const { id, folder } of moved) {
@@ -150,7 +157,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				// A session's own folder is outside the data directory (Files never shows that one).
 				const where = location ?? {
 					environment: await until(device.thing, (machine) => machine !== "", ctx),
-					folder: join(runtime.value.workRoot, id),
+					folder: join(await ownFolders(ctx), id),
 				};
 				if (location === undefined) {
 					// An empty folder a failed commit leaves is harmless; a session without its folder is not.
@@ -220,10 +227,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 /**
  * Moves a session's own folder `from` to `to` with one atomic rename and answers where its files are now: `to` once
  * moved; `from` when `to` is taken or the rename is not possible (another file system, no permission): the folder stays
- * whole where it is and the row keeps its path, never a copy and a removal (Astra, round 5); `to` when only `to` is
- * there (a move a crash cut short after the rename).
+ * whole where it is and the row keeps its path, never a copy and a removal (Astra, round 6; decision 128), and the
+ * failure is reported, since Files does not show the data directory; `to` when only `to` is there (a move a crash cut
+ * short after the rename).
  */
-async function movedFolder(from: string, to: string): Promise<string> {
+async function movedFolder(from: string, to: string, context: Context): Promise<string> {
 	const [source, target] = await Promise.all([present(from), present(to)]);
 	if (target) return source ? from : to;
 	if (!source) return from;
@@ -231,7 +239,8 @@ async function movedFolder(from: string, to: string): Promise<string> {
 		await mkdir(dirname(to), { recursive: true, mode: 0o700 });
 		await rename(from, to);
 		return to;
-	} catch {
+	} catch (error) {
+		reportError(`sessions: ${from} stays where it is (Files does not show it): not moved to ${to}`, error, context);
 		return from;
 	}
 }

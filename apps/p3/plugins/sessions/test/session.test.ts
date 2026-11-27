@@ -164,7 +164,7 @@ describe("making a session (1)", () => {
 		const placed = (await store.workspaces.one.page({ workspace: session }, 1, context)).items[0];
 		assert.deepEqual([placed?.name, placed?.parent], ["one", fam]);
 		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
-		assert.deepEqual(row.location, { environment: machine, folder: join(dataDir, "work", session) });
+		assert.deepEqual(row.location, { environment: machine, folder: join(dataDir, "work", pi, session) });
 		assert.ok((await stat(row.location.folder)).isDirectory());
 		await assert.rejects(
 			makeSession(leo, fam, "two", { location: { environment: "nowhere", folder: "/tmp" } }),

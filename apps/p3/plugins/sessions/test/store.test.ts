@@ -41,7 +41,7 @@ import { MachineHosts } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { seeded } from "../../environments/test/seeded.ts";
-import { OneThing } from "../../things/contract.server.ts";
+import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { type World, world } from "../../things/test/world.ts";
 import { SessionsStore } from "../contract.server.ts";
 import { ThinkingLevel } from "../contract.ts";
@@ -83,7 +83,9 @@ describe("the sessions store", () => {
 		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 		await store.insert({ id: "s1", model: null }, context);
 		const own = await row("s1");
-		assert.deepEqual(own?.location, { environment: machine, folder: join(dataDir, "work", "s1") });
+		const things = await w.host.get(ThingsStore, {}, context);
+		const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		assert.deepEqual(own?.location, { environment: machine, folder: join(dataDir, "work", pi, "s1") });
 		assert.ok((await stat(own!.location.folder)).isDirectory());
 		assert.deepEqual([own?.state, own?.archivedAt, own?.model], ["settled", null, null]);
 		await store.insert({ id: "s2", location: { environment: machine, folder: "/tmp" }, model: null }, context);
@@ -208,9 +210,14 @@ const older = defineFacet((host) => {
 describe("a Pi's rows from before the machine was a thing (decision 125)", () => {
 	/**
 	 * Restarts with the older store and work root `workRoot`, writes rows `rows` (`this-device`, each in its folder)
-	 * through it, then updates to the sessions plugin as it is now, on the same store; this device's machine.
+	 * through it, runs `prepare` with where this Pi's sessions get their own folders (`<workRoot>/<Pi's id>`), then
+	 * updates to the sessions plugin as it is now, on the same store; this device's machine and that folder.
 	 */
-	async function updated(workRoot: string, rows: readonly { id: string; folder: string }[]): Promise<string> {
+	async function updated(
+		workRoot: string,
+		rows: readonly { id: string; folder: string }[],
+		prepare: (folders: string) => Promise<void> = async () => {},
+	): Promise<{ machine: string; folders: string }> {
 		await w.close(context);
 		const runtime = { dataDir, workRoot, machine: { user: "test", hostname: "test" } } as ServerRuntime;
 		w = await world(context, [
@@ -223,32 +230,37 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 		]);
 		const before = await w.host.get(OldStore, {}, context);
 		for (const { id, folder } of rows) await before.put({ id, environment: "this-device", folder }, context);
+		const things = await w.host.get(ThingsStore, {}, context);
+		const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const folders = join(workRoot, pi);
+		await prepare(folders);
 		await w.reload("@earendil-works/p3-sessions", context, sessionsServer);
 		store = await w.host.get(SessionsStore, {}, context);
-		return seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		return { machine: await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context), folders };
 	}
 
 	/** Session `id`'s own folder as the older code made it. */
 	const own = (id: string) => join(dataDir, "folders", id);
 
-	it("names this device's machine once the store starts, moves a session's own folder to the work root, and a session works there (Files opens it)", async () => {
-		const work = join(dataDir, "work");
+	it("names this device's machine once the store starts, moves a session's own folder to this Pi's work folder, and a session works there (Files opens it)", async () => {
 		// A session in its own folder, as the older code made it, with a file in it.
 		await mkdir(own("own"), { recursive: true });
 		await writeFile(join(own("own"), "marker"), "prior-content");
-		// A move a crash cut short after the rename: the folder is at its new place only.
-		await mkdir(join(work, "cut"), { recursive: true });
-		await writeFile(join(work, "cut", "marker"), "moved");
-		// The new place taken: nothing is overwritten, the files stay where they are.
 		await mkdir(own("taken"), { recursive: true });
 		await writeFile(join(own("taken"), "marker"), "here");
-		await mkdir(join(work, "taken"), { recursive: true });
-		await writeFile(join(work, "taken", "other"), "there");
-		const machine = await updated(work, [
+		const rows = [
 			// A location the person chose (not the session's own folder).
 			{ id: "old", folder: dataDir },
 			...["own", "cut", "taken"].map((id) => ({ id, folder: own(id) })),
-		]);
+		];
+		const { machine, folders: work } = await updated(join(dataDir, "work"), rows, async (folders) => {
+			// A move a crash cut short after the rename: the folder is at its new place only.
+			await mkdir(join(folders, "cut"), { recursive: true });
+			await writeFile(join(folders, "cut", "marker"), "moved");
+			// The new place taken: nothing is overwritten, the files stay where they are.
+			await mkdir(join(folders, "taken"), { recursive: true });
+			await writeFile(join(folders, "taken", "other"), "there");
+		});
 		await eventually(
 			async () => (await row("old"))?.location.environment,
 			(environment) => environment === machine,
@@ -271,7 +283,7 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 
 	// Astra, round 6: a copy across file systems whose removal of the source failed halfway left the row on a source
 	// with files missing. One rename only: where it cannot be done, the folder stays whole and the row keeps it.
-	it("leaves a session's own folder whole where it is, and the row on it, when the work root is on another file system", async (t) => {
+	it("leaves a session's own folder whole where it is, the row on it, and says so, when the work root is on another file system", async (t) => {
 		const work = await mkdtemp("/dev/shm/p3-sessions-work-").catch(() => undefined);
 		if (work === undefined || (await stat(work)).dev === (await stat(dataDir)).dev) {
 			t.skip("needs /dev/shm on another file system than the temporary directory");
@@ -284,7 +296,8 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 			await writeFile(join(output, "a"), "A");
 			await writeFile(join(own("far"), "b"), "B");
 			await chmod(output, 0o500);
-			const machine = await updated(work, [{ id: "far", folder: own("far") }]);
+			const reported = t.mock.method(console, "error", () => {});
+			const { machine, folders } = await updated(work, [{ id: "far", folder: own("far") }]);
 			await eventually(
 				async () => (await row("far"))?.location,
 				(location) => location?.environment === machine && location.folder === own("far"),
@@ -293,7 +306,10 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 				[await readFile(join(own("far"), "b"), "utf8"), await readFile(join(output, "a"), "utf8")],
 				["B", "A"],
 			);
-			await assert.rejects(stat(join(work, "far")), { code: "ENOENT" });
+			await assert.rejects(stat(join(folders, "far")), { code: "ENOENT" });
+			// Reported once, naming the folder that stays (deck2).
+			const said = reported.mock.calls.map((call) => String(call.arguments[0]));
+			assert.equal(said.filter((line) => line.includes(`${own("far")} stays where it is`)).length, 1);
 		} finally {
 			await chmod(output, 0o700).catch(() => undefined);
 			await rm(work, { recursive: true, force: true });
