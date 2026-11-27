@@ -343,7 +343,9 @@ pub fn on_exit_signal(on_signal: impl FnOnce(i32) + Send + 'static) {
     });
 }
 
-/// Kill the command's process group, or the process if the group is gone.
+/// Kill the command's session: its process group (or the process if the group is gone), then every other group in the
+/// session. Commands start in a session of their own (`setsid`), and a shell with job control puts each background job
+/// in a group of its own, so a terminal's `sleep 9 &` is reached too; only what left the session (`setsid`) is not.
 pub fn kill_tree(pid: u32) {
     let pid = pid as i32;
     // SAFETY: plain signal delivery.
@@ -351,6 +353,62 @@ pub fn kill_tree(pid: u32) {
         if libc::kill(-pid, libc::SIGKILL) != 0 {
             libc::kill(pid, libc::SIGKILL);
         }
+    }
+    // A member may fork while the others are killed: again until none is found, or only the same ones (killed, not
+    // reaped yet).
+    let mut last = Vec::new();
+    for _ in 0..8 {
+        let members = session_members(pid);
+        if members.is_empty() || members == last {
+            return;
+        }
+        for member in &members {
+            // SAFETY: plain signal delivery.
+            unsafe {
+                libc::kill(*member, libc::SIGKILL);
+            }
+        }
+        last = members;
+    }
+}
+
+/// The processes of session `sid`, by their session id.
+fn session_members(sid: i32) -> Vec<i32> {
+    // SAFETY: `getsid` only reads; a process gone meanwhile answers -1.
+    let mut members: Vec<i32> = all_pids()
+        .into_iter()
+        .filter(|&pid| pid > 0 && unsafe { libc::getsid(pid) } == sid)
+        .collect();
+    members.sort_unstable();
+    members
+}
+
+/// Every process id this user may see: `/proc` on Linux and Android.
+#[cfg(not(target_vendor = "apple"))]
+fn all_pids() -> Vec<i32> {
+    std::fs::read_dir("/proc")
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every process id this user may see: the kernel's list on macOS.
+#[cfg(target_vendor = "apple")]
+fn all_pids() -> Vec<i32> {
+    // SAFETY: a null buffer asks for the count; then a buffer of that many (and room for a few new ones) is filled.
+    unsafe {
+        let count = libc::proc_listallpids(std::ptr::null_mut(), 0);
+        if count <= 0 {
+            return Vec::new();
+        }
+        let mut pids = vec![0i32; count as usize + 64];
+        let bytes = (pids.len() * std::mem::size_of::<i32>()) as libc::c_int;
+        let filled = libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes);
+        pids.truncate(filled.max(0) as usize);
+        pids
     }
 }
 
@@ -462,5 +520,47 @@ mod tests {
         }
         // SAFETY: as above.
         assert_ne!(unsafe { libc::kill(sleeper, 0) }, 0);
+    }
+
+    #[test]
+    fn killing_a_session_kills_its_jobs_in_groups_of_their_own() {
+        // A shell with job control, as a terminal's is: its background job gets a process group of its own (bash: a
+        // POSIX `sh` may not do job control without a terminal).
+        let mut command = Command::new("bash");
+        command.stdout(Stdio::piped());
+        let script = "set -m; sleep 30 </dev/null >/dev/null 2>&1 & echo $!; wait";
+        configure(
+            &mut command,
+            &["-c".to_string(), script.to_string()],
+            &Map::new(),
+            true,
+        );
+        let mut child = command.spawn().unwrap();
+        let mut line = Vec::new();
+        let mut stdout = child.stdout.take().unwrap();
+        let mut byte = [0u8; 1];
+        while stdout.read(&mut byte).unwrap() == 1 && byte[0] != b'\n' {
+            line.push(byte[0]);
+        }
+        let job: i32 = String::from_utf8(line).unwrap().trim().parse().unwrap();
+        // SAFETY: plain process queries.
+        assert_ne!(
+            unsafe { libc::getpgid(job) },
+            child.id() as i32,
+            "the job has a group of its own"
+        );
+        kill_tree(child.id());
+        let _ = child.wait();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // SAFETY: signal 0 only checks that the process exists.
+        while unsafe { libc::kill(job, 0) } == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // SAFETY: as above.
+        assert_ne!(
+            unsafe { libc::kill(job, 0) },
+            0,
+            "the job ended with its session"
+        );
     }
 }

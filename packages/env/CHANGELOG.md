@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing a terminal (`RemoteTerminal.close()`, a cancelled `pty`, a lost connection or the daemon's exit) now kills every process of its session on Linux, Android and macOS, not only the shell's process group: a shell with job control puts each background job (`sleep 60 &`) in a group of its own, and those kept running after the terminal was gone. Commands of `exec` and `process` are ended the same way. A program that left the session (`setsid`, a daemon) is not reached
+
 ## [1.6.1] - 2026-11-25
 
 ### Fixed
