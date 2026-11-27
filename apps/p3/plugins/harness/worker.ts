@@ -210,9 +210,10 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 	const { session, host: worker, store } = runtime;
 	// Set once Durable is open; a location asked before (a part at its apply) is the session's.
 	let durable: Harness | undefined;
-	const location = locations(facts, async (conversation, context) =>
-		durable === undefined ? undefined : durable.commit((tx) => tx.conversation(conversation), context),
-	);
+	/** Conversation `conversation`'s record in the session's store (`undefined`: none, or Durable not open yet). */
+	const record = async (conversation: ConversationId, context: Context) =>
+		durable === undefined ? undefined : durable.commit((tx) => tx.conversation(conversation), context);
+	const location = locations(facts, record);
 	const things = new AgentParts({
 		session,
 		// The session's workspace has the session's id (slice 5); the parts take it from here, never assume it.
@@ -220,6 +221,10 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 		call: (fn, context) => worker.root(fn, context),
 		location,
 		moveLocation: async (conversation, location, context) => {
+			// Only a conversation the session has (Opus): any other key would hold one of the session's moved places.
+			if ((await record(conversation, context)) === undefined) {
+				throw invalid("args", `harness: no conversation ${conversation}`);
+			}
 			await facts.moveLocation({ conversation: String(conversation), location }, context);
 		},
 	});

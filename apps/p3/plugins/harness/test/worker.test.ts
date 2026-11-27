@@ -26,6 +26,7 @@ import {
 } from "@earendil-works/p3/v1";
 import type { TestedPlugin } from "@earendil-works/p3/v1/testing";
 import {
+	type ConversationId,
 	fauxProvider,
 	LiveDoc,
 	NodeExecutionEnv,
@@ -532,6 +533,22 @@ describe("the harness plugin on a worker", () => {
 		await ranIn(moved, 2);
 		assert.deepEqual(await session.location(ROOT_CONVERSATION_ID, context), { machine: "m", folder: moved });
 		assert.deepEqual(await session.location(child, context), { machine: "m", folder: own });
+	});
+
+	// Opus, after push 4: a key that names no conversation would hold one of the session's 1000 moved places for good.
+	it("refuses to move a conversation the session does not have", async () => {
+		const sessions: HarnessSession[] = [];
+		const server = await start([other("test.located", "l")], {}, [
+			{ kind: "test.located", seen: (session) => sessions.push(session) },
+		]);
+		await harness();
+		const [session] = sessions;
+		assert.ok(session !== undefined);
+		const nowhere = 999_999 as ConversationId;
+		await assert.rejects(session.moveLocation(nowhere, { machine: "m", folder: "/srv" }, context), /no conversation/);
+		await assert.rejects(session.moveLocation(nowhere, null, context), /no conversation/);
+		await session.moveLocation(ROOT_CONVERSATION_ID, { machine: "m", folder: "/srv" }, context);
+		assert.deepEqual(Object.keys(server.moved()), ["1"]);
 	});
 
 	// Opus M1, round 1 (R41): a session on no machine (its maker could use none) gives its agent no environment.

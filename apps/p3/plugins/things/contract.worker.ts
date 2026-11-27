@@ -46,9 +46,10 @@ export type HarnessLocation = { readonly machine: string; readonly folder: strin
  * or one on no machine; it may read Durable once per conversation, so never from Durable's Session line, an observer:
  * a tool, the environment, a prompt section and a hook all run off it), and `moveLocation`, which moves the
  * conversation to `location` (`null`: undoes its move, it follows its owner again): the next tool call works there, a
- * call under way keeps its environment; refused, with a message, unless the folder is a full path (`invalid`) and the
- * agents have Work here on its machine (`forbidden`, the machine kind's rule). `HarnessLocation` is the sessions
- * plugin's `Location`, written again: this plugin never imports that one.
+ * call under way keeps its environment; refused for a conversation the session does not have (`invalid`), and, with a
+ * message, unless the folder is a full path (`invalid`) and the agents have Work here on its machine (`forbidden`, the
+ * machine kind's rule). `HarnessLocation` is the sessions plugin's `Location`, written again: this plugin never imports
+ * that one.
  */
 export type HarnessSession = {
 	readonly session: string;
