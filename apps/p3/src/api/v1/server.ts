@@ -40,6 +40,9 @@ export {
 export type { BinaryReader, ExecutionEnv, Result } from "@earendil-works/pi-durable/env";
 export { FileError } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+// YAML, for the prompt plugin's server facet: a skill's front matter, read as pi reads it (its `yaml` pin). A built-in
+// plugin's own npm dependency would have to be installed in its folder; through the API it is the server's one copy.
+export { parse as parseYaml } from "yaml";
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
 // The things plugin's store and what a kind's server side needs; the index's handles stay out.

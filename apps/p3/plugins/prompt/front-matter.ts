@@ -1,9 +1,9 @@
 // pi's front-matter reader, copied from packages/coding-agent/src/utils/frontmatter.ts (`parseFrontmatter`, with
 // `stripBom` of packages/coding-agent/src/utils/text.ts): YAML between a first line `---` and the next `\n---`, the
 // rest the body. p3 does not depend on the coding agent; with the same reader a `SKILL.md` reads the same in pi, p2
-// and p3. YAML that does not parse throws, as in pi.
+// and p3. YAML that does not parse throws, as in pi. Its YAML parser is pi's (`yaml`), through p3's server API.
 
-import { parse } from "yaml";
+import { parseYaml as parse } from "@earendil-works/p3/v1/server";
 
 /** A file's front matter (its fields; none: `{}`) and its body, trimmed. */
 export type ParsedFrontmatter = { readonly frontmatter: Readonly<Record<string, unknown>>; readonly body: string };
