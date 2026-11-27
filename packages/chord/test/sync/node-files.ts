@@ -44,6 +44,15 @@ export const nodeFiles: SyncFileSystem = {
 		}),
 	writeFile: (path, content) => attempt(() => writeFile(path, content)),
 	appendFile: (path, content) => attempt(() => appendFile(path, content)),
+	flushFile: (path) =>
+		attempt(async () => {
+			const file = await open(path, "r+");
+			try {
+				await file.sync();
+			} finally {
+				await file.close();
+			}
+		}),
 	renameFile: (source, destination) => attempt(() => rename(source, destination)),
 	listDir: (path) =>
 		attempt(async () =>

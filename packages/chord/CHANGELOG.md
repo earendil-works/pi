@@ -9,6 +9,7 @@
 - `useVariant(ref, variant)` and `TuiScope.variant(ref, variant)` are replaced by `useLive(ref)` and `TuiScope.live(ref)`: the reference while it is live (and while it rebinds after it was), re-rendering when its grant changes. `VariantRef`, `VariantOf` and `InVariant` are removed (`LiveRef`).
 - A flag's label is a message: `remote(..., { flags: { export: messages.message("flagExport") } })` takes a `MessageData` (from the plugin's `defineMessages`, its key checked against the catalog), not English text, and the declaration refuses a label that is no message. Labels stay out of the fingerprint. Migration: add the label to the plugin's `messages.ts` and declare `messages.message(key)`; render it with the viewer's `t.render(label)`.
 - The link's `bound` entry carries `granted` (indexes into the version's sorted grantable members and flags) in place of `variant`; remote contracts' fingerprints change. `PROTOCOL_VERSION` is 2: a host of an earlier release (protocol 1) is refused at its `hello` (the link closes with a protocol error) instead of failing at its first `bound`. Update every host of an app together.
+- `SyncFileSystem` has `flushFile(path, context)` (fsync), as Pi Durable's `FileSystem` has it: an implementation of its own adds it.
 
 ### Added
 
@@ -39,6 +40,7 @@
 - The plugins component's first uses of a kind at once (`scripts(kind)`, `load`, a rollout) share one making of its current set: each facet is built once, not once per caller (a server resuming many workers built every worker facet once per worker). A making that failed is forgotten, so the next use tries again.
 - The plugins component's shared first making of a kind's set runs in the component's own context (aborted by `close`), each caller waiting in its own: one caller going away (a worker's start whose hold ended) no longer fails every other first use waiting for the same build, and a waiter leaves no abort listener behind.
 - Fixed an intermittent CI failure in the grant-cache eviction test when V8 deferred finalization.
+- `FileSystemSyncRemote` creates a slot once when two uploads of a session race (each session's creations are queued in the instance; one process writes a directory), flushes every file to disk before renaming it into place, and finds a session's head from a `head.json` written after each slot instead of reading every slot per upload.
 
 ## [1.6.1] - 2026-11-25
 
