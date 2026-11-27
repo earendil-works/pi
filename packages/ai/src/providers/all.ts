@@ -134,7 +134,10 @@ export function getAllBuiltinModels<TProvider extends BuiltinProvider>(provider:
 	return [...getBuiltinModels(provider), ...getBuiltinImageModels(provider), ...getBuiltinClassifierModels(provider)];
 }
 
-/** All built-in providers, freshly constructed. */
+/**
+ * All built-in providers, freshly constructed, except `google-ai-plan`, which needs the app's own Google client
+ * (see `googleAiPlanProvider`).
+ */
 export function builtinProviders(): Provider[] {
 	return [
 		amazonBedrockProvider(),
