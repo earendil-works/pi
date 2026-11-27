@@ -18,7 +18,8 @@ import sessionsServer from "../../sessions/server.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import { make } from "../../things/kind-server.ts";
 import thingsServer from "../../things/server.ts";
-import { Backups, SessionBackup } from "../contract.ts";
+import { BackupStore } from "../contract.server.ts";
+import { type BackupStatus, Backups, SessionBackup, type SessionBackupRow } from "../contract.ts";
 
 /** The plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -182,6 +183,66 @@ describe("a session's own choice", () => {
 				),
 				(error) => isChordError(error, "invalid"),
 			);
+		});
+	});
+});
+
+/** What session `session`'s worker reports. */
+async function report(t: Awaited<ReturnType<typeof testPlugin>>, session: string, status: BackupStatus): Promise<void> {
+	await t.root(async (ctx) => (await ctx.get(SessionBackup, {})).report({ status }, ctx), context, {
+		principal: { kind: "worker", session },
+	});
+}
+
+/** Session `session`'s stored state, if it reported one. */
+async function stateOf(
+	t: Awaited<ReturnType<typeof testPlugin>>,
+	session: string,
+): Promise<SessionBackupRow | undefined> {
+	const { items } = await t.root(
+		async (ctx) => (await ctx.get(BackupStore, {})).states.one.page({ session }, 1, ctx),
+		context,
+	);
+	return items[0];
+}
+
+describe("a session's reported state", () => {
+	it("is stored when it changes, and not when only the upload moves on", async () => {
+		await withServerFacet(async (t, _owner, [s1]) => {
+			assert.equal(await stateOf(t, s1), undefined);
+			await report(t, s1, { state: { kind: "uploading" }, at: 1 });
+			// `uploading` is never stored.
+			assert.equal(await stateOf(t, s1), undefined);
+			await report(t, s1, { state: { kind: "synced" }, syncedHead: 3, at: 2 });
+			assert.deepEqual(await stateOf(t, s1), { session: s1, state: { kind: "synced" }, since: 2 });
+			// The same state again: `since` stays, nothing is written.
+			await report(t, s1, { state: { kind: "synced" }, syncedHead: 7, at: 5 });
+			assert.deepEqual(await stateOf(t, s1), { session: s1, state: { kind: "synced" }, since: 2 });
+			await report(t, s1, { state: { kind: "stopped", reason: "diverged", error: "head moved" }, at: 9 });
+			assert.deepEqual(await stateOf(t, s1), {
+				session: s1,
+				state: { kind: "stopped", reason: "diverged", error: "head moved" },
+				since: 9,
+			});
+		});
+	});
+
+	it("and the session's own choice share a row: setting one keeps the other", async () => {
+		await withServerFacet(async (t, owner, [s1]) => {
+			const setSession = (enabled: boolean | null) =>
+				t.root(async (ctx) => (await ctx.get(Backups, {})).setSession({ session: s1, enabled }, ctx), context, {
+					principal: owner,
+				});
+			await setSession(true);
+			await report(t, s1, { state: { kind: "retrying", error: "offline" }, at: 4 });
+			assert.equal(await enabledFor(t, s1), true);
+			await setSession(null);
+			assert.deepEqual(await stateOf(t, s1), {
+				session: s1,
+				state: { kind: "retrying", error: "offline" },
+				since: 4,
+			});
+			assert.equal(await enabledFor(t, s1), false);
 		});
 	});
 });
