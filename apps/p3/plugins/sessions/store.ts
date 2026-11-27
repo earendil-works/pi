@@ -163,7 +163,10 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				// A location the person chose stays where it is.
 				rewritten.push({
 					id,
-					folder: folder === own ? await movedFolder(own, join(folders, session), ctx) : folder,
+					folder:
+						folder === own
+							? await movedFolder(own, join(folders, session), join(runtime.value.workRoot, session), ctx)
+							: folder,
 				});
 			}
 			await self.tx(async (tx) => {
@@ -318,16 +321,21 @@ function noMachine(machine: string): Error {
 }
 
 /**
- * Moves a session's own folder `from` to `to` with one atomic rename and answers where its files are now: `to` once
- * moved; `from` when `to` is taken or the rename is not possible (another file system, no permission): the folder stays
- * whole where it is and the row keeps its path, never a copy and a removal (Astra, round 6; decision 128), and the
- * failure is reported, since Files does not show the data directory; `to` when only `to` is there (a move a crash cut
- * short after the rename).
+ * Moves a session's own folder `from` to `to` with one atomic rename and answers where its files are now, never a
+ * folder that is not there: `to` once moved, or when only `to` is there (a move a crash cut short after the rename);
+ * `earlier` when only it is there (00e4bc5e8 moved it there and stopped before its row was written, Astra, round 7);
+ * `from` when `to` is taken or the rename is not possible (another file system, no permission): the folder stays whole
+ * where it is and the row keeps its path, never a copy and a removal (Astra, round 6; decision 128). A folder that
+ * stays out of Files' sight, or that is nowhere, is reported.
  */
-async function movedFolder(from: string, to: string, context: Context): Promise<string> {
-	const [source, target] = await Promise.all([present(from), present(to)]);
+async function movedFolder(from: string, to: string, earlier: string, context: Context): Promise<string> {
+	const [source, target, before] = await Promise.all([present(from), present(to), present(earlier)]);
 	if (target) return source ? from : to;
-	if (!source) return from;
+	if (!source) {
+		if (before) return earlier;
+		reportError(`sessions: ${from} is not there, nor at ${to} or ${earlier}`, "the row keeps it", context);
+		return from;
+	}
 	try {
 		await mkdir(dirname(to), { recursive: true, mode: 0o700 });
 		await rename(from, to);

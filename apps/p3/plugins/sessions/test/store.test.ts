@@ -254,6 +254,39 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 	/** Session `id`'s own folder as the older code made it. */
 	const own = (id: string) => join(dataDir, "folders", id);
 
+	// Astra, round 7: 00e4bc5e8 moved a folder to `<workRoot>/<id>` and could stop before writing its row; the row then
+	// named a folder that was not there.
+	it("points a row at the folder an earlier version moved it to, when only that one is there", async (t) => {
+		const work = join(dataDir, "work");
+		const earlier = join(work, "cut-before");
+		const reported = t.mock.method(console, "error", () => {});
+		const { machine } = await updated(work, [{ id: "cut-before", folder: own("cut-before") }], async () => {
+			await mkdir(earlier, { recursive: true });
+			await writeFile(join(earlier, "marker"), "existing");
+		});
+		await eventually(
+			async () => (await row("cut-before"))?.location,
+			(location) => location?.machine === machine && location.folder === earlier,
+		);
+		assert.equal(await readFile(join(earlier, "marker"), "utf8"), "existing");
+		const said = reported.mock.calls.map((call) => String(call.arguments[0]));
+		assert.deepEqual(
+			said.filter((line) => line.includes("cut-before")),
+			[],
+		);
+	});
+
+	it("keeps a row's folder, and says so, when its folder is nowhere", async (t) => {
+		const reported = t.mock.method(console, "error", () => {});
+		const { machine } = await updated(join(dataDir, "work"), [{ id: "lost", folder: own("lost") }]);
+		await eventually(
+			async () => (await row("lost"))?.location,
+			(location) => location?.machine === machine && location.folder === own("lost"),
+		);
+		const said = reported.mock.calls.map((call) => String(call.arguments[0]));
+		assert.equal(said.filter((line) => line.includes(`${own("lost")} is not there`)).length, 1);
+	});
+
 	it("names this device's machine once the store starts, moves a session's own folder to this Pi's work folder, and a session works there (Files opens it)", async () => {
 		// A session in its own folder, as the older code made it, with a file in it.
 		await mkdir(own("own"), { recursive: true });
