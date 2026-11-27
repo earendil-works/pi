@@ -382,23 +382,22 @@ describe("counted work", () => {
 
 	// The route's admission and the worker objects' (`followSession`) read the access index, no query; the worker's
 	// facts read its session's row: one run; a second hold shares it.
-	it("a hold of a session's worker costs one read: its worker's row; a second hold none", async () => {
+	// Astra, round 5: the worker's start is counted whole, wherever its machine read lands around the first hold.
+	it("a session's worker costs two reads by the time it holds its machine: its row and the machine's; a second hold none", async () => {
 		const { t, owner, id, pi } = await withSession();
 		await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		const first = counted();
 		await owner.get(SessionWorker, { session: id }, context);
-		const second = counted();
-		// The worker, once started, holds what its agent may use (this device's machine: its info is one read, once);
-		// that is the worker's start, not the second hold's.
+		// The worker, once started, holds what its agent may use: this device's machine, its info one read, once.
 		const holding = await t.workers.get(id)!.host.registry(HeldThings, context);
 		await until(holding, (held) => held?.has(MACHINE_KIND) === true, within("the worker's holding", context));
 		const settled = counted();
 		await (await t.client(t.owner)).get(SessionWorker, { session: id }, context);
 		const after = counted();
 		assert.deepEqual(
-			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - settled[0]!, after[1]! - settled[1]!],
-			[1, 0, 0, 0],
+			[settled[0]! - first[0]!, settled[1]! - first[1]!, after[0]! - settled[0]!, after[1]! - settled[1]!],
+			[2, 0, 0, 0],
 		);
 	});
 });
