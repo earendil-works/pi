@@ -44,7 +44,7 @@ describe("a viewer's stream", () => {
 			const socket = await p.socket(a, id, ctx);
 			assert.equal(await socket.next(), "kept");
 			assert.deepEqual(socket.told, [
-				{ kind: "kept", bytes: 4 },
+				{ kind: "kept", end: 4 },
 				{ kind: "size", ...SIZE },
 				{ kind: "from", offset: 0 },
 			]);

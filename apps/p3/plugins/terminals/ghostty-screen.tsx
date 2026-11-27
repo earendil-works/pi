@@ -73,9 +73,10 @@ export function GhosttyScreen({ link, label }: TerminalScreenProps) {
 			drawn.current = undefined;
 		};
 	}, [link]);
-	// A tap or click focuses the input and opens the on-screen keyboard, unless it selected output to copy (a selection
-	// elsewhere on the page is no reason: it kept a click from focusing, Astra, round 3). On click, not pointerup: a
-	// tap's mousedown follows its pointerup and took the focus away again.
+	// A tap or a click focuses the input (a tap opens the on-screen keyboard), unless it selected output to copy (a
+	// selection elsewhere on the page is no reason: Astra, round 3). A mouse focuses on the button's release: a redraw
+	// between press and release replaces the pressed row's spans and the browser sends no click then (Astra, round 4).
+	// A finger focuses on the click: a tap's mousedown follows its pointerup and took the focus away again.
 	useEffect(() => {
 		const area = frame.current;
 		if (area === null || !typable) return;
@@ -89,8 +90,18 @@ export function GhosttyScreen({ link, label }: TerminalScreenProps) {
 			if (document.activeElement === element) element.blur();
 			element.focus({ preventScroll: true });
 		};
-		area.addEventListener("click", focus);
-		return () => area.removeEventListener("click", focus);
+		const released = (event: PointerEvent) => {
+			if (event.pointerType !== "touch" && event.button === 0) focus();
+		};
+		const clicked = (event: MouseEvent) => {
+			if (event instanceof PointerEvent && event.pointerType === "touch") focus();
+		};
+		area.addEventListener("pointerup", released);
+		area.addEventListener("click", clicked);
+		return () => {
+			area.removeEventListener("pointerup", released);
+			area.removeEventListener("click", clicked);
+		};
 	}, [typable]);
 	// Buttons that keep the focus (and the on-screen keyboard) in the terminal.
 	const keepFocus = (event: ReactPointerEvent) => event.preventDefault();
@@ -275,8 +286,8 @@ class DrawnTerminal {
 	#connected = false;
 	/** Whether a lost connection is made again (else the terminal ended, or the person is no longer let in). */
 	#reconnecting = true;
-	/** How many bytes of replayed output are still to parse, whose queries go unanswered. */
-	#replay = 0;
+	/** Where in the terminal's output the replayed output ends: queries before it go unanswered. */
+	#replayEnd = 0;
 	/** Output waiting to be parsed, and where in the terminal's output the bytes after a mark start. */
 	#queue: (Uint8Array | { readonly offset: number })[] = [];
 	/** Output parsed and not told to the link yet. */
@@ -339,7 +350,7 @@ class DrawnTerminal {
 			},
 		);
 		const feed: ScreenFeed = {
-			restart: (kept) => this.#restart(kept),
+			restart: (end) => this.#restart(end),
 			output: (bytes) => {
 				this.#queue.push(bytes);
 				this.#pump();
@@ -498,14 +509,14 @@ class DrawnTerminal {
 	}
 
 	/** A new connection: the replay that follows is drawn on a fresh terminal. */
-	#restart(kept: number): void {
+	#restart(end: number): void {
 		cancelAnimationFrame(this.#fling);
 		// What the last connection sent and was not parsed: the replay sends it again.
 		this.#queue = [];
 		this.#undrawn = 0;
 		clearTimeout(this.#drawnTimer);
 		this.#drawnTimer = undefined;
-		this.#replay = kept;
+		this.#replayEnd = end;
 		this.#answering = false;
 		this.#answers = [];
 		this.#offset = 0;
@@ -550,7 +561,7 @@ class DrawnTerminal {
 				? {}
 				: {
 						onReply: (bytes: Uint8Array) => {
-							if (this.#replay === 0 && this.#answering) reply(replies.decode(bytes));
+							if (this.#offset >= this.#replayEnd && this.#answering) reply(replies.decode(bytes));
 						},
 					}),
 			colorScheme: () => (this.#scheme.matches ? "dark" : "light"),
@@ -945,14 +956,13 @@ class DrawnTerminal {
 			// The replay's end and the next change of who answers end a piece, so the queries before them are answered
 			// as they were then.
 			const change = this.#answers[0] === undefined ? OUTPUT_SLICE_BYTES : this.#answers[0].at - this.#offset;
-			const replay = this.#replay > 0 ? this.#replay : OUTPUT_SLICE_BYTES;
+			const replay = this.#offset < this.#replayEnd ? this.#replayEnd - this.#offset : OUTPUT_SLICE_BYTES;
 			const slice = Math.min(OUTPUT_SLICE_BYTES, replay, change);
 			if (bytes.length > slice) {
 				this.#queue[0] = bytes.subarray(slice);
 				bytes = bytes.subarray(0, slice);
 			} else this.#queue.shift();
 			vt.write(bytes);
-			this.#replay = Math.max(0, this.#replay - bytes.length);
 			this.#offset += bytes.length;
 			parsed += bytes.length;
 		}

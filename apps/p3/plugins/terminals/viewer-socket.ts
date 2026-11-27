@@ -1,10 +1,12 @@
 // One viewer's attach socket as the server drives it (socket.ts has the protocol): its lifetime, which a loss ends at
 // once (`end`: nothing is read, sent or taken from it after, before the socket's close handshake even starts), and its
 // flow: at most `WINDOW` bytes of output sent and not drawn (a page's `drawn` counts only what was sent), and at most
-// `WINDOW` bytes, output and text frames alike, in the socket's own buffer (a page that stopped reading). A size or an
-// election that comes while the buffer is full waits, the newest of each kind kept (they supersede each other), and
-// no output goes while an election waits (it names the output offset it starts at). Output frames say where in the
-// terminal's output they start (`from`) before the first and after a skip.
+// `WINDOW` bytes, output and text frames alike, in the socket's own buffer (a page that stopped reading). A size that
+// comes while the buffer is full waits, the newest kept (sizes supersede each other). Elections that come meanwhile
+// wait in order, each for the output from its offset on: a later one never replaces an earlier one of another offset
+// (A, B, A: the page must know B had the bytes between; Astra, round 4), only one at the same offset; no output goes
+// while one waits. Output frames say where in the terminal's output they start (`from`) before the first and after a
+// skip.
 
 import type { Context } from "@earendil-works/p3/v1";
 import type { WebSocketHandle } from "@earendil-works/p3/v1/server";
@@ -13,6 +15,9 @@ import { SOCKET_ENDED, SOCKET_REFUSED, type SocketTold } from "./kind.ts";
 
 /** How many bytes a viewer may have sent to it and not drawn, or waiting in its socket's buffer. */
 export const WINDOW = 256 * 1024;
+
+/** How many elections may wait for one viewer's buffer: people type, so more is a page that stopped reading. */
+const MAX_ELECTIONS = 64;
 
 /** A viewer's socket: its lifetime, what it is told, and its output. */
 export class ViewerSocket {
@@ -23,8 +28,9 @@ export class ViewerSocket {
 	#drawn = 0;
 	/** Bytes handed to the socket and not written out yet. */
 	#buffered = 0;
-	/** The newest size and election not sent yet: the buffer was full. */
-	readonly #waiting = new Map<"size" | "answer", SocketTold>();
+	/** The newest size not sent yet, and the elections not sent yet, in order: the buffer was full. */
+	#size: SocketTold | undefined;
+	readonly #answers: SocketTold[] = [];
 	#resume: () => void = () => {};
 
 	constructor(socket: WebSocketHandle) {
@@ -40,27 +46,43 @@ export class ViewerSocket {
 	end(reason: string): void {
 		if (this.#lost.signal.aborted) return;
 		this.#lost.abort(new Error(`terminals: the socket ended: ${reason}`));
-		this.#waiting.clear();
+		this.#size = undefined;
+		this.#answers.length = 0;
 		this.#socket.close(SOCKET_REFUSED, reason);
 	}
 
 	/**
-	 * Tells the page a size or an election: at once while the buffer has room for it and none of its kind waits (an
-	 * older one would else come after it), else it waits, the newest of its kind kept.
+	 * Tells the page the terminal's size: at once while the buffer has room for it and none waits (an older one would
+	 * else come after it), else it waits, the newest kept.
 	 */
-	tell(told: Extract<SocketTold, { kind: "size" | "answer" }>): void {
+	size(columns: number, rows: number): void {
 		if (this.#lost.signal.aborted) return;
-		const text = JSON.stringify(told);
-		if (this.#waiting.has(told.kind) || this.#buffered + Buffer.byteLength(text) > WINDOW) {
-			this.#waiting.set(told.kind, told);
-			return;
-		}
-		this.#write(text);
+		const told: SocketTold = { kind: "size", columns, rows };
+		if (this.#size !== undefined || !this.#fits(told)) this.#size = told;
+		else this.#write(JSON.stringify(told));
 	}
 
-	/** Tells the page, as the first frame, how many bytes of the output that follows are kept output (a replay). */
-	kept(bytes: number): void {
-		this.#write(JSON.stringify({ kind: "kept", bytes } satisfies SocketTold));
+	/**
+	 * Tells the page whether it answers the program's queries from output offset `at` on: at once while the buffer has
+	 * room and none waits, else after those that wait (one at the same offset replaced). A page that falls this far
+	 * behind (`MAX_ELECTIONS` waiting) is ended: its elections can no longer be told in order.
+	 */
+	answer(yes: boolean, at: number): void {
+		if (this.#lost.signal.aborted) return;
+		const told: SocketTold = { kind: "answer", yes, at };
+		if (this.#answers.length === 0 && this.#fits(told)) {
+			this.#write(JSON.stringify(told));
+			return;
+		}
+		const last = this.#answers.at(-1);
+		if (last?.kind === "answer" && last.at === at) this.#answers[this.#answers.length - 1] = told;
+		else if (this.#answers.length < MAX_ELECTIONS) this.#answers.push(told);
+		else this.end("too far behind");
+	}
+
+	/** Tells the page, as the first frame, where in the terminal's output the kept output (a replay) ends. */
+	kept(end: number): void {
+		this.#write(JSON.stringify({ kind: "kept", end } satisfies SocketTold));
 	}
 
 	/** The page drew `bytes` more: counted up to what was sent. */
@@ -91,6 +113,7 @@ export class ViewerSocket {
 				if (next.from !== from) {
 					const text = JSON.stringify({ kind: "from", offset: next.from } satisfies SocketTold);
 					while (this.#buffered + Buffer.byteLength(text) > WINDOW) await this.#more();
+					if (signal.aborted) return;
 					this.#write(text);
 					from = next.from;
 				}
@@ -109,7 +132,7 @@ export class ViewerSocket {
 
 	/** How many output bytes may go now: the least of the window's room and the buffer's; none while an election waits. */
 	#room(): number {
-		if (this.#waiting.has("answer")) return 0;
+		if (this.#answers.length > 0) return 0;
 		return Math.min(WINDOW - (this.#sent - this.#drawn), WINDOW - this.#buffered);
 	}
 
@@ -124,14 +147,20 @@ export class ViewerSocket {
 		});
 	}
 
-	/** Sends what waited for room in the buffer, as far as there is room. */
+	/** Whether `told` fits in the buffer now. */
+	#fits(told: SocketTold): boolean {
+		return this.#buffered + Buffer.byteLength(JSON.stringify(told)) <= WINDOW;
+	}
+
+	/** Sends what waited for room in the buffer, as far as there is room: the elections in order, then the size. */
 	#flush(): void {
-		for (const [kind, told] of this.#waiting) {
-			const text = JSON.stringify(told);
-			if (this.#lost.signal.aborted || this.#buffered + Buffer.byteLength(text) > WINDOW) return;
-			this.#waiting.delete(kind);
-			this.#write(text);
+		while (!this.#lost.signal.aborted && this.#answers[0] !== undefined && this.#fits(this.#answers[0])) {
+			this.#write(JSON.stringify(this.#answers.shift()));
 		}
+		const size = this.#size;
+		if (this.#lost.signal.aborted || size === undefined || !this.#fits(size)) return;
+		this.#size = undefined;
+		this.#write(JSON.stringify(size));
 	}
 
 	/** Resolves when the page drew more or the buffer emptied some, or the viewer is lost (then rejects). */

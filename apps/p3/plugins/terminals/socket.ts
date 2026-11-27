@@ -3,7 +3,7 @@
 // sign-in that opened it, as a `/chord` link does (`LinkOpened`). One binary frame per piece each way, no call and no
 // reply per key (decision 133; the bench's 0.26 against 0.13 ms per keystroke). Frames (`SocketTold`,
 // `SocketMessage`, kind.ts):
-// - to the page: `{ kind: "kept", bytes }` first (how much of the output that follows is the kept output, a replay),
+// - to the page: `{ kind: "kept", end }` first (where in the terminal's output the kept output, a replay, ends),
 //   then the kept output and each piece as it comes, as binary frames; the terminal's size (`size`) at the start and
 //   after each change (another viewer resized it); and whether this page answers the program's queries (`answer`):
 //   one viewer that may type per terminal does, the one that typed last, else the first, so a query is answered once;
@@ -31,7 +31,7 @@ import {
 	type LinkOpenedHook,
 	type WebSocketHandle,
 } from "@earendil-works/p3/v1/server";
-import { TERMINAL_BACKLOG, type TerminalHost, TerminalHosts } from "../environments/contract.terminal-host.server.ts";
+import { type TerminalHost, TerminalHosts } from "../environments/contract.terminal-host.server.ts";
 import { abortWhen, abortWhenLost } from "../things/contract.server.ts";
 import { type Answerer, Answering } from "./answering.ts";
 import { SOCKET_FRAME, SOCKET_PATH, SocketMessage, Terminals } from "./kind.ts";
@@ -97,7 +97,7 @@ async function attach(socket: WebSocketHandle, request: HttpRequest, reach: Reac
 	reach.answering.set(terminal, election);
 	const answerer: Answerer = {
 		typable: () => ref.type !== undefined,
-		answer: (yes, at) => viewer.tell({ kind: "answer", yes, at }),
+		answer: (yes, at) => viewer.answer(yes, at),
 	};
 	received = (bytes, binary) => {
 		// Use withheld since: what is typed, a size, an answer go nowhere.
@@ -113,8 +113,8 @@ async function attach(socket: WebSocketHandle, request: HttpRequest, reach: Reac
 			terminals.resize(terminal, message.columns, message.rows);
 		} else if (message?.kind === "reply" && ref.type !== undefined) terminals.write(terminal, message.text);
 	};
-	viewer.kept(Math.min(terminals.tail(terminal, 0).end, TERMINAL_BACKLOG));
-	const stop = terminals.followSize(terminal, ({ columns, rows }) => viewer.tell({ kind: "size", columns, rows }));
+	viewer.kept(terminals.tail(terminal, 0).end);
+	const stop = terminals.followSize(terminal, ({ columns, rows }) => viewer.size(columns, rows));
 	election.add(answerer);
 	for (const [data, binary] of early.splice(0)) received(data, binary);
 	try {

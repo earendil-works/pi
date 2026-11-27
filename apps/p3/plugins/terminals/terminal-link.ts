@@ -62,7 +62,9 @@ function follow(
 	};
 	const connect = async () => {
 		const attached = await live.attach?.({ terminal }, BACKGROUND_CONTEXT);
-		if (stopped || attached === undefined) return;
+		if (stopped) return;
+		// Watch and Use withheld: nothing will connect (Astra, round 4: the screen said "Connecting…" for good).
+		if (attached === undefined) return feed.lost(false);
 		const url = new URL(attached.url, location.href);
 		url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 		const socket = new WebSocket(url);
@@ -77,7 +79,7 @@ function follow(
 			const told = JSON.parse(event.data) as SocketTold;
 			switch (told.kind) {
 				case "kept":
-					return feed.restart(told.bytes);
+					return feed.restart(told.end);
 				case "from":
 					return feed.from(told.offset);
 				case "size":
@@ -97,8 +99,8 @@ function follow(
 	const start = () => {
 		connect().catch((error: unknown) => {
 			if (stopped) return;
-			// Refused (Watch and Use withheld, the terminal gone): the view's list shows it; anything else is tried again.
-			if (isChordError(error, "forbidden") || isChordError(error, "invalid")) return;
+			// Refused (Watch and Use withheld, the terminal gone): nothing will connect; anything else is tried again.
+			if (isChordError(error, "forbidden") || isChordError(error, "invalid")) return feed.lost(false);
 			reportError("terminals: attaching to a terminal", error, BACKGROUND_CONTEXT);
 			again();
 		});

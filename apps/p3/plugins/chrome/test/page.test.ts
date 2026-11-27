@@ -436,6 +436,47 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await shots("terminals-phone");
 		await browser.size(DESKTOP);
 		await shots("terminals");
+		// Astra, round 4: a program redraws the row under the mouse between press and release, the browser sends no
+		// click; the release still focuses the field.
+		await line("for i in $(seq 1 100); do printf '\\0337\\033[5;1Hframe-%s\\0338' \"$i\"; sleep .05; done");
+		const row = `[...${screen}.querySelectorAll("span")].find((e) => /^frame-[0-9]/.test(e.textContent))`;
+		await browser.wait(`Boolean(${row})`);
+		const point = await browser.evaluate<{ x: number; y: number }>(
+			`(() => { const r = ${row}.getBoundingClientRect(); return { x: r.x + 4, y: r.y + r.height / 2 }; })()`,
+		);
+		await browser.evaluate(
+			`document.activeElement.blur(); document.addEventListener("mousedown", (event) => { window.pressed = event.target; }, { capture: true, once: true })`,
+		);
+		await browser.call("Input.dispatchMouseEvent", {
+			type: "mousePressed",
+			...point,
+			button: "left",
+			buttons: 1,
+			clickCount: 1,
+		});
+		await browser.wait("window.pressed !== undefined && !window.pressed.isConnected");
+		await browser.call("Input.dispatchMouseEvent", {
+			type: "mouseReleased",
+			...point,
+			button: "left",
+			buttons: 0,
+			clickCount: 1,
+		});
+		await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`, 5_000);
+		await browser.call("Input.dispatchKeyEvent", {
+			type: "keyDown",
+			key: "c",
+			code: "KeyC",
+			windowsVirtualKeyCode: 67,
+			modifiers: 2,
+		});
+		await browser.call("Input.dispatchKeyEvent", {
+			type: "keyUp",
+			key: "c",
+			code: "KeyC",
+			windowsVirtualKeyCode: 67,
+			modifiers: 2,
+		});
 		// An ended terminal takes no input and says it ended, never "Connecting…" (Astra, round 3).
 		await line("exit 7");
 		await browser.wait(`document.querySelector("[data-terminals]")?.textContent.includes("Ended with code 7.")`);
@@ -450,6 +491,46 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(
 			`document.querySelector("[data-terminals]")?.textContent.includes("No terminals are open here.")`,
 		);
+		await browser.open(`${origin}/w/${pi}`);
+	});
+
+	// Astra, round 4: the screen alone (its socket's frames written by the test): a page whose connection skipped over the
+	// kept output's end answers the live queries it draws after it.
+	it("answers the live queries after a skip over the kept output's end, none before", async () => {
+		await browser.wait(
+			`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Terminals")`,
+		);
+		const terminals = await browser.evaluate<string>(
+			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Terminals")?.dataset.navThing`,
+		);
+		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
+		// Only this terminal's socket is the test's: everything else on the page is real.
+		await browser.evaluate(`(() => {
+			const Real = WebSocket;
+			window.writes = [];
+			window.WebSocket = new Proxy(Real, { construct(target, args) {
+				if (!String(args[0]).includes("/terminals/socket")) return Reflect.construct(target, args);
+				const socket = { readyState: 1, close() {}, send(data) { if (typeof data === "string") window.writes.push(JSON.parse(data)); } };
+				window.frame = (data) => socket.onmessage({ data: typeof data === "string" || data instanceof ArrayBuffer ? data : JSON.stringify(data) });
+				setTimeout(() => socket.onopen?.());
+				return socket;
+			} });
+		})()`);
+		await press("[data-terminals-open]");
+		await browser.wait("typeof window.frame === 'function'");
+		const drawn = "window.writes.filter((m) => m.kind === 'drawn').reduce((n, m) => n + m.bytes, 0)";
+		const replies = "window.writes.filter((m) => m.kind === 'reply').length";
+		await browser.evaluate(
+			"frame({ kind: 'kept', end: 262144 }); frame({ kind: 'size', columns: 80, rows: 24 }); frame({ kind: 'answer', yes: true, at: 262144 }); frame({ kind: 'from', offset: 0 }); for (let at = 0; at < 262016; at += 65536) frame(new Uint8Array(Math.min(65536, 262016 - at)).buffer)",
+		);
+		await browser.wait(`${drawn} === 262016`);
+		await browser.evaluate("frame({ kind: 'from', offset: 300000 }); frame(new Uint8Array([27, 91, 99]).buffer)");
+		await browser.wait(`${drawn} === 262019`);
+		assert.equal(await browser.evaluate<number>(replies), 1, "the first live query is answered");
+		await browser.evaluate("frame(new Uint8Array(200).buffer); frame(new Uint8Array([27, 91, 99]).buffer)");
+		await browser.wait(`${drawn} === 262222`);
+		assert.equal(await browser.evaluate<number>(replies), 2, "and the next");
+		await press("[data-terminal-close]");
 		await browser.open(`${origin}/w/${pi}`);
 	});
 

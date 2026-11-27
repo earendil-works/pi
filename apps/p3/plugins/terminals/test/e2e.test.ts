@@ -114,7 +114,7 @@ describe("a terminal on this device", () => {
 		browser.socket.send(Buffer.from("echo typed-$((6*7)) && pwd\r"));
 		assert.match(await browser.printed(/typed-42/), new RegExp(folder));
 		assert.deepEqual(browser.told.slice(0, 2), [
-			{ kind: "kept", bytes: 0 },
+			{ kind: "kept", end: 0 },
 			{ kind: "size", columns: 80, rows: 24 },
 		]);
 		browser.socket.send(JSON.stringify({ kind: "resize", columns: 100, rows: 30 }));

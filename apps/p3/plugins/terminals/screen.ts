@@ -5,10 +5,11 @@
 /** What a screen is told about its terminal while it follows the link. */
 export type ScreenFeed = {
 	/**
-	 * A new connection starts: what follows is the terminal's kept output from its oldest kept byte, the first `kept`
-	 * bytes of it old output a screen draws on an empty screen and answers no query of (a replay), then live output.
+	 * A new connection starts: what follows is the terminal's kept output from its oldest kept byte, old output up to
+	 * offset `end` of the terminal's output (a replay, drawn on an empty screen, no query of it answered, also when the
+	 * connection skips over that offset), then live output.
 	 */
-	restart(kept: number): void;
+	restart(end: number): void;
 	/** Output, in order. */
 	output(bytes: Uint8Array): void;
 	/** The terminal's size: at each start and after each change (another viewer resized it). */
