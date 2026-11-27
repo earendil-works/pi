@@ -54,8 +54,8 @@ export type ModelChoice = Static<typeof ModelChoice>;
 /**
  * A session as its holders and its worker see it besides its thing (its name is the thing's, its parent the thing's
  * place): its id (its workspace's), where it works, when it was made, its state, when it was last touched, when it was
- * archived (`null`: it is not) and its model (`null`: the agent's default; metadata until the model picker asks the
- * agent's model with it, decision 118).
+ * archived (`null`: it is not) and its model (`null`: the agent's default; else the model its agent is asked while
+ * a login it may Use gives it, decision 118).
  */
 export const SessionRow = obj({
 	id: str(),

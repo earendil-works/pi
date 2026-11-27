@@ -4,24 +4,29 @@
 // server: switches applied, whoever makes the session), else the plugin's own.
 
 import {
+	bool,
 	type Ctx,
 	callerKey,
 	defineTable,
 	eq,
+	evolveTable,
 	type FacetHost,
 	json,
 	local,
 	method,
+	nul,
 	obj,
 	type P3Principal,
 	queries,
 	query,
 	str,
+	union,
 } from "@earendil-works/p3/v1";
 import { Gives } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
 import { SessionDefaults } from "./contract.ts";
 import { SessionDefaultsKind } from "./kind.ts";
+import { ModelChoiceV1 } from "./store.ts";
 
 /** Serves the session defaults kind on `host`: its settings' store and the kind. */
 export function serveDefaultsKind(host: FacetHost<P3Principal>): void {
@@ -84,21 +89,40 @@ export const DefaultsSettings = local("sessions.defaults-settings", {
 	},
 });
 
-/** Each defaults thing's settings, by thing (none set: `DEFAULTS`). */
-const Settings = defineTable("sessions.settings", {
+/**
+ * Each defaults thing's settings, by thing (none set: `DEFAULTS`). Version 1, as Pis deployed from 7093618af stored
+ * it.
+ */
+const SettingsV1 = defineTable("sessions.settings", {
 	version: 1,
-	// Version 2: the model choice names a login; a default of version 1 keeps everything but its model (decisions 71,
-	// 125: stored data survives the update).
 	columns: {
 		thing: str(),
-		defaults: json(SessionDefaults, {
+		defaults: json(
+			obj({
+				model: union([ModelChoiceV1, nul()]),
+				shared: bool(),
+				opensWith: union([str({ max: 200 }), nul()]),
+			}),
+			{ version: 1 },
+		),
+	},
+	key: ["thing"],
+});
+
+/**
+ * Version 2: the model choice names a login (decision 124); defaults of version 1 keep everything but their model,
+ * so stored data survives the update (decision 125).
+ */
+const Settings = evolveTable(SettingsV1, (t) =>
+	t.json(
+		"defaults",
+		json(SessionDefaults, {
 			version: 2,
 			// Version 1 cells are this plugin's own writes of the same object; the column checks the result once.
 			migrate: (old) => ({ ...(old as SessionDefaults), model: null }),
 		}),
-	},
-	key: ["thing"],
-});
+	),
+);
 
 /** Serves `DefaultsSettings` on `host`. */
 function serveSettings(host: FacetHost<P3Principal>): void {

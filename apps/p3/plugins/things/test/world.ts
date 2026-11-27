@@ -46,10 +46,17 @@ export type World = {
 	close(context: Context): Promise<void>;
 };
 
-/** A host at `Server()` with the things plugin, the test kind and `more` loaded. */
-export async function world(context: Context, more: readonly PluginFacet<P3Principal>[] = []): Promise<World> {
+/**
+ * A host at `Server()` with the things plugin, the test kind and `more` loaded, on a store in a file of its own, or in
+ * the file at `at` (a store an older version wrote: the caller removes it).
+ */
+export async function world(
+	context: Context,
+	more: readonly PluginFacet<P3Principal>[] = [],
+	at?: string,
+): Promise<World> {
 	const dir = await mkdtemp(join(tmpdir(), "p3-things-"));
-	const path = join(dir, "store.sqlite");
+	const path = at ?? join(dir, "store.sqlite");
 	const store: ChordStore = await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context);
 	const telemetry = new InMemoryTelemetryContext();
 	const errors: HostError[] = [];

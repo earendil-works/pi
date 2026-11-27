@@ -10,12 +10,14 @@ import {
 	type Ctx,
 	defineTable,
 	eq,
+	evolveTable,
 	type FacetHost,
 	host as hostColumn,
 	int,
 	invalid,
 	json,
 	nul,
+	obj,
 	type P3Principal,
 	query,
 	type RowOf,
@@ -28,7 +30,7 @@ import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { EnvironmentsStore } from "../environments/contract.server.ts";
 import { THIS_DEVICE } from "../environments/contract.ts";
 import { SessionsStore } from "./contract.server.ts";
-import { ModelChoice, type SessionState } from "./contract.ts";
+import { ModelChoice, type SessionState, ThinkingLevel } from "./contract.ts";
 import { messages } from "./messages.ts";
 
 /**
@@ -43,17 +45,23 @@ const ROW = {
 	state: str(),
 	lastTouch: int(),
 	archivedAt: int(),
-	// Version 2: a choice names a login, not a provider; one of version 1 reads as none (decision 71: no compatibility).
+	// Version 2: a choice names a login, not a provider; a choice of version 1 reads as none (decisions 71, 124).
 	model: json(union([ModelChoice, nul()]), { version: 2, migrate: () => null }),
 };
 
-/** Every session, one row each; by state for the waker. */
-const Rows = defineTable("sessions.sessions", {
+/** A model choice as version 1 of the tables stored it (a provider, not a login): their history's, never read. */
+export const ModelChoiceV1 = obj({ provider: str({ max: 200 }), model: str({ max: 200 }), thinking: ThinkingLevel });
+
+/** Every session, one row each; by state for the waker. Version 1, as Pis deployed from 7093618af stored it. */
+const RowsV1 = defineTable("sessions.sessions", {
 	version: 1,
-	columns: ROW,
+	columns: { ...ROW, model: json(union([ModelChoiceV1, nul()]), { version: 1 }) },
 	key: ["id"],
 	indexes: { working: ["state", "archivedAt"] },
 });
+
+/** Version 2: the model choice names a login (decision 124); stored data survives the update (decision 125). */
+const Rows = evolveTable(RowsV1, (t) => t.json("model", ROW.model));
 
 /** Serves `SessionsStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
