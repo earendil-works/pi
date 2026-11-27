@@ -3349,7 +3349,9 @@ loop. Chord has no stream type (it would need its own rules for drops, cancellat
   a reload withdraws the old Harness first, so that end is an old attachment's and ignored, and the next Harness's
   view arrives as one replacement (`[["r", view]]`, after what it committed while it attached): nothing fails. A
   failure of the Harness still given fails the member (`follow_failed`), retried after a backoff or with the next
-  Harness; the object stays live. While no Harness is given the member keeps its last view. `registryReader`'s listener runs inside Chord's batch: it only wakes
+  Harness; the object stays live. While no Harness is given the member keeps its last view. A failed first
+  attachment fails the object `transient` as any activation's: `self.retryOn(harness)` wakes it on the next Harness
+  (without it, it waits for its backoff). `registryReader`'s listener runs inside Chord's batch: it only wakes
   Durable's scheduler (a Chord call there throws `invalid/reentrant`).
 - `HarnessModels` and `HarnessEnvironments` start with one contribution each, from the models and envs plugins'
   objects that own the natives; several providers or environment kinds are their `compose`. After a models reload
@@ -3591,7 +3593,7 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
 - **The schema:** `CHORD_TELEMETRY_SCHEMA` (root export, `defineTelemetrySchema`) declares every span, event and metric
   Chord records with its attributes; the cost counters (`chord.data.*`, `chord.link.*`, `chord.store.*`,
   `chord.query.runs`, `chord.query.probes`, `chord.query.skips`, `chord.query.rows` (rows returned to Chord: output,
-  not what the backend scanned), `chord.cycle.visits`, `chord.derive.*`, `chord.registry.*`, `chord.contract.adapts`) are recorded
+  not what the backend scanned), `chord.cycle.visits`, `chord.follow.attaches`, `chord.derive.*`, `chord.registry.*`, `chord.contract.adapts`) are recorded
   through it (`chordMetrics(metrics)`: typed instruments made once per adapter's metrics object and name, a `WeakMap`;
   the NOOP metrics share one set). Ids (object labels, run ids, address keys) are span attributes only.
 - **Spans:** `chord.call` (a consumer's call of a remote member, until its reply), `chord.method` (a provider running a

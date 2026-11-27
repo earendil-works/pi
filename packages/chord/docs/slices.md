@@ -132,9 +132,10 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   (every cache evicts; no growth round after round). Benches `test/bench/hot-paths.ts`, `list-heap.ts`,
   `hold-heap.ts` (client heap, case 8), `commit-index.ts` (case 3).
 - **A follow over a changing source** (built 2026-11-27, no slice of its own; decision "A follow re-attaches over a
-  changing source", ERNDL-1191): `self.follow(over, attach)` in `host/follow.ts` (each attachment its own observer;
-  a failed member retried with backoff; `follow_failed`), the `over` check (`followedOver`); tests in
-  `test/host/follow.test.ts` ("over a changing source"); example 79.
+  changing source", ERNDL-1191): `self.follow(over, attach)` in `host/follow-over.ts`, an attach for
+  `host/follow.ts` (each attachment its own observer; a failed member retried with backoff; `follow_failed`;
+  `chord.follow.attaches`), the `over` check (`followedOver`, also in staging); tests in `test/host/follow.test.ts`
+  (the describes "over a changing source: …"); example 79.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.

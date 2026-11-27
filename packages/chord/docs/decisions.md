@@ -3878,7 +3878,7 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   old value, and nothing reports it. Make a new object for every new value. No freezing, no development mode checks
   it (R9): the guides say it (`plugin-authoring.md` "Values you hand to Chord", p3's `chord-practices.md`).
 
-- **A follow re-attaches over a changing source (owner, 2026-11-27, decision 131; ERNDL-1191):** the problem: an
+- **A follow re-attaches over a changing source (ERNDL-1191; the failure rule: main session, 2026-11-27, decision 131, reversible, for Mario to confirm):** the problem: an
   object following a view of a runtime that a registry gives (p3's transcript over the session's harness) could only
   fail and `retryOn` when a reload replaced the entry, which reported `object_failed` per open holder at every reload;
   p3 rebuilt the follow in a plugin (`followAcross`), and its reviews found six races there (an attachment overtaken
@@ -3893,8 +3893,18 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   publishes; `undefined` lets the attachment go and keeps the last value. **A failure of the source still given while
   live (its attach rejecting or giving `undefined`, its runtime's `failed` end) fails the member, not the object**:
   one failure call, `follow_failed` once per episode, retried after `nextDelay`'s backoff and at once on the next
-  value, the next attachment replacing the value whole. Its `ended` end lets the attachment go. `self.follow(attach)`
-  keeps R4.
+  value, the next attachment replacing the value whole. Its `ended` end lets the attachment go. While the attempt
+  still activates (also after this follow's first attachment, another one not yet), a failure is the activation's
+  (R4); a sealed attempt starts, reports and retries nothing more. Activation takes the first attachment current when
+  it resolves: each new value starts its own, one overtaken never holds up the newest. A call of the current
+  attachment in the batch that changed `over`, before its call came, counts only while `over` still gives its value
+  (the attachment watches `over` as a dependent). The same value again while attached changes nothing. A pending
+  attachment keeps only its newest value. The runtime's `detach` runs outside any batch. Attachments are counted
+  (`chord.follow.attaches`, by reason `value` or `retry`). (Review round 1: Opus, Astra, Fable.)
+  **Built as an attach of its own** (`host/follow-over.ts`; main session, 2026-11-27, decision 140, from Fable's
+  review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
+  it; its one new rule: a `failed` call fails the member until the next value, which replaces it whole (Durable
+  never sends one: it ends its observer). `self.follow(attach)` keeps R4 otherwise.
 
 ## Still valid from `target-design.md`
 

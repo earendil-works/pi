@@ -12,6 +12,7 @@
 
 ### Added
 
+- `self.follow(over, attach)`: a follow over a changing source (a registry value or a writable), attached again to each of its values: one replacement and no failure when the source is replaced, calls held while it attaches. A failure of the source still given while the object is live fails the member (`follow_failed`, a new `HostError`), retried with backoff; the object stays live. Attachments are counted (`chord.follow.attaches`) ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - `grantable(member)`, `GrantableName<C>`, `AllowedOf<C>` and flags in remote contracts (slice 15).
 - `deny(reason, message?)`: an admission's denial carries a message as data for the person (`MessageData`), in the `forbidden` error's `details.message` (the denied reference's failure, a call's `forbidden`, a cut call's `forbidden/revoked`). A changed message is a new decision without a rebuild.
 - `MessageData`, `MessageParam` and `MessageSchema` are exported from the package root's data layer as well (still from `/surfaces`).
@@ -22,6 +23,7 @@
 
 ### Changed
 
+- A `failed` call to a `self.follow` observer fails the member until its next value, which replaces the value whole; it was ignored (Durable never sends one) ([ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191)).
 - A commit files a read only under the row keys that came or went since its last run, and a live window that moved by k rows is diffed by identity: a 500-item checklist read by 100 unshared lists 54 → 45 ms per write, a shifted window of 500 rows diffed in about 3 µs instead of 80 (`docs/benchmarks.md`, "Identical live reads", step 4).
 - Identical live reads share one source: `self.liveQuery` and `self.count` readers of the same provider instance's named query with the same arguments and window (or count) share one read: one run, one decode and one value per write, their frames diffed once. 100 callers each holding their own object over a link with the same window of 50 notes: 1.6 ms to the last delivery per write instead of 8.1 ms, a 500-item checklist 1.8 ms instead of 46 ms; one query run instead of 100 (`docs/benchmarks.md`, "Identical live reads"). Lists do not share their pages yet.
 - A reference makes its named queries' handles on first use: a reference to a store with 23 named queries, none read, takes 1.3 KiB instead of 6.4 KiB.

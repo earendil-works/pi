@@ -56,7 +56,8 @@ import { CallContext, type Caller, type Ctx, withLinkedAbortSignal } from "./ctx
 import { Deadline } from "./deadline.ts";
 import { checkDependencies, type Dependency, ParkedLong, type Parking, parkedCause, pinKeys } from "./dependencies.ts";
 import { type EventNode, OwnEventSource, type SourceOwner } from "./events.ts";
-import { type FollowAttach, type Followed, type FollowOverAttach, FollowSource, followedOver } from "./follow.ts";
+import { type FollowAttach, FollowSource } from "./follow.ts";
+import { type FollowOverAttach, followedOver, followOver } from "./follow-over.ts";
 import type { HostError } from "./host.ts";
 import type { ListOptions } from "./list.ts";
 import {
@@ -184,7 +185,9 @@ export interface Self<P extends Principal = Principal> extends RoutineDeclaratio
 	 * old one detached, the new one's calls held until it attached, then one replacement with its newest value), and
 	 * one overtaken while it attaches never shows; `undefined` keeps the last value. A failure of the source still
 	 * given while live (its attach rejecting, its runtime failing) makes the member failed (`follow_failed`), retried
-	 * after a backoff or at the next value; the object stays live. A rejection while activating fails it `transient`.
+	 * after a backoff or at the next value; the object stays live. A failure while the object activates fails it
+	 * `transient`, as a plain follow's: declare `self.retryOn(over)` so that the next value wakes it (else it waits for
+	 * its backoff, up to 60 s).
 	 */
 	follow<S, T>(over: NativeWatchable<S | undefined>, attach: FollowOverAttach<S, T>): Watchable<T>;
 	/**
@@ -779,21 +782,19 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		const object = this.#object;
 		const { host, label } = object;
 		// The source holds what the runtime gives it, `T`, as Chord's JSON sources do; the forms differ by their arity.
-		const followed: Followed =
+		const attached =
 			attach === undefined
-				? { kind: "once", attach: first as unknown as FollowAttach<JsonValue> }
-				: {
-						kind: "over",
-						over: followedOver(first, label),
-						attach: attach as unknown as FollowOverAttach<unknown, JsonValue>,
-					};
-		const owner = {
-			label,
-			context: this.#context,
-			ended: (end: WatchEnd) => this.#followEnded(end),
-			report: (error: unknown) => host.report({ kind: "follow_failed", object: label, error }),
-		};
-		const source = new FollowSource(followed, owner, host.batch);
+				? (first as unknown as FollowAttach<JsonValue>)
+				: followOver(followedOver(first, label), attach as unknown as FollowOverAttach<unknown, JsonValue>, {
+						label,
+						// Its later attachments run as the live object's work: no activation span, no opener mark.
+						context: withAbortSignal(this.#abort.signal, this.#context),
+						metrics: host.metrics,
+						live: () => this.#isLive,
+						report: (error) => host.report({ kind: "follow_failed", object: label, error }),
+					});
+		const owner = { label, context: this.#context, ended: (end: WatchEnd) => this.#followEnded(end) };
+		const source = new FollowSource(attached, owner, host.batch);
 		this.#follows = appended(this.#follows, source);
 		return source as unknown as Watchable<T>;
 	}

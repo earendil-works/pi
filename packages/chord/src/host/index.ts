@@ -14,7 +14,8 @@ export type {
 } from "./attempt.ts";
 export type { Ctx } from "./ctx.ts";
 export { defineFacet, type Facet, type FacetHost, type FacetSelf, type ServeOptions } from "./facet.ts";
-export type { FollowAttach, FollowAttachment, FollowObserver, FollowOverAttach } from "./follow.ts";
+export type { FollowAttach, FollowAttachment, FollowObserver } from "./follow.ts";
+export type { FollowOverAttach } from "./follow-over.ts";
 export {
 	type CommittedReload,
 	createHost,

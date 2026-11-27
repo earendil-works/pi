@@ -26,6 +26,7 @@ import type { Watchable } from "../watch.ts";
 import { type AdmitSelf, type AdmittedValue, refuseAdmittedJob } from "./admission.ts";
 import type { StoreSelf } from "./attempt.ts";
 import { type Facet, type FacetContribution, type ServedEntry, setUp } from "./facet.ts";
+import { followedOver } from "./follow-over.ts";
 import { grantedImplementation } from "./members.ts";
 import type { ChordObject, LocalContract, RemoteContract, Served, ServedAdmission } from "./object.ts";
 import type { Presence } from "./presence.ts";
@@ -467,8 +468,10 @@ class RecordingSelf {
 		throw new Error(`${this.#object.label}: self.tx runs in calls, not in a factory`);
 	}
 
-	follow(): never {
+	follow(first?: unknown, attach?: unknown): never {
 		this.#assertDeclaring("follow");
+		// Over a changing source: a registry value is checked; a writable is inert here, so it is checked when served.
+		if (attach !== undefined && first !== INERT) followedOver(first, this.#object.label);
 		return INERT;
 	}
 
