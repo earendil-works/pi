@@ -287,10 +287,11 @@ const archiveTool = (session: HarnessSession) =>
 			const agent = (await subagentsOf(api, context))[name];
 			if (agent === undefined) return reply(`No subagent named ${name} (see subagent_list).`);
 			await (await api.conversation(agent.conversationId, context))?.abort(context);
+			// Before its name goes: an undo that fails (the server away) leaves the subagent listed, so a retry undoes it.
+			await session.moveLocation(agent.conversationId, null, context);
 			await api.commit(async (tx) => {
 				delete (await tx.doc(Subagents, api.conversationId)).agents[name];
 			}, context);
-			await session.moveLocation(agent.conversationId, null, context);
 			return reply(`Archived ${name}.`);
 		},
 	});

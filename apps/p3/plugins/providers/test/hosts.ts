@@ -13,7 +13,7 @@ import {
 	type P3Principal,
 	type PluginFacet,
 } from "@earendil-works/p3/v1";
-import { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
 import fauxServer from "../../../test/plugins/faux-login/server.ts";
 import { type World, world } from "../../things/test/world.ts";
 import providersServer from "../server.ts";
@@ -41,10 +41,12 @@ export function providerFacets(
 		},
 		{
 			name: "p3-base",
-			facet: defineFacet((facetHost) =>
+			facet: defineFacet((facetHost) => {
+				// No runner: the plugin tier starts no worker, and a session's removal deletes no worker's data.
+				facetHost.serve(WorkerRunners, { compose: () => undefined });
 				facetHost.serve(ServerRuntime, {
 					// The providers plugin reads the runtime's host and catalog base only, the sessions plugin (a session's
-					// models' tests) its data directory and machine; the host is made after this facet loads.
+					// models' tests) its data directory, work root and machine; the host is made after this facet loads.
 					compose: () =>
 						({
 							get host() {
@@ -52,10 +54,11 @@ export function providerFacets(
 							},
 							catalogBaseUrl,
 							dataDir: tmpdir(),
+							workRoot: tmpdir(),
 							machine: { user: "test", hostname: "test" },
 						}) as unknown as ServerRuntime,
-				}),
-			),
+				});
+			}),
 		},
 	];
 }

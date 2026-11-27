@@ -36,6 +36,7 @@ import { ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
 import { checkMachine } from "../environments/contract.server.ts";
 import { MACHINE_KIND } from "../environments/contract.ts";
 import { OneThing, ThingsStore } from "../things/contract.server.ts";
+import { type Caller, callerKeyOf } from "../things/contract.ts";
 import { SessionsStore } from "./contract.server.ts";
 import { type Location, ModelChoice, SessionDetail, type SessionState, ThinkingLevel } from "./contract.ts";
 import { messages } from "./messages.ts";
@@ -183,9 +184,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		 */
 		const agentsWorkAt = async (session: string, { machine, folder }: Location, ctx: Ctx<P3Principal>) => {
 			fullPath(folder);
-			const answer = await things.answerOf({ workspace: session, thing: machine, caller: `worker:${session}` }, ctx);
-			if (answer?.kind !== MACHINE_KIND) throw noMachine(machine);
-			checkMachine(machine, { kind: "agent", session }, answer);
+			const agents: Caller = { kind: "agent", session };
+			const answer = await things.answerOf({ workspace: session, thing: machine, caller: callerKeyOf(agents) }, ctx);
+			// Nothing there for them: the machine kind's refusal, as Files and Terminals give it (Astra, round 2); a thing
+			// there that is no machine is none.
+			if (answer === null) return checkMachine(machine, agents, undefined);
+			if (answer.kind !== MACHINE_KIND) throw noMachine(machine);
+			checkMachine(machine, agents, answer);
 		};
 		return {
 			sessions: self.queries(

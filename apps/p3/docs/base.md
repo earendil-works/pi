@@ -62,8 +62,9 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   the moved conversations (`detail`, one document per session, by conversation id); the worker reads the same in
   `SessionFacts.detail`.
 - **What its workers keep** (their directory, `<data>/workers/<id>`) goes with the session: removing the session stops
-  its worker and deletes it (the runner's `remove`). A directory of a session with no row is swept, and reported,
-  whenever a runner appears (at every start).
+  its worker and deletes it (the runner's `remove`, refusing an id that names no session). A directory of a session
+  with no row is swept whenever a runner appears (at every start), each one reported as it goes, one that fails
+  reported too and holding up none of the others.
 
 ## Admission: one question
 

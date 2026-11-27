@@ -103,6 +103,8 @@ export type Server = {
 	row(change: Partial<SessionRow>): void;
 	/** The conversations moved, by id (`SessionFacts.detail`, as `moveLocation` set them). */
 	readonly moved: () => SessionDetail["locations"];
+	/** Makes the next undo of a move fail (the server away for one call). */
+	failNextUndo(): void;
 	/**
 	 * Sets what the agent holds (and makes the holding ready); a kind whose entries are the same objects in the same
 	 * order keeps its list.
@@ -183,6 +185,7 @@ export function standIns(
 	let readies = 0;
 	const rows = new Set<Writable<SessionRow>>();
 	let movedValue: SessionDetail = { locations: {} };
+	let failUndo = false;
 	const details = new Set<Writable<SessionDetail>>();
 	const holdings = new Set<Writable<Held | undefined>>();
 	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
@@ -201,6 +204,9 @@ export function standIns(
 			for (const writable of rows) writable.set(rowValue);
 		},
 		moved: () => movedValue.locations,
+		failNextUndo: () => {
+			failUndo = true;
+		},
 		hold: (next) => {
 			grouped = group([...next, DEVICE], grouped);
 			heldValue = grouped;
@@ -234,6 +240,10 @@ export function standIns(
 				session: self.derive([session], ([value]) => value),
 				detail: self.derive([detail], ([value]) => value),
 				moveLocation: async ({ conversation, location }) => {
+					if (location === null && failUndo) {
+						failUndo = false;
+						throw new Error("stand-in: the server is away for this undo");
+					}
 					const { [conversation]: _undone, ...others } = movedValue.locations;
 					movedValue = { locations: location === null ? others : { ...others, [conversation]: location } };
 					for (const writable of details) writable.set(movedValue);

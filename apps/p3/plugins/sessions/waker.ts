@@ -28,10 +28,9 @@ export function serveWaker(host: FacetHost<P3Principal>): void {
 		const runtime = self.registry(ServerRuntime);
 		const runners = self.registry(WorkerRunners);
 		self.onLive(async (ctx) => {
-			const { host: server } = runtime.value;
 			/** Starts session `session`'s worker: held until it serves `SessionStart` (it is live then), then released. */
 			const start = (session: string) =>
-				server
+				runtime.value.host
 					.root(async (root) => void (await root.get(SessionStart, { session })), ctx)
 					.catch((error: unknown) => {
 						// Ending with the waker (its reload, the server's close) is no failure.

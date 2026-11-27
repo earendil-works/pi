@@ -16,6 +16,7 @@ import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
 	defineFacet,
+	isChordError,
 	type P3Principal,
 	type Reference,
 	Session,
@@ -394,19 +395,18 @@ describe("a location per conversation (8)", () => {
 		});
 	});
 
-	// Opus S3, round 1: the worker's path, for a thing no machine and one not linked in the session at all.
+	// Opus S3, round 1: the worker's path, for a thing no machine and one not linked in the session at all; Astra, round
+	// 2: one not there is the machine kind's refusal, as for a person and in Files.
 	it("refuses the worker's move to a thing that is no machine or is not there", async () => {
 		const { leo, fam } = await family();
 		const session = await makeSession(leo, fam, "one");
 		const board = await store.create({ kind: "test.board", name: "b", workspace: fam, by: BY }, context);
 		await as({ kind: "worker", session }, async (ctx) => {
 			const facts = await ctx.get(SessionFacts, {});
-			for (const machine of [board, "nowhere"]) {
-				await assert.rejects(
-					facts.moveLocation({ conversation: "1", location: { machine, folder: "/srv" } }, ctx),
-					new RegExp(`no machine ${machine}`),
-				);
-			}
+			const move = (machine: string) =>
+				facts.moveLocation({ conversation: "1", location: { machine, folder: "/srv" } }, ctx);
+			await assert.rejects(move(board), new RegExp(`no machine ${board}`));
+			await assert.rejects(move("nowhere"), (error: unknown) => isChordError(error) && error.code === "forbidden");
 		});
 	});
 

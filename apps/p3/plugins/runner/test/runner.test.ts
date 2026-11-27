@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { getEventListeners } from "node:events";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -425,6 +425,22 @@ describe("the local runner's stops and exits", () => {
 		mock.restoreAll();
 		mock.timers.reset();
 		await t.close();
+	});
+
+	// Astra, push 4 round 2: an empty id named `workers/` itself.
+	it("removes one session's workers' directory, refusing an id that names no session's before it stops anything", async () => {
+		const workers = join(t.runtime.dataDir, "workers");
+		await mkdir(join(workers, "kept"), { recursive: true });
+		await mkdir(join(workers, "gone"), { recursive: true });
+		await mkdir(join(workers, "not a session"), { recursive: true });
+		for (const id of ["", ".", "..", "a/b", "../kept", "kept/.."]) {
+			await assert.rejects(t.runner.remove(id), /is no session id/, JSON.stringify(id));
+		}
+		assert.deepEqual(t.route, [], "nothing was stopped (the route never suspended)");
+		assert.deepEqual((await t.runner.stored()).toSorted(), ["gone", "kept"], "only session ids are listed");
+		await t.runner.remove("gone");
+		assert.deepEqual((await readdir(workers)).toSorted(), ["kept", "not a session"]);
+		assert.deepEqual(t.route, ["suspend gone: none"]);
 	});
 
 	it("an exit counts once the server's store settled, its link closed first; the next start forks only then (Sol S2, S6)", async () => {

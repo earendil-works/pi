@@ -565,8 +565,12 @@ describe("the harness plugin on a worker", () => {
 		await ranIn(moved, 2);
 		assert.deepEqual(await session.location(ROOT_CONVERSATION_ID, context), { machine: "m", folder: moved });
 		assert.deepEqual(await session.location(child, context), { machine: "m", folder: own });
-		// Round 1's decision: an archived subagent's move is undone with it.
+		// Round 1's decision: an archived subagent's move is undone with it. Astra, round 2: an undo that failed leaves the
+		// subagent there, so the next archive undoes it.
+		server.failNextUndo();
 		await ask("@archive");
+		assert.deepEqual(server.moved()[String(child)], { machine: "m", folder: own }, "the failed archive kept it");
+		await ask("@archive, again");
 		await eventually(server.moved, (locations) => locations[String(child)] === undefined, 5000);
 		assert.deepEqual(Object.keys(server.moved()), ["1"]);
 	});
