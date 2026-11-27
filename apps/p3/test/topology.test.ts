@@ -37,8 +37,9 @@ import { SessionStart } from "../plugins/sessions/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
 import { ATTACH_PATH, Terminals, TerminalsKind } from "../plugins/terminals/kind.ts";
 import { OneThing } from "../plugins/things/contract.server.ts";
+import { HeldThings } from "../plugins/things/contract.worker.ts";
 import { Probe } from "./plugins/probe/contract.ts";
-import { newSession, piOf } from "./support.ts";
+import { newSession, piOf, thisDevice } from "./support.ts";
 import { type Topology, topology } from "./topology.ts";
 import { collected, eventually, within } from "./until.ts";
 
@@ -60,7 +61,7 @@ async function withSession(idleMs?: number) {
 	running = t;
 	const owner = await t.client(t.owner);
 	// Where the topology's sessions work: this device's machine, in /tmp.
-	const here = { environment: (await owner.get(ThisDevice, {}, context)).machine.value, folder: "/tmp" };
+	const here = { environment: await thisDevice(owner, context), folder: "/tmp" };
 	const make = (title: string) => newSession(owner, title, context, here);
 	const archive = async (session: string) => {
 		const held = await owner.get(SessionObject, { workspace: session, thing: session }, context);
@@ -233,7 +234,7 @@ describe("reloads while in use", () => {
 		assert.equal(session.row.value.id, id);
 		assert.deepEqual(
 			environments.environments.value.map(({ id: environment }) => environment),
-			[(await owner.get(ThisDevice, {}, context)).machine.value],
+			[await thisDevice(owner, context)],
 		);
 		assert.deepEqual(t.errors, []);
 	});
@@ -406,10 +407,15 @@ describe("counted work", () => {
 		const first = counted();
 		await owner.get(SessionWorker, { session: id }, context);
 		const second = counted();
+		// The worker, once started, holds what its agent may use (this device's machine: its info is one read, once);
+		// that is the worker's start, not the second hold's.
+		const holding = await t.workers.get(id)!.host.registry(HeldThings, context);
+		await until(holding, (held) => held?.has(MACHINE_KIND) === true, within("the worker's holding", context));
+		const settled = counted();
 		await (await t.client(t.owner)).get(SessionWorker, { session: id }, context);
 		const after = counted();
 		assert.deepEqual(
-			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - second[0]!, after[1]! - second[1]!],
+			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - settled[0]!, after[1]! - settled[1]!],
 			[1, 0, 0, 0],
 		);
 	});
