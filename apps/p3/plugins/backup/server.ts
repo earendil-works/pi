@@ -1,7 +1,8 @@
 // The backup plugin on the server. The store keeps whether sessions are backed up by default, each session's own
 // choice, and each session's backup state. The owner sets the default and the choices (`Backups`); each session's
 // worker sees the result for its session (its own choice, else the default) and reports its state (`SessionBackup`).
-// Counts, the owner's list, uploads and targets come in later steps.
+// The owner sees how many sessions are in each state (`Backups.counts`) and the sessions in one state (`BackupsList`).
+// Uploads and targets come in later steps.
 
 import {
 	admitOwner,
@@ -24,7 +25,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { SessionsStore } from "@earendil-works/p3/v1/server";
 import { BackupStore } from "./contract.server.ts";
-import { type BackupState, type BackupStatus, Backups, SessionBackup } from "./contract.ts";
+import { type BackupState, type BackupStatus, Backups, BackupsList, Counts, SessionBackup } from "./contract.ts";
 
 /** Whether sessions are backed up by default. Off until the owner turns it on. */
 const Settings = defineState("backup.settings", {
@@ -61,13 +62,28 @@ const Sessions = defineTable("backup.sessions", {
 /** A row's state before the session's first report. */
 const NO_STATE = { state: "none", reason: "", error: "", since: 0 };
 
-/** No session has reported yet: the counts start at 0 (the statuses come in a later step). */
-const NO_COUNTS = { synced: 0, retrying: 0, paused: 0, stopped: 0 };
+/**
+ * How many sessions are in each state, kept as the rows change: in the same commit as the row whose state changes.
+ * Why not count the rows: a count reads every row in the state each time a row changes state, so an outage that turns
+ * every session to `retrying` and back would read the whole table once per session.
+ */
+const StateCounts = defineState("backup.counts", {
+	schema: Counts,
+	version: 1,
+	initial: () => ({ synced: 0, retrying: 0, paused: 0, stopped: 0 }),
+	persist: true,
+	// One small value: a checkpoint each time keeps it a single row.
+	checkpointWhen: () => true,
+});
+
+/** How many sessions the owner's list loads at a time. */
+const PAGE = 50;
 
 export default defineFacet((host) => {
 	host.serve(BackupStore, (_params, self) => {
 		const settings = self.state(Settings);
 		const rows = self.table(Sessions);
+		const counts = self.state(StateCounts);
 		const sessions = self.get(SessionsStore, {});
 		return {
 			defaultEnabled: self.derive([settings], ([value]) => value.defaultEnabled),
@@ -94,8 +110,14 @@ export default defineFacet((host) => {
 					// The key; a row without a reported state is left out.
 					one: ({ session }: { session: string }) =>
 						query(Sessions).where((c) => and(eq(c.session, Session({ id: session })), ne(c.state, "none"))),
+					// Index `by_state`.
+					inState: ({ state }: { state: string }) =>
+						query(Sessions)
+							.where((c) => eq(c.state, state))
+							.orderBy((c) => c.since, "asc"),
 				},
 			),
+			counts,
 			report: async ({ session, status }, ctx) => {
 				const stored = storedOf(status);
 				// `uploading` and the last commit change on every upload: they are never stored.
@@ -106,7 +128,9 @@ export default defineFacet((host) => {
 					if (row === undefined) tx.put(rows, { ...key, choice: "default", ...stored, since: status.at });
 					else if (row.state !== stored.state || row.reason !== stored.reason || row.error !== stored.error) {
 						tx.update(rows, key, { ...stored, since: status.at });
-					}
+					} else return null;
+					// A new reason or error in the same state changes no count.
+					if (row?.state !== stored.state) recount(await tx.draft(counts), row?.state, stored.state);
 					return null;
 				}, ctx);
 				return null;
@@ -138,10 +162,19 @@ export default defineFacet((host) => {
 			return {
 				defaultEnabled: store.defaultEnabled,
 				server: constant(null),
-				counts: constant(NO_COUNTS),
+				counts: store.counts,
 				setDefault: (on, ctx) => store.setDefault(on, ctx),
 				setSession: (args, ctx) => store.setSession(args, ctx),
 			};
+		},
+		{ admit: admitOwner },
+	);
+
+	host.serve(
+		BackupsList,
+		({ state }, _principal, _admitted, self) => {
+			const list = self.list("sessions", [[self.get(BackupStore, {}).states.inState, { state }]], { first: PAGE });
+			return { list: list.value, more: (ctx) => list.more(ctx) };
 		},
 		{ admit: admitOwner },
 	);
@@ -161,7 +194,7 @@ export default defineFacet((host) => {
 });
 
 /** A reported status as its row keeps it: its kind, reason and error; `undefined` for `uploading`, never stored. */
-function storedOf(status: BackupStatus): { state: string; reason: string; error: string } | undefined {
+function storedOf(status: BackupStatus): { state: keyof Counts; reason: string; error: string } | undefined {
 	const state = status.state;
 	switch (state.kind) {
 		case "uploading":
@@ -189,4 +222,11 @@ function stateOf(row: { state: string; reason: string; error: string }): BackupS
 		default:
 			return { kind: "synced" };
 	}
+}
+
+/** Moves one session from state `from` (`none` or missing: not counted yet) to state `to` in `counts`. */
+function recount(counts: Counts, from: string | undefined, to: keyof Counts): void {
+	// `from` holds only what `storedOf` wrote, or `none`.
+	if (from !== undefined && from !== "none") counts[from as keyof Counts] -= 1;
+	counts[to] += 1;
 }

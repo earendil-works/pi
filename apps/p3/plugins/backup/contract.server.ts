@@ -2,7 +2,7 @@
 // Every write goes through it.
 
 import { bool, local, method, nul, obj, oneOf, queries, str, union } from "@earendil-works/p3/v1";
-import { BackupStatus, SessionBackupRow } from "./contract.ts";
+import { BackupStatus, Counts, SessionBackupRow } from "./contract.ts";
 
 /**
  * The backup's store, once per server: whether sessions are backed up by default, each session's own choice, and each
@@ -26,7 +26,11 @@ export const BackupStore = local("backup.store", {
 		states: queries(SessionBackupRow, {
 			/** Session `session`'s state, if it reported one. */
 			one: obj({ session: str() }),
+			/** The sessions in state `state`, the longest in it first. */
+			inState: obj({ state: str() }),
 		}),
+		/** How many sessions are in each state. */
+		counts: Counts,
 		/** Keeps session `session`'s reported state: written only when it differs from the stored one. */
 		report: method(obj({ session: str(), status: BackupStatus })),
 	},

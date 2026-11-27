@@ -1,7 +1,9 @@
-// The backup plugin on the server: the owner sets whether sessions are backed up by default and each session's own
-// choice, and a session's worker sees the result for its session (plugin tier); only the owner may use `Backups`, and only a session's worker `SessionBackup` (plugin tier);
-// the default is stored, so it survives a restart and a reload of the plugin while the owner holds `Backups` (end to
-// end).
+// The backup plugin on the server.
+// - Plugin tier: the owner sets the default and each session's own choice, and a session's worker sees the result; a
+//   worker's reported state is stored only when it changes; the owner sees the counts by state and the sessions in one
+//   state; only the owner may use `Backups` and `BackupsList`, and only a session's worker `SessionBackup`.
+// - End to end: the default is stored, so it survives a restart and a reload of the plugin while the owner holds
+//   `Backups`.
 
 import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -19,7 +21,14 @@ import { ThingsStore } from "../../things/contract.server.ts";
 import { make } from "../../things/kind-server.ts";
 import thingsServer from "../../things/server.ts";
 import { BackupStore } from "../contract.server.ts";
-import { type BackupStatus, Backups, SessionBackup, type SessionBackupRow } from "../contract.ts";
+import {
+	type BackupStatus,
+	Backups,
+	BackupsList,
+	type Counts,
+	SessionBackup,
+	type SessionBackupRow,
+} from "../contract.ts";
 
 /** The plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -247,12 +256,73 @@ describe("a session's reported state", () => {
 	});
 });
 
+/** What the owner sees: how many sessions are in each state, and the sessions in state `state`, in order. */
+async function ownerSees(
+	t: Awaited<ReturnType<typeof testPlugin>>,
+	owner: P3Principal,
+	state: "synced" | "retrying" | "paused" | "stopped",
+): Promise<{ counts: Counts; sessions: string[] }> {
+	return t.root(
+		async (ctx) => {
+			const counts = (await ctx.get(Backups, {})).counts.value;
+			const { rows } = (await ctx.get(BackupsList, { view: "test", state })).list.value;
+			return { counts, sessions: rows.map((row) => row.session) };
+		},
+		context,
+		{ principal: owner },
+	);
+}
+
+describe("the owner's overview", () => {
+	it("counts the sessions in each state, moving a session when its state changes", async () => {
+		await withServerFacet(async (t, owner, [s1, s2]) => {
+			await report(t, s1, { state: { kind: "synced" }, at: 1 });
+			await report(t, s2, { state: { kind: "retrying", error: "offline" }, at: 2 });
+			assert.deepEqual((await ownerSees(t, owner, "synced")).counts, {
+				synced: 1,
+				retrying: 1,
+				paused: 0,
+				stopped: 0,
+			});
+			await report(t, s1, { state: { kind: "stopped", reason: "diverged", error: "head moved" }, at: 3 });
+			// The same state with another reason: the counts stay.
+			await report(t, s1, { state: { kind: "stopped", reason: "refused", error: "too large" }, at: 4 });
+			assert.deepEqual((await ownerSees(t, owner, "synced")).counts, {
+				synced: 0,
+				retrying: 1,
+				paused: 0,
+				stopped: 1,
+			});
+		});
+	});
+
+	it("lists the sessions in one state, the longest in it first", async () => {
+		await withServerFacet(async (t, owner, [s1, s2]) => {
+			await report(t, s1, { state: { kind: "retrying", error: "offline" }, at: 5 });
+			await report(t, s2, { state: { kind: "retrying", error: "offline" }, at: 3 });
+			assert.deepEqual((await ownerSees(t, owner, "retrying")).sessions, [s2, s1]);
+			assert.deepEqual((await ownerSees(t, owner, "synced")).sessions, []);
+			await report(t, s2, { state: { kind: "synced" }, at: 6 });
+			assert.deepEqual((await ownerSees(t, owner, "retrying")).sessions, [s1]);
+			assert.deepEqual((await ownerSees(t, owner, "synced")).sessions, [s2]);
+		});
+	});
+});
+
 describe("who may use what", () => {
-	it("gives Backups to the owner only", async () => {
+	it("gives Backups and BackupsList to the owner only", async () => {
 		await withServerFacet(async (t) => {
 			for (const principal of [{ kind: "person", id: "p", name: "P" }, WORKER] satisfies P3Principal[]) {
 				await assert.rejects(
 					t.root(async (ctx) => ctx.get(Backups, {}, { readyTimeout: 500 }), context, { principal }),
+					(error) => isChordError(error, "forbidden"),
+				);
+				await assert.rejects(
+					t.root(
+						async (ctx) => ctx.get(BackupsList, { view: "test", state: "synced" }, { readyTimeout: 500 }),
+						context,
+						{ principal },
+					),
 					(error) => isChordError(error, "forbidden"),
 				);
 			}
