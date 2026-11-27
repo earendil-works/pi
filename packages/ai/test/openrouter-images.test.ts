@@ -326,5 +326,47 @@ describe("openrouter images", () => {
 		expect(output.stopReason).toBe("stop");
 		expect(output.usage?.cost.total).toBe(0.042);
 		expect(output.usage?.cost.totalFromProvider).toBe(true);
+		expect(output.usage?.reasoning).toBe(0);
+		expect(output.usage?.imageOutput).toBeUndefined();
+	});
+
+	it("reports reasoning and image tokens as subsets of output tokens", async () => {
+		mockState.nextResponse = {
+			id: "gen-reasoning-1",
+			usage: {
+				prompt_tokens: 15,
+				completion_tokens: 2290,
+				completion_tokens_details: { reasoning_tokens: 1000, image_tokens: 1120 },
+			},
+			choices: [
+				{
+					finish_reason: "stop",
+					message: {
+						content: null,
+						images: [{ image_url: "data:image/png;base64,ZmFrZS1wbmc=" }],
+					},
+				},
+			],
+		};
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
+			id: "google/gemini-3-pro-image",
+			name: "Gemini 3 Pro Image",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image", "text"],
+			cost: { input: 2, output: 120, cacheRead: 0.2, cacheWrite: 0.375 },
+		};
+
+		const output = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "A compass rose" }] },
+			{ apiKey: "test" },
+		);
+		expect(output.usage?.output).toBe(2290);
+		expect(output.usage?.reasoning).toBe(1000);
+		expect(output.usage?.imageOutput).toBe(1120);
 	});
 });

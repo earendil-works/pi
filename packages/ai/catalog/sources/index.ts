@@ -1,9 +1,11 @@
 import {
 	DEFAULT_RADIUS_GATEWAY,
+	getRadiusClassifierModelsFromConfig,
+	getRadiusImageModelsFromConfig,
 	getRadiusModelsFromConfig,
 	loadRadiusGatewayConfig,
 } from "../../src/providers/radius-config.ts";
-import type { Model } from "../../src/types.ts";
+import type { ClassifierModel, ImageModel, Model } from "../../src/types.ts";
 import {
 	MODELS_DEV_DECISIONS_URL,
 	MODELS_DEV_URL,
@@ -15,6 +17,12 @@ import { type AiGatewayCatalog, fetchAiGatewayCatalog } from "./vercel-ai-gatewa
 
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 
+export interface RadiusCatalog {
+	chat: Model<"pi-messages">[];
+	images: ImageModel<"pi-image">[];
+	classifiers: ClassifierModel<"pi-decision">[];
+}
+
 /** Everything fetched from upstream before the catalog is built. */
 export interface CatalogSources {
 	modelsDev: ModelsDevV2Catalog;
@@ -23,7 +31,7 @@ export interface CatalogSources {
 	aiGateway: AiGatewayCatalog;
 	/** Live NVIDIA NIM ids, keyed by both the raw and the normalized id. */
 	nvidiaModelIds: Map<string, string>;
-	radius: Model<"pi-messages">[];
+	radius: RadiusCatalog;
 }
 
 async function fetchJson<T>(url: string, label: string): Promise<T> {
@@ -46,11 +54,15 @@ async function fetchNvidiaModelIds(): Promise<Map<string, string>> {
 	return modelIds;
 }
 
-async function fetchRadiusModels(): Promise<Model<"pi-messages">[]> {
+export async function fetchRadiusCatalog(): Promise<RadiusCatalog> {
 	const config = await loadRadiusGatewayConfig(DEFAULT_RADIUS_GATEWAY);
-	const models = getRadiusModelsFromConfig("radius", config);
-	if (models.length === 0) throw new Error("Radius API returned no models");
-	return models;
+	const chat = getRadiusModelsFromConfig("radius", config);
+	if (chat.length === 0) throw new Error("Radius API returned no models");
+	return {
+		chat,
+		images: getRadiusImageModelsFromConfig("radius", config),
+		classifiers: getRadiusClassifierModelsFromConfig("radius", config),
+	};
 }
 
 /**
@@ -89,7 +101,11 @@ export async function loadCatalogSources(strict: boolean): Promise<CatalogSource
 	});
 	if (strict && openRouter.images.length === 0) throw new Error("OpenRouter API returned no usable image models");
 	const aiGateway = await load("Vercel AI Gateway models", fetchAiGatewayCatalog, { chat: [], classifiers: [] });
-	const radius = await load("Radius models", fetchRadiusModels, []);
+	const radius = await load("Radius models", fetchRadiusCatalog, {
+		chat: [],
+		images: [],
+		classifiers: [],
+	});
 
 	return { modelsDev, modelsDevDecisions, openRouter, aiGateway, nvidiaModelIds, radius };
 }

@@ -6,7 +6,7 @@ import { loadRadiusOAuth } from "../auth/oauth/load.ts";
 import type { Provider } from "../models.ts";
 import type { ClassifierModel, ImageModel, Model } from "../types.ts";
 import { isModelType } from "../utils/model-operations.ts";
-import { RADIUS_MODELS } from "./radius.models.ts";
+import { RADIUS_CLASSIFIER_MODELS, RADIUS_IMAGE_MODELS, RADIUS_MODELS } from "./radius.models.ts";
 import {
 	DEFAULT_RADIUS_GATEWAY,
 	getRadiusAllModelsFromConfig,
@@ -30,7 +30,11 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 	const gateway = normalizeRadiusGatewayUrl(options.gateway ?? DEFAULT_RADIUS_GATEWAY);
 	const baselineModels: RadiusModel[] =
 		gateway === normalizeRadiusGatewayUrl(DEFAULT_RADIUS_GATEWAY)
-			? Object.values(RADIUS_MODELS).map((model) => ({ ...model, provider: id }))
+			? [
+					...(Object.values(RADIUS_MODELS) as Model<"pi-messages">[]),
+					...(Object.values(RADIUS_CLASSIFIER_MODELS) as ClassifierModel<"pi-decision">[]),
+					...(Object.values(RADIUS_IMAGE_MODELS) as ImageModel<"pi-image">[]),
+				].map((model) => ({ ...model, provider: id }))
 			: [];
 	// Gateway catalog for this account. Radius org owners can disable models, so once known it replaces
 	// the shipped baseline instead of overlaying it. The baseline only covers the time before any catalog exists.

@@ -34,7 +34,7 @@ export type RadiusGatewayImageModel = {
 export type RadiusGatewayConfig = {
 	baseUrl: string;
 	models: RadiusGatewayModel[];
-	classifiers?: RadiusGatewayClassifierModel[];
+	decision?: RadiusGatewayClassifierModel[];
 	images?: RadiusGatewayImageModel[];
 };
 
@@ -83,13 +83,13 @@ function isRadiusGatewayModel(value: unknown): value is RadiusGatewayModel {
 
 function sanitizeRadiusGatewayConfig(config: unknown): RadiusGatewayConfig | undefined {
 	if (typeof config !== "object" || config === null || Array.isArray(config)) return undefined;
-	const { baseUrl, models, classifiers, images } = config as Partial<RadiusGatewayConfig>;
+	const { baseUrl, models, decision, images } = config as Partial<RadiusGatewayConfig>;
 	if (typeof baseUrl !== "string" || !Array.isArray(models)) return undefined;
 	return {
 		baseUrl,
 		models: models.filter(isRadiusGatewayModel).map((model) => ({ ...model })),
-		...(Array.isArray(classifiers)
-			? { classifiers: classifiers.filter(isRadiusGatewayClassifierModel).map((model) => ({ ...model })) }
+		...(Array.isArray(decision)
+			? { decision: decision.filter(isRadiusGatewayClassifierModel).map((model) => ({ ...model })) }
 			: {}),
 		...(Array.isArray(images)
 			? {
@@ -121,30 +121,40 @@ export function getRadiusModelsFromConfig(providerId: string, config: RadiusGate
 	}));
 }
 
+export function getRadiusClassifierModelsFromConfig(
+	providerId: string,
+	config: RadiusGatewayConfig,
+): ClassifierModel<"pi-decision">[] {
+	return (config.decision ?? []).map((model) => ({
+		...model,
+		type: "classifier",
+		api: "pi-decision",
+		provider: providerId,
+		baseUrl: config.baseUrl,
+	}));
+}
+
+export function getRadiusImageModelsFromConfig(
+	providerId: string,
+	config: RadiusGatewayConfig,
+): ImageModel<"pi-image">[] {
+	return (config.images ?? []).map((model) => ({
+		...model,
+		type: "image",
+		api: "pi-image",
+		provider: providerId,
+		baseUrl: config.baseUrl,
+	}));
+}
+
 export function getRadiusAllModelsFromConfig(
 	providerId: string,
 	config: RadiusGatewayConfig,
 ): (Model<"pi-messages"> | ClassifierModel<"pi-decision"> | ImageModel<"pi-image">)[] {
 	return [
 		...getRadiusModelsFromConfig(providerId, config),
-		...(config.classifiers ?? []).map(
-			(model): ClassifierModel<"pi-decision"> => ({
-				...model,
-				type: "classifier",
-				api: "pi-decision",
-				provider: providerId,
-				baseUrl: config.baseUrl,
-			}),
-		),
-		...(config.images ?? []).map(
-			(model): ImageModel<"pi-image"> => ({
-				...model,
-				type: "image",
-				api: "pi-image",
-				provider: providerId,
-				baseUrl: config.baseUrl,
-			}),
-		),
+		...getRadiusClassifierModelsFromConfig(providerId, config),
+		...getRadiusImageModelsFromConfig(providerId, config),
 	];
 }
 

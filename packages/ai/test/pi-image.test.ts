@@ -32,6 +32,8 @@ describe("Pi Image", () => {
 						output: 1290,
 						cacheRead: 0,
 						cacheWrite: 0,
+						reasoning: 200,
+						imageOutput: 1000,
 						totalTokens: 1305,
 						cost: {
 							input: 0.0000045,
@@ -84,6 +86,8 @@ describe("Pi Image", () => {
 			usage: {
 				input: 15,
 				output: 1290,
+				reasoning: 200,
+				imageOutput: 1000,
 				totalTokens: 1305,
 				cost: { total: 0.0032295, totalFromProvider: true },
 			},
@@ -107,6 +111,8 @@ describe("Pi Image", () => {
 		expect(result.usage?.cost.input).toBeCloseTo(0.0003);
 		expect(result.usage?.cost.output).toBeCloseTo(0.005);
 		expect(result.usage?.cost.total).toBeCloseTo(0.0053);
+		expect(result.usage?.reasoning).toBeUndefined();
+		expect(result.usage?.imageOutput).toBeUndefined();
 	});
 
 	it("accepts provider-reported cost without token counts", async () => {

@@ -116,6 +116,13 @@ export function parsePiUsage(value: unknown, model: AnyModel): Usage | undefined
 		output,
 		cacheRead,
 		cacheWrite,
+		// Optional splits stay undefined when the backend does not report them.
+		...(typeof value.reasoning === "number" && Number.isFinite(value.reasoning) && value.reasoning >= 0
+			? { reasoning: value.reasoning }
+			: {}),
+		...(typeof value.imageOutput === "number" && Number.isFinite(value.imageOutput) && value.imageOutput >= 0
+			? { imageOutput: value.imageOutput }
+			: {}),
 		totalTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
