@@ -9,6 +9,9 @@ import { arr, int, nul, obj, remote, Server, type Static, str, union } from "@ea
 /** The machines' family kind (`MachineKind`, the plugin's own): what `OneThing` names to find this device's machine. */
 export const MACHINE_KIND = "environments.machine";
 
+/** This device's machine type (`this-device.ts`): the one whose machines a worker runs tools on with Node, there. */
+export const THIS_DEVICE_TYPE = "local";
+
 /** A machine as the owner's list shows it: its thing id, its name and its type (a `MachineTypes` entry's name). */
 export const Environment = obj({ id: str(), name: str({ max: 200 }), type: str() });
 

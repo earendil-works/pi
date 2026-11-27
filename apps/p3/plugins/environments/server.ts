@@ -10,12 +10,12 @@ import { admitOwner, defineFacet } from "@earendil-works/p3/v1";
 import { OneThing, ThingsStore } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
 import { TerminalKeeper } from "./contract.terminal-host.server.ts";
-import { Environments, ThisDevice } from "./contract.ts";
+import { Environments, THIS_DEVICE_TYPE, ThisDevice } from "./contract.ts";
 import { MachineKind } from "./kind.ts";
 import { MachineInfoHere, MachineKeeper, serveMachines } from "./machines.ts";
 import { serveStore } from "./store.ts";
 import { serveTerminals } from "./terminal-host.ts";
-import { serveThisDevice, THIS_DEVICE, THIS_DEVICE_TYPE } from "./this-device.ts";
+import { serveThisDevice, THIS_DEVICE } from "./this-device.ts";
 
 export default defineFacet((host) => {
 	serveStore(host);

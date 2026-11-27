@@ -1,7 +1,6 @@
 // The machine kind's harness part, called as the harness calls it (stand-in references with their grants and info):
-// a location on a held machine with Work here gets a Node environment in
-// its folder; a machine held without Work
-// here, or not held, gets none; the prompt line names the machine of the conversation's location (not the first one
+// a location on a held machine of this device's type with Work here gets a Node environment in its folder; a machine
+// held without Work here, not held, of another type or unavailable gets none; the prompt line names the machine of the conversation's location (not the first one
 // held) and the folder, or says no machine is available.
 
 import assert from "node:assert/strict";
@@ -9,7 +8,7 @@ import { describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
 import type { HarnessSession, HeldThing } from "../../things/contract.worker.ts";
 import { machinePart } from "../harness-part.ts";
-import type { Machine } from "../kind.ts";
+import type { Machine, MachineInfo } from "../kind.ts";
 
 /** The session the part is called for: its conversations work on machine `machine`. */
 function session(machine = "m1"): HarnessSession {
@@ -21,10 +20,15 @@ function session(machine = "m1"): HarnessSession {
 	};
 }
 
-/** A held machine `thing` named `name` whose reference has the flags `granted`. */
+/** A held ready machine `thing` of this device's type named `name` whose reference has the flags `granted`. */
 function held(thing: string, name: string, ...granted: string[]): HeldThing<typeof Machine> {
+	return heldAs({ name, type: "local", status: "ready" }, thing, ...granted);
+}
+
+/** A held machine `thing` with info `info` whose reference has the flags `granted`. */
+function heldAs(info: MachineInfo, thing: string, ...granted: string[]): HeldThing<typeof Machine> {
 	// A stand-in for the holding's reference: the part reads only `granted` and `info`.
-	const ref = { granted: new Set(granted), info: { value: { name, status: "ready" } } };
+	const ref = { granted: new Set(granted), info: { value: info } };
 	return { thing, workspace: "w", depth: 0, ref: ref as unknown as HeldThing<typeof Machine>["ref"] };
 }
 
@@ -63,5 +67,16 @@ describe("the machine's harness part", () => {
 			undefined,
 		);
 		assert.equal(await line(contribution, undefined), "No machine is available here: commands cannot run.");
+	});
+
+	it("gives none on a machine of another type, or one whose type is not installed (Astra, round 5)", async () => {
+		const at = { machine: "m1", folder: "/tmp" };
+		for (const info of [
+			{ name: "box", type: "remote", status: "ready" },
+			{ name: "box", type: "local", status: "unavailable" },
+		] satisfies MachineInfo[]) {
+			const contribution = given(heldAs(info, "m1", "work"));
+			assert.equal(await contribution.env?.(at, context), undefined);
+		}
 	});
 });
