@@ -61,17 +61,20 @@ const HAND_OVER_MS = 5000;
 const FIRST_SET_MS = 4000;
 
 /**
- * One held thing: its part (a new one gives its kind a new array), what `HeldThings` lists of it, the grant last seen
- * live (`undefined`: not listed: not live yet, failed or ended), and whether its reference settled once (live, failed
- * or ended) and ended.
+ * One held thing: its part (a new one gives its kind a new array), what `HeldThings` lists of it (a new object with
+ * each grant seen live, which it carries), the grant last seen live (`undefined`: not listed: not live yet, failed or
+ * ended), and whether its reference settled once (live, failed or ended) and ended.
  */
 type Entry = {
 	readonly part: ThingHarnessPart;
-	readonly held: HeldThing;
+	held: HeldThing;
 	granted: ReadonlySet<string> | undefined;
 	settled: boolean;
 	ended: boolean;
 };
+
+/** The grant of a thing not seen live yet (it is not listed until then). */
+const NOTHING: ReadonlySet<string> = new Set();
 
 /** The references the worker holds as its agent, published per kind in `held`. */
 class Holding {
@@ -157,7 +160,7 @@ class Holding {
 		const ref = this.#runtime.host.hold(part.kind.contract, params, this.#context);
 		const entry: Entry = {
 			part,
-			held: { thing, workspace, depth, ref },
+			held: { thing, workspace, depth, ref, granted: NOTHING },
 			granted: undefined,
 			settled: false,
 			ended: false,
@@ -191,6 +194,9 @@ class Holding {
 		if (granted !== entry.granted) {
 			if (entry.granted !== undefined && granted === undefined) this.#lost.add(kind);
 			entry.granted = granted;
+			// The grant as published: a part deciding from an earlier value later reads that one, not the reference's now
+			// (Astra, round 5 of the subagents port).
+			if (granted !== undefined) entry.held = { ...entry.held, granted };
 			this.#changed.add(kind);
 		}
 		this.#publish();

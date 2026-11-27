@@ -231,6 +231,22 @@ describe("the holding", () => {
 		assert.equal(one.get(Pad.name), pads);
 	});
 
+	it("publishes each thing with its grant as of then: an earlier value keeps it after a regrant and an unlink", async () => {
+		// Astra, round 5 of the subagents port: a part deciding from an earlier value read the reference's grant now.
+		const board = await make(Board.name);
+		const first = await held((v) => v.has(Board.name), "held");
+		const before = first.get(Board.name)![0]!;
+		const was = [...before.granted].toSorted();
+		assert.deepEqual(was, [...before.ref.granted].toSorted());
+		await grant(board, ["bash"]);
+		const regranted = await held((v) => v.get(Board.name) !== first.get(Board.name), "the regrant");
+		assert.equal(regranted.get(Board.name)![0]!.granted.has("bash"), true);
+		assert.deepEqual([...before.granted].toSorted(), was);
+		await store.unlink({ workspace: session, thing: board }, context);
+		await held((v) => !v.has(Board.name), "the unlink");
+		assert.deepEqual([...before.granted].toSorted(), was);
+	});
+
 	it("drops a thing withheld from the agents by every route", async () => {
 		const board = await make(Board.name);
 		await held((v) => v.has(Board.name), "held");

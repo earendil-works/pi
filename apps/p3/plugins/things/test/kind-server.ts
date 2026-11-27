@@ -165,8 +165,11 @@ export async function kindServer<C extends Contract>(
 			return host.root(
 				async (ctx) => {
 					const held: HeldThing<C>[] = [];
-					for (const thing of ids)
-						held.push({ thing, workspace, depth: 0, ref: await get(ctx, workspace, thing) });
+					for (const thing of ids) {
+						const ref = await get(ctx, workspace, thing);
+						// A generic contract's `granted` reads as a member to TypeScript; the holding reads it the same way.
+						held.push({ thing, workspace, depth: 0, ref, granted: ref.granted as ReadonlySet<string> });
+					}
 					// The registry's part takes any kind's held things; these are its kind's.
 					const contribution = entry.value.part(held as unknown as readonly HeldThing[], harness);
 					const { extension } = contribution;

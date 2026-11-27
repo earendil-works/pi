@@ -119,8 +119,9 @@ export async function adoptConversationRosters(durable: Adopting, context: Conte
 export const MAX_NAME = 100;
 
 /**
- * `name` if no subagent of `agents` has it, else the first free one of `<name>-<conversation>`, `<name>-<conversation>-2`,
- * ...; `name` cut so the whole stays within `MAX_NAME`, so the tool reaches it (Astra, round 4 of the port).
+ * `name` if no subagent of `agents` has it, else the first free one of `<name>-<conversation>`,
+ * `<name>-<conversation>-2`, ...; `name` cut so the whole stays within `MAX_NAME`, so the tool reaches it (Astra, round
+ * 4 of the port).
  */
 function freeName(agents: Record<string, Subagent>, name: string, conversation: ConversationId): string {
 	if (subagentOf(agents, name) === undefined && name.length <= MAX_NAME) return name;
@@ -133,7 +134,8 @@ function freeName(agents: Record<string, Subagent>, name: string, conversation: 
 
 /**
  * The subagent a reporter's message went to, and its name now: the one of its name with its conversation; for a
- * reporter of version 1, whose subagent the move may have renamed, the one with its conversation. None: gone or replaced.
+ * reporter of version 1, whose subagent the move may have renamed, the one with its conversation. None: gone or
+ * replaced.
  */
 export function sentTo<T extends Subagent>(
 	agents: Record<string, T>,

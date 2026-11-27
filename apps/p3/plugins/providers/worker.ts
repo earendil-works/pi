@@ -23,7 +23,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { lazyStream, loadProvider, WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
-import { type LoginDefinitions, SessionModels } from "./contract.ts";
+import { type LoginDefinitions, loginProviderId, SessionModels } from "./contract.ts";
 import { type Login, LoginKind } from "./kind.ts";
 import { LoginProviders, type ProviderMap, serveLoginProviders } from "./login-providers.ts";
 
@@ -94,9 +94,6 @@ const COMPLETE_MS = 10_000;
 /** No models (a login the session's catalog does not list yet). */
 const NONE: readonly unknown[] = [];
 
-/** The separator of a login's provider id: `<provider>~<login thing>`. */
-const SEPARATOR = "~";
-
 /**
  * Login `held`'s own provider: its id `<provider>~<thing>`, its models the login's entry in the session's catalog
  * (`session`) under that id, its requests made by the provider's request code with the model's provider restored
@@ -108,7 +105,7 @@ function loginProvider(
 	added: RegistryValue<ProviderMap>,
 	session: SessionCatalog,
 ): Provider {
-	const id = `${base}${SEPARATOR}${thing}`;
+	const id = loginProviderId(base, thing);
 	/** pi-ai's built-in request code, loaded on the first request that needs it; a failed load is tried again. */
 	let builtIn: Promise<Provider | undefined> | undefined;
 	const code = async (): Promise<Provider> => {

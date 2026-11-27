@@ -164,6 +164,23 @@ export const SessionModels = remote("providers.session-models", {
 	state: { complete: bool(), models: arr(LoginModels), catalog: grantable(arr(LoginDefinitions)) },
 });
 
+/** The separator of a login's provider id on a session's worker (`loginProviderId`). */
+const LOGIN_SEPARATOR = "~";
+
+/**
+ * The id of login `login`'s model provider on a session's worker: `<provider>~<login thing>`, so two logins of one
+ * provider are two providers.
+ */
+export function loginProviderId(provider: string, login: string): string {
+	return `${provider}${LOGIN_SEPARATOR}${login}`;
+}
+
+/** The provider and the login a model provider's id names (`loginProviderId`'s inverse); none: not a login's. */
+export function loginOfProvider(id: string): { readonly provider: string; readonly login: string } | undefined {
+	const at = id.indexOf(LOGIN_SEPARATOR);
+	return at <= 0 ? undefined : { provider: id.slice(0, at), login: id.slice(at + 1) };
+}
+
 /**
  * One override of a model's metadata, in a model settings thing (`providers.models`, decision 118b): the model's id
  * (`model`), of one provider type only (`provider`) or of every one, and the fields it sets: its name, costs, context

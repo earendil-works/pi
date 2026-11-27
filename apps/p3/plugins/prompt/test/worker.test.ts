@@ -36,16 +36,18 @@ type Value<T> = { value: T };
 /** A held instructions thing: its text and language as values the case changes, and whether Use is granted. */
 function instructions(thing: string, text: Value<string>, language: Value<Language>, use = true): HeldThing {
 	// A stand-in for the holding's reference until `kindServer.giving` is on main: the members the part reads.
-	const ref = { text, language, granted: new Set(use ? ["use"] : []) } as unknown as HeldThing["ref"];
-	return { thing, workspace: "w", depth: 0, ref };
+	const granted = new Set(use ? ["use"] : []);
+	const ref = { text, language, granted } as unknown as HeldThing["ref"];
+	return { thing, workspace: "w", depth: 0, ref, granted };
 }
 
 /** A held set `thing` with `skills` (a list the case may change), `read` granted unless `use` is false. */
 function set(thing: string, skills: Value<Skill[]>, use = true): HeldThing {
 	const read = async ({ name }: { name: string }) => ({ text: `${thing}'s ${name}`, files: ["run.sh"] });
-	const ref = { skills, granted: new Set(use ? ["read"] : []), ...(use ? { read } : {}) };
+	const granted = new Set(use ? ["read"] : []);
+	const ref = { skills, granted, ...(use ? { read } : {}) };
 	// A stand-in for the holding's reference until `kindServer.giving` is on main: the members the part reads.
-	return { thing, workspace: "w", depth: 0, ref: ref as unknown as HeldThing["ref"] };
+	return { thing, workspace: "w", depth: 0, ref: ref as unknown as HeldThing["ref"], granted };
 }
 
 /** A skill. */

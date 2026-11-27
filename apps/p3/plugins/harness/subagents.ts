@@ -20,17 +20,16 @@ import {
 	type ModelThinkingLevel,
 	type ToolExecutionApi,
 } from "@earendil-works/p3/v1/worker";
-import { type HarnessExtension, thingHarnessPart } from "../things/contract.worker.ts";
+import { type HarnessExtension, type HeldThing, thingHarnessPart } from "../things/contract.worker.ts";
 import type { ModelRef } from "./agent-parts.ts";
 import { SubagentsKind } from "./kind.ts";
-import { closeModels, listModels } from "./model-list.ts";
+import { closeModels, listModels, type ModelNames, modelName, modelNames, resolveModel } from "./model-list.ts";
 import { Reporter, textOf } from "./reporter.ts";
 import {
 	Anchor,
 	givable,
 	levelOf,
 	MAX_NAME,
-	modelRef,
 	modelText,
 	Stopper,
 	SUBAGENT_TOOL,
@@ -40,12 +39,18 @@ import {
 	toolsOf,
 } from "./roster.ts";
 
-/** The subagents' part: the `subagent` tool while the nearest reference has `use` (the kind stacks `nearest`). */
-export const subagentsPart = thingHarnessPart(SubagentsKind, (things) => {
-	const nearest = things[things.length - 1];
-	if (nearest === undefined || !nearest.ref.granted.has("use")) return {};
-	return { extension: SUBAGENT_TOOLS };
-});
+/** The subagents' part: the `subagent` tool while the agent has Use of the subagents (`hasUse`). */
+export const subagentsPart = thingHarnessPart(SubagentsKind, (things) =>
+	hasUse(things) ? { extension: SUBAGENT_TOOLS } : {},
+);
+
+/**
+ * Whether the agent holding `things` (nearest last) has Use of the subagents, as they were published (`granted`): the
+ * kind stacks `nearest`.
+ */
+export function hasUse(things: readonly HeldThing[]): boolean {
+	return things.at(-1)?.granted.has("use") === true;
+}
 
 /** The thinking levels a subagent may be given, clamped to its model (pi-ai's list; its index does not export it). */
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies ModelThinkingLevel[];
@@ -71,9 +76,10 @@ const subagentTool = defineTool({
 		"Manages your subagents: each is a persistent conversation of its own, a copy of you working in the background",
 		"while you go on. Answers JSON. Actions (`action`):",
 		"- spawn (`name`, `message`; optional `model`, `thinkingLevel`, `tools`): starts a subagent and sends it its first",
-		"  message. `model` is `provider/modelId` (default: yours; see models); `thinkingLevel` is",
-		"  off|minimal|low|medium|high|xhigh|max, clamped to the model (default: yours); `tools` names tools of yours it",
-		"  gets (default: every one you may give it; [] for none). With each message it gets them as you have them then.",
+		"  message. `model` is a model as models names it: its id, or `provider/modelId` or `login/modelId` where more",
+		"  than one offers that id (default: yours); `thinkingLevel` is off|minimal|low|medium|high|xhigh|max, clamped",
+		"  to the model (default: yours); `tools` names tools of yours it gets (default: every one you may give it; []",
+		"  for none). With each message it gets them as you have them then.",
 		"  This tool cannot be given.",
 		"- send (`name`, `message`; `followUp: true` waits until its current answer instead of reaching it at its next",
 		"  step). Restores an archived subagent.",
@@ -83,7 +89,8 @@ const subagentTool = defineTool({
 		"- answer (`name`): its latest reported answer again, and whether it is working on a newer one.",
 		"- status (optional `name`): your subagents, whether each is working, its model, thinking level (as used) and",
 		"  tools; archived ones only by name.",
-		"- models (optional `model`: a provider or words of a model's id or name): the models you can give, by `model`.",
+		"- models (optional `model`: a provider, a login or words of a model's id or name): the models you can give, by",
+		"  `model`, with their provider, login and name.",
 		"Each answer comes back to you as a message `[subagent <name> answered] ...` once it arrives (or",
 		"`[subagent <name> failed: ...]`): do not wait or poll for it.",
 	].join("\n"),
@@ -218,7 +225,8 @@ async function configureAgent(call: Call, api: ToolExecutionApi, context: Contex
 		await configure(tx, agent.conversationId, change);
 	}, context);
 	const agent = subagentNamed(await subagentsOf(api, context), name);
-	return statusOf(name, agent, api, await working(agent.conversationId, api, context));
+	const names = modelNames(api.models.getModels());
+	return statusOf(name, agent, api, names, await working(agent.conversationId, api, context));
 }
 
 /**
@@ -240,8 +248,8 @@ async function archive(call: Call, api: ToolExecutionApi, context: Context): Pro
 /**
  * Stops the call's subagent: one commit bumps its generation (and makes `also`'s change) and starts the stopper that
  * aborts the older generation's work (`Stopper`, a background task: it finishes also when this call is cancelled), or
- * reuses the one pending; the call answers once it ended. A send whose commit comes later restores it, waits for the stopper, and is delivered;
- * one before is dropped (Astra, rounds 1 to 3 of the port).
+ * reuses the one pending; the call answers once it ended. A send whose commit comes later restores it, waits for the
+ * stopper, and is delivered; one before is dropped (Astra, rounds 1 to 3 of the port).
  */
 async function halt(
 	call: Call,
@@ -295,19 +303,20 @@ async function status(call: Call, api: ToolExecutionApi, context: Context): Prom
 		named === undefined
 			? Object.entries(agents).filter(([, agent]) => agent.archived === undefined)
 			: [[named, subagentNamed(agents, named)] as const];
+	const names = modelNames(api.models.getModels());
 	const subagents = [];
 	for (const [name, agent] of listed)
-		subagents.push(statusOf(name, agent, api, await working(agent.conversationId, api, context)));
+		subagents.push(statusOf(name, agent, api, names, await working(agent.conversationId, api, context)));
 	const archived = named === undefined ? Object.keys(agents).length - listed.length : 0;
 	return archived === 0 ? { subagents } : { subagents, archived };
 }
 
-/** A subagent as status shows it: the thinking level as its model takes it. */
-function statusOf(name: string, agent: Subagent, api: ToolExecutionApi, busy: boolean) {
+/** A subagent as status shows it: its model by name (`names`), the thinking level as its model takes it. */
+function statusOf(name: string, agent: Subagent, api: ToolExecutionApi, names: ModelNames, busy: boolean) {
 	return {
 		name,
 		working: busy,
-		model: agent.model,
+		model: modelName(names, agent.model),
 		thinkingLevel: levelOf(agent, api.models).thinkingLevel,
 		tools: agent.tools ?? "all",
 		...(agent.archived === undefined ? {} : { archived: true }),
@@ -324,7 +333,8 @@ const MODELS_MS = 10_000;
 
 /** The models with credentials, all or those `model` matches. */
 async function models(call: Call, api: ToolExecutionApi): Promise<Answer> {
-	return listModels(await api.models.getAvailable(undefined, { signal: AbortSignal.timeout(MODELS_MS) }), call.model);
+	const available = await api.models.getAvailable(undefined, { signal: AbortSignal.timeout(MODELS_MS) });
+	return listModels(available, call.model, modelNames(api.models.getModels()));
 }
 
 /** The session's subagents, as its document has them. */
@@ -351,16 +361,29 @@ function subagentNamed<T extends Subagent>(agents: Record<string, T>, name: stri
 	return agent;
 }
 
-/** The model `text` names (`provider/modelId`; none: the agent's own), or the refusal with close matches. */
+/**
+ * The model `text` names (`modelNames`: a name as `models` lists it, or a longer form; none: the agent's own), or the
+ * refusal: of a text naming several (with their names), or of one naming none (with close matches).
+ */
 async function modelOf(text: string | undefined, own: ModelRef | undefined, api: ToolExecutionApi): Promise<ModelRef> {
-	const ref = text === undefined ? own : modelRef(text);
-	if (ref !== undefined && api.models.getModel(ref.provider, ref.modelId) !== undefined) return ref;
-	if (text === undefined)
+	if (text === undefined) {
+		if (own !== undefined && api.models.getModel(own.provider, own.modelId) !== undefined) return own;
 		throw invalid("args", "subagent: you have no model to copy: name one with `model` (see models)");
-	const available = await api.models.getAvailable(undefined, { signal: AbortSignal.timeout(MODELS_MS) });
-	const close = closeModels(available, text);
-	const hint = close.length === 0 ? "" : ` Close matches: ${close.join(", ")}.`;
-	throw invalid("args", `subagent: no model ${text}.${hint} The models action lists them.`);
+	}
+	const names = modelNames(api.models.getModels());
+	const resolved = resolveModel(names, text);
+	switch (resolved.kind) {
+		case "one":
+			return { provider: resolved.model.provider, modelId: resolved.model.id };
+		case "several":
+			throw invalid("args", `subagent: ${text} names more than one model; name one: ${resolved.names.join(", ")}.`);
+		case "none": {
+			const available = await api.models.getAvailable(undefined, { signal: AbortSignal.timeout(MODELS_MS) });
+			const close = closeModels(available, text, names);
+			const hint = close.length === 0 ? "" : ` Close matches: ${close.join(", ")}.`;
+			throw invalid("args", `subagent: no model ${text}.${hint} The models action lists them.`);
+		}
+	}
 }
 
 /**
