@@ -96,7 +96,8 @@ export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 		// A follow-up input: it starts a turn when the agent is idle, or waits for its current answer. Kept when the
 		// agent is stopped meanwhile (`onAbort: "keep"`): its next input takes it (Astra, round 1 of the port).
 		report: async (reporter, runtime, context) => {
-			const report = reporter.state.checkpoint.report;
+			const saved = reporter.state.checkpoint.report;
+			const report = saved === undefined ? undefined : await renamed(saved, reporter.input, runtime, context);
 			if (report !== undefined) {
 				const sender = await runtime.conversation(runtime.conversationId, context);
 				const input = { type: "input", content: report, whenBusy: "followUp", onAbort: "keep" } as const;
@@ -108,6 +109,19 @@ export const Reporter = defineTask<ReporterInput, ReporterState, null>({
 	abort: (_reporter, runtime, context) =>
 		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
 });
+
+/**
+ * `report` under its subagent's name now: a report version 1 decided before the update names the subagent as version 1
+ * did, which the move may have renamed (another subagent may have the old name now), so it is found by its
+ * conversation (Astra, round 4 of the port). A report of version 2 names it as it is.
+ */
+async function renamed(report: string, input: ReporterInput, runtime: ReporterRuntime, context: Context) {
+	if (input.v1 !== true) return report;
+	const found = sentTo((await runtime.snapshot(Subagents, context))?.agents ?? {}, input);
+	const old = `[subagent ${input.name} `;
+	if (found === undefined || found.name === input.name || !report.startsWith(old)) return report;
+	return `[subagent ${found.name} ${report.slice(old.length)}`;
+}
 
 /** A reporter's task runtime. */
 type ReporterRuntime = TaskRuntime<ReporterInput, ReporterState, null, object>;

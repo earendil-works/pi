@@ -185,16 +185,20 @@ const SubagentsV1 = defineDoc<{ agents: Record<string, { conversationId: Convers
 	initial: () => ({ agents: {} }),
 });
 
-/** What the reporter of version 1 that ran before the update (`answered`) saw: its message's answer settled. */
+/** What the reporter of version 1 that ran before the update (`answered`, `saved`) saw: its message's answer settled. */
 let answeredV1 = Promise.withResolvers<void>();
 
+/** Whether the reporter of version 1 that runs before the update also decides its report (`saved`) before it. */
+let savesV1 = false;
+
 /**
- * Version 1 of the reporter, as main at 7093618af stored it: its name, version and input. Its `deliver` does what main's
- * did up to the answer (submit, wait), then waits for the update; a case that does not resume it never runs it.
+ * Version 1 of the reporter, as main at 7093618af stored it: its name, version, input and phases. Its `deliver` does what
+ * main's did up to the answer (submit, wait), and with `savesV1` also decides the report (main's `report` checkpoint,
+ * the subagent named as then); then it waits for the update. A case that does not resume it never runs it.
  */
 const ReporterV1 = defineTask<
 	{ name: string; conversationId: ConversationId; message: string; followUp: boolean },
-	{ phase: "deliver" },
+	{ phase: "deliver" } | { phase: "report"; report?: string },
 	null
 >({
 	name: "harness.subagent-reporter",
@@ -205,9 +209,19 @@ const ReporterV1 = defineTask<
 			const child = await runtime.conversation(reporter.input.conversationId, ctx);
 			const draft = { type: "input", content: reporter.input.message, whenBusy: "steer" } as const;
 			const submission = await child?.submit({ ...draft, requestId: `subagent:${reporter.id}` }, ctx);
-			await submission?.wait(ctx);
+			const settled = await submission?.wait(ctx);
+			if (savesV1 && settled?.status === "done" && settled.type === "input") {
+				const report = `[subagent ${reporter.input.name} answered] old handled`;
+				await runtime.commit(() => ({ status: "running", checkpoint: { phase: "report", report } }), ctx);
+				answeredV1.resolve();
+				return;
+			}
 			answeredV1.resolve();
 			// The worker is updated before it reports: the phase runs again on the new code.
+			await new Promise((resolve) => runtime.signal.addEventListener("abort", resolve));
+		},
+		// The worker is updated before the report is sent.
+		report: async (_reporter, runtime) => {
 			await new Promise((resolve) => runtime.signal.addEventListener("abort", resolve));
 		},
 	},
@@ -217,10 +231,10 @@ const ReporterV1 = defineTask<
 /**
  * What main at 7093618af left, by case: `plain`, a message in flight to the root's `reader`; `renamed`, one to the other
  * top-level conversation's `reader`, which the move renames; `answered`, that message answered before the update and
- * not yet reported; `collision`, the root also lists a `reader-<the other's conversation>`; `long`, both subagents named
+ * not yet reported; `saved`, that answer's report decided (naming the subagent as version 1 did) and not sent; `collision`, the root also lists a `reader-<the other's conversation>`; `long`, both subagents named
  * with 100 characters; `owned`, a subagent's conversation lists one of its own (Astra, round 4 of the port).
  */
-type Variant = "plain" | "renamed" | "answered" | "collision" | "long" | "owned";
+type Variant = "plain" | "renamed" | "answered" | "saved" | "collision" | "long" | "owned";
 
 /** What the case wrote: the subagents' conversations, the answer reported, the names used. */
 type Written = {
@@ -278,14 +292,15 @@ async function writeV1(store: WorkerRuntime["store"], variant: Variant, ctx: typ
 				third = await child(first);
 				(await tx.doc(SubagentsV1, first)).agents.inside = { conversationId: third, reported: [] };
 			}
-			const toSecond = variant === "renamed" || variant === "answered";
+			const toSecond = variant === "renamed" || variant === "answered" || variant === "saved";
 			const input = { name, conversationId: toSecond ? second : first, message: "in flight", followUp: false };
 			await tx.createTask(ReporterV1, input, { ...background, conversationId: toSecond ? branch.id : root.id });
 			return { first, second, answer: answer.id, name, ...(third === undefined ? {} : { third }) };
 		}, ctx);
-		if (variant === "answered") {
+		if (variant === "answered" || variant === "saved") {
 			durable.resume();
 			await answeredV1.promise;
+			// The report decided: committed before the promise resolved.
 		}
 		return written;
 	} finally {
@@ -299,6 +314,7 @@ async function writeV1(store: WorkerRuntime["store"], variant: Variant, ctx: typ
  */
 async function migrated(variant: Variant) {
 	answeredV1 = Promise.withResolvers<void>();
+	savesV1 = variant === "saved";
 	const folder = await realpath(await mkdtemp(join(tmpdir(), "p3-roster-")));
 	const written = Promise.withResolvers<Written>();
 	const v1 = defineFacet((host) => {
@@ -392,6 +408,17 @@ describe("a worker whose store version 1 of the subagents wrote", () => {
 
 	it("reports an answer given before the update to its sender once, without asking again (Astra, port round 4)", async () => {
 		const { written, control, settled, close } = await migrated("answered");
+		try {
+			await settled();
+			assert.equal(control.requests.filter(({ last }) => last === "in flight").length, 0);
+			assert.deepEqual(reportsOf(control), [`[subagent reader-${written.second} answered] old handled`]);
+		} finally {
+			await close();
+		}
+	});
+
+	it("sends a report decided before the update under the subagent's new name (Astra, port round 4)", async () => {
+		const { written, control, settled, close } = await migrated("saved");
 		try {
 			await settled();
 			assert.equal(control.requests.filter(({ last }) => last === "in flight").length, 0);
