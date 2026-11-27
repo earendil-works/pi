@@ -2,27 +2,36 @@
 // holds. `canvas_list` (the boards: id, name, whether the agent may draw there) and `canvas_read({ canvas, after? })`
 // (a page of a board's shapes as JSON) always; `canvas_draw({ canvas, shapes })` when the agent may draw on at least
 // one board, refused naming the board on the others. The tools take a board's id from `canvas_list`, so their
-// descriptions stay fixed whatever boards the agent holds. Every call goes through the agent's held reference: a Draw
-// withheld meanwhile refuses the draw, and a read is a page read now (`page`), so nothing stays loaded after it.
+// descriptions stay fixed whatever boards the agent holds. Every call goes through the agent's held reference
+// (decision 120): a Draw withheld meanwhile refuses the draw, and a read is a page read now (`page`), so nothing stays
+// loaded after it. Reads and draws answer JSON.
 
-import { arr, type Context, defineFacet, forbidden, invalid, obj, opt, str } from "@earendil-works/p3/v1";
+import { arr, defineFacet, forbidden, invalid, obj, opt, str } from "@earendil-works/p3/v1";
 import { defineTool } from "@earendil-works/p3/v1/worker";
-import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
-import { BOARD_HEIGHT, BOARD_WIDTH, type Canvas, CanvasKind, Shape } from "./contract.ts";
+import {
+	type HarnessExtension,
+	type HeldThing,
+	ThingHarnessParts,
+	thingHarnessPart,
+} from "../things/contract.worker.ts";
+import { BOARD_HEIGHT, BOARD_WIDTH, type Canvas, CanvasKind, MAX_SHAPES, Shape } from "./kind.ts";
 
 export default defineFacet((_host, self) => {
-	self.contribute(ThingHarnessParts, canvasPart);
+	self.contribute(
+		ThingHarnessParts,
+		thingHarnessPart(CanvasKind, (boards) => ({ extension: canvasExtension(boards) })),
+	);
 });
 
 /** A board the agent holds. */
 type Board = HeldThing<typeof Canvas>;
 
-/** The canvas's harness part. */
-const canvasPart = thingHarnessPart(CanvasKind, (boards) => {
+/** The agent's canvas tools: list and read, and draw while one board gives Draw. */
+function canvasExtension(boards: readonly Board[]): HarnessExtension {
 	const tools = [listTool(boards), readTool(boards)];
-	const draws = boards.some(({ ref }) => ref.granted.has("add"));
-	return { extension: { tools: draws ? [...tools, drawTool(boards)] : tools } };
-});
+	// Installed under the kind's name by the harness.
+	return { tools: boards.some(({ ref }) => ref.add !== undefined) ? [...tools, drawTool(boards)] : tools };
+}
 
 /** The tool `canvas_list`: the boards, with whether the agent may draw on each. */
 function listTool(boards: readonly Board[]) {
@@ -30,14 +39,14 @@ function listTool(boards: readonly Board[]) {
 		name: "canvas_list",
 		description:
 			"Lists the session's shared canvases as JSON: each one's `id` (what the other canvas tools take), its `name` " +
-			"and whether you may `draw` on it.",
+			"(empty when it has none) and whether you may `draw` on it.",
 		parameters: obj({}),
 		replay: "safe",
 		execute: async () => {
 			const listed = boards.map(({ thing, ref }) => ({
 				id: thing,
 				name: ref.name.value,
-				draw: ref.granted.has("add"),
+				draw: ref.add !== undefined,
 			}));
 			return { output: [{ type: "text", text: JSON.stringify(listed) }] };
 		},
@@ -47,14 +56,14 @@ function listTool(boards: readonly Board[]) {
 /** What the tools say about the board's coordinates. */
 const UNITS = `The board is ${BOARD_WIDTH} units wide and ${BOARD_HEIGHT} high; x grows to the right, y down.`;
 
-/** The tool `canvas_read`: every shape of a board, oldest first, as JSON. */
+/** The tool `canvas_read`: a page of a board's shapes, oldest first, as JSON. */
 function readTool(boards: readonly Board[]) {
 	return defineTool({
 		name: "canvas_read",
 		description:
 			"A page of the shapes on one of the session's shared canvases (`canvas`: its id from `canvas_list`), oldest " +
-			"first. Answers JSON: `rows` (each shape with its id and who drew it) and, when there are more, `next`: pass " +
-			`it as \`after\` for the next page. ${UNITS}`,
+			"first. Answers JSON: `rows` (each shape's `id`, `author`: who drew it, and `shape`) and, when there are more, " +
+			`\`next\`: pass it as \`after\` for the next page. ${UNITS}`,
 		parameters: obj({ canvas: str(), after: opt(str()) }),
 		replay: "safe",
 		execute: async ({ canvas: id, after }, _api, context) => {
@@ -72,13 +81,15 @@ function drawTool(boards: readonly Board[]) {
 		description:
 			"Draws shapes on one of the session's shared canvases (`canvas`: its id from `canvas_list`, one you may draw " +
 			"on), which everyone in the session sees at once: lines (`points` is [x0, y0, x1, y1, ...]), rectangles and " +
-			`text, each with a colour \`#rrggbb\`. ${UNITS}`,
+			`text, each with a colour \`#rrggbb\`. Answers JSON: the new shapes' \`ids\`, in order. A canvas holds ` +
+			`${MAX_SHAPES} shapes at most. ${UNITS}`,
 		parameters: obj({ canvas: str(), shapes: arr(Shape, { min: 1, max: 100 }) }),
-		execute: async ({ canvas: id, shapes }, _api, context: Context) => {
+		execute: async ({ canvas: id, shapes }, _api, context) => {
 			const board = boardOf(boards, id);
 			// The held reference's `add` is there while Draw is granted: withheld since, it is gone.
 			const add = board.ref.add;
 			if (add === undefined) throw forbidden(`canvas: you may not draw on ${described(board)}`);
+
 			const ids = await add({ shapes }, context);
 			return { output: [{ type: "text", text: JSON.stringify({ ids }) }] };
 		},
@@ -93,7 +104,8 @@ function boardOf(boards: readonly Board[], id: string): Board {
 	return found;
 }
 
-/** A board as an error names it: its name and id. */
+/** A board as an error names it: its name (unnamed: says so) and id. */
 function described({ thing, ref }: Board): string {
-	return `the canvas "${ref.name.value}" (${thing})`;
+	const name = ref.name.value;
+	return name === "" ? `an unnamed canvas (${thing})` : `the canvas "${name}" (${thing})`;
 }

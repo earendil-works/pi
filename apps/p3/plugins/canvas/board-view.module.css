@@ -1,5 +1,7 @@
-/* One board: a drawer's tools above it, the board as white paper scaled to the width it has (a whiteboard in light
- * and dark alike, so every colour reads), and the others' pointers with their names on it. */
+/* One board: a drawer's tools above it, the board as white paper scaled to the width it has, and the others' pointers
+ * with their names on it. The paper is white in light and dark alike on purpose: a shape's colour is data (stored
+ * `#rrggbb`, the palette in `toolbar.tsx`), drawn as it was picked, so the paper must not change under it. Everything
+ * else uses the app's variables. */
 
 .board {
 	display: flex;
@@ -23,10 +25,10 @@
 	gap: var(--semantic-dimension-space-gap-x-small);
 }
 
-/* Touch targets of 32px, the swatch inside; the picked one ringed. */
+/* Touch targets of the medium size, the swatch inside; the picked one ringed. */
 .color {
-	inline-size: 32px;
-	block-size: 32px;
+	inline-size: var(--semantic-dimension-size-medium);
+	block-size: var(--semantic-dimension-size-medium);
 	padding: 0;
 	border: var(--semantic-dimension-border-width-medium) solid var(--semantic-color-background-canvas);
 	border-radius: var(--semantic-dimension-radius-full);
@@ -54,6 +56,7 @@
 	overflow: hidden;
 	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
 	border-radius: var(--semantic-dimension-radius-medium);
+	/* White paper in every theme (see the top). */
 	background: #ffffff;
 }
 
@@ -73,24 +76,23 @@
 
 .cursor {
 	position: absolute;
-	inline-size: 12px;
-	block-size: 12px;
-	margin: -6px 0 0 -6px;
-	border: 2px solid #ffffff;
+	inline-size: var(--semantic-dimension-size-x-small);
+	block-size: var(--semantic-dimension-size-x-small);
+	margin: calc(-0.5 * var(--semantic-dimension-size-x-small)) 0 0 calc(-0.5 * var(--semantic-dimension-size-x-small));
+	border: var(--semantic-dimension-border-width-medium) solid var(--semantic-color-text-on-primary-fill);
 	border-radius: var(--semantic-dimension-radius-full);
-	background: #6639ba;
-	box-shadow: 0 0 0 1px #6639ba;
+	background: var(--semantic-color-background-fill-primary-information);
 	pointer-events: none;
 }
 
 .label {
 	position: absolute;
-	inset-block-start: 12px;
-	inset-inline-start: 10px;
-	padding: 1px 6px;
+	inset-block-start: var(--semantic-dimension-size-x-small);
+	inset-inline-start: var(--semantic-dimension-size-x-small);
+	padding: var(--semantic-dimension-space-padding-xxx-small) var(--semantic-dimension-space-padding-x-small);
 	border-radius: var(--semantic-dimension-radius-small);
-	background: #6639ba;
-	color: #ffffff;
+	background: var(--semantic-color-background-fill-primary-information);
+	color: var(--semantic-color-text-on-primary-fill);
 	font: var(--semantic-typography-ui-tertiary);
 	white-space: nowrap;
 }

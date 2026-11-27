@@ -57,7 +57,7 @@ let session: string;
 let agent: P3Principal;
 
 beforeEach(async () => {
-	w = await providersWorld(context, new Set(), [
+	w = await providersWorld(context, [
 		{ name: "p3-test-other-faux", facet: OTHER },
 		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 		{ name: "@earendil-works/p3-sessions", facet: sessionsServer },

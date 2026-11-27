@@ -1,10 +1,10 @@
 // The instructions kind (`prompt.instructions`): a text the agent starts from, and the language it is written in.
-// Made by people (an agent never writes its own instructions, decision 10); the plugin seeds one in Pi. Every
-// instructions thing that reaches a session adds its own prompt section, the closest last. Its one tick, Use, is a
-// flag tick for the agents (decision 97). The text and the language are settings, changed with Configure where the
-// thing is linked (decision 91). No guests.
+// Made by people (an agent never writes its own instructions, decision 10); the plugin seeds one in Pi with its
+// default text. Every instructions thing that reaches a session adds its own prompt section, the closest last. Its
+// one tick, Use, is a flag tick for the agents (decision 97). The text and the language are settings, changed with
+// Configure where the thing is linked (decision 91). No guests.
 
-import { oneOf, type Static, str } from "@earendil-works/p3/v1";
+import { obj, oneOf, type Static, str } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";
 
@@ -16,6 +16,12 @@ export const Language = oneOf("en", "de", "fr");
 
 /** A language instructions are written in (see `Language`). */
 export type Language = Static<typeof Language>;
+
+/** An instructions thing's settings: its text and its language. */
+export const InstructionsSettings = obj({ text: InstructionsText, language: Language });
+
+/** An instructions thing's settings (see `InstructionsSettings`). */
+export type InstructionsSettings = Static<typeof InstructionsSettings>;
 
 /** Instructions: the text and the language, plain (they are what the agent reads); Use gives the prompt section. */
 export const InstructionsKind = defineThing("prompt.instructions", {

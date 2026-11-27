@@ -1,4 +1,4 @@
-// The files plugin on the server (`testPlugin`, beside the things, environments and people plugins' server facets):
+// The files plugin on the server (`testPlugin`, beside the things and environments plugins' server facets):
 // Files is made in Pi once and gives everyone there Browse; Browse lists, searches and opens, Edit uploads, renames
 // and removes, and with no tick there is no member; both ticks are for people only. Every call reaches its machine as
 // the caller: a machine hidden in the workspace or with `@open` withheld is refused, so are relative paths, Pi's data
@@ -35,7 +35,6 @@ import { MachineHosts, type StagedFile } from "../../environments/contract.serve
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { seeded } from "../../environments/test/seeded.ts";
-import peopleServer from "../../people/server.ts";
 import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Party, type Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
@@ -55,7 +54,6 @@ const BY: Source = { kind: "plugin", plugin: "test" };
 const STUBS = [
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-	{ name: "@earendil-works/p3-people", facet: peopleServer },
 ];
 
 let t: TestedPlugin<P3Principal>;

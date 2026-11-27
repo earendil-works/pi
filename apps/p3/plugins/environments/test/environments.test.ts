@@ -19,10 +19,8 @@ import {
 	ThisDevice,
 	until,
 } from "@earendil-works/p3/v1";
-import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { collected, eventually, within } from "../../../test/until.ts";
-import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import { ThingHarnessParts } from "../../things/contract.worker.ts";
@@ -57,7 +55,6 @@ const remoteType = fakeType(
 /** What the server facet uses of other plugins. */
 const STUBS = [
 	{ name: "@earendil-works/p3-a-remote-type", facet: remoteType },
-	{ name: "@earendil-works/p3-people", facet: peopleServer },
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 ];
 
@@ -238,13 +235,13 @@ describe("the environments plugin on the server", () => {
 
 	it("gives the owner the machines, and nobody else", async () => {
 		const [owner] = await t.root(
-			async (ctx) => (await (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx)).items,
+			async (ctx) => (await (await ctx.get(ThingsStore, {})).persons.owners.page({}, 1, ctx)).items,
 			context,
 		);
 		const ids = await t.root(
 			async (ctx) => (await ctx.get(Environments, {})).environments.value.map(({ id }) => id),
 			context,
-			{ principal: { kind: "person", id: owner!.id, name: owner!.name } },
+			{ principal: { kind: "person", id: owner!.person, name: owner!.name } },
 		);
 		assert.deepEqual(ids, [machine]);
 		for (const principal of [

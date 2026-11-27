@@ -4,9 +4,9 @@ import { isNotFound, type SyncFileReader, type SyncFileSystem, unwrap } from "./
 import {
 	type BatchInfo,
 	type JsonObject,
+	LOG_START,
 	type PutBatchResult,
 	type RemoteListing,
-	remoteHead,
 	type Seq,
 	type SessionChanges,
 	type SessionSyncMaintenance,
@@ -33,26 +33,36 @@ export function checkSessionId(sessionId: string): string {
 /**
  * A remote store in a directory, laid out as the real remote is: per session, one slot per batch start, holding where
  * the batch ends and which device created it, and snapshots named by their end. As the real remote, it creates a slot
- * only where the history ends. Creating a slot is check-then-write,
- * without the atomicity of the real remote across processes: for development and tests, with one process writing.
+ * only where the history ends.
+ *
+ * One process writes a directory, through one instance: creating a slot is a check, then a write, queued per session
+ * in this instance, so two uploads of a session cannot both create a slot. Across processes nothing guards it (the
+ * file operations have no exclusive create): an app with several processes routes their uploads through one.
+ *
+ * Every file is flushed to disk before it is renamed into place, so a slot that exists survives a power loss with its
+ * body. The head of a session's history is kept in a file, written after each slot, so creating one reads a few files,
+ * not every slot.
  *
  * ```text
  * {root}/{session}/slots/{after}.json     { after, to, device, archive?, folded? }, written once
  * {root}/{session}/batches/{after}.batch  the commits (or an archive), until folded
  * {root}/{session}/snapshots/{to}.batch   a store archive
+ * {root}/{session}/head.json             { head }: where the history ends, or a little before it
  * {root}/{session}/meta.json             the host's description, last write wins
  * ```
  */
 export class FileSystemSyncRemote implements SessionSyncMaintenance {
 	readonly #fs: SyncFileSystem;
 	readonly #root: string;
+	/** Each session's slot creation under way, so the next waits for it: the last one queued, by session. */
+	readonly #creating = new Map<string, Promise<unknown>>();
 
 	constructor(fs: SyncFileSystem, root: string) {
 		this.#fs = fs;
 		this.#root = root;
 	}
 
-	async putBatch(
+	putBatch(
 		sessionId: string,
 		after: Seq,
 		to: Seq,
@@ -61,9 +71,29 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 		context: Context,
 		options: { readonly archive?: boolean } = {},
 	): Promise<PutBatchResult> {
+		const previous = this.#creating.get(sessionId) ?? Promise.resolve();
+		const run = previous.then(() => this.#create(sessionId, after, to, device, body, context, options));
+		const settled = run.catch(() => {});
+		this.#creating.set(sessionId, settled);
+		void settled.then(() => {
+			if (this.#creating.get(sessionId) === settled) this.#creating.delete(sessionId);
+		});
+		return run;
+	}
+
+	/** `putBatch` once no other slot of the session is being created. */
+	async #create(
+		sessionId: string,
+		after: Seq,
+		to: Seq,
+		device: string,
+		body: SyncBody,
+		context: Context,
+		options: { readonly archive?: boolean },
+	): Promise<PutBatchResult> {
 		const existing = await this.#slot(sessionId, after, context);
 		if (existing !== undefined) return { type: "exists", to: existing.to, device: existing.device };
-		const head = remoteHead(await this.list(sessionId, context));
+		const head = await this.#head(sessionId, context);
 		if (after !== head) return { type: "not_head", head };
 		await this.#write(sessionId, ["batches"], `${pad(after)}.batch`, body, context);
 		// The slot is written last: it is what makes the batch exist.
@@ -75,7 +105,28 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 			once(new TextEncoder().encode(JSON.stringify(slot))),
 			context,
 		);
+		await this.#write(
+			sessionId,
+			[],
+			"head.json",
+			once(new TextEncoder().encode(JSON.stringify({ head: to }))),
+			context,
+		);
 		return { type: "created" };
+	}
+
+	/**
+	 * Where the session's history ends: the head file, then the chain of slots after it. A crash between a slot and the
+	 * head file leaves the file behind by that slot; a directory written before head files walks the chain once.
+	 */
+	async #head(sessionId: string, context: Context): Promise<Seq> {
+		const bytes = await this.#read(context, sessionId, "head.json");
+		let at = bytes === undefined ? LOG_START : (JSON.parse(new TextDecoder().decode(bytes)) as { head: Seq }).head;
+		for (let next = await this.#slot(sessionId, at, context); next !== undefined; ) {
+			at = next.to;
+			next = await this.#slot(sessionId, at, context);
+		}
+		return at;
 	}
 
 	async getBatch(sessionId: string, after: Seq, context: Context): Promise<SyncBody | undefined> {
@@ -145,7 +196,7 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 		for (const id of names) {
 			sessions.push({
 				id,
-				head: remoteHead(await this.list(id, context)),
+				head: await this.#head(id, context),
 				meta: await this.getMeta(id, context),
 			});
 		}
@@ -190,8 +241,8 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 	}
 
 	/**
-	 * Write a body through a temporary file and a rename, so a reader never sees half a file; the body is appended chunk
-	 * by chunk as it streams.
+	 * Write a body through a temporary file, flushed to disk, and a rename, so a reader never sees half a file and a
+	 * renamed file keeps its content after a power loss; the body is appended chunk by chunk as it streams.
 	 */
 	async #write(
 		sessionId: string,
@@ -208,6 +259,7 @@ export class FileSystemSyncRemote implements SessionSyncMaintenance {
 		unwrap(await this.#fs.writeFile(temporary, new Uint8Array(), context));
 		try {
 			for await (const chunk of body) unwrap(await this.#fs.appendFile(temporary, chunk, context));
+			unwrap(await this.#fs.flushFile(temporary, context));
 		} catch (error) {
 			await this.#fs.remove(temporary, { force: true }, context);
 			throw error;

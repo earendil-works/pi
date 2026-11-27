@@ -1,14 +1,14 @@
 // The prompt plugin on the server: its two kinds (`serveThing`: the things plugin admits every caller) over one store
 // of their settings (`store.ts`). Instructions read their settings live (no text while never set); Pi's first one is
-// seeded at start (`one`) with a default text. A set of skills hands out its shared read (`set.ts`: the folder's skills, watched)
-// and `read`, a skill's text, read from the Pi's disk when asked for.
+// seeded at start (`one`) with a default text. A set of skills hands out its shared read (`set.ts`: the folder's
+// skills, watched) and `read`, a skill's text, read from the Pi's disk when asked for.
 
 import { defineFacet } from "@earendil-works/p3/v1";
 import { serveThing } from "../things/serve.ts";
-import { InstructionsKind } from "./instructions-kind.ts";
+import { InstructionsKind, type InstructionsSettings } from "./instructions-kind.ts";
 import { SkillSet, serveSet } from "./set.ts";
 import { SkillsKind } from "./skills-kind.ts";
-import { type InstructionsSettings, PromptStore, serveStore, UNSET_INSTRUCTIONS } from "./store.ts";
+import { PromptStore, serveStore, UNSET_INSTRUCTIONS } from "./store.ts";
 
 /** This plugin's name: the maker of the things it seeds. */
 const PLUGIN = "@earendil-works/p3-prompt";
@@ -33,6 +33,8 @@ export default defineFacet((host) => {
 			};
 		},
 		// Pi's seed (made by this plugin, `one`) starts with the default text; a person's new instructions start empty.
+		// A special case until things2 reads a left-out create input as `{}` (the hackiness cleanup plan, things2: "a
+		// left-out create input"); then the seed passes its text through `one.input` and this case goes.
 		create: async ({ thing, by }, ctx) => {
 			if (by.kind !== "plugin" || by.plugin !== PLUGIN) return;
 			await (await ctx.get(PromptStore, {})).configureInstructions({ thing, ...SEED }, ctx);

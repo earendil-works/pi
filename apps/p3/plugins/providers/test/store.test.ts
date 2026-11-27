@@ -50,7 +50,7 @@ const valid = (access: string) => ({ ...OLD, access, expires: Date.now() + 3_600
  * `thing`'s row as the store's file holds it.
  */
 async function served(t: TestContext, more: readonly PluginFacet<P3Principal>[] = []) {
-	const w = await providersWorld(context, new Set(), more);
+	const w = await providersWorld(context, more);
 	t.after(() => w.close(context));
 	return {
 		store: () => w.host.get(LoginStore, {}, context),
@@ -161,10 +161,7 @@ describe("the store's statements", () => {
 			await host.close(context);
 			await stored.close(context);
 		});
-		const facets = [
-			{ name: "@earendil-works/p3-things", facet: thingsServer },
-			...providerFacets(new Set(), () => host),
-		];
+		const facets = [{ name: "@earendil-works/p3-things", facet: thingsServer }, ...providerFacets(() => host)];
 		await host.load([...facets, gated().plugin, cutting().plugin], context);
 		const store = await host.get(LoginStore, {}, context);
 		await store.create({ thing: "t1", provider: FAUX_PROVIDER, credential: CREDENTIAL }, context);
