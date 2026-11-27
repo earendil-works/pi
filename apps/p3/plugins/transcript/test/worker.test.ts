@@ -676,6 +676,7 @@ describe("the follower across harnesses, raced at the observation's attachment (
 		const g = c.delay("after");
 		const reader = read();
 		await g.entered.promise;
+		await c.say("old harness while the first attachment is pending");
 		await c.swap();
 		await c.say("fresh");
 		g.ready.resolve();
