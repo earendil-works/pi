@@ -6,7 +6,6 @@
 import {
 	and,
 	bool,
-	type Ctx,
 	defineColumns,
 	defineTable,
 	eq,
@@ -21,7 +20,6 @@ import {
 	type TableOf,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import { SignIns } from "../sign-in/contract.ts";
 import type { Touched } from "./access.ts";
 import {
 	ManagedBy,
@@ -308,10 +306,4 @@ export class PeopleWrites {
 	async #mustBeGroup(tx: Tx, group: string): Promise<void> {
 		if ((await tx.get(this.#t.groups, { group })) === undefined) throw invalid("args", `things: no group ${group}`);
 	}
-}
-
-/** Ends every sign-in of the persons `persons` (they were removed): each one's open links close at once. */
-export async function endSignIns(persons: readonly string[], ctx: Ctx<P3Principal>): Promise<void> {
-	const signIns = await ctx.get(SignIns, {});
-	for (const person of persons) await signIns.revokeOf({ person }, ctx);
 }

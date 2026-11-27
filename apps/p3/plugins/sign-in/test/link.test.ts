@@ -93,7 +93,7 @@ describe("a link's sign-in and removal", () => {
 			const late = await at.things.createPerson({ name: "Late", madeBy: at.by }, context);
 			await at.things.removePerson({ person: late }, context);
 			const refused = await at.host.root(
-				async (ctx) => answer(await issue({ person: late, name: "Late" }, "test", LOCAL, ctx), late, ctx),
+				async (ctx) => answer(await issue({ person: late, name: "Late" }, "test", LOCAL, ctx), ctx),
 				context,
 			);
 			assert.deepEqual(refused, { kind: "error", status: 403 });
@@ -106,7 +106,7 @@ describe("a link's sign-in and removal", () => {
 					await at.things.removePerson({ person }, context);
 				})();
 				const signing = at.host.root(
-					async (ctx) => answer(await issue({ person, name: "P" }, "test", LOCAL, ctx), person, ctx),
+					async (ctx) => answer(await issue({ person, name: "P" }, "test", LOCAL, ctx), ctx),
 					context,
 				);
 				await Promise.all([removal, signing]);

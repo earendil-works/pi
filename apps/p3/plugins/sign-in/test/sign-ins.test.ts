@@ -1,9 +1,10 @@
 // The sign-ins (`sign-ins.ts`): tokens random, kept as SHA-256 hashes, matched in constant time; sign-ins issued,
-// verified, listed and revoked through `SignIns`, only hashes kept; the authenticator taking a bearer token, else the
-// signed cookie named after the Pi; a sign-in ending unused after 400 days; a sign-in's open links closed when it ends,
-// only its own; and every link of a `SignIns` object closed when the object ends (a reload of the plugin); the
-// sign-ins and the cookie's key kept across a restart. The plugin tier first (its facet alone, requests made by the
-// test), then the real server (`testServer`) for what needs HTTP and `/chord` links; the probe's route
+// verified, read (`rows.ofPerson`, `rows.all`) and revoked (one of a person's, or every one of persons') through
+// `SignIns`, only hashes kept; the version-1 sign-ins moved into the table once; the authenticator taking a bearer
+// token, else the signed cookie named after the Pi; a sign-in ending unused after 400 days; a sign-in's open links
+// closed when it ends, only its own; and every link of a `SignIns` object closed when the object ends (a reload of the
+// plugin); the sign-ins and the cookie's key kept across a restart. The plugin tier first (its facet alone, requests
+// made by the test), then the real server (`testServer`) for what needs HTTP and `/chord` links; the probe's route
 // (`GET /_probe/principal`) says what a request authenticated as.
 
 import assert from "node:assert/strict";
@@ -30,6 +31,7 @@ import {
 	sqliteBackend,
 	str,
 	webSocketLink,
+	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import {
 	Authenticators,
@@ -59,6 +61,8 @@ async function ownerOf(host: TestServer["host"]): Promise<P3Principal> {
 	return { kind: "person", id: found!.person, name: found!.name };
 }
 const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
+/** A principal that is no person's. */
+const WORKER: P3Principal = { kind: "worker", session: "test" };
 
 /** The sign-in plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -111,9 +115,16 @@ function verify(t: TestedPlugin<P3Principal>, token: string): Promise<P3Principa
 	return t.root(async (ctx) => (await ctx.get(SignIns, {})).verify(token, ctx), context);
 }
 
-/** Revokes sign-in `id` on `t`. */
-function revoke(t: TestedPlugin<P3Principal>, id: string): Promise<null> {
-	return t.root(async (ctx) => (await ctx.get(SignIns, {})).revoke(id, ctx), context);
+/** The id of `principal`, a person (whose sign-ins the tests revoke). */
+function personOf(principal: P3Principal): string {
+	assert.ok(principal.kind === "person");
+	return principal.id;
+}
+
+/** Revokes sign-in `id` of `principal` (a person) on `t`: whether it ended one. */
+function revoke(t: TestedPlugin<P3Principal>, principal: P3Principal, id: string): Promise<boolean> {
+	const person = personOf(principal);
+	return t.root(async (ctx) => (await ctx.get(SignIns, {})).revoke({ person, id }, ctx), context);
 }
 
 /** The sign-ins `t` lists. */
@@ -179,7 +190,7 @@ describe("the plugin's SignIns", () => {
 		const shown = (await listed(t)).find(({ id }) => id === issued.id)!;
 		assert.deepEqual(Object.keys(shown).sort(), ["created", "id", "kind", "label", "lastUsed", "principal"]);
 		assert.deepEqual([shown.label, shown.kind, shown.principal], ["Max's laptop", "device", MAX]);
-		await revoke(t, issued.id);
+		assert.equal(await revoke(t, MAX, issued.id), true);
 		assert.equal(await verify(t, issued.token), null);
 		assert.equal(await authenticate(t, request(carrying(issued, "cookie"))), undefined);
 		assert.equal(
@@ -269,6 +280,26 @@ describe("the plugin's SignIns", () => {
 		assert.deepEqual(await verify(t, issued.token), OWNER);
 	});
 
+	// Astra, round 1: the touch ran under the request's context, so a client that left at once cancelled it (an error
+	// reported) while memory already had the use: a second use within the minute wrote nothing.
+	it("writes a use's touch under the object's own context: a request that ends at once keeps its use", async () => {
+		const start = Date.now();
+		mock.timers.enable({ apis: ["Date"], now: start });
+		const issued = await issue(t, OWNER, "device", "d");
+		mock.timers.setTime(start + 61_000);
+		const [entry] = t.contributions(Authenticators);
+		const left = new AbortController();
+		const used = entry!.value(request(carrying(issued, "bearer")), withAbortSignal(left.signal, context));
+		left.abort(new Error("the client left"));
+		assert.deepEqual(await used, OWNER);
+		await eventually(
+			() => listed(t),
+			(rows) => rows.some((row) => row.id === issued.id && row.lastUsed === start + 61_000),
+			2000,
+		);
+		assert.deepEqual(t.errors.slice(loaded), []);
+	});
+
 	it("ends a sign-in unused for 400 days at its next use", async () => {
 		const start = Date.now();
 		mock.timers.enable({ apis: ["Date"], now: start });
@@ -307,7 +338,7 @@ describe("one person's sign-ins, and the sign-ins version 1 kept", () => {
 					[second.id, "phone"],
 				],
 			);
-			await t.root(async (ctx) => (await ctx.get(SignIns, {})).revokeOf({ person: MAX.id }, ctx), context);
+			await t.root(async (ctx) => (await ctx.get(SignIns, {})).revokeOf({ persons: [MAX.id] }, ctx), context);
 			assert.deepEqual(await ofMax(), []);
 			assert.deepEqual([await verify(t, first.token), await verify(t, second.token)], [null, null]);
 			assert.deepEqual(await verify(t, other.token), OWNER);
@@ -316,7 +347,46 @@ describe("one person's sign-ins, and the sign-ins version 1 kept", () => {
 		}
 	});
 
-	it("moves the sign-ins version 1 kept in its document into the table once: their tokens still sign in", async () => {
+	it("revokes a sign-in only for its own person: another's, a non-person's and an unknown id end nothing", async () => {
+		const t = await signInPlugin();
+		try {
+			const maxs = await issue(t, MAX, "device", "Max's");
+			const owners = await issue(t, OWNER, "device", "the owner's");
+			const workers = await issue(t, WORKER, "device", "a worker's");
+			const refused = [owners.id, workers.id, "nope", "__proto__"];
+			for (const id of refused) assert.equal(await revoke(t, MAX, id), false, id);
+			assert.deepEqual(
+				[await verify(t, maxs.token), await verify(t, owners.token), await verify(t, workers.token)],
+				[MAX, OWNER, WORKER],
+			);
+			assert.equal(await revoke(t, MAX, maxs.id), true);
+			assert.equal(await verify(t, maxs.token), null);
+			assert.equal(await revoke(t, MAX, maxs.id), false);
+		} finally {
+			await t.close(context);
+		}
+	});
+
+	// Astra, round 1: `""` is the stored person of every sign-in that is no person's, so it would select them all.
+	it("refuses the empty person id: no read or revoke by person reaches a sign-in that is no person's", async () => {
+		const t = await signInPlugin();
+		try {
+			const workers = await issue(t, WORKER, "device");
+			const invalid = (error: unknown) => isChordError(error, "invalid");
+			await t.root(async (ctx) => {
+				const signIns = await ctx.get(SignIns, {});
+				await assert.rejects(signIns.rows.ofPerson.page({ person: "" }, 10, ctx), invalid);
+				await assert.rejects(signIns.revokeOf({ persons: [MAX.id, ""] }, ctx), invalid);
+				await assert.rejects(signIns.revoke({ person: "", id: workers.id }, ctx), invalid);
+				return null;
+			}, context);
+			assert.deepEqual(await verify(t, workers.token), WORKER);
+		} finally {
+			await t.close(context);
+		}
+	});
+
+	it("version-1 sign-ins move into the table once; their tokens still sign in, a revoked one stays revoked", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "p3-sign-ins-"));
 		const path = join(dir, "store.sqlite");
 		// Version 1's document as it was stored: written through a stand-in object of the same type.
@@ -369,11 +439,20 @@ describe("one person's sign-ins, and the sign-ins version 1 kept", () => {
 			const before = await open([seeded]);
 			await before.host.root(async (ctx) => (await ctx.get(V1, {})).seed({ hash: hashToken(secret) }, ctx), context);
 			await before.close();
-			for (let start = 0; start < 2; start++) {
+			for (let start = 0; start < 3; start++) {
 				const after = await open([{ name: "@earendil-works/p3-sign-in", facet: signInServer }]);
 				try {
 					const signIns = await after.host.get(SignIns, {}, context);
+					if (start === 2) {
+						// Opus, round 1: revoked after the move, it stays revoked at the next start (the move ran once).
+						assert.equal(await signIns.verify(`old.${secret}`, context), null);
+						continue;
+					}
 					assert.deepEqual(await signIns.verify(`old.${secret}`, context), MAX);
+					if (start === 1) {
+						assert.ok(await signIns.revoke({ person: personOf(MAX), id: "old" }, context));
+						continue;
+					}
 					const { items } = await signIns.rows.ofPerson.page({ person: MAX.id }, 10, context);
 					assert.deepEqual(
 						items.map(({ id, label }) => [id, label]),
@@ -412,7 +491,7 @@ describe("the plugin's links of a sign-in", () => {
 		const kept = await linked(phone, "cookie");
 		// A link that closed on its own is no longer the sign-in's.
 		third.end!();
-		await revoke(t, laptop.id);
+		await revoke(t, OWNER, laptop.id);
 		assert.deepEqual([first.link.closed, second.link.closed, third.link.closed, kept.link.closed], [1, 1, 0, 0]);
 	});
 
@@ -440,7 +519,7 @@ describe("the plugin's links of a sign-in", () => {
 			const issued = await issue(t, OWNER, carry === "cookie" ? "browser" : "device");
 			const req = request(carrying(issued, carry));
 			assert.deepEqual(await authenticate(t, req), OWNER);
-			if (race === "revoke") await revoke(t, issued.id);
+			if (race === "revoke") await revoke(t, OWNER, issued.id);
 			else mock.timers.setTime(start + 401 * DAY);
 			const { link, end } = await open(t, req);
 			assert.deepEqual([link.closed, end], [1, undefined], `${carry}, ${race}`);
@@ -462,7 +541,7 @@ describe("the plugin's links of a sign-in", () => {
 		const req = request(carrying(laptop, "bearer"));
 		// Opened without this object's authenticator having seen the request.
 		const { link } = await open(t, req);
-		await revoke(t, laptop.id);
+		await revoke(t, OWNER, laptop.id);
 		assert.equal(link.closed, 1);
 	});
 
@@ -580,9 +659,15 @@ async function device(port: number, headers: Readonly<Record<string, string>>) {
 	return { host, state };
 }
 
-/** Revokes `id` on `host`, then waits until `revoked`'s socket closed. */
-async function revokeClosing(host: TestServer["host"], id: string, revoked: { closed: boolean }) {
-	await host.root(async (ctx) => (await ctx.get(SignIns, {})).revoke(id, ctx), context);
+/** Revokes sign-in `id` of `principal` (a person) on `host`, then waits until `revoked`'s socket closed. */
+async function revokeClosing(
+	host: TestServer["host"],
+	principal: P3Principal,
+	id: string,
+	revoked: { closed: boolean },
+) {
+	const person = personOf(principal);
+	assert.ok(await host.root(async (ctx) => (await ctx.get(SignIns, {})).revoke({ person, id }, ctx), context));
 	await eventually(
 		async () => revoked.closed,
 		(closed) => closed,
@@ -599,7 +684,7 @@ describe("a sign-in's `/chord` links on the server", () => {
 		const kept = await device(t.port, carrying(phone, "cookie"));
 		try {
 			await newSession(revoked.host, "before", context, TMP);
-			await revokeClosing(t.host, laptop.id, revoked.state);
+			await revokeClosing(t.host, owner, laptop.id, revoked.state);
 			await assert.rejects(newSession(revoked.host, "by a revoked device", context, TMP));
 			await newSession(kept.host, "after", context, TMP);
 			assert.equal(kept.state.closed, false);
@@ -653,7 +738,7 @@ describe("a reload of the sign-in plugin", () => {
 			);
 			// The sign-ins stay: both devices sign in again, and a revoke reaches the new object's links.
 			const [revoked, kept] = await connect();
-			await revokeClosing(host, laptop.id, revoked!.state);
+			await revokeClosing(host, owner, laptop.id, revoked!.state);
 			await newSession(kept!.host, "after", context, TMP);
 			assert.equal(kept!.state.closed, false);
 			assert.deepEqual(t.errors, []);

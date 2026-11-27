@@ -64,7 +64,7 @@ export function serveInvite(host: FacetHost<P3Principal>): void {
 							await revoke(issued, ctx);
 							return { kind: "error", status: 403 };
 						}
-						return answer(issued, newPerson, ctx);
+						return answer(issued, ctx);
 					},
 				},
 			},
@@ -94,7 +94,7 @@ async function spentUnredeemed(
 	await things.spendInvite({ secret }, ctx);
 	const signIns = await ctx.get(SignIns, {});
 	await signIns
-		.revokeOf({ person }, ctx)
+		.revokeOf({ persons: [person] }, ctx)
 		.catch((error: unknown) =>
 			reportError("sign-in: a sign-in the invite route may have issued could not be revoked", error, ctx),
 		);

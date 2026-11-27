@@ -8,8 +8,8 @@ import type { HttpRequest, HttpResponse } from "@earendil-works/p3/v1/server";
 import { ThingsStore } from "../things/contract.server.ts";
 import { SignIns } from "./contract.ts";
 
-/** A sign-in issued for a link, not yet answered: its id (to revoke it) and its cookie. */
-export type Issued = { readonly id: string; readonly cookie: string };
+/** A sign-in issued for a link, not yet answered: its id and person (to revoke it) and its cookie. */
+export type Issued = { readonly id: string; readonly person: string; readonly cookie: string };
 
 /** A link's page at `path`: its script (the response's nonce) posts the fragment's token there, then opens p3. */
 export function linkPage(path: string, nonce: string): string {
@@ -33,16 +33,16 @@ export async function issue(
 	const principal = { kind: "person", id: person, name } as const;
 	const secure = request.provenance.kind !== "local";
 	const { id, cookie } = await (await ctx.get(SignIns, {})).issue({ principal, label, kind: "browser", secure }, ctx);
-	return { id, cookie };
+	return { id, person, cookie };
 }
 
 /**
- * The answer that sets sign-in `issued`'s cookie, once person `person` is still there; a person a removal took meanwhile
- * gets the sign-in revoked and a refusal (403).
+ * The answer that sets sign-in `issued`'s cookie, once its person is still there; a person a removal took meanwhile gets
+ * the sign-in revoked and a refusal (403).
  */
-export async function answer(issued: Issued, person: string, ctx: Ctx): Promise<HttpResponse> {
+export async function answer(issued: Issued, ctx: Ctx): Promise<HttpResponse> {
 	const things = await ctx.get(ThingsStore, {});
-	if ((await things.persons.one.page({ person }, 1, ctx)).items.length === 0) {
+	if ((await things.persons.one.page({ person: issued.person }, 1, ctx)).items.length === 0) {
 		await revoke(issued, ctx);
 		return { kind: "error", status: 403 };
 	}
@@ -51,5 +51,6 @@ export async function answer(issued: Issued, person: string, ctx: Ctx): Promise<
 
 /** Revokes sign-in `issued`, never answered. */
 export async function revoke(issued: Issued, ctx: Ctx): Promise<void> {
-	await (await ctx.get(SignIns, {})).revoke(issued.id, ctx);
+	const { id, person } = issued;
+	await (await ctx.get(SignIns, {})).revoke({ person, id }, ctx);
 }

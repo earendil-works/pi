@@ -27,6 +27,7 @@ import {
 	type Tx,
 } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { SignIns } from "../sign-in/contract.ts";
 import { AccessIndex, type Asks, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
@@ -57,7 +58,6 @@ import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
 import { ticksNow } from "./migration.ts";
 import {
-	endSignIns,
 	GroupColumns,
 	GroupManagers,
 	GroupMembers,
@@ -350,7 +350,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		 */
 		const signOut = async (persons: readonly string[], ctx: Ctx<P3Principal>): Promise<void> => {
 			try {
-				await endSignIns(persons, ctx);
+				await (await ctx.get(SignIns, {})).revokeOf({ persons: [...persons] }, ctx);
 				await self.tx(async (tx) => {
 					for (const person of persons) tx.delete(t.signOuts, { person });
 					return null;

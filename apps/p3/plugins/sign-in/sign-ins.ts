@@ -5,13 +5,13 @@
 // random, kept only as their SHA-256 hashes, compared in constant time (the owner link's too).
 
 import {
-	BACKGROUND_CONTEXT,
 	type Context,
 	defineState,
 	defineTable,
 	eq,
 	type FacetHost,
 	type HandleOf,
+	inArray,
 	int,
 	json,
 	map,
@@ -21,6 +21,7 @@ import {
 	P3Principal,
 	query,
 	reportError,
+	type Static,
 	type StoreSelf,
 	str,
 	type TableOf,
@@ -65,6 +66,19 @@ const SignInsTable = defineTable("sign-in.sign-ins", {
 	indexes: { by_person: ["person", "created"] },
 });
 
+/** A sign-in as version 1 kept it in the document, and as a row has it but its id and person. */
+const StoredSignIn = obj({
+	hash: str(),
+	label: str(),
+	kind: oneOf("browser", "device"),
+	principal: P3Principal,
+	created: num(),
+	lastUsed: num(),
+});
+
+/** A sign-in as version 1 kept it (see `StoredSignIn`). */
+type StoredSignIn = Static<typeof StoredSignIn>;
+
 /**
  * The cookie's key, made once per Pi: its id names the cookie (a browser shares cookies between the ports of one host,
  * so two Pis on a machine need two names), its secret signs it. The key starts empty and the first issue writes it: no
@@ -76,16 +90,7 @@ const SignInsTable = defineTable("sign-in.sign-ins", {
 export const SignInsDocument = defineState("p3.sign-ins", {
 	schema: obj({
 		cookie: obj({ id: str(), secret: str() }),
-		signIns: map(
-			obj({
-				hash: str(),
-				label: str(),
-				kind: oneOf("browser", "device"),
-				principal: P3Principal,
-				created: num(),
-				lastUsed: num(),
-			}),
-		),
+		signIns: map(StoredSignIn),
 	}),
 	version: 1,
 	initial: () => ({ cookie: { id: "", secret: "" }, signIns: {} }),
@@ -126,32 +131,43 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 			},
 			() => {},
 		);
+		// The object's own context, set in the turn it goes live, before any call or contribution reaches it: a touch and
+		// an idle sign-in's end run under it, not under the request's (a client that leaves would cancel the write).
+		let live: Context | undefined;
 		// The next object (a reload's) tracks none of these links, so it could never close them: they end with this one,
 		// and their clients sign in again.
 		self.onLive(async (ctx) => {
+			live = ctx;
 			await untilAborted(ctx);
 			links.closeAll();
 		});
+		/** Sign-ins `ids`, whose rows a commit deleted: out of memory, their open links closed. */
+		const forget = (ids: readonly string[]): null => {
+			for (const id of ids) {
+				known.delete(id);
+				links.close(id);
+			}
+			return null;
+		};
 		/** Ends sign-in `id`: its row deleted, then its open links closed. */
 		const end = async (id: string, context: Context): Promise<null> => {
 			await self.tx(async (tx) => {
 				tx.delete(table, { id });
 				return null;
 			}, context);
-			known.delete(id);
-			links.close(id);
-			return null;
+			return forget([id]);
 		};
-		/** Writes sign-in `id`'s last use `now` (not awaited by the use). */
+		/** Writes sign-in `id`'s last use `now`, not awaited by the use (a row ended meanwhile: nothing changes). */
 		const touch = (id: string, now: number, context: Context): Promise<null> =>
 			self.tx(async (tx) => {
-				if ((await tx.get(table, { id })) !== undefined) tx.update(table, { id }, { lastUsed: now });
+				tx.update(table, { id }, { lastUsed: now });
 				return null;
 			}, context);
-		const authenticate = (token: string, context: Context) => authenticated(known, token, end, touch, context);
-		self.contribute(Authenticators, (request, context) => {
+		// `live` is set: nothing authenticates before the object is live.
+		const authenticate = (token: string) => authenticated(known, token, end, touch, live!);
+		self.contribute(Authenticators, (request) => {
 			const token = requestToken(request, key());
-			return token === undefined ? undefined : authenticate(token, context)?.principal;
+			return token === undefined ? undefined : authenticate(token)?.principal;
 		});
 		// The link's request is checked again here, not remembered from its authentication: a reload of this plugin
 		// between the two would leave the link to an object that never saw the request, and a revoke would miss it. A
@@ -159,25 +175,17 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 		self.contribute(LinkOpened, (request, close) => {
 			const token = requestToken(request, key());
 			if (token === undefined) return undefined;
-			const signIn = authenticate(token, BACKGROUND_CONTEXT);
+			const signIn = authenticate(token);
 			if (signIn === undefined) close();
 			return links.opened(signIn?.id, close);
 		});
 		return {
 			rows: self.queries(
 				table,
+				// Never the hash; `person` is the principal's.
+				{ map: ({ hash: _hash, person: _person, ...shown }) => shown },
 				{
-					map: ({ id, label, kind, principal, created, lastUsed }) => ({
-						id,
-						label,
-						kind,
-						principal,
-						created,
-						lastUsed,
-					}),
-				},
-				{
-					// Index `by_person`: one person's, in the order they were made.
+					// Index `by_person`: one person's, by the time they were made.
 					ofPerson: ({ person }: { person: string }) =>
 						query(SignInsTable)
 							.where((r) => eq(r.person, person))
@@ -213,58 +221,35 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 				});
 				return { id, token, cookie: signed };
 			},
-			verify: async (token, ctx) => authenticate(token, ctx)?.principal ?? null,
-			revoke: end,
-			revokeOf: async ({ person }, ctx) => {
+			verify: async (token) => authenticate(token)?.principal ?? null,
+			revoke: async ({ person, id }, ctx) => {
+				// Memory has every sign-in's principal (this object writes the table): no read.
+				const principal = known.get(id)?.principal;
+				if (principal?.kind !== "person" || principal.id !== person) return false;
+				await end(id, ctx);
+				return true;
+			},
+			revokeOf: async ({ persons }, ctx) => {
 				const ids = await self.tx(async (tx) => {
 					const gone: string[] = [];
-					for await (const row of tx.rows(
-						table,
-						query(SignInsTable).where((r) => eq(r.person, person)),
-					))
-						gone.push(row.id);
-					tx.deleteWhere(table, (r) => eq(r.person, person));
+					// Index `by_person`, in its order (no sort).
+					const theirs = query(SignInsTable)
+						.where((r) => inArray(r.person, persons))
+						.orderBy((r) => r.person, "asc")
+						.orderBy((r) => r.created, "asc");
+					for await (const { id } of tx.rows(table, theirs)) gone.push(id);
+					tx.deleteWhere(table, (r) => inArray(r.person, persons));
 					return gone;
 				}, ctx);
-				for (const id of ids) {
-					known.delete(id);
-					links.close(id);
-				}
-				return null;
+				return forget(ids);
 			},
 		};
 	});
 }
 
 /** The row of sign-in `id` (its person: a person's principal's id, else `""`). */
-function rowOf(
-	id: string,
-	{
-		hash,
-		label,
-		kind,
-		principal,
-		created,
-		lastUsed,
-	}: {
-		readonly hash: string;
-		readonly label: string;
-		readonly kind: "browser" | "device";
-		readonly principal: P3Principal;
-		readonly created: number;
-		readonly lastUsed: number;
-	},
-) {
-	return {
-		id,
-		hash,
-		label,
-		kind,
-		principal,
-		person: principal.kind === "person" ? principal.id : "",
-		created,
-		lastUsed,
-	};
+function rowOf(id: string, signIn: StoredSignIn) {
+	return { ...signIn, id, person: signIn.principal.kind === "person" ? signIn.principal.id : "" };
 }
 
 /**
@@ -317,7 +302,7 @@ class SignInLinks {
 
 /**
  * The sign-in `token` authenticates with (its id and principal), or `undefined`. It touches that sign-in (at most once
- * a minute), or ends it when it was unused too long; neither is awaited.
+ * a minute), or ends it when it was unused too long; neither is awaited, both run under `context` (the object's).
  */
 function authenticated(
 	known: Map<string, Known>,

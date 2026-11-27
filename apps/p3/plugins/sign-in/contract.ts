@@ -2,6 +2,7 @@
 // behind a token `<id>.<secret>` (random); only the secret's hash is kept, one row per sign-in.
 
 import {
+	arr,
 	bool,
 	local,
 	method,
@@ -18,6 +19,12 @@ import {
 
 /** The invite link's page and post (`invite.ts`); `Workspace.inviteLink` answers links to it, `#<token>` after it. */
 export const INVITE_PATH = "/_p3/invite";
+
+/**
+ * A person's id, as `SignIns` selects by it: never empty (the stored person of every sign-in that is no person's, which
+ * an empty id would select).
+ */
+const PersonId = str({ min: 1 });
 
 /** A sign-in as `SignIns` shows it: never its token or hash. */
 export const SignInRow = obj({
@@ -38,10 +45,10 @@ export const SignIns = local("p3.sign-ins", {
 	params: {},
 	members: {
 		/**
-		 * The sign-ins' rows: `ofPerson`, one person's, in the order they were made (index `by_person`); `all`, every one
+		 * The sign-ins' rows: `ofPerson`, one person's, by the time they were made (index `by_person`); `all`, every one
 		 * (in the order of their ids).
 		 */
-		rows: queries(SignInRow, { ofPerson: obj({ person: str() }), all: obj({}) }),
+		rows: queries(SignInRow, { ofPerson: obj({ person: PersonId }), all: obj({}) }),
 		/**
 		 * A new sign-in for `principal`: its id, its token (shown once, kept only hashed) and the sign-in cookie carrying
 		 * it for a browser (`Set-Cookie`; `secure` for a remote one).
@@ -52,9 +59,12 @@ export const SignIns = local("p3.sign-ins", {
 		),
 		/** The principal `token` authenticates as, or `null` (unknown, revoked, expired, malformed). */
 		verify: method(str(), union([P3Principal, nul()])),
-		/** Ends sign-in `id` at once: its token authenticates nothing more, and its open links are closed. */
-		revoke: method(str()),
-		/** Ends every sign-in of person `person` at once (`revoke` each), in one write. */
-		revokeOf: method(obj({ person: str() })),
+		/**
+		 * Ends sign-in `id` of person `person` at once: its token authenticates nothing more, and its open links are
+		 * closed. Whether it ended one: `false` when `person` has no sign-in `id` (another's is never ended).
+		 */
+		revoke: method(obj({ person: PersonId, id: str() }), bool()),
+		/** Ends every sign-in of the persons `persons` at once (`revoke` each), in one write. */
+		revokeOf: method(obj({ persons: arr(PersonId) })),
 	},
 });

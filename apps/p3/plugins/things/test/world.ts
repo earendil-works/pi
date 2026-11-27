@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
+	and,
 	type ChordStore,
 	type Context,
 	createHost,
@@ -18,6 +19,7 @@ import {
 	type Facet,
 	type Host,
 	type HostError,
+	inArray,
 	int,
 	invalid,
 	json,
@@ -175,7 +177,7 @@ export function signInsStub(): {
 		facet: defineFacet((host) =>
 			host.serve(SignIns, (_params, self) => {
 				const table = self.table(StubSignIns);
-				const revoke = async (id: string, ctx: Context) => {
+				const end = async (id: string, ctx: Context) => {
 					if (stub.failing) throw new Error("the sign-in plugin failed");
 					revoked.push(id);
 					await self.tx(async (tx) => {
@@ -218,10 +220,15 @@ export function signInsStub(): {
 						return { id, token: id, cookie: "" };
 					},
 					verify: async () => null,
-					revoke,
-					revokeOf: async ({ person }, ctx) => {
-						const mine = query(StubSignIns).where((r) => eq(r.person, person));
-						for (const { id } of (await table.page(mine, 1000, ctx)).items) await revoke(id, ctx);
+					revoke: async ({ person, id }, ctx) => {
+						const one = query(StubSignIns).where((r) => and(eq(r.id, id), eq(r.person, person)));
+						if ((await table.page(one, 1, ctx)).items.length === 0) return false;
+						await end(id, ctx);
+						return true;
+					},
+					revokeOf: async ({ persons }, ctx) => {
+						const mine = query(StubSignIns).where((r) => inArray(r.person, persons));
+						for (const { id } of (await table.page(mine, 1000, ctx)).items) await end(id, ctx);
 						return null;
 					},
 				};

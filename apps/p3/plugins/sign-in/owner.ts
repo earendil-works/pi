@@ -35,7 +35,7 @@ export function serveOwner(host: FacetHost<P3Principal>): void {
 						}
 						// The machine's owner as the things store has them now (a server-local read).
 						const owner = await (await ctx.get(ThingsStore, {})).machineOwner({}, ctx);
-						return answer(await issue(owner, "owner browser", request, ctx), owner.person, ctx);
+						return answer(await issue(owner, "owner browser", request, ctx), ctx);
 					},
 				},
 			},

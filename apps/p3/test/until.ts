@@ -20,14 +20,15 @@ export function within(what: string, context: Context, ms = 2000): Context {
 
 /**
  * The first result of `probe` that does not throw and passes `done`, tried every 10 ms; rejects with the last error
- * after `ms` (10 s by default). For effects in other processes (a worker's exit), which no watchable shows here.
+ * after `ms` (10 s by default). For effects in other processes (a worker's exit), which no watchable shows here. Its
+ * deadline is on the monotonic clock, so a case that mocks `Date` still fails in time.
  */
 export async function eventually<T>(
 	probe: () => T | Promise<T>,
 	done: (value: T) => boolean = () => true,
 	ms = 10_000,
 ): Promise<T> {
-	const deadline = Date.now() + ms;
+	const deadline = performance.now() + ms;
 	let last: unknown = new Error("eventually: nothing passed");
 	for (;;) {
 		try {
@@ -37,7 +38,7 @@ export async function eventually<T>(
 		} catch (error) {
 			last = error;
 		}
-		if (Date.now() > deadline) throw last;
+		if (performance.now() > deadline) throw last;
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 }
