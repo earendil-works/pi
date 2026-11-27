@@ -92,14 +92,18 @@ export default defineFacet((host) => {
 		self.contribute(OwnerSeeds, seed);
 		self.open(
 			async (ctx) => {
-				const found = await self.tx(async (tx) => {
-					const owner = query(Persons).where((p) => eq(p.owner, 1));
-					const [row] = (await tx.page(persons, owner, 1)).items;
-					if (row !== undefined) return row;
-					const made = { id: crypto.randomUUID(), name: ownerName(runtime.value.machine.user), owner: 1 };
-					tx.put(persons, made);
-					return made;
-				}, ctx);
+				const owner = query(Persons).where((p) => eq(p.owner, 1));
+				// Read outside a transaction first: from the second start on, the store opens with none a reload could
+				// cancel (this store starts with the plugin: the owner bridge holds it).
+				const found =
+					(await persons.page(owner, 1, ctx)).items[0] ??
+					(await self.tx(async (tx) => {
+						const [row] = (await tx.page(persons, owner, 1)).items;
+						if (row !== undefined) return row;
+						const made = { id: crypto.randomUUID(), name: ownerName(runtime.value.machine.user), owner: 1 };
+						tx.put(persons, made);
+						return made;
+					}, ctx));
 				seed.set({ person: found.id, name: found.name });
 				return null;
 			},
