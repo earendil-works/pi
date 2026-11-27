@@ -1,22 +1,37 @@
 import type { AuthProvider, McpFetch } from "../auth-provider.ts";
+import { PROTOCOL_VERSION_HEADER, standardRequestHeaders } from "../protocol/http-headers.ts";
 import {
+	isJsonRpcId,
+	isJsonRpcNotification,
 	isJsonRpcRequest,
 	isJsonRpcResponse,
+	isObject,
 	JSON_RPC_ERROR_CODES,
 	type JsonRpcId,
 	type JsonRpcMessage,
+	type JsonRpcRequest,
 	McpAbortError,
 	McpConnectionClosedError,
 	normalizeOwnRequestId,
 	parseJsonRpcMessage,
 	toError,
 } from "../protocol/jsonrpc.ts";
+import { META_PROTOCOL_VERSION } from "../protocol/modern.ts";
+import {
+	isModernProtocolVersion,
+	type ModernProtocolVersion,
+	type SupportedProtocolVersion,
+} from "../protocol/types.ts";
+import { McpAuthRequiredError, McpHttpError, McpSessionExpiredError } from "./http-errors.ts";
 import {
 	DEFAULT_MAX_MESSAGE_BYTES,
+	type McpModernTransportSupport,
 	type McpTransport,
 	type McpTransportSendOptions,
 	TransportEvents,
 } from "./transport.ts";
+
+export { McpAuthRequiredError, McpHttpError, McpSessionExpiredError };
 
 const MAX_ERROR_BODY_BYTES = 8 * 1024;
 const ERROR_MESSAGE_BODY_CHARS = 500;
@@ -32,6 +47,8 @@ export interface SseEvent {
 
 export interface ConsumeSseOptions {
 	maxEventBytes?: number;
+	/** Stops reading and closes the stream; the returned promise then resolves. */
+	signal?: AbortSignal;
 	onEvent(event: SseEvent): void;
 	/** Called for every `id` field, including events without data (for example resumption priming events). */
 	onId?(id: string): void;
@@ -41,6 +58,9 @@ export interface ConsumeSseOptions {
 
 export async function consumeSseStream(stream: ReadableStream<Uint8Array>, options: ConsumeSseOptions): Promise<void> {
 	const reader = stream.getReader();
+	const cancel = () => void reader.cancel().catch(() => {});
+	if (options.signal?.aborted) cancel();
+	options.signal?.addEventListener("abort", cancel, { once: true });
 	const decoder = new TextDecoder();
 	// The incomplete last line. Only new text is scanned and the line is read once when it ends, so a large
 	// line arriving in many chunks costs time linear in its size.
@@ -136,6 +156,7 @@ export async function consumeSseStream(stream: ReadableStream<Uint8Array>, optio
 		await reader.cancel().catch(() => {});
 		throw error;
 	} finally {
+		options.signal?.removeEventListener("abort", cancel);
 		reader.releaseLock();
 	}
 }
@@ -159,35 +180,6 @@ export interface StreamableHttpTransportOptions {
 	authProvider?: AuthProvider;
 	/** Reconnection of dropped SSE streams (the GET stream, and response streams that carry event IDs). */
 	reconnect?: StreamableHttpReconnectOptions;
-}
-
-export class McpHttpError extends Error {
-	readonly status: number;
-	readonly body: string;
-
-	constructor(status: number, message: string, body = "") {
-		super(message);
-		this.name = "McpHttpError";
-		this.status = status;
-		this.body = body;
-	}
-}
-
-export class McpAuthRequiredError extends McpHttpError {
-	readonly wwwAuthenticate: string | null;
-
-	constructor(response: Response, body = "") {
-		super(401, "MCP server requires authentication", body);
-		this.name = "McpAuthRequiredError";
-		this.wwwAuthenticate = response.headers.get("www-authenticate");
-	}
-}
-
-export class McpSessionExpiredError extends McpHttpError {
-	constructor(body = "") {
-		super(404, "MCP session expired", body);
-		this.name = "McpSessionExpiredError";
-	}
 }
 
 function contentType(response: Response): string | undefined {
@@ -250,7 +242,33 @@ interface StreamCursor {
 	received: boolean;
 }
 
+/**
+ * The version a request of the stateless protocol (MCP 2026-07-28) declares in its `_meta`. Read from
+ * the message, so the `MCP-Protocol-Version` header always matches the body, as servers require.
+ */
+function modernVersionOf(message: JsonRpcRequest): ModernProtocolVersion | undefined {
+	if (!isObject(message.params) || !isObject(message.params._meta)) return undefined;
+	const version = message.params._meta[META_PROTOCOL_VERSION];
+	return typeof version === "string" && isModernProtocolVersion(version) ? version : undefined;
+}
+
+/** The JSON-RPC error response in an HTTP error body, which modern servers send with 4xx statuses. */
+function jsonRpcErrorIn(body: string, request: JsonRpcRequest): JsonRpcMessage | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(body);
+	} catch {
+		return undefined;
+	}
+	if (!isObject(parsed) || parsed.jsonrpc !== "2.0" || !isObject(parsed.error)) return undefined;
+	const { code, message, data } = parsed.error;
+	if (typeof code !== "number" || typeof message !== "string") return undefined;
+	// Servers that reject a request before reading it cannot echo its id.
+	return { jsonrpc: "2.0", id: request.id, error: { code, message, ...(data === undefined ? {} : { data }) } };
+}
+
 export class StreamableHttpTransport extends TransportEvents implements McpTransport {
+	readonly modernProtocol: McpModernTransportSupport = { headers: true };
 	readonly url: URL;
 	readonly options: Readonly<StreamableHttpTransportOptions>;
 	private fetch: McpFetch;
@@ -258,10 +276,12 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	private started = false;
 	private closed = false;
 	private sessionIdValue: string | undefined;
-	private protocolVersion: string | undefined;
+	private protocolVersion: SupportedProtocolVersion | undefined;
 	private getStreamStarted = false;
 	/** Access token of the latest request, which `close()` reuses instead of asking the auth provider. */
 	private lastToken: string | undefined;
+	/** Requests of the stateless protocol in flight. Closing their response stream cancels them. */
+	private modernRequests = new Set<JsonRpcId>();
 
 	constructor(options: StreamableHttpTransportOptions) {
 		super();
@@ -283,12 +303,30 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		this.started = true;
 	}
 
-	setProtocolVersion(version: string): void {
+	setProtocolVersion(version: SupportedProtocolVersion): void {
 		this.protocolVersion = version;
 	}
 
-	async send(message: JsonRpcMessage, { signal }: McpTransportSendOptions = {}): Promise<void> {
+	async send(message: JsonRpcMessage, options: McpTransportSendOptions = {}): Promise<void> {
 		if (!this.started || this.closed) throw new McpConnectionClosedError();
+		if (isJsonRpcRequest(message)) {
+			const modernVersion = modernVersionOf(message);
+			if (modernVersion !== undefined) {
+				await this.sendModern(message, modernVersion, options);
+				return;
+			}
+		}
+		if (
+			isJsonRpcNotification(message) &&
+			message.method === "notifications/cancelled" &&
+			isObject(message.params) &&
+			isJsonRpcId(message.params.requestId) &&
+			this.modernRequests.has(message.params.requestId)
+		) {
+			// MCP 2026-07-28 over HTTP cancels by closing the response stream, which aborting the send did.
+			return;
+		}
+		const { signal } = options;
 		const response = await this.authorizedFetch(
 			"POST",
 			{
@@ -312,16 +350,81 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		}
 		const type = contentType(response);
 		if (type === "application/json") {
-			const maxBytes = this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES;
-			const { text, truncated } = await readBodyText(response, maxBytes);
-			if (truncated) throw new Error(`MCP JSON response exceeds ${maxBytes} bytes`);
-			const body: unknown = JSON.parse(text);
-			for (const item of Array.isArray(body) ? body : [body]) this.emitMessage(parseJsonRpcMessage(item));
+			await this.readJsonResponse(response);
 			return;
 		}
 		if (type === "text/event-stream" && response.body) {
 			void this.consumeResponseStream(response.body, message.id);
 			return;
+		}
+		await discard(response);
+		throw new McpHttpError(response.status, `Unsupported MCP response content type: ${type ?? "missing"}`);
+	}
+
+	/**
+	 * Send a request of the stateless protocol: its version, method, and name in headers, no session,
+	 * and a response stream that cannot be resumed. Aborting `signal` closes the response stream, which
+	 * cancels the request. A JSON-RPC error in a 4xx body is delivered as the response.
+	 */
+	private async sendModern(
+		message: JsonRpcRequest,
+		version: ModernProtocolVersion,
+		{ signal, headers }: McpTransportSendOptions,
+	): Promise<void> {
+		this.modernRequests.add(message.id);
+		let streaming = false;
+		try {
+			streaming = await this.postModern(message, version, signal, headers);
+		} finally {
+			if (!streaming) this.modernRequests.delete(message.id);
+		}
+	}
+
+	/** Resolves to whether the answer streams in the background. */
+	private async postModern(
+		message: JsonRpcRequest,
+		version: ModernProtocolVersion,
+		signal: AbortSignal | undefined,
+		headers: Record<string, string> | undefined,
+	): Promise<boolean> {
+		const response = await this.authorizedFetch(
+			"POST",
+			{
+				headers: {
+					accept: "application/json, text/event-stream",
+					"content-type": "application/json",
+					...headers,
+					...standardRequestHeaders(message.method, message.params),
+					[PROTOCOL_VERSION_HEADER]: version,
+				},
+				body: JSON.stringify(message),
+				session: false,
+				// Closing the connection cancels the request, also before the response arrives.
+				abort: signal,
+			},
+			signal,
+		);
+		if (!response.ok && response.status !== 401) {
+			const body = (await readBodyText(response, MAX_ERROR_BODY_BYTES).catch(() => ({ text: "" }))).text;
+			const error = jsonRpcErrorIn(body, message);
+			if (!error) throw new McpHttpError(response.status, describeHttpFailure(response.status, body), body);
+			this.emitMessage(error);
+			return false;
+		}
+		await this.checkResponse(response);
+		if (response.status === 202 || response.status === 204) {
+			throw new McpHttpError(response.status, `MCP server accepted request ${message.method} without a response`);
+		}
+		const type = contentType(response);
+		if (type === "application/json") {
+			await this.readJsonResponse(response);
+			return false;
+		}
+		if (type === "text/event-stream" && response.body) {
+			void this.consumeModernResponseStream(response.body, message.id, signal).finally(() =>
+				this.modernRequests.delete(message.id),
+			);
+			return true;
 		}
 		await discard(response);
 		throw new McpHttpError(response.status, `Unsupported MCP response content type: ${type ?? "missing"}`);
@@ -346,9 +449,19 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		this.emitClose();
 	}
 
+	private async readJsonResponse(response: Response): Promise<void> {
+		const maxBytes = this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES;
+		const { text, truncated } = await readBodyText(response, maxBytes);
+		if (truncated) throw new Error(`MCP JSON response exceeds ${maxBytes} bytes`);
+		const body: unknown = JSON.parse(text);
+		for (const item of Array.isArray(body) ? body : [body]) this.emitMessage(parseJsonRpcMessage(item));
+	}
+
 	/**
 	 * Fetch with auth headers. A 401 (or a 403 asking for more scope) is handed to the auth provider
-	 * once, and the request is retried with whatever credentials it left behind.
+	 * once, and the request is retried with whatever credentials it left behind. `session: false` leaves
+	 * out the session and the negotiated version, for requests of the stateless protocol. `abort` also
+	 * aborts the fetch itself.
 	 *
 	 * `signal` only stops dispatch: getting a token or the authorization recovery can take a while, and a
 	 * request its sender gave up on in the meantime must not reach the server. It does not abort the shared
@@ -356,18 +469,19 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	 */
 	private async authorizedFetch(
 		method: "GET" | "POST",
-		init: { headers: Record<string, string>; body?: string },
+		init: { headers: Record<string, string>; body?: string; session?: boolean; abort?: AbortSignal | undefined },
 		signal?: AbortSignal,
 	): Promise<Response> {
 		const onUnauthorized = this.options.authProvider?.onUnauthorized?.bind(this.options.authProvider);
+		const fetchSignal = init.abort ? AbortSignal.any([this.controller.signal, init.abort]) : this.controller.signal;
 		for (let attempt = 0; ; attempt++) {
-			const { headers, token } = await this.headers(init.headers);
+			const { headers, token } = await this.headers(init.headers, init.session ?? true);
 			if (signal?.aborted) throw new McpAbortError();
 			const response = await this.fetch(this.url, {
 				method,
 				headers,
 				body: init.body,
-				signal: this.controller.signal,
+				signal: fetchSignal,
 			});
 			if (attempt > 0 || !onUnauthorized || !needsAuthorization(response)) return response;
 			try {
@@ -378,17 +492,20 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		}
 	}
 
-	private async headers(extra: Record<string, string> = {}): Promise<{ headers: Headers; token?: string }> {
+	private async headers(
+		extra: Record<string, string>,
+		session: boolean,
+	): Promise<{ headers: Headers; token?: string }> {
 		const token = await this.options.authProvider?.token();
 		this.lastToken = token;
-		return { headers: this.buildHeaders(extra, token), ...(token ? { token } : {}) };
+		return { headers: this.buildHeaders(extra, token, session), ...(token ? { token } : {}) };
 	}
 
-	private buildHeaders(extra: Record<string, string>, token: string | undefined): Headers {
+	private buildHeaders(extra: Record<string, string>, token: string | undefined, session = true): Headers {
 		const headers = new Headers(this.options.headers);
+		if (session && this.sessionIdValue) headers.set("Mcp-Session-Id", this.sessionIdValue);
+		if (session && this.protocolVersion) headers.set(PROTOCOL_VERSION_HEADER, this.protocolVersion);
 		for (const [name, value] of Object.entries(extra)) headers.set(name, value);
-		if (this.sessionIdValue) headers.set("Mcp-Session-Id", this.sessionIdValue);
-		if (this.protocolVersion) headers.set("MCP-Protocol-Version", this.protocolVersion);
 		if (token) headers.set("Authorization", `Bearer ${token}`);
 		return headers;
 	}
@@ -411,9 +528,11 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 		stream: ReadableStream<Uint8Array>,
 		cursor: StreamCursor,
 		onMessage?: (message: JsonRpcMessage) => void,
+		signal?: AbortSignal,
 	): Promise<void> {
 		await consumeSseStream(stream, {
 			maxEventBytes: this.options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES,
+			...(signal === undefined ? {} : { signal }),
 			onId: (id) => {
 				cursor.lastEventId = id;
 			},
@@ -474,6 +593,38 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 			}
 		}
 		if (this.closed) return;
+		const reason = failure === undefined ? "stream ended without a response" : toError(failure).message;
+		this.emitMessage({
+			jsonrpc: "2.0",
+			id: requestId,
+			error: { code: JSON_RPC_ERROR_CODES.internalError, message: `MCP response stream failed: ${reason}` },
+		});
+	}
+
+	/**
+	 * Read the SSE stream answering one request of the stateless protocol. Its streams cannot be resumed:
+	 * when one ends or breaks before the response, the request fails. Aborting `signal` closes it.
+	 */
+	private async consumeModernResponseStream(
+		body: ReadableStream<Uint8Array>,
+		requestId: JsonRpcId,
+		signal: AbortSignal | undefined,
+	): Promise<void> {
+		let answered = false;
+		let failure: unknown;
+		try {
+			await this.consumeSse(
+				body,
+				{ lastEventId: undefined, retryMs: undefined, received: false },
+				(message) => {
+					if (isJsonRpcResponse(message) && normalizeOwnRequestId(message.id) === requestId) answered = true;
+				},
+				signal,
+			);
+		} catch (error) {
+			failure = error;
+		}
+		if (answered || this.closed || signal?.aborted) return;
 		const reason = failure === undefined ? "stream ended without a response" : toError(failure).message;
 		this.emitMessage({
 			jsonrpc: "2.0",

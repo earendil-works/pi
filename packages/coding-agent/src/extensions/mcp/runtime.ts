@@ -16,8 +16,10 @@ import {
 	type ListResourceTemplatesResult,
 	McpAuthRequiredError,
 	McpClient,
+	McpConnectionClosedError,
 	McpError,
 	McpHttpError,
+	type McpProtocolMode,
 	type McpRequestOptions,
 	McpSessionExpiredError,
 	type Tool as McpTool,
@@ -51,6 +53,12 @@ const DEFAULT_TIMEOUT_SECONDS = 60;
 const STDERR_TAIL_CHARS = 2_000;
 /** Delays between attempts to connect to an HTTP server that failed with a transient error. */
 const CONNECT_RETRY_DELAYS_MS = [250, 1_000];
+/**
+ * Delays before reopening a modern server's tool change subscription after it ended, by the number of
+ * ends in a row. A subscription that stayed open for the last delay resets the count; after the last
+ * delay, tool changes are no longer watched until the next connection.
+ */
+const LISTEN_RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
 
 /**
  * `disconnected`: the connection dropped (for example the stdio server exited); the next call
@@ -158,6 +166,11 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 	private readonly shutdown = new AbortController();
 	/** Stderr of the last stdio server that failed to connect. */
 	private stderrTail: string | undefined;
+	/**
+	 * The protocol the server spoke on its last connection. With `auto`, reconnects use it: a legacy
+	 * server is not probed again. Dropped when a connection with it fails.
+	 */
+	private detected: McpProtocolMode | undefined;
 	private readonly cwd: string;
 	private readonly createTransport: McpTransportFactory;
 	private readonly authProvider: McpAuthProvider | undefined;
@@ -211,6 +224,14 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 
 	get timeoutMs(): number {
 		return (this.entry.config.timeout ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+	}
+
+	/**
+	 * Every server is probed by default, as the spec recommends. A legacy stdio server that exits on the
+	 * probe is started again without it (see `open()`).
+	 */
+	get protocol(): McpProtocolMode {
+		return this.entry.config.protocol ?? "auto";
 	}
 
 	/** Server URL when the server authenticates with OAuth. */
@@ -343,11 +364,32 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		this.state = "connecting";
 		this.changed();
 		const retries = "url" in this.entry.config ? CONNECT_RETRY_DELAYS_MS : [];
+		let reprobed = false;
 		for (let attempt = 0; ; attempt++) {
 			this.stderrTail = undefined;
+			const protocol = this.protocol === "auto" && this.detected ? this.detected : this.protocol;
 			try {
-				return await this.connectOnce();
+				const client = await this.connectOnce(protocol);
+				const negotiated = client.negotiatedProtocol;
+				this.detected = negotiated?.era === "modern" ? negotiated.version : "legacy";
+				return client;
 			} catch (error) {
+				if (!reprobed && !this.closed && this.protocol === "auto") {
+					if (protocol !== "auto") {
+						// The server may have changed protocol since the last connection: probe it again.
+						reprobed = true;
+						this.detected = undefined;
+						attempt--;
+						continue;
+					}
+					if (error instanceof McpConnectionClosedError && !("url" in this.entry.config)) {
+						// A legacy stdio server may exit on a request before `initialize`; start it again without one.
+						reprobed = true;
+						this.detected = "legacy";
+						attempt--;
+						continue;
+					}
+				}
 				const delay = retries[attempt];
 				if (this.closed || delay === undefined || !isTransientError(error)) {
 					throw this.connectFailed(error);
@@ -358,14 +400,17 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		}
 	}
 
-	private async connectOnce(): Promise<McpClient> {
+	private async connectOnce(protocol: McpProtocolMode): Promise<McpClient> {
+		const log = this.log;
 		const client = new McpClient({
 			name: "pi",
 			version: VERSION,
+			protocol,
 			requestTimeoutMs: this.timeoutMs,
 			roots: [{ uri: pathToFileURL(this.cwd).href, name: basename(this.cwd) }],
+			// Modern servers send log messages only when requests ask for them.
+			...(log ? { logLevel: "info" as const } : {}),
 		});
-		const log = this.log;
 		if (log) client.onNotification("notifications/message", (params) => log.write(this.entry.name, params));
 		// Closing the client fails its pending initialize or discovery requests and closes the transport.
 		// Memoized: a second `client.close()` returns before the first finished closing the transport.
@@ -396,6 +441,9 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 			this.error = undefined;
 			this.onTools(this);
 			this.changed();
+			if (client.negotiatedProtocol?.era === "modern" && client.serverCapabilities?.tools?.listChanged) {
+				void this.watchToolChanges(client);
+			}
 			return client;
 		} catch (error) {
 			await closeClient();
@@ -427,6 +475,31 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		const stderr = stdio ? sliceTail(stdio.stderr.trim(), STDERR_TAIL_CHARS) : undefined;
 		this.error = stderr ? `Connection closed\n${stderr}` : "Connection closed";
 		this.changed();
+	}
+
+	/**
+	 * Modern servers send tool list changes only on a `subscriptions/listen` stream. Keep one open while
+	 * `client` is the connection, reopening it when it ends, and refresh the tools after reopening: changes
+	 * in between were missed.
+	 */
+	private async watchToolChanges(client: McpClient): Promise<void> {
+		const current = () => this.client === client && !this.closed && client.connectionState === "connected";
+		let ends = 0;
+		for (let opened = 0; current(); opened++) {
+			const openedAt = Date.now();
+			try {
+				const subscription = await client.listen({ toolsListChanged: true }, { signal: this.shutdown.signal });
+				if (opened > 0) void this.refreshTools(client);
+				await subscription.closed;
+			} catch {
+				// A failed subscription is reopened below, like one that ended.
+			}
+			const lastDelay = LISTEN_RETRY_DELAYS_MS[LISTEN_RETRY_DELAYS_MS.length - 1] ?? 0;
+			ends = Date.now() - openedAt > lastDelay ? 1 : ends + 1;
+			const delay = LISTEN_RETRY_DELAYS_MS[ends - 1];
+			if (delay === undefined || !current()) return;
+			await sleep(delay, undefined, { signal: this.shutdown.signal }).catch(() => undefined);
+		}
 	}
 
 	private async refreshTools(client: McpClient): Promise<void> {

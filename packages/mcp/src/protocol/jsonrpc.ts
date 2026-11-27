@@ -50,6 +50,18 @@ export const JSON_RPC_ERROR_CODES = {
 	internalError: -32603,
 } as const;
 
+/**
+ * Error codes MCP defines in the JSON-RPC server-error range. `-32020` to `-32022` are reserved by MCP
+ * 2026-07-28, so receiving one identifies a server that speaks it. `resourceNotFound` is the code of
+ * 2025-11-25 and earlier; 2026-07-28 uses `invalidParams` instead.
+ */
+export const MCP_ERROR_CODES = {
+	resourceNotFound: -32002,
+	headerMismatch: -32020,
+	missingRequiredClientCapability: -32021,
+	unsupportedProtocolVersion: -32022,
+} as const;
+
 export class McpError extends Error {
 	readonly code: number;
 	readonly data: unknown;

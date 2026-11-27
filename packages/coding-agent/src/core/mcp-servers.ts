@@ -66,8 +66,8 @@ const MCP_EXPOSURES: readonly string[] = ["codemode", "deferred", "direct", "hid
 const MCP_EXPOSURE_ALIASES: Readonly<Record<string, McpExposure>> = { "codemode-deferred": "codemode" };
 
 /**
- * pi's fields of every server entry, beside the shared `mcpServers` fields of pi-mcp. `description`
- * and `timeout` are shared fields, declared again for pi's documentation.
+ * pi's fields of every server entry, beside the shared `mcpServers` fields of pi-mcp. `description`,
+ * `timeout` and `protocol` are shared fields, declared again for pi's documentation.
  */
 interface McpServerConfigBase {
 	/** Default: `codemode`. */
@@ -86,6 +86,11 @@ interface McpServerConfigBase {
 	toolExposure?: Record<string, McpExposure>;
 	/** Per-request timeout in seconds. Progress notifications from the server reset it. Default: 60. */
 	timeout?: number;
+	/**
+	 * MCP protocol: `legacy` (`initialize` handshake), `2026-07-28` (stateless, required), or `auto`
+	 * (probe with `server/discover`, fall back to `legacy`). Default: `auto`.
+	 */
+	protocol?: "auto" | "legacy" | "2026-07-28";
 }
 
 export interface McpStdioServerConfig extends McpStdioServerFields, McpServerConfigBase {

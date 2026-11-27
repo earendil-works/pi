@@ -29,6 +29,30 @@ For a remote server, use `new StreamableHttpTransport({ url, headers })`. Fetch 
 
 An MCP transport owns framing and I/O. It delivers individual JSON-RPC messages to `McpClient`; the client owns request correlation, initialization, timeouts, cancellation, server requests, and protocol-level helpers.
 
+### Protocol versions
+
+MCP `2026-07-28` is stateless: there is no `initialize` handshake and no session, and every request carries the protocol version and the client's capabilities in `_meta`. Earlier versions start with `initialize`. `McpClient` speaks both; `protocol` chooses:
+
+- `legacy` (default): `initialize`, as before.
+- `auto`: probe with `server/discover`; use `2026-07-28` when the server answers it, otherwise fall back to `initialize`. An `UnsupportedProtocolVersionError` is retried once with a version from its list.
+- a modern version (`2026-07-28`): `server/discover`, requiring that version, without the fallback.
+
+```typescript
+const client = new McpClient({ name: "my-client", version: "1.0.0", protocol: "auto", logLevel: "info" });
+await client.connect(new StreamableHttpTransport({ url }));
+client.negotiatedProtocol; // { era: "modern", version: "2026-07-28" } or { era: "legacy", version: "2025-11-25" }
+```
+
+The rest of the API is the same for both. With a modern server, the client:
+
+- answers input requests of multi round-trip requests (`resultType: "input_required"`) with the handlers of `setRequestHandler()` for the same method (`roots/list` from `roots`), and sends the request again, as a new request, with the answers and the server's `requestState`. Input without a handler fails the request.
+- sends `logLevel` with every request: modern servers send log messages only for requests that name a level.
+- opens `subscriptions/listen` streams with `listen(filter)`; their notifications reach `onNotification()` listeners.
+
+Over Streamable HTTP, modern requests carry `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` headers, and `Mcp-Param-*` headers for tool arguments a tool marks with `x-mcp-header`; `listTools()` leaves out tools whose markings are invalid and reports them through `onError()`. There is no session, no server-to-client GET stream, and no stream resumption, and closing a response stream cancels its request.
+
+Transports declare that they carry the modern protocol with `modernProtocol`. The built-in transports do; a client uses `legacy` with transports that do not.
+
 ### Stdio servers started elsewhere
 
 `PipeTransport` speaks MCP's stdio framing over a program that something else starts, for example on another machine. `open` starts the program, connects its stdout and stderr to the given handlers, and returns an `McpPipe` (`write`, `closeStdin`, `close` to kill, and an `exited` promise). `@earendil-works/pi-env`'s `openProcess()` returns one, without an adapter:
@@ -170,16 +194,17 @@ for (const [name, entry] of Object.entries(file.mcpServers)) {
 ## Supported protocol surface
 
 - MCP protocol version `2025-11-25`, accepting servers that negotiate `2025-06-18`, `2025-03-26`, or `2024-11-05`
+- MCP protocol version `2026-07-28` (stateless): `server/discover`, per-request `_meta`, version retry, multi round-trip requests, `subscriptions/listen`, `resultType`, the `Mcp-Method`, `Mcp-Name`, and `Mcp-Param-*` HTTP headers, and detection of legacy servers
 - initialization and `notifications/initialized`
 - ping
 - paginated `tools/list`
 - `tools/call`, including structured content
 - progress notifications and timeout renewal
 - request cancellation
-- Streamable HTTP sessions, the server-to-client GET stream with reconnection, and resumption of dropped response streams with `Last-Event-ID`
+- Streamable HTTP sessions, the server-to-client GET stream with reconnection, and resumption of dropped response streams with `Last-Event-ID` (legacy versions)
 - stdio shutdown per the spec (close stdin, then SIGTERM, then SIGKILL), applied to the server's whole process group
 - stdio over a caller-provided pipe (`PipeTransport`)
-- server `ping` and `roots/list` requests
+- server `ping` and `roots/list` requests (legacy), and input requests answered by the same handlers (`2026-07-28`)
 - logging and tool-list-change notifications through the generic notification API
 - OAuth protected-resource and authorization-server discovery
 - PKCE authorization code flow, dynamic client registration, token refresh (one refresh shared by concurrent 401s), and step-up authorization for `insufficient_scope`

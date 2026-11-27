@@ -1,5 +1,5 @@
 export type { AuthProvider, McpFetch, UnauthorizedContext } from "./auth-provider.ts";
-export { McpClient, type McpClientOptions, type McpRequestOptions } from "./client.ts";
+export { McpClient, type McpClientOptions, type McpRequestOptions, type McpSubscription } from "./client.ts";
 export {
 	isMcpServerOverride,
 	type McpHttpServerConfig,
@@ -46,6 +46,7 @@ export {
 	type JsonRpcRequest,
 	type JsonRpcResponse,
 	type JsonRpcSuccessResponse,
+	MCP_ERROR_CODES,
 	McpAbortError,
 	McpConnectionClosedError,
 	McpError,
@@ -55,13 +56,23 @@ export {
 export {
 	type CancelledNotification,
 	type ClientCapabilities,
+	type DiscoverResult,
 	type Implementation,
 	type InitializeParams,
 	type InitializeResult,
+	type InputRequest,
+	isModernProtocolVersion,
+	isSupportedProtocolVersion,
+	LATEST_MODERN_PROTOCOL_VERSION,
 	LATEST_PROTOCOL_VERSION,
 	type ListResourcesResult,
 	type ListResourceTemplatesResult,
 	type ListToolsResult,
+	type LoggingLevel,
+	type McpNegotiatedProtocol,
+	type McpProtocolMode,
+	MODERN_PROTOCOL_VERSIONS,
+	type ModernProtocolVersion,
 	type ProgressNotification,
 	type ReadResourceResult,
 	type Resource,
@@ -69,6 +80,7 @@ export {
 	type Root,
 	type ServerCapabilities,
 	SUPPORTED_PROTOCOL_VERSIONS,
+	type SubscriptionFilter,
 	type SupportedProtocolVersion,
 	type Tool,
 	type ToolAnnotations,
@@ -90,6 +102,7 @@ export {
 	type StreamableHttpTransportOptions,
 } from "./transports/streamable-http.ts";
 export type {
+	McpModernTransportSupport,
 	McpTransport,
 	McpTransportCloseListener,
 	McpTransportErrorListener,
