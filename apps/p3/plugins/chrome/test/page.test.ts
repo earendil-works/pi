@@ -246,7 +246,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Sketch").dataset.navThing`,
 		);
 		await press(`[data-nav-thing="${sketch}"]`);
-		await browser.wait(`document.querySelector('section[aria-label="Canvas"]')`);
+		await browser.wait(`document.querySelector('[data-canvas="drawer"]')`);
 		await browser.wait(`document.querySelector("[data-gear]")`);
 		await shots("06-canvas-desktop");
 		await press("[data-gear]");

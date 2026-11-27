@@ -201,8 +201,15 @@ reference or a native.
   transitions only.
 - Counts read every row they pass: `self.count` only where a key or an index bounds it; lists use `more`.
 - A table's definition (columns, key, indexes) is part of its version: changing it means a new version and a
-  migration. Chord refuses to open a version recorded with another definition ("a history edited in place"); before
-  p3's first release a data directory of an older build is deleted instead.
+  migration. Chord refuses to open a version recorded with another definition ("a history edited in place").
+  Stored data survives updates (decision 125): no data directory is deleted for a new build, and nothing is
+  changed in place, however small the change and however short the old shape was on main. Every changed stored
+  definition comes with its migration and a test of it: `evolveTable` to a new version for a table
+  (`plugins/sessions/store.ts`, `RowsV2`), `migrate(old, from)` for a `json` column (`plugins/sessions/defaults.ts`)
+  and for a document (`packages/chord/src/documents/README.md`). A contract whose members change bumps its `version`:
+  that is the wire's version, nothing stored migrates with it. The migrations are collapsed once before the first
+  release
+  ([ERNDL-1192](https://linear.app/earendil/issue/ERNDL-1192)).
 
 **Lists**
 - One remote object per screen, the screen's own id in its params; `self.list` tiles pages between fixed bookmarks,
@@ -251,6 +258,21 @@ reference or a native.
   "Values handed to Chord are never changed afterwards", 2026-11-26; `plugin-authoring.md`, "Values you hand to
   Chord"). In-memory indexes that answer admissions (the things plugin's access index) hand out a new answer object
   for every changed answer and keep the old one untouched.
+
+**Kinds** (the whole of it: `kind-pattern.md`)
+- A feature people or the agent use is a kind of thing: `defineThing` in `kind.ts`, `serveThing` in `server.ts`, no
+  admission of your own, no check of who calls. What is not granted does not exist on the object.
+- A kind's harness part is registered with the one plain form `thingHarnessPart(Kind, (things, session) => …)`; no
+  helper variants. What it registers replaces what it registered before; a part's tools that follow live state (an
+  MCP server's tool list) use `again`, which gives only that kind again (decision 137). Decided (142), being changed
+  on main (today the harness gives only kinds that hold something): the harness calls every part on every change of
+  what the agent holds, possibly nothing, and the part checks for none itself, first: `if (things.length === 0)
+  return { extension: {} };`. An empty extension, never `{}`: it keeps the kind's place in Durable's registry (a kind
+  appended again changes the prompt's order and loses the provider's prompt cache). A part that gives tasks gives
+  them always (`{ extension: { tasks: TASKS } }` with nothing held).
+- A kind's method never checks the caller's access to its own thing again. Only a method that names another thing
+  (Files and Terminals name a machine) checks the caller's answer on that thing.
+- Nothing a person reads is written outside `messages.ts`: no English in a state value, a view or a key.
 
 **Code** (the Chord v2 code style of the root `AGENTS.md`, for plugin code too)
 - One concept per file, named after it; the first line says what the file is for; the public entry first, helpers
@@ -302,9 +324,19 @@ reference or a native.
 | The base's composed `LinkOpened` made each link's disposer inside the function that had the request: V8 keeps one context per scope, so every open link kept its request (headers, cookie) | a closure that outlives its call is made in a function of its own, given only what it needs; a GC test through the composed registry |
 | A failed store (`storage_failed`) was only logged: the server answered `running` with a closed host | the server closes and exits non-zero; the supervisor starts it again |
 | A second runner contributed to change how workers run (it sorted first, so the route used it): the first runner still ran a held worker, and the status, which named only the second's, hid it from `p3 stop` | one runner; a plugin contributes a wrap (`WorkerRunnerWraps`) over it, and a second runner is reported as a conflict |
-| A built-in plugin's page part took a new component token through `/v1/web`: on a running server that is the page's base bundle, built at start, so after an apply the token was `undefined` and the page part threw | built-in plugins import each other's contract files by path; what comes through `/v1` is the base, which changes only with a restart |
+| A built-in plugin's page part took a new component token through `/v1/web`: on a running server that is the page's base bundle, built at start, so after an apply the token was `undefined` and the page part threw | built-in plugins import each other's contract files by path; what comes through `/v1` is the base, which changes only with a restart (being changed, decision 139: an apply will rebuild the page base, and every facet will import through `/v1/*`) |
 | The login kind's create hook took its maker from `ctx.principal`: the hook runs inside the things store's `create`, whose caller is the server code holding the store, so every login looked made by the server | the things plugin hands the hook its maker (`by`); never read a caller from a `ctx` that passed through another plugin's store |
 | A test waited for a worker's state by reading Linux's `/proc/<pid>/stat` (stopped by `SIGSTOP`): on a POSIX system without `/proc` it never saw it | the process says it over IPC (a socket the test listens on) or writes a marker file; the test answers to let it go on |
 | A workspace's removal read a table again (`tx.get`) after a `deleteWhere` on it in the same transaction: Chord refuses that | read everything a transaction needs first, then write; the deletes come last |
 | A list's names were a `liveQuery` whose arguments derived from a followed source (the access index's rows): Chord refuses a reader whose arguments read a followed source | read what such a list shows inside the followed computation (the index's probe reads the names before each computation; a rename tells the probes) |
 | A prefix read with no order (`under` a path): Chord orders by the key, so SQLite sorted every page | order by the indexed column the prefix runs on; a plan test |
+| A harness part tested with a stand-in object that imitates a held reference: nothing showed that a withheld tick removes the member | `kindServer.giving` (`plugins/things/test/kind-server.ts`): the part from the built facet, real references held as the session's worker |
+| A sleep, or an assertion on elapsed time, as the proof that something happened or did not (50 ms, then "nothing was called") | wait for the effect with `until(member, done, ctx)`; prove an absence by a counted metric, a mocked clock, or a later effect that could only come after it |
+| A hand-made follow, join or lease inside a plugin (a registry value followed by hand, a changing set joined in a derive, a refresh lease in a row) | ask for the Chord primitive instead of building it: write it up for Mario (`process.md`); [ERNDL-1191](https://linear.app/earendil/issue/ERNDL-1191) (follow), [ERNDL-1194](https://linear.app/earendil/issue/ERNDL-1194) (a changing set) |
+| English text in a state value (a fallback name, "Agent"), or a joined text key (`person:<id>`, `<thing>/<workspace>`) stored, compared or cut apart again | state holds data: `""` and a message in the view; a tagged union (`Caller`) compared by its fields; two columns instead of one joined key |
+| A flag parameter that switches what a function or a tool does, the other arguments optional | two functions, or one tagged value whose variants carry the arguments they need (`notes_write`'s `change`) |
+| One closure of a store's factory holding every table, queue and helper: hundreds of lines nobody can test or read alone | the factory wires; tables, named queries and writes are files or classes of their own, given only what they need |
+| Tests named after review rounds ("round 3", "Astra's repro") | name the case after the rule it pins; the reviewer and round go in a comment beside it |
+| A helper copied into the next plugin instead of shared (`useAction` and `failureText` word for word in two views; `person`, `holding`, `refused` in each kind's tests) | move it where both can import it in the change that needs the second copy: `plugins/things/test/kind-server.ts` for tests, `useErrorText` of `plugins/things/contract.web.tsx` for a failure's text |
+| A plugin's or a kind's name written out as a string where it is compared (`by.plugin === "@earendil-works/p3-prompt"`, `"sessions.session"` written out in two other plugins beside its owner's `SESSION_KIND`) | import the owner's contract constant (`MACHINE_KIND`), or pass the data instead of asking who called (a `create.input`, a registry entry's `plugin`) |
+| A table's definition changed in place (a column added to a version that was already on main): Chord refused to open the stores written by the build before, and a running Pi's update broke | never in place: `evolveTable` to a new version with a migration and its test, in the same commit; a contract whose members change bumps its `version` (decision 125) |

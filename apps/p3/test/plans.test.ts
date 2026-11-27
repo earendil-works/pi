@@ -29,6 +29,9 @@ import sessionsServer from "../plugins/sessions/server.ts";
 import thingsServer from "../plugins/things/server.ts";
 import { serverCoreFacet } from "../src/server.ts";
 
+/** A canvas's shape. */
+const CANVAS_RECT = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
+
 /** A query's pages, read once each. */
 type Read = () => Promise<unknown>;
 
@@ -119,8 +122,14 @@ describe("the plans of the stores' queries", () => {
 			);
 			const canvas = await host.get(CanvasStore, {}, context);
 			for (const board of ["b1", "b2"]) {
-				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
-				await canvas.add({ canvas: board, shapes: [rect, rect, rect], author: "person:owner" }, context);
+				await canvas.add(
+					{
+						canvas: board,
+						shapes: [CANVAS_RECT, CANVAS_RECT, CANVAS_RECT],
+						author: { kind: "person", person: "owner" },
+					},
+					context,
+				);
 			}
 			const prompt = await host.get(PromptStore, {}, context);
 			for (const thing of ["t1", "t2"]) {
@@ -175,6 +184,12 @@ describe("the plans of the stores' queries", () => {
 				],
 				["settings.of", pages(notes.settings.of, { notebook: "n1" }), {}],
 				["shapes.of", pages(canvas.shapes.of, { canvas: "b1" }), { index: `${C}.shapes:by_order` }],
+				// A board's add: its newest shape on `by_order` (descending), no sort.
+				[
+					"canvas add",
+					[() => canvas.add({ canvas: "b1", shapes: [CANVAS_RECT], author: { kind: "server" } }, context)],
+					{ index: `${C}.shapes:by_order` },
+				],
 				["items.of", pages(checklists.items.of, { checklist: "c1" }), { index: `${K}.items:by_order` }],
 				["prompt.instructions.of", pages(prompt.instructions.of, { thing: "t1" }), {}],
 				["prompt.skills.of", pages(prompt.skills.of, { thing: "t1" }), {}],

@@ -7,12 +7,14 @@ agent needs while building, and the record of how p3 got here.
 
 ## Read before you build, in this order, in full
 
-1. `process.md`: how a package goes from its Linear issue to the nightly; what you must never change.
+1. `process.md`: how a package goes from its Linear issue to the nightly; whose the base files are.
 2. `chord-practices.md`: how p3 fits together and how a p3 plugin is built on Chord: the shape, the rules, the
    mistakes made and their fixes.
-3. `testing.md`: the tiers, what every package tests, the commands.
-4. `performance.md`: the budgets, how to measure, the traps.
-5. `names.md`: one name per thing; use these words in code, contracts and text.
+3. `kind-pattern.md`: how a kind plugin is built, file by file: the layout, the declaration, serving, the harness
+   part and its tools, views and messages, refusals, tests, with the built-in plugin that shows each point.
+4. `testing.md`: the tiers, what every package tests, the commands.
+5. `performance.md`: the budgets, how to measure, the traps.
+6. `names.md`: one name per thing; use these words in code, contracts and text.
 
 For depth, only when a guide sends you there: Chord's design (`packages/chord/docs/design.md`; §3 hosts and links, §6
 objects and admission, §§9-11 documents, tables, queries, lists, §17 registries, §21 reload, §23 HTTP, workers and
@@ -31,12 +33,29 @@ surfaces) and its plugin guide (`packages/chord/docs/plugin-authoring.md`).
 
 | Path | What |
 | --- | --- |
-| `apps/p3/plugins/<name>/` | the built-in plugins; `sessions` is the model plugin |
+| `apps/p3/plugins/<name>/` | the built-in plugins; which to copy from, and what not to copy from each: "The examples", below |
 | `apps/p3/src/api/v1/` | the API plugins import: `@earendil-works/p3/v1`, `/v1/server`, `/v1/worker`, `/v1/web` (web facets: the components plugins offer each other, the route, icons, and the built-in plugins' web contracts, the `layout` plugin's pane layout among them), and `/v1/testing` for their tests (`testPlugin`, `testServer`) |
 | `apps/p3/src/` | the base: `bin.ts` (the `p3` command), `server.ts`, `worker.ts`, `supervisor.ts`, the Pis and their data directories (`files.ts`), the sockets that are the locks and the command's channel (`local-socket.ts`), what p3 is (`app.ts`: its API, facet kinds, principals) |
 | `apps/p3/test/` | the tests of the base and of the whole, their harness (`topology.ts`, `support.ts`, `until.ts`) and the tests' probe plugin (`test/plugins/probe/`); a plugin's own tests, unit and end to end, sit in its `test/` folder |
 | `apps/p3/bench/` | benchmarks, one per slice or package |
 | `apps/p2/` | p2 (Pi Mobile), today's app: inspiration for what to build, never a source to copy |
+
+## The examples
+
+Copy the shape from these. Where `kind-pattern.md` says "being changed", or the mistakes table of
+`chord-practices.md` says otherwise, follow those, not the example. "Still rough" is what the hackiness review of
+2026-11-27 found in each and its cleanup has not yet removed (checked against main that day, 09:50 UTC): do not copy
+it.
+
+| Plugin | The shape it shows | Still rough: do not copy |
+| --- | --- | --- |
+| `notes` (the reference), `checklist` | a kind with a store and a view | `useAction` and `failureText` copied into both views (use `useErrorText` of `plugins/things/contract.web.tsx`); a `gone` tombstone table in each store; notes' page cursor is a joined text (`<order>:<cursor>`) |
+| `tools` | a flag kind with a harness part and no view | its part is tested with a stand-in reference (use `kindServer.giving`) and reads `ref.granted` where `HeldThing.granted` is meant |
+| `prompt` | two kinds in one plugin | both parts are tested with stand-in references; `server.ts` compares `by.plugin` with its own package name written out (declare a `create.input` instead) |
+| `environments`, `files` | a family of types; HTTP routes held as the person | the machine's worker part builds this device's environment itself, by the type's name; `files/transfers.ts` checks one right in several overlapping ways and races the request's body by hand; `files/test/server.test.ts` holds the routes' cases named after a review round |
+| `sessions` | a workspace kind | a joined text key built by hand (`person:<id>` in `new-session.tsx`); a one-time rewrite of rows in `store.ts`; `serveStore` is one function of about 180 lines |
+| every kind with a harness part | – | none has decision 142's nothing-held check yet (`kind-pattern.md`, section 6): write it in a new part |
+| `canvas` | flag ticks, a people-only tick, a member's behaviour by a flag (`granted.has`), live events, a view split into components (`board-view.tsx`, `toolbar.tsx`, `drawing.tsx`) | its view runs its changes by hand (`run`, `failure`; the text through `useErrorText`), as each view does until the shared hook exists; a `gone` mark per board in its store, the same race solved per kind as in notes and checklist |
 
 Rules for this folder: the guides stay current (fix one the moment it is wrong or silent, in the commit that shows
 it); the reference is not edited except to correct a fact.

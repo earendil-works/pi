@@ -51,7 +51,7 @@ import {
 	type Source,
 	sourceKey,
 } from "./contract.ts";
-import { anyExpired, InviteWrites, type Redeemer } from "./invites.ts";
+import { InviteWrites, type Redeemer } from "./invites.ts";
 import { type DefaultGrants, type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
@@ -155,28 +155,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		// attempt's own context. Closed with the attempt: its watchers attach to the next attempt's index.
 		self.open(
 			async (ctx) => {
-				// Pi and the owner's person exist from the first start on: read first, outside a transaction, so a start
-				// after the first (a reload, maybe right after another) opens with no transaction a reload could cancel.
-				const pi = (
-					await t.workspaces.page(
-						query(Workspaces).where((w) => eq(w.parent, "")),
-						1,
-						ctx,
-					)
-				).items[0];
-				const owner = (
-					await t.persons.page(
-						query(Persons).where((p) => eq(p.owner, 1)),
-						1,
-						ctx,
-					)
-				).items[0];
-				if (pi === undefined || owner === undefined) {
-					await self.tx(async (tx) => {
-						await people.ensureOwner(tx, runtime.value.machine.user);
-						return ensurePi(tx, t);
-					}, ctx);
-				}
+				// Pi and the owner's person exist from the first start on, each made once (a start after the first writes
+				// nothing).
+				await self.tx(async (tx) => {
+					await people.ensureOwner(tx, runtime.value.machine.user);
+					return ensurePi(tx, t);
+				}, ctx);
 				index = new AccessIndex(readerOf(q, kindsNow, reported), kindsNow, ctx);
 				return index;
 			},
@@ -253,15 +237,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
-			pending: async (ctx) => {
-				const rows = [];
-				// The whole table, outside a transaction: a store started lazily and reloaded at once (its start cut short)
-				// leaves no transaction cancelled (back into one when Chord stops reporting a transaction its own object's
-				// end cancels: the main session's Chord issue, core2). What waits for a delete hook is few rows, read at the start and when the
-				// hooks change.
-				for await (const row of pending.rows(query(Pending), ctx)) rows.push(row);
-				return rows;
-			},
+			// The whole table: what waits for a delete hook is few rows, read at the start and when the hooks change.
+			pending: (ctx) =>
+				self.tx(async (tx) => {
+					const rows = [];
+					for await (const row of tx.rows(pending, query(Pending))) rows.push(row);
+					return rows;
+				}, ctx),
 			hooks: () => hooks.value,
 		});
 		/**
@@ -383,17 +365,18 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx), startPeople(ctx)]);
 		});
 		/**
-		 * What the store does about people at its start: the sign-outs still to end are ended, expired invite links
-		 * swept. Read outside a transaction, a transaction only if there is something to do: a store that ends meanwhile
-		 * leaves no transaction to drain (ERNDL-1190).
+		 * What the store does about people at its start, in one transaction: the sign-outs still to end are ended (after
+		 * it), expired invite links swept.
 		 */
 		const startPeople = async (ctx: Ctx<P3Principal>): Promise<void> => {
-			// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
-			const left: string[] = [];
-			for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);
+			const left = await self.tx(async (tx) => {
+				// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
+				const persons: string[] = [];
+				for await (const { person } of tx.rows(t.signOuts, query(SignOuts))) persons.push(person);
+				await invites.sweep(tx, Date.now());
+				return persons;
+			}, ctx);
 			if (left.length > 0) void signOut(left, ctx);
-			const now = Date.now();
-			if (await anyExpired(t.invites, now, ctx)) await self.tx((tx) => invites.sweep(tx, now), ctx);
 		};
 		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
 		// migrate anew, every loaded workspace is read again; a kind's hooks back, its waiting deletes run.
