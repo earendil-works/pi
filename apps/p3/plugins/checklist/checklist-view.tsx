@@ -121,7 +121,7 @@ type Action = {
 
 /**
  * The view's change state and its `run`: a failure is kept as the text a person reads (`failureText`). Local until
- * the web API has the shared hook and `refusalText`.
+ * the web API has the shared hook (the text itself: the things plugin's `useErrorText`).
  */
 function useAction(): Action {
 	const { t } = useMessages(messages);

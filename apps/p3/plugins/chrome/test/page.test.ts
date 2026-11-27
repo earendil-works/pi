@@ -21,7 +21,7 @@
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -29,6 +29,7 @@ import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, People,
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
+import { SignIns } from "../../sign-in/contract.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import { ThingKindsView } from "../../things/kind.ts";
 import { Workspace } from "../../things/workspace.ts";
@@ -235,6 +236,124 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press("[data-gear]");
 		await browser.wait(`location.pathname.endsWith("/settings")`);
 		await browser.wait(`document.querySelector('[data-settings="${sketch}"]')`);
+	});
+
+	it("opens Pi's Files, Terminals and machine in their views, on a desktop and a phone (ERNDL-1172-1174)", async () => {
+		/** The navigator's entry named `name` in Pi: its thing's id. */
+		const entry = (name: string) =>
+			browser.evaluate<string>(
+				`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === ${JSON.stringify(name)})?.dataset.navThing`,
+			);
+		await press(`[data-nav-workspace="${pi}"]`);
+		await browser.wait(`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Files")`);
+		const views = [
+			// The owner has Edit by the owner flag: the browser's writer, on this device's root.
+			[await entry("Files"), 'section[aria-label="Files"][data-files="writer"]', "files"],
+			[await entry("Terminals"), 'section[aria-label="Terminals"][data-terminals]', "terminals"],
+			[await entry(hostname()), '[data-machine="ready"]', "machine"],
+		] as const;
+		for (const [thing, shown, name] of views) {
+			await browser.open(`${origin}/w/${pi}/t/${thing}`);
+			await browser.wait(`document.querySelector(${JSON.stringify(shown)})`);
+			await shots(`07-${name}-desktop`);
+			await browser.size(PHONE);
+			await browser.wait(`document.querySelector(${JSON.stringify(shown)})?.offsetParent !== null`);
+			await shots(`07-${name}-phone`);
+			await browser.size(DESKTOP);
+		}
+		await browser.open(`${origin}/w/${pi}`);
+	});
+
+	// Opus, round 5 (S4): the views as a person with Browse and Watch only, and as one with neither (the kinds' default).
+	it("shows Files and Terminals to a person with Browse and Watch only, read only, and nothing to one without", async () => {
+		await browser.wait(
+			`["Files", "Terminals"].every((name) => [...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === name))`,
+		);
+		const [files, terminals] = await Promise.all(
+			["Files", "Terminals"].map((name) =>
+				browser.evaluate<string>(
+					`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === ${JSON.stringify(name)})?.dataset.navThing`,
+				),
+			),
+		);
+		/** A person put into Pi, with Browse and Watch (`ticks`) or none, and their browser cookie. */
+		const personWith = (name: string, ticks: boolean) =>
+			t.host.root(async (ctx) => {
+				const things = await ctx.get(ThingsStore, {});
+				const by = { kind: "plugin", plugin: "test" } as const;
+				const id = await things.createPerson({ name, madeBy: by }, ctx);
+				const party = { kind: "person", person: id } as const;
+				await things.putParty({ workspace: pi, party, source: by }, ctx);
+				if (ticks) {
+					const grants = [
+						{ workspace: pi, thing: files!, party, tick: "browse", gives: true },
+						{ workspace: pi, thing: terminals!, party, tick: "watch", gives: true },
+					];
+					await things.setGrants({ source: by, grants }, ctx);
+				}
+				const principal = { kind: "person", id, name } as const;
+				const issued = await (await ctx.get(SignIns, {})).issue({ principal, kind: "browser", label: "test" }, ctx);
+				return issued.cookie.split(";")[0]!;
+			}, context);
+		const other = await Browser.start();
+		try {
+			await other.signIn(origin, await personWith("Bea", true));
+			for (const size of [DESKTOP, PHONE]) {
+				await other.size(size);
+				await other.open(`${origin}/w/${pi}/t/${files}`);
+				await other.wait(
+					`document.querySelector('section[aria-label="Files"][data-files="reader"] [data-files-entry]')`,
+				);
+				assert.equal(
+					await other.evaluate<boolean>(
+						`!!document.querySelector("[data-files-upload], [data-files-rename], [data-files-remove]")`,
+					),
+					false,
+				);
+				await other.open(`${origin}/w/${pi}/t/${terminals}`);
+				await other.wait(`document.querySelector('section[aria-label="Terminals"][data-terminals]')`);
+				assert.equal(
+					await other.evaluate<boolean>(
+						`!!document.querySelector("[data-terminals-open], [data-terminal-close]")`,
+					),
+					false,
+				);
+			}
+			// Not let in on either: the page says so in place of the view.
+			await other.signIn(origin, await personWith("Cal", false));
+			await other.open(`${origin}/w/${pi}/t/${files}`);
+			await other.wait(
+				`!document.querySelector('[data-files]') && document.body.textContent.includes("You have no access to this here.")`,
+			);
+			await other.open(`${origin}/w/${pi}/t/${terminals}`);
+			await other.wait(
+				`!document.querySelector('[data-terminals]') && document.body.textContent.includes("You have no access to this here.")`,
+			);
+		} finally {
+			await other.close();
+		}
+	});
+
+	it("says a machine's refusal in the Terminals view as its message, not as the log's text (Fable, round 5)", async () => {
+		await browser.wait(
+			`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Terminals")`,
+		);
+		const terminals = await browser.evaluate<string>(
+			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Terminals")?.dataset.navThing`,
+		);
+		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
+		await press("[data-terminals-open]");
+		// This device has no terminals yet: the environments plugin's message, rendered in the terminals plugin's view.
+		await browser.wait(
+			`document.querySelector("[data-terminals]")?.textContent.includes("Terminals on this machine are not there yet.")`,
+		);
+		assert.equal(
+			await browser.evaluate<boolean>(
+				`document.querySelector("[data-terminals]").textContent.includes("environments:")`,
+			),
+			false,
+		);
+		await browser.open(`${origin}/w/${pi}`);
 	});
 
 	it("shows things from above greyed in a workspace below, and folds a hidden one", async () => {
@@ -774,14 +893,14 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.settled("[data-add-thing-dialog]");
 		await press('[data-add-offer="make:sessions.session"]');
 		await browser.type("[data-add-name]", "Alpha");
-		await browser.type('[data-field="folder"]', "custom/folder");
+		await browser.type('[data-field="folder"]', "/custom/folder");
 		await press('[data-add-default="everyone/send"]');
 		const draft = () =>
 			browser.evaluate<string>(
 				`JSON.stringify([document.querySelector("[data-add-name]").value, document.querySelector('[data-field="folder"]').value, document.querySelector('[data-add-default="everyone/send"]').getAttribute("aria-checked")])`,
 			);
 		const before = await draft();
-		assert.equal(before, JSON.stringify(["Alpha", "custom/folder", "false"]));
+		assert.equal(before, JSON.stringify(["Alpha", "/custom/folder", "false"]));
 		// Astra, review round 2: an apply of the things plugin remounted the dialog and lost the folder and the removal.
 		const file = join(builtIn, "things/add-thing.tsx");
 		await writeFile(

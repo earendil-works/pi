@@ -1,13 +1,15 @@
 // The things plugin's contracts for server facets only: the store (`ThingsStore`: every table's rows as named
 // queries, and every write; trusted server code, it checks no caller), `Gives` (what a workspace gives one caller,
 // what every thing's admission derives from), the registry the store hands its access index to admissions through
-// (`AccessHandles`), the kinds' hooks (`ThingHooks`), and a kind's seeded thing (`OneThing`).
+// (`AccessHandles`), the kinds' hooks (`ThingHooks`), a kind's seeded thing (`OneThing`), and for kinds whose calls or
+// streams name another thing, what a workspace gives a caller (`givesTo`) and a stream's hold on it (`abortWhen`).
 
 import {
 	arr,
 	bool,
 	type Context,
 	type Ctx,
+	constant,
 	defineRegistry,
 	type FollowObserver,
 	int,
@@ -15,6 +17,7 @@ import {
 	local,
 	map,
 	method,
+	type NativeWatchable,
 	nul,
 	num,
 	obj,
@@ -22,14 +25,18 @@ import {
 	opt,
 	type P3Principal,
 	queries,
+	type RefState,
+	type Self,
 	type Static,
 	str,
 	type TableItem,
 	union,
 	unknown,
+	until,
+	type Watchable,
 } from "@earendil-works/p3/v1";
 import type { Attachment, Probe, ProbeAttachment } from "./access.ts";
-import { Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
+import { Caller, callerKeyOf, Item, ManagedBy, Party, Source } from "./contract.ts";
 import type { DefaultGrants } from "./kind.ts";
 import type { Answer as Answered } from "./rules.ts";
 import { DefaultsChoice, PartyInfo } from "./workspace.ts";
@@ -342,6 +349,48 @@ export const Gives = local("things.gives", {
 	params: { workspace: str(), caller: str() },
 	members: { answers: map(Answer) },
 });
+
+/**
+ * What `workspace` gives `caller`, live, for a kind's object whose calls name another thing (Files and Terminals: a
+ * machine). The server (trusted code) is no party anywhere: nothing.
+ */
+export function givesTo(
+	self: Self<P3Principal>,
+	workspace: string,
+	caller: Caller,
+): Watchable<Readonly<Record<string, Static<typeof Answer>>>> {
+	if (caller.kind === "server") return constant({});
+	return self.get(Gives, { workspace, caller: callerKeyOf(caller) }).answers;
+}
+
+/**
+ * Aborts `controller` once `lost` holds for `source`'s value (the current one included) or its watch ends, unless
+ * `context` aborts first: how a kind's stream (a download, a terminal's bytes) holds what lets its caller in
+ * (decision 25) and ends the moment that goes.
+ */
+export function abortWhen<T>(
+	source: NativeWatchable<T>,
+	lost: (value: T) => boolean,
+	controller: AbortController,
+	context: Context,
+): void {
+	const end = () => controller.abort();
+	void until(source, lost, context).then(end, end);
+}
+
+/**
+ * `abortWhen` for the reference a stream's caller holds: aborts `controller` once `ref` fails, ends or no longer has
+ * its member `member` (the tick that gave it was withheld).
+ */
+export function abortWhenLost<R extends { readonly state: NativeWatchable<RefState> }>(
+	ref: R,
+	member: keyof R,
+	controller: AbortController,
+	context: Context,
+): void {
+	const lost = (state: RefState) => state.kind === "failed" || state.kind === "ended" || ref[member] === undefined;
+	abortWhen(ref.state, lost, controller, context);
+}
 
 /**
  * What the store's object hands admissions: attaching to its index (`Gives` follows it with `self.follow`; `undefined`

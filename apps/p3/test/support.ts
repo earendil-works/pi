@@ -21,7 +21,7 @@ import {
 	SessionKind,
 	SessionObject,
 	str,
-	THIS_DEVICE,
+	ThisDevice,
 	Transcript,
 	until,
 	Workspace,
@@ -103,7 +103,7 @@ export async function gatedSession(
 		{ when: "opened", reply: [{ kind: "text", text: "done" }] },
 		{ when: "", reply: [wait] },
 	];
-	const session = await newSession(client, title, context, { environment: THIS_DEVICE, folder });
+	const session = await newSession(client, title, context, { folder });
 	await scriptFaux(server, session, script, context);
 	return session;
 }
@@ -126,6 +126,9 @@ export async function startRun(client: Host<P3Principal>, session: string, conte
 	}, context);
 }
 
+/** Where a test's session works: a folder, on this device's machine unless `environment` names another. */
+export type TestLocation = { readonly machine?: string; readonly folder: string };
+
 /**
  * A new session titled `title`, made in Pi by `client` (the owner: every tick of it) with `Workspace.make`, working at
  * `location` (left out: this device, in a folder of its own); answers its id.
@@ -134,18 +137,29 @@ export function newSession(
 	client: Host<P3Principal>,
 	title: string,
 	context: Context,
-	location?: Location,
+	location?: TestLocation,
 ): Promise<string> {
 	return client.root((ctx) => makeSession(ctx, title, location), context);
 }
 
 /** As `newSession`, as the caller of `ctx` (the owner, or anyone with Make of sessions in Pi). */
-export async function makeSession(ctx: Ctx<P3Principal>, title: string, location?: Location): Promise<string> {
+export async function makeSession(ctx: Ctx<P3Principal>, title: string, location?: TestLocation): Promise<string> {
 	const workspace = withGranted(await ctx.get(Workspace, { workspace: await piIn(ctx) }), "make")!;
-	return workspace.make(
-		{ kind: SessionKind.name, name: title, input: location === undefined ? {} : { location } },
-		ctx,
-	);
+	const at: Location | undefined =
+		location === undefined
+			? undefined
+			: { machine: location.machine ?? (await thisDeviceIn(ctx)), folder: location.folder };
+	return workspace.make({ kind: SessionKind.name, name: title, input: at === undefined ? {} : { location: at } }, ctx);
+}
+
+/** This device's machine (what a location on it names), as `client` reads it. */
+export function thisDevice(client: Host<P3Principal>, context: Context): Promise<string> {
+	return client.root(thisDeviceIn, context);
+}
+
+/** This device's machine, as the caller of `ctx` reads it (once the store seeded it). */
+async function thisDeviceIn(ctx: Ctx<P3Principal>): Promise<string> {
+	return until((await ctx.get(ThisDevice, {})).machine, (machine) => machine !== "", ctx);
 }
 
 /** Pi, the root workspace, as `client` (the owner) sees it. */
@@ -160,7 +174,7 @@ async function piIn(ctx: Ctx<P3Principal>): Promise<string> {
 }
 
 /** A location on this device in `/tmp`, for sessions whose folder no test reads. */
-export const TMP: Location = { environment: THIS_DEVICE, folder: tmpdir() };
+export const TMP: TestLocation = { folder: tmpdir() };
 
 /** Whether process `pid` lives. */
 export function alive(pid: number): boolean {

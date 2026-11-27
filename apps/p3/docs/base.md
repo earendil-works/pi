@@ -19,7 +19,7 @@ the "Pi next" package ([ERNDL-1140](https://linear.app/earendil/issue/ERNDL-1140
 | **party** | whom a grant names: everyone here, the agents, a person, a group, one session's agent |
 | **answer** | what a caller gets for one thing in one workspace: its ticks (perhaps none), from the things plugin's index |
 | **view** | one way to look at a target (a thing of a kind, a person, a group): an entry of the things plugin's `Views` |
-| **location** | where a session works: a machine (its id) and a folder on it |
+| **location** | where a conversation works: a machine (its thing's id) and a folder on it (`{ machine, folder }`) |
 
 ## Sessions
 
@@ -33,8 +33,8 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   tick of the new session and is put in (decisions 88, 90, 115); its agent is put in too, with Make for the content
   kinds only (R6).
 - **Its ticks** are the workspace ticks and the session kind's own: **Read** (the transcript), **Send** (the
-  composer), **Stop**, **Manage** (archive, restore, the model). Its name is its thing's, changed with Configure in
-  its parent (decision 80). The transcript is no thing (decision 76).
+  composer), **Stop**, **Manage** (its detail, archive, restore, the model, moving a conversation). Its name is its
+  thing's, changed with Configure in its parent (decision 80). The transcript is no thing (decision 76).
 - **Shared or private** comes from the nearest session defaults thing (`sessions.defaults`) available in the parent
   (decisions 75, 93; one `Gives` read as the server, switches applied): shared gives everyone here Read and Send;
   private writes no grant for everyone and hides people from above. The defaults also give the new session its
@@ -49,8 +49,26 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   its row, and the kinds are told (`workspaceGone`).
 - **Lists** of sessions are the things plugin's lists of a workspace's children (`WorkspaceChildren`), filtered by
   presence. Listing starts no worker.
-- **Where it works:** the make's `location`, or (left out) this device in a folder of its own,
-  `<data directory>/folders/<id>`.
+- **Where it works** (decision 24): each conversation has a location. The session's (its row's `location`) is where a
+  top-level conversation works: the make's, refused unless its maker may use that machine in the parent (R41); left out,
+  this device in a folder of its own (`<work root>/<id>`) if its maker may use this device there, else none (its agent
+  has no environment until a conversation is moved; the new-session step says so). A subagent's conversation works where
+  its caller works, and follows its moves. A conversation moved (`SessionObject.moveLocation` with Manage, by a client:
+  the Settings view has no form for it yet; `SessionFacts.moveLocation` is there for the agent's `location_move`, which
+  the machine part does not offer yet) works at its own location from its next tool call on; a call under way keeps its
+  environment. A move with `location: null` is undone (the conversation follows its owner again); a subagent keeps its
+  own while archived (a restore finds it). A move is refused unless the folder is a full path and the agents have Work
+  on the machine in the session, and a person's unless the machine is available to them there (the environments plugin's
+  `checkMachine`, as Files and Terminals). The harness (`HarnessSession.moveLocation`, the path the agent's tool takes)
+  refuses to move a conversation the session does not have; an undo always goes through. A direct
+  `SessionFacts.moveLocation` call by the session's worker is not checked: the worker is trusted plugin code (decision
+  111). Manage's path takes any well-formed id for now (carry-over 3 of ERNDL-704: the server asking the session's
+  worker). Manage shows the moved conversations (`detail`, one document per session, by conversation id); the worker
+  reads the same in `SessionFacts.detail`.
+- **What its workers keep** (their directory, `<data>/workers/<id>`) goes with the session: removing the session stops
+  its worker and deletes it (the runner's `remove`, refusing an id that names no session). A directory of a session
+  with no row is swept whenever a runner appears (at every start), each one reported as it goes, one that fails
+  reported too and holding up none of the others.
 
 ## Admission: one question
 
@@ -115,9 +133,13 @@ with them:
   on some thing (`ref.add`, `ref.granted.has("bash")`).
 - **A tool acts as the agent** through the held reference (decision 120.1); `session.call(fn, context)` runs `fn` as
   the session's worker with references of its own, released when `fn` settles, for a tool that needs one.
+- **A `main` tool** (`HarnessTool`'s `scope: "main"`) works only in the session's top-level conversations (the
+  `subagent` tool: no subagent starts subagents). A subagent gets the agent's tools again with every message it is
+  sent: those offered to the agent then, minus the `main` ones (never one the agent has not); the harness installs
+  `main` tools guarded (a call from a subagent is refused).
 - **A part's environment** is a function of the conversation's location (`{ machine, folder }`), answered by the
-  machine kind for the machines the agent may work on (`thingHarnessPart(…, { env: "gives" })`). Once such a part is
-  registered, a machine withheld or let go of leaves no environment.
+  machine kind for the machines the agent may work on. Only parts give environments: a machine withheld or let go of
+  leaves none.
 - **The agent makes things** with the things plugin's own part, `make_thing` over the session workspace's `make`:
   planned, not built yet.
 - Installing a plugin gives no session anything; there is no global tools registry. An agent that holds no login has
@@ -201,6 +223,6 @@ in `contract.ts`, the create hook in `session.ts`).
   [ERNDL-706 Sign-in and identity](https://linear.app/earendil/issue/ERNDL-706).
 - The file, diff and terminal views: [ERNDL-796 Earendil-provided views](https://linear.app/earendil/issue/ERNDL-796).
 - MCP: [ERNDL-725 MCP (UX, device MCP)](https://linear.app/earendil/issue/ERNDL-725).
-- A location per conversation, moved by the agent or by Manage (decision 24): carry-over of ERNDL-704.
+- The form that moves a conversation in a session's Settings view: carry-over of ERNDL-704.
 
 Each plugs into the registries above without a base change.

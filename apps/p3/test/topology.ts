@@ -4,7 +4,7 @@
 // runner it contributes is asked by the waker alone. `reload` renews a plugin's facet object on the server or a
 // worker (its objects restart, as after an edit); `count` reads the server's metrics.
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import {
@@ -29,12 +29,14 @@ import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import controlServer from "../plugins/control/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import environmentsWorker from "../plugins/environments/worker.ts";
+import filesServer from "../plugins/files/server.ts";
 import peopleServer from "../plugins/people/server.ts";
 import runnerServer from "../plugins/runner/server.ts";
 import runnerWorker from "../plugins/runner/worker.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import sessionsWorker from "../plugins/sessions/worker.ts";
 import signInServer from "../plugins/sign-in/server.ts";
+import terminalsServer from "../plugins/terminals/server.ts";
 import thingsServer from "../plugins/things/server.ts";
 import thingsWorker from "../plugins/things/worker.ts";
 import { SERVER, workerPrincipal } from "../src/app.ts";
@@ -52,10 +54,12 @@ type Plugin = { readonly name: string; readonly facet: Facet<P3Principal> };
 const SERVER_PLUGINS: readonly Plugin[] = [
 	{ name: "@earendil-works/p3-control", facet: controlServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+	{ name: "@earendil-works/p3-files", facet: filesServer },
 	{ name: "@earendil-works/p3-people", facet: peopleServer },
 	{ name: "@earendil-works/p3-runner", facet: runnerServer },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
+	{ name: "@earendil-works/p3-terminals", facet: terminalsServer },
 	// The things plugin: it serves the registry the people plugin hands its owner to (ERNDL-1144's bridge).
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 ];
@@ -97,7 +101,10 @@ export type Topology = {
 
 /** Starts a topology: the server loaded, with its route to session workers; `idleMs` is each worker's idle time. */
 export async function topology(context: Context, idleMs = 60_000): Promise<Topology> {
-	const dataDir = await mkdtemp(join(tmpdir(), "p3-topology-"));
+	// The topology's own root: the data and work roots inside, so its close removes only what it made.
+	const root = await mkdtemp(join(tmpdir(), "p3-topology-"));
+	const dataDir = join(root, "data");
+	await mkdir(dataDir, { mode: 0o700 });
 	const errors: Topology["errors"][number][] = [];
 	const closed: string[] = [];
 	const workers = new Map<string, Worker>();
@@ -144,6 +151,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 	const sessions = server.route(Session, { authorize: () => true, admit: admitRoute, resolve: startWorker }, context);
 	const runtime: ServerRuntime = {
 		dataDir,
+		workRoot: join(root, "work"),
 		machine: { user: userInfo().username, hostname: hostname() },
 		host: server,
 		store,
@@ -210,7 +218,7 @@ export async function topology(context: Context, idleMs = 60_000): Promise<Topol
 			await http.close(context);
 			await server.close(context);
 			await store.close(context);
-			await rm(dataDir, { recursive: true, force: true });
+			await rm(root, { recursive: true, force: true });
 		},
 	};
 }

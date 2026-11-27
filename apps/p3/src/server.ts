@@ -9,7 +9,7 @@
 
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { hostname, userInfo } from "node:os";
+import { homedir, hostname, userInfo } from "node:os";
 import { dirname, extname, join } from "node:path";
 import {
 	type Address,
@@ -63,6 +63,8 @@ import { type ServerAnswer, type ServerStatus, serverSocket, takeSocket } from "
 /** What the server's start takes. */
 export type ServerOptions = {
 	readonly dataDir: string;
+	/** Where sessions work by default (a folder each); `~/p3-work` unless given. */
+	readonly workRoot?: string;
 	/** The plugin roots: p3's built-in one first (`required`: a plugin of it failing fails the start). */
 	readonly roots: readonly { readonly path: string; readonly required: boolean }[];
 	/** Where it listens: `127.0.0.1` and this port (0: a free one). */
@@ -214,6 +216,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 		let listening: ListenAddress | undefined;
 		const runtime: ServerRuntime = {
 			dataDir,
+			workRoot: options.workRoot ?? join(homedir(), "p3-work"),
 			machine: { user: userInfo().username, hostname: hostname() },
 			host,
 			store,

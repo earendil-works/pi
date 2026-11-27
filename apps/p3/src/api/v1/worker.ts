@@ -20,6 +20,8 @@ export {
 	uploadSession,
 } from "@earendil-works/chord/sync";
 export {
+	// For the subagents' part: a subagent's thinking level, clamped to its model.
+	clampThinkingLevel,
 	createModels,
 	createProvider,
 	// pi-ai's faux provider, for plugins' tests: a model login that answers what the test scripts.
@@ -31,13 +33,18 @@ export {
 	lazyStream,
 	type Message,
 	type Models,
+	type ModelThinkingLevel,
 	type MutableModels,
 	type Provider,
 } from "@earendil-works/pi-ai";
 export {
+	type Agent,
+	type AgentChange,
 	AssistantEntry,
 	type Conversation,
+	type ConversationHandle,
 	type ConversationId,
+	type ConversationRecord,
 	type ConversationView,
 	configure,
 	createRegistry,
@@ -54,16 +61,19 @@ export {
 	type PromptSection,
 	type Registry,
 	ROOT_CONVERSATION_ID,
+	type SettledSubmissionRecord,
+	type Submission,
 	section,
 	type TaskGraph,
+	type TaskId,
 	type TaskRuntime,
 	type ToolExecutionApi,
+	type Tx,
 } from "@earendil-works/pi-durable";
 export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 export { StoreStorage } from "@earendil-works/pi-durable/storage/store";
 export { createCodingTools } from "@earendil-works/pi-durable/tools";
-export * from "../../../plugins/environments/contract.worker.ts";
 export * from "../../../plugins/harness/contract.worker.ts";
 export { loadProvider } from "./providers.ts";
 

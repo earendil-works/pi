@@ -1,12 +1,11 @@
-// What the things plugin's page parts share: every registered kind by name, a message of any plugin as text, how a
-// "from" reads, what a party opens, how a party is named, what a failed call, a denial or a gone target says, and
-// whether the window is wide.
+// What the things plugin's page parts share: every registered kind by name, how a "from" reads, what a party opens,
+// how a party is named, what a denial or a gone target says, and whether the window is wide.
 
-import type { MessageData, RefState } from "@earendil-works/p3/v1";
+import type { RefState } from "@earendil-works/p3/v1";
 import { type Target, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
 import { useMemo, useSyncExternalStore } from "react";
 import type { Party } from "./contract.ts";
-import { useMessageText } from "./contract.web.tsx";
+import { messageOf, useMessageText } from "./contract.web.tsx";
 import { type KindView, ThingKindsView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import type { Origin } from "./workspace.ts";
@@ -60,30 +59,6 @@ export function usePartyName(): (party: Party, name: string) => string {
 				return name;
 		}
 	};
-}
-
-/** What a failed call says to the person: the message the server sent with it, else the error's own text. */
-export function useErrorText(): (error: unknown) => string {
-	const text = useMessageText();
-	return (error) => {
-		const message = messageOf(error);
-		if (message !== undefined) return text(message);
-		return error instanceof Error ? error.message : String(error);
-	};
-}
-
-/**
- * The message the server sent with an error (`details.message`, as data: a denial's, a refused call's), if it sent
- * one (a trust boundary: an error from the server).
- */
-export function messageOf(error: unknown): MessageData | undefined {
-	const details: unknown =
-		typeof error === "object" && error !== null && "details" in error ? error.details : undefined;
-	const message =
-		typeof details === "object" && details !== null && "message" in details ? details.message : undefined;
-	return typeof message === "object" && message !== null && "namespace" in message && "key" in message
-		? (message as MessageData)
-		: undefined;
 }
 
 /**

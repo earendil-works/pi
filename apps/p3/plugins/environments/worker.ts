@@ -1,39 +1,43 @@
-// The environments plugin on a session's worker: `ExecutionEnvironments`, which gives a session's tools the
-// environment of its location (the contributions tried in plugin order, the first that answers wins), and this
-// device's resolver: the session's folder on the machine the worker runs on.
+// The environments plugin on a session's worker: the machine kind's harness part (card 7), the one part that gives
+// environments: the execution environment at a conversation's location, when the location names a machine the agent
+// holds with Work here, and the prompt section saying where the tools run. Only a ready machine of this device's type
+// has one (a Node environment in the folder, on the machine the worker runs on); other types give theirs when they come
+// (SSH, ERNDL-731). A location on a machine the agent does not hold, holds without Work here, or whose type is not
+// installed, has no environment, and nothing falls back: the agent cannot run commands there.
 
-import { type Context, defineFacet, reportError, THIS_DEVICE } from "@earendil-works/p3/v1";
-import { type EnvironmentResolver, ExecutionEnvironments, NodeExecutionEnv } from "@earendil-works/p3/v1/worker";
+import { defineFacet } from "@earendil-works/p3/v1";
+import { NodeExecutionEnv, type PromptSection } from "@earendil-works/p3/v1/worker";
+import { ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
+import { THIS_DEVICE_TYPE } from "./contract.ts";
+import { MachineKind } from "./kind.ts";
 
-export default defineFacet((host, self) => {
-	host.serve(ExecutionEnvironments, {
-		compose: (table) => (location, context) => {
-			for (const { plugin, value } of table) {
-				const env = resolved(plugin, value, location, context);
-				if (env !== undefined) return env;
-			}
-			return undefined;
-		},
-	});
-	self.contribute(ExecutionEnvironments, (location) =>
-		location.environment === THIS_DEVICE ? new NodeExecutionEnv({ cwd: location.folder }) : undefined,
-	);
+export default defineFacet((_host, self) => {
+	self.contribute(ThingHarnessParts, machinePart);
 });
 
 /**
- * What `resolve` (of `plugin`) answers for `location`; a resolver that throws is untrusted code failing: reported, and
- * the next one asked.
+ * The machine kind's part: the environment at a location on a ready machine of this device's type held with Work here,
+ * and where tools run.
  */
-function resolved(
-	plugin: string,
-	resolve: EnvironmentResolver,
-	location: Parameters<EnvironmentResolver>[0],
-	context: Context,
-): ReturnType<EnvironmentResolver> {
-	try {
-		return resolve(location, context);
-	} catch (error) {
-		reportError(`p3 environments: ${plugin}'s resolver`, error, context);
-		return undefined;
-	}
-}
+const machinePart = thingHarnessPart(MachineKind, (things, session) => {
+	// Read at each use: a grant withheld calls the part anew, with the references as they are then.
+	const working = (machine: string) => things.find((held) => held.thing === machine && held.ref.granted.has("work"));
+	const where: PromptSection = {
+		key: "machine",
+		render: async ({ conversationId, env }, context) => {
+			if (env === undefined) return "No machine is available here: commands cannot run.";
+			const location = await session.location(conversationId, context);
+			const held = location === undefined ? undefined : working(location.machine);
+			return held === undefined ? undefined : `Tools run on ${held.ref.info.value.name}, in ${env.cwd}.`;
+		},
+	};
+	return {
+		env: (location) => {
+			const info = working(location.machine)?.ref.info.value;
+			// Running a remote machine's commands here would run them on the wrong machine (Astra, round 5).
+			if (info?.type !== THIS_DEVICE_TYPE || info.status !== "ready") return undefined;
+			return new NodeExecutionEnv({ cwd: location.folder });
+		},
+		extension: { sections: [where] },
+	};
+});

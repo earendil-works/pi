@@ -18,6 +18,7 @@ export const SESSION: HarnessSession = {
 	workspace: "w",
 	call: () => Promise.reject(new Error("no call")),
 	location: async () => undefined,
+	moveLocation: () => Promise.reject(new Error("no move")),
 };
 
 /** `Kind`'s harness part, as the tested worker facet `t` contributed it. */

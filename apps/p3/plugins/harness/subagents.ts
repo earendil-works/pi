@@ -1,296 +1,380 @@
-// The subagents' harness part (`harness.subagents`): the tools to start, steer, list and archive subagents, offered
-// while the agent's reference has the flag `use`. Each subagent is a conversation of the session, named by the agent,
-// its transcript the session's (decision 76); it starts as a copy of the session's agent (the same things: it is the
-// same party) without the subagent tools, so it starts none of its own. A message to a subagent travels in a reporter
-// task, which hands the answer back to the agent as a new message once it arrives. The tasks are an extension of their
-// own the harness installs always (`SUBAGENT_TASKS`), so a reporter under way when Use is withheld still delivers its
-// answer: the subagent finishes its step and gets no new message, since the tools are gone.
+// The subagents' harness part (`harness.subagents`): the one tool `subagent`, with a tagged action (spawn, send,
+// configure, stop, archive, restore, answer, status, models), offered while the agent's reference has the flag `use`.
+// Each subagent is a conversation of the session, named by the agent, its transcript the session's (decision 76): it
+// starts as a copy of the session's agent (the same things: it is the same party), with a model, thinking level and
+// tools of its own if the agent chose them, and gets the agent's tools again with every message (never one the agent
+// has not now). The tool has `scope: "main"`: a subagent is never given it (its tools leave it out, and the harness
+// refuses its calls there), so no subagent starts subagents (decision 116). The subagents are the session's
+// (`roster.ts`); messages travel in reporter tasks (`reporter.ts`), which hand each answer back to the conversation
+// that sent the message once it arrives.
 
-import { bool, type Context, obj, opt, str } from "@earendil-works/p3/v1";
+import { arr, bool, type Context, invalid, obj, oneOf, opt, type Static, str } from "@earendil-works/p3/v1";
 import {
+	type Agent,
+	type AgentChange,
 	AssistantEntry,
 	type ConversationId,
 	configure,
-	defineDoc,
-	defineExtension,
-	defineTask,
 	defineTool,
-	type EntryId,
-	type Extension,
 	LiveDoc,
-	type Message,
-	type TaskRuntime,
+	type ModelThinkingLevel,
 	type ToolExecutionApi,
 } from "@earendil-works/p3/v1/worker";
-import { thingHarnessPart } from "../things/contract.worker.ts";
+import { type HarnessExtension, thingHarnessPart } from "../things/contract.worker.ts";
+import type { ModelRef } from "./agent-parts.ts";
 import { SubagentsKind } from "./kind.ts";
+import { closeModels, listModels } from "./model-list.ts";
+import { Reporter, textOf } from "./reporter.ts";
+import {
+	Anchor,
+	givable,
+	levelOf,
+	MAX_NAME,
+	modelRef,
+	modelText,
+	Stopper,
+	SUBAGENT_TOOL,
+	type Subagent,
+	Subagents,
+	subagentOf,
+	toolsOf,
+} from "./roster.ts";
 
-/** The subagents' part: the four tools while the nearest reference has `use` (the kind stacks `nearest`). */
+/** The subagents' part: the `subagent` tool while the nearest reference has `use` (the kind stacks `nearest`). */
 export const subagentsPart = thingHarnessPart(SubagentsKind, (things) => {
 	const nearest = things[things.length - 1];
 	if (nearest === undefined || !nearest.ref.granted.has("use")) return {};
 	return { extension: SUBAGENT_TOOLS };
 });
 
-/** A subagent: its conversation, and the answers already reported (several messages may end in one answer). */
-type Subagent = { readonly conversationId: ConversationId; readonly reported: EntryId[] };
+/** The thinking levels a subagent may be given, clamped to its model (pi-ai's list; its index does not export it). */
+const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies ModelThinkingLevel[];
 
-/** The session agent's subagents by name, in its conversation. */
-const Subagents = defineDoc<{ agents: Record<string, Subagent> }>({
-	checkpointWhen: () => false,
-	kind: "harness.subagents",
-	version: 1,
-	scope: "conversation",
-	history: "latest",
-	// A fork of the conversation starts without subagents.
-	fork: "initial",
-	initial: () => ({ agents: {} }),
+/** The tool's arguments: the action, and the fields the actions take. */
+const Args = obj({
+	action: oneOf("spawn", "send", "configure", "stop", "archive", "restore", "answer", "status", "models"),
+	name: opt(str({ min: 1, max: MAX_NAME })),
+	message: opt(str({ min: 1 })),
+	followUp: opt(bool()),
+	model: opt(str({ min: 1 })),
+	thinkingLevel: opt(oneOf(...THINKING)),
+	tools: opt(arr(str())),
 });
 
-/**
- * What owns a subagent's conversation: a background task that ends at once. A subagent outlives the agent's turns; a
- * background task is a boundary, so the agent's stop and idle waits do not reach it.
- */
-const Anchor = defineTask<null, { phase: "done" }, null>({
-	name: "harness.subagent-anchor",
-	version: 1,
-	initial: () => ({ phase: "done" }),
-	phases: {
-		done: (_anchor, runtime, context) =>
-			runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), context),
+/** What the tool is called with. */
+type Call = Static<typeof Args>;
+
+/** The tool `subagent`: one action per call, answering JSON. */
+const subagentTool = defineTool({
+	name: SUBAGENT_TOOL,
+	description: [
+		"Manages your subagents: each is a persistent conversation of its own, a copy of you working in the background",
+		"while you go on. Answers JSON. Actions (`action`):",
+		"- spawn (`name`, `message`; optional `model`, `thinkingLevel`, `tools`): starts a subagent and sends it its first",
+		"  message. `model` is `provider/modelId` (default: yours; see models); `thinkingLevel` is",
+		"  off|minimal|low|medium|high|xhigh|max, clamped to the model (default: yours); `tools` names tools of yours it",
+		"  gets (default: every one you may give it; [] for none). With each message it gets them as you have them then.",
+		"  This tool cannot be given.",
+		"- send (`name`, `message`; `followUp: true` waits until its current answer instead of reaching it at its next",
+		"  step). Restores an archived subagent.",
+		"- configure (`name`; `model`, `thinkingLevel`, `tools`): replaces what is given, for its later work.",
+		"- stop (`name`): stops its current work and drops the messages it has not taken yet; it stays usable.",
+		"- archive (`name`): stops it and hides it from status; restore (`name`) or send brings it back.",
+		"- answer (`name`): its latest reported answer again, and whether it is working on a newer one.",
+		"- status (optional `name`): your subagents, whether each is working, its model, thinking level (as used) and",
+		"  tools; archived ones only by name.",
+		"- models (optional `model`: a provider or words of a model's id or name): the models you can give, by `model`.",
+		"Each answer comes back to you as a message `[subagent <name> answered] ...` once it arrives (or",
+		"`[subagent <name> failed: ...]`): do not wait or poll for it.",
+	].join("\n"),
+	parameters: Args,
+	// A call a crash interrupted is not run again (a stop must not hit newer work): the model sees it was
+	// interrupted and can check with status.
+	replay: "unsafe",
+	execute: async (call, api, context) => {
+		const answer = await ACTIONS[call.action](call, api, context);
+		return { output: [{ type: "text", text: JSON.stringify(answer) }] };
 	},
-	abort: (_anchor, runtime, context) =>
-		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
 });
 
-/** What a reporter delivers: to which subagent, the message, and whether it waits for the current answer. */
-type ReporterInput = { name: string; conversationId: ConversationId; message: string; followUp: boolean };
+/** The subagent tools (the harness installs them under the kind's name): the one tool, for the main conversation. */
+const SUBAGENT_TOOLS: HarnessExtension = { tools: [{ ...subagentTool, scope: "main" }] };
 
-/** A reporter's phases: deliver the message and wait for the answer, then report it (none: nothing to report). */
-type ReporterState = { phase: "deliver" } | { phase: "withdraw" } | { phase: "report"; report?: string };
+/** What an action answers: a value the tool answers as JSON. */
+type Answer = object;
 
-/** What a reporter tells the agent when the message waited behind a subagent run that failed and was withdrawn. */
-const STRANDED = "its run failed before it took the message";
-
-/**
- * Delivers one message to a subagent and reports its answer to the agent, a background task (the agent's stop and
- * idle waits leave it alone). Request ids make a repeated submission return the first: after a restart the subagent
- * gets the message once and the agent the report once. A message left queued behind a run that failed (Durable keeps
- * it until the next input, which a subagent may never get) is withdrawn in a phase of its own, `withdraw`, decided in
- * a commit before the withdrawal: a restart in between withdraws it again and still reports it (Astra, rounds 1, 2).
- */
-const Reporter = defineTask<ReporterInput, ReporterState, null>({
-	name: "harness.subagent-reporter",
-	version: 1,
-	initial: () => ({ phase: "deliver" }),
-	phases: {
-		deliver: async (reporter, runtime, context) => {
-			const sent = await send(reporter, runtime, context);
-			if (sent === undefined) return finish(runtime, context);
-			const settled = await settle(sent.subagent, sent.submission, context);
-			if (settled === "stranded") {
-				await runtime.commit(() => ({ status: "running", checkpoint: { phase: "withdraw" } }), context);
-				return;
-			}
-			await decide(reporter.input, settled, undefined, runtime, context);
-		},
-		withdraw: async (reporter, runtime, context) => {
-			const sent = await send(reporter, runtime, context);
-			if (sent === undefined) return finish(runtime, context);
-			// Placed meanwhile after all, or settled: it reports as delivered; withdrawn by us: as stranded.
-			const outcome = await sent.submission.abort(context);
-			const settled = await sent.submission.wait(context);
-			const why = outcome === "already_placed" ? undefined : STRANDED;
-			await decide(reporter.input, settled, why, runtime, context);
-		},
-		// A follow-up input: it starts a turn when the agent is idle, or waits for its current answer.
-		report: async (reporter, runtime, context) => {
-			const report = reporter.state.checkpoint.report;
-			if (report !== undefined) {
-				const main = await runtime.conversation(runtime.conversationId, context);
-				const input = { type: "input", content: report, whenBusy: "followUp" } as const;
-				await main?.submit({ ...input, requestId: `subagent-report:${reporter.id}` }, context);
-			}
-			await finish(runtime, context);
-		},
-	},
-	abort: (_reporter, runtime, context) =>
-		runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
-});
-
-/** A reporter's task runtime. */
-type ReporterRuntime = TaskRuntime<ReporterInput, ReporterState, null, object>;
-
-/** A subagent's conversation, as a task reaches it (Durable's `ConversationHandle`). */
-type Child = NonNullable<Awaited<ReturnType<ReporterRuntime["conversation"]>>>;
-
-/** A message submitted to a subagent (Durable's `Submission`). */
-type Sent = Awaited<ReturnType<Child["submit"]>>;
-
-/** How a submitted message settled (Durable's `SettledSubmissionRecord`). */
-type Settled = Awaited<ReturnType<Sent["wait"]>>;
-
-/** Submits the reporter's message (again: the request id returns the first submission); none: the subagent is gone. */
-async function send(
-	reporter: { readonly id: string | number; readonly input: ReporterInput },
-	runtime: ReporterRuntime,
-	context: Context,
-): Promise<{ subagent: Child; submission: Sent } | undefined> {
-	const { conversationId, message, followUp } = reporter.input;
-	const subagent = await runtime.conversation(conversationId, context);
-	if (subagent === undefined) return undefined;
-	// While the subagent is busy, a steer reaches it at its next step and a follow-up after its current answer.
-	const request = { type: "input", content: message, whenBusy: followUp ? "followUp" : "steer" } as const;
-	const submission = await subagent.submit({ ...request, requestId: `subagent:${reporter.id}` }, context);
-	return { subagent, submission };
-}
-
-/**
- * Answered or unanswered, or `stranded` when the subagent went idle with the message still queued: no run will take
- * it, so the reporter withdraws it (in its `withdraw` phase).
- */
-async function settle(subagent: Child, submission: Sent, context: Context): Promise<Settled | "stranded"> {
-	const settled = submission.wait(context);
-	const idle = subagent.waitForIdle(context).then(() => "idle" as const);
-	if ((await Promise.race([settled, idle])) !== "idle") return settled;
-	return (await submission.status(context)).status === "queued" ? "stranded" : settled;
-}
-
-/**
- * One commit decides the report and records the answer as delivered, so a restart does not decide again. Nothing is
- * reported for a subagent archived meanwhile or whose name was given to a new one since (Astra, rounds 1, 2), nor for
- * a message withdrawn by an archive (`aborted` without `stranded`); `stranded` reports the withdrawal.
- */
-async function decide(
-	{ name, conversationId }: ReporterInput,
-	settled: Settled,
-	stranded: string | undefined,
-	runtime: ReporterRuntime,
-	context: Context,
-): Promise<void> {
-	await runtime.commit(async (tx) => {
-		const next = (report?: string) => ({ status: "running", checkpoint: { phase: "report", report } }) as const;
-		const agents = (await tx.doc(Subagents, runtime.conversationId)).agents;
-		const agent = Object.hasOwn(agents, name) ? agents[name] : undefined;
-		if (agent === undefined || agent.conversationId !== conversationId) return next();
-		if (settled.status === "unanswered") {
-			const why = stranded ?? (settled.reason === "aborted" ? undefined : settled.reason);
-			return next(why === undefined ? undefined : `[subagent ${name} failed: ${why}]`);
-		}
-		if (settled.type !== "input" || agent.reported.includes(settled.answer)) return next();
-		agent.reported.push(settled.answer);
-		const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0];
-		return next(`[subagent ${name} answered] ${textOf(answer)}`);
-	}, context);
-}
-
-/** Ends a reporter: completed. */
-function finish(runtime: ReporterRuntime, context: Context): Promise<void> {
-	return runtime.commit(() => ({ status: "terminal", outcome: { status: "completed", result: null } }), context);
-}
-
-/** The text of an answer's message (an assistant's). */
-function textOf(message: Message | undefined): string {
-	if (message?.role !== "assistant") return "";
-	return message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
-}
-
-/** The subagents' tasks: installed always, so reporters under way finish whatever the agent's grants are now. */
-export const SUBAGENT_TASKS: Extension = defineExtension({ name: "harness.subagent-tasks", tasks: [Anchor, Reporter] });
-
-/** A tool's answer to the model. */
-function reply(text: string) {
-	return { output: [{ type: "text" as const, text }] };
-}
-
-/** The agent's subagents as its conversation's document has them. */
-async function subagentsOf(api: ToolExecutionApi, context: Context): Promise<Record<string, Subagent>> {
-	return (await api.snapshot(Subagents, api.conversationId, context))?.agents ?? {};
-}
+/** The actions, by name. */
+const ACTIONS: Record<Call["action"], (call: Call, api: ToolExecutionApi, context: Context) => Promise<Answer>> = {
+	spawn,
+	send,
+	configure: configureAgent,
+	stop,
+	archive,
+	restore,
+	answer: answerOf,
+	status,
+	models,
+};
 
 /** Both tasks belong to the agent's conversation and are background: its stop and idle waits skip them. */
 const BACKGROUND = { ownership: { kind: "conversation" }, background: true } as const;
 
-const spawnTool = defineTool({
-	name: "subagent_spawn",
-	description:
-		"Starts a subagent named `name`, a copy of you without these subagent tools, working in the background on " +
-		"`message`. Its answer comes back to you as a message once it arrives.",
-	parameters: obj({ name: str({ min: 1, max: 100 }), message: str({ min: 1 }) }),
-	// A call a crash interrupted is not run again: the model sees it was interrupted and can check with subagent_list.
-	replay: "unsafe",
-	execute: async ({ name, message }, api, context) => {
-		const said = await api.commit(async (tx) => {
-			const state = await tx.doc(Subagents, api.conversationId);
-			if (Object.hasOwn(state.agents, name)) return `${name} exists already; use subagent_send.`;
-			const anchor = await tx.createTask(Anchor, null, BACKGROUND);
-			// Owned by a task of the agent's conversation: it starts as a copy of the agent.
-			const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
-			await configure(tx, child.id, {
-				extensions: { remove: [{ name: SubagentsKind.name }] },
-				instructions: `You are the subagent "${name}" of this session's agent. Answer its requests.`,
-			});
-			state.agents[name] = { conversationId: child.id, reported: [] };
-			await tx.createTask(Reporter, { name, conversationId: child.id, message, followUp: false }, BACKGROUND);
-			return `Started ${name}.`;
-		}, context);
-		return reply(said);
-	},
-});
+/** Starts the subagent `name` and sends it `message`. */
+async function spawn(call: Call, api: ToolExecutionApi, context: Context): Promise<Answer> {
+	const name = nameOf(call);
+	const message = messageOf(call);
+	if (Object.hasOwn(await subagentsOf(api, context), name)) throw exists(name);
+	const own = await api.agent(context);
+	const model = await modelOf(call.model, own.model, api);
+	const tools = call.tools === undefined ? undefined : chosenTools(call.tools, own);
+	const thinkingLevel = call.thinkingLevel ?? own.thinkingLevel;
+	await api.commit(async (tx) => {
+		const roster = await tx.doc(Subagents);
+		const withholds = roster.withholds ?? 0;
+		// Spawned meanwhile by a call running beside this one.
+		if (Object.hasOwn(roster.agents, name)) throw exists(name);
+		const anchor = await tx.createTask(Anchor, null, BACKGROUND);
+		// Owned by a task of the agent's conversation: it starts as a copy of the agent.
+		const child = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
+		const agent: Subagent = {
+			conversationId: child.id,
+			reported: [],
+			reportedTo: [],
+			model: modelText(model),
+			thinkingLevel,
+			...(tools === undefined ? {} : { tools }),
+			generation: 0,
+			followUps: [],
+		};
+		roster.agents[name] = agent;
+		const instructions = instructionsOf(name);
+		await configure(tx, child.id, { ...levelOf(agent, api.models), ...toolsOf(agent, own), instructions });
+		const input = { name, conversationId: child.id, generation: 0, withholds, message, followUp: false };
+		await tx.createTask(Reporter, input, BACKGROUND);
+	}, context);
+	return { name, done: "started" };
+}
 
-const sendTool = defineTool({
-	name: "subagent_send",
-	description:
-		"Sends `message` to the subagent `name`. While it works, the message reaches it at its next step; with " +
-		"`followUp: true` it waits until its current answer instead. The answer comes back to you as a message.",
-	parameters: obj({ name: str(), message: str({ min: 1 }), followUp: opt(bool()) }),
-	replay: "unsafe",
-	execute: async ({ name, message, followUp }, api, context) => {
-		const said = await api.commit(async (tx) => {
-			const agents = (await tx.doc(Subagents, api.conversationId)).agents;
-			const agent = Object.hasOwn(agents, name) ? agents[name] : undefined;
-			if (agent === undefined) return `No subagent named ${name} (see subagent_list).`;
-			const input = { name, conversationId: agent.conversationId, message, followUp: followUp === true };
-			await tx.createTask(Reporter, input, BACKGROUND);
-			return `Sent to ${name}.`;
-		}, context);
-		return reply(said);
-	},
-});
+/**
+ * The refusal of a name that is taken: a state, refused as the kind pattern decides (`invalid("args")` for a state that
+ * refuses).
+ */
+function exists(name: string) {
+	return invalid("args", `subagent: ${name} exists already (see status; archived ones too): send to it`);
+}
 
-const listTool = defineTool({
-	name: "subagent_list",
-	description: "Lists your subagents, each working or idle.",
-	parameters: obj({}),
-	replay: "safe",
-	execute: async (_args, api, context) => {
-		const lines: string[] = [];
-		for (const [name, { conversationId }] of Object.entries(await subagentsOf(api, context))) {
-			// A conversation is busy while it has a run: from an input until its answer.
-			const busy = (await api.snapshot(LiveDoc, conversationId, context))?.run !== undefined;
-			lines.push(`${name}: ${busy ? "working" : "idle"}`);
-		}
-		return reply(lines.length === 0 ? "No subagents." : lines.join("\n"));
-	},
-});
+/** What a subagent is told it is. */
+function instructionsOf(name: string): string {
+	return (
+		`You are the subagent "${name}", working for the session's agent. Do the requested work and answer ` +
+		"concisely; your final answer is reported back to it."
+	);
+}
 
-const archiveTool = defineTool({
-	name: "subagent_archive",
-	description:
-		"Archives the subagent `name`: stops what it is doing and drops its queued messages; its name is free again. " +
-		"Its transcript stays in the session.",
-	parameters: obj({ name: str() }),
-	replay: "unsafe",
-	execute: async ({ name }, api, context) => {
-		const agent = (await subagentsOf(api, context))[name];
-		if (agent === undefined) return reply(`No subagent named ${name} (see subagent_list).`);
-		await (await api.conversation(agent.conversationId, context))?.abort(context);
-		await api.commit(async (tx) => {
-			delete (await tx.doc(Subagents, api.conversationId)).agents[name];
-		}, context);
-		return reply(`Archived ${name}.`);
-	},
-});
+/**
+ * Sends `message` to the subagent `name` (a steer, or a follow-up), restoring it if archived. The reporter delivers it
+ * in the subagent's generation now: a stop or archive after this commit drops it.
+ */
+async function send(call: Call, api: ToolExecutionApi, context: Context): Promise<Answer> {
+	const name = nameOf(call);
+	const message = messageOf(call);
+	await api.commit(async (tx) => {
+		const roster = await tx.doc(Subagents);
+		const agent = subagentNamed(roster.agents, name);
+		delete agent.archived;
+		const { conversationId, generation } = agent;
+		const followUp = call.followUp === true;
+		const withholds = roster.withholds ?? 0;
+		const input = { name, conversationId, generation, withholds, message, followUp };
+		const reporter = await tx.createTask(Reporter, input, BACKGROUND);
+		// Follow-ups go in the order sent.
+		if (followUp) agent.followUps.push(reporter);
+	}, context);
+	return { name, done: "sent" };
+}
 
-/** The subagent tools (the harness installs them under the kind's name, which `subagent_spawn` leaves out). */
-const SUBAGENT_TOOLS = { tools: [spawnTool, sendTool, listTool, archiveTool] };
+/**
+ * Gives the subagent `name` another model, thinking level or tools, for its later work. Checked before the commit; the
+ * commit writes only what the call names, so two configures at once keep both (Astra, round 1 of the port).
+ */
+async function configureAgent(call: Call, api: ToolExecutionApi, context: Context): Promise<Answer> {
+	const name = nameOf(call);
+	if (call.model === undefined && call.thinkingLevel === undefined && call.tools === undefined)
+		throw invalid("args", "subagent: configure takes `model`, `thinkingLevel` or `tools`");
+	subagentNamed(await subagentsOf(api, context), name);
+	const own = await api.agent(context);
+	const model = call.model === undefined ? undefined : await modelOf(call.model, undefined, api);
+	const tools = call.tools === undefined ? undefined : chosenTools(call.tools, own);
+	await api.commit(async (tx) => {
+		const agent = subagentNamed((await tx.doc(Subagents)).agents, name);
+		if (model !== undefined) agent.model = modelText(model);
+		if (call.thinkingLevel !== undefined) agent.thinkingLevel = call.thinkingLevel;
+		if (tools !== undefined) agent.tools = tools;
+		const leveled = model !== undefined || call.thinkingLevel !== undefined;
+		const change: AgentChange = {
+			...(leveled ? levelOf(agent, api.models) : {}),
+			...(tools === undefined ? {} : toolsOf(agent, own)),
+		};
+		await configure(tx, agent.conversationId, change);
+	}, context);
+	const agent = subagentNamed(await subagentsOf(api, context), name);
+	return statusOf(name, agent, api, await working(agent.conversationId, api, context));
+}
+
+/**
+ * Stops what the subagent `name` is doing and drops the messages it has not taken: a new generation first (so a message
+ * sent before is not delivered after), then the abort.
+ */
+async function stop(call: Call, api: ToolExecutionApi, context: Context): Promise<Answer> {
+	return { name: await halt(call, api, context), done: "stopped" };
+}
+
+/** Stops the subagent `name` and hides it from status (`restore` or `send` brings it back). */
+async function archive(call: Call, api: ToolExecutionApi, context: Context): Promise<Answer> {
+	const name = await halt(call, api, context, (agent) => {
+		agent.archived = true;
+	});
+	return { name, done: "archived" };
+}
+
+/**
+ * Stops the call's subagent: one commit bumps its generation (and makes `also`'s change) and starts the stopper that
+ * aborts the older generation's work (`Stopper`, a background task: it finishes also when this call is cancelled), or
+ * reuses the one pending; the call answers once it ended. A send whose commit comes later restores it, waits for the stopper, and is delivered;
+ * one before is dropped (Astra, rounds 1 to 3 of the port).
+ */
+async function halt(
+	call: Call,
+	api: ToolExecutionApi,
+	context: Context,
+	also?: (agent: Subagent) => void,
+): Promise<string> {
+	const name = nameOf(call);
+	const stopper = await api.commit(async (tx) => {
+		const agent = subagentNamed((await tx.doc(Subagents)).agents, name);
+		agent.generation += 1;
+		also?.(agent);
+		// A stop pending already ends this generation's work too: nothing was admitted past it (Astra, round 5 of the
+		// port).
+		if (agent.stopping !== undefined) return agent.stopping;
+		const id = await tx.createTask(Stopper, { name, conversationId: agent.conversationId }, BACKGROUND);
+		agent.stopping = id;
+		return id;
+	}, context);
+	await api.waitForTask(stopper, context);
+	return name;
+}
+
+/** Shows the archived subagent `name` in status again. */
+async function restore(call: Call, api: ToolExecutionApi, context: Context): Promise<Answer> {
+	const name = nameOf(call);
+	await api.commit(async (tx) => {
+		delete subagentNamed((await tx.doc(Subagents)).agents, name).archived;
+	}, context);
+	return { name, done: "restored" };
+}
+
+/**
+ * The latest answer of the subagent `name` that was reported back (its reporters record each), `null` before the
+ * first, and whether it is working (on a newer one).
+ */
+async function answerOf(call: Call, api: ToolExecutionApi, context: Context): Promise<Answer> {
+	const name = nameOf(call);
+	const agent = subagentNamed(await subagentsOf(api, context), name);
+	const latest = agent.reported.at(-1);
+	const entry = latest === undefined ? undefined : await api.commit((tx) => tx.entry(AssistantEntry, latest), context);
+	const answer = entry === undefined ? null : textOf(entry.model?.[0]);
+	return { name, working: await working(agent.conversationId, api, context), answer };
+}
+
+/** The subagents (with `name`: that one, archived too; without: those not archived, and how many are archived). */
+async function status(call: Call, api: ToolExecutionApi, context: Context): Promise<Answer> {
+	const agents = await subagentsOf(api, context);
+	const named = call.name;
+	const listed =
+		named === undefined
+			? Object.entries(agents).filter(([, agent]) => agent.archived === undefined)
+			: [[named, subagentNamed(agents, named)] as const];
+	const subagents = [];
+	for (const [name, agent] of listed)
+		subagents.push(statusOf(name, agent, api, await working(agent.conversationId, api, context)));
+	const archived = named === undefined ? Object.keys(agents).length - listed.length : 0;
+	return archived === 0 ? { subagents } : { subagents, archived };
+}
+
+/** A subagent as status shows it: the thinking level as its model takes it. */
+function statusOf(name: string, agent: Subagent, api: ToolExecutionApi, busy: boolean) {
+	return {
+		name,
+		working: busy,
+		model: agent.model,
+		thinkingLevel: levelOf(agent, api.models).thinkingLevel,
+		tools: agent.tools ?? "all",
+		...(agent.archived === undefined ? {} : { archived: true }),
+	};
+}
+
+/** Whether `conversationId` is working: it has a run, from an input until its answer. */
+async function working(conversationId: ConversationId, api: ToolExecutionApi, context: Context): Promise<boolean> {
+	return (await api.snapshot(LiveDoc, conversationId, context))?.run !== undefined;
+}
+
+/** How long reading the models with credentials may take. */
+const MODELS_MS = 10_000;
+
+/** The models with credentials, all or those `model` matches. */
+async function models(call: Call, api: ToolExecutionApi): Promise<Answer> {
+	return listModels(await api.models.getAvailable(undefined, { signal: AbortSignal.timeout(MODELS_MS) }), call.model);
+}
+
+/** The session's subagents, as its document has them. */
+async function subagentsOf(api: ToolExecutionApi, context: Context): Promise<Record<string, Subagent>> {
+	return (await api.snapshot(Subagents, context))?.agents ?? {};
+}
+
+/** The call's `name`, which every action but status and models needs. */
+function nameOf(call: Call): string {
+	if (call.name === undefined) throw invalid("args", `subagent: ${call.action} takes \`name\``);
+	return call.name;
+}
+
+/** The call's `message`, which spawn and send need. */
+function messageOf(call: Call): string {
+	if (call.message === undefined) throw invalid("args", `subagent: ${call.action} takes \`message\``);
+	return call.message;
+}
+
+/** The subagent `name` of `agents`, or the refusal naming it. */
+function subagentNamed<T extends Subagent>(agents: Record<string, T>, name: string): T {
+	const agent = subagentOf(agents, name);
+	if (agent === undefined) throw invalid("args", `subagent: you have no subagent named ${name} (see status)`);
+	return agent;
+}
+
+/** The model `text` names (`provider/modelId`; none: the agent's own), or the refusal with close matches. */
+async function modelOf(text: string | undefined, own: ModelRef | undefined, api: ToolExecutionApi): Promise<ModelRef> {
+	const ref = text === undefined ? own : modelRef(text);
+	if (ref !== undefined && api.models.getModel(ref.provider, ref.modelId) !== undefined) return ref;
+	if (text === undefined)
+		throw invalid("args", "subagent: you have no model to copy: name one with `model` (see models)");
+	const available = await api.models.getAvailable(undefined, { signal: AbortSignal.timeout(MODELS_MS) });
+	const close = closeModels(available, text);
+	const hint = close.length === 0 ? "" : ` Close matches: ${close.join(", ")}.`;
+	throw invalid("args", `subagent: no model ${text}.${hint} The models action lists them.`);
+}
+
+/**
+ * The names `names` of tools the agent `own` may give now (`givable`), in the order named, each once; a name of no such
+ * tool is refused, listing the ones it may give.
+ */
+function chosenTools(names: readonly string[], own: Agent): string[] {
+	const choosable = givable(own).map((tool) => tool.name);
+	for (const name of names) {
+		if (choosable.includes(name)) continue;
+		throw invalid(
+			"args",
+			`subagent: you cannot give the tool ${name}; you may give: ${choosable.join(", ") || "none"}`,
+		);
+	}
+	return [...new Set(names)];
+}

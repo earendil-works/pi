@@ -1,6 +1,8 @@
-// A session's own facts for its worker (`SessionFacts`): its row, and its report of what the agent does.
+// A session's own facts for its worker (`SessionFacts`): its row, its moved conversations, its report of what the
+// agent does, and the move of one of its conversations (`HarnessSession.moveLocation`, for an agent's tool; no tool
+// calls it yet).
 
-import { type FacetHost, forbidden, type P3Principal } from "@earendil-works/p3/v1";
+import { type FacetHost, forbidden, type P3Principal, Session } from "@earendil-works/p3/v1";
 import { SessionsStore } from "./contract.server.ts";
 import { SessionFacts } from "./contract.ts";
 import { sessionRow } from "./session.ts";
@@ -13,7 +15,10 @@ export function serveFacts(host: FacetHost<P3Principal>): void {
 		const store = self.get(SessionsStore, {});
 		return {
 			session: sessionRow(session, self),
+			detail: store.moved.at(Session({ id: session })),
 			report: ({ state }, ctx) => store.report({ session, state }, ctx),
+			moveLocation: ({ conversation, location }, ctx) =>
+				store.moveLocation({ session, conversation, location }, ctx),
 		};
 	});
 }

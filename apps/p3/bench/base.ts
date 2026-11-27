@@ -26,7 +26,6 @@ import {
 	type P3Principal,
 	SessionObject,
 	type SessionState,
-	THIS_DEVICE,
 	Transcript,
 	until,
 	withGranted,
@@ -99,7 +98,7 @@ try {
 			const folder = join(root, `folder-${i}`);
 			await mkdir(folder);
 			// The session is made in Pi, so Pi's coding tools reach it; its faux login is made in it.
-			const id = await newSession(client, `s${i}`, context, { environment: THIS_DEVICE, folder });
+			const id = await newSession(client, `s${i}`, context, { folder });
 			await scriptFauxAs(client, id, SCRIPT, context);
 			const started = performance.now();
 			held.push(await client.get(SessionWorker, { session: id }, context));

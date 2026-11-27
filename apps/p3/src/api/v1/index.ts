@@ -32,6 +32,8 @@ export {
 	withCancel,
 } from "@earendil-works/chord/context";
 export type { JsonValue } from "@earendil-works/chord/json";
+/** What `until` follows: a reference's state, a member, any watchable. */
+export type { NativeWatchable } from "@earendil-works/chord/watch";
 // pi-ai's types of providers and their auth, for every kind's facets (a value of them comes from `/v1/server` or
 // `/v1/worker`).
 export type {
@@ -58,6 +60,7 @@ export {
 	Location,
 	ModelChoice,
 	SessionDefaults,
+	SessionDetail,
 	SessionFacts,
 	SessionRow,
 	SessionState,

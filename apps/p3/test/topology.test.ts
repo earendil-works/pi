@@ -2,6 +2,7 @@
 // (every object refuses the principals it does not serve), and the work a common action costs.
 
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
 import { afterEach, describe, it } from "node:test";
 import { isChordError } from "@earendil-works/chord";
 import {
@@ -12,24 +13,36 @@ import {
 	SessionFacts,
 	SessionObject,
 	SessionWorker,
-	THIS_DEVICE,
 	until,
 	Workspace,
 	WorkspaceChildren,
 	withGranted,
 } from "@earendil-works/p3/v1";
-import { PeopleStore, ServerCommands, SessionsStore, ThingsStore } from "@earendil-works/p3/v1/server";
+import {
+	Http,
+	PeopleStore,
+	type Router,
+	ServerCommands,
+	SessionsStore,
+	ThingsStore,
+} from "@earendil-works/p3/v1/server";
+import { MachineHosts } from "../plugins/environments/contract.server.ts";
+import { TerminalHosts } from "../plugins/environments/contract.terminal-host.server.ts";
+import { MACHINE_KIND } from "../plugins/environments/contract.ts";
+import { Machine } from "../plugins/environments/kind.ts";
+import { seeded } from "../plugins/environments/test/seeded.ts";
+import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../plugins/files/kind.ts";
 import { SessionStart } from "../plugins/sessions/contract.ts";
 import { SignIns } from "../plugins/sign-in/contract.ts";
+import { ATTACH_PATH, Terminals, TerminalsKind } from "../plugins/terminals/kind.ts";
+import { OneThing } from "../plugins/things/contract.server.ts";
+import { HeldThings } from "../plugins/things/contract.worker.ts";
 import { Probe } from "./plugins/probe/contract.ts";
-import { newSession, piOf } from "./support.ts";
+import { newSession, piOf, thisDevice } from "./support.ts";
 import { type Topology, topology } from "./topology.ts";
-import { eventually, within } from "./until.ts";
+import { collected, eventually, within } from "./until.ts";
 
 const PERSON: P3Principal = { kind: "person", id: "p1", name: "Ann" };
-
-/** Where the topology's sessions work. */
-const HERE = { environment: THIS_DEVICE, folder: "/tmp" };
 
 let running: Topology | undefined;
 
@@ -46,7 +59,9 @@ async function withSession(idleMs?: number) {
 	const t = await topology(context, idleMs);
 	running = t;
 	const owner = await t.client(t.owner);
-	const make = (title: string) => newSession(owner, title, context, HERE);
+	// Where the topology's sessions work: this device's machine, in /tmp.
+	const here = { machine: await thisDevice(owner, context), folder: "/tmp" };
+	const make = (title: string) => newSession(owner, title, context, here);
 	const archive = async (session: string) => {
 		const held = await owner.get(SessionObject, { workspace: session, thing: session }, context);
 		await withGranted(held, "archive")!.archive(context);
@@ -74,6 +89,17 @@ async function ownerAdopted(t: Topology): Promise<void> {
 	await eventually(owners, (items) => items.some(({ person }) => person === id));
 }
 
+/** The handlers of the files and terminals plugins' routes in the HTTP component's router. */
+function routes(router: Router): object[] {
+	const paths = [`GET ${DOWNLOAD_PATH}`, `PUT ${UPLOAD_PATH}`, `GET ${ATTACH_PATH}`];
+	return paths.map((key) => {
+		const [method, path] = key.split(" ") as [string, string];
+		const match = router.route(method, path);
+		assert.ok(match !== undefined && match !== "bad_path", key);
+		return match.handler;
+	});
+}
+
 /** Whether `promise` rejects with a ChordError of `code`. */
 async function refused(promise: Promise<unknown>, code: string): Promise<void> {
 	await assert.rejects(promise, (error: unknown) => isChordError(error) && error.code === code);
@@ -99,12 +125,91 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
+	// Opus S3, push 4 round 1: Manage's view of the moved conversations and the worker's go on through a reload.
+	it("the sessions plugin on the server: a session's moved conversations, as Manage and its worker see them, go on", async () => {
+		const { t, owner, id } = await withSession();
+		const machine = await thisDevice(owner, context);
+		const session = withGranted(await owner.get(SessionObject, { workspace: id, thing: id }, context), "detail")!;
+		const worker = await t.client({ kind: "worker", session: id });
+		const facts = await worker.get(SessionFacts, {}, context);
+		await until(
+			session.detail,
+			(detail) => Object.keys(detail.locations).length === 0,
+			within("the detail", context),
+		);
+		await t.reload("@earendil-works/p3-sessions");
+		await facts.moveLocation({ conversation: "1", location: { machine, folder: "/srv" } }, context);
+		const moved = { "1": { machine, folder: "/srv" } };
+		await until(
+			session.detail,
+			(detail) => detail.locations["1"]?.folder === "/srv",
+			within("Manage's view", context),
+		);
+		await until(facts.detail, (detail) => detail.locations["1"]?.folder === "/srv", within("the worker's", context));
+		assert.deepEqual(facts.detail.value.locations, moved);
+		assert.deepEqual(t.errors, []);
+	});
+
 	it("the sessions plugin on a worker: its row still follows the server", async () => {
 		const { t, owner, archive, id } = await withSession();
 		const worker = await owner.get(SessionWorker, { session: id }, context);
 		await t.reload("@earendil-works/p3-sessions", id);
 		await archive(id);
 		await until(worker.session, (row) => row?.archivedAt !== null, within("the archived row", context));
+		assert.deepEqual(t.errors, []);
+	});
+
+	it("the files and terminals plugins: a person's Files and Terminals go on", async () => {
+		const t = await topology(context);
+		running = t;
+		const [pi, files, terminals, machine, ann] = await annInPi(t);
+		const person = await t.client({ kind: "person", id: ann, name: "Ann" });
+		const browser = await person.get(Files, { workspace: pi, thing: files }, context);
+		const panes = await person.get(Terminals, { workspace: pi, thing: terminals }, context);
+		await browser.entries!({ machine, path: tmpdir() }, context);
+		await t.reload("@earendil-works/p3-files");
+		await until(browser.state, (state) => state.kind === "live", within("Files again", context));
+		await browser.entries!({ machine, path: tmpdir() }, context);
+		await t.reload("@earendil-works/p3-terminals");
+		await until(panes.state, (state) => state.kind === "live", within("Terminals again", context));
+		// This device's terminals are pending (its `openPty` refuses): the list is what goes on, empty.
+		await until(panes.terminals!, (list) => list.length === 0, within("the list", context));
+		assert.deepEqual(t.errors, []);
+	});
+
+	it("the environments, files and terminals plugins: the old objects are collected after a reload (guide 8.6)", async () => {
+		const t = await topology(context);
+		running = t;
+		const [pi, files, terminals, machine, ann] = await annInPi(t);
+		const person = await t.client({ kind: "person", id: ann, name: "Ann" });
+		const browser = await person.get(Files, { workspace: pi, thing: files }, context);
+		const panes = await person.get(Terminals, { workspace: pi, thing: terminals }, context);
+		const held = await person.get(Machine, { workspace: pi, thing: machine }, context);
+		// The markers: what each plugin's objects made (the terminal host, the machines' resolver, the routes), read
+		// through one registry value each, read again after the reloads (a value read once keeps its composition).
+		const registries = {
+			terminals: await t.server.registry(TerminalHosts, context),
+			machines: await t.server.registry(MachineHosts, context),
+			http: await t.server.registry(Http, context),
+		};
+		const marked = () => [
+			new WeakRef(registries.terminals.value!),
+			new WeakRef(registries.machines.value),
+			...routes(registries.http.value).map((route) => new WeakRef(route)),
+		];
+		const before = marked();
+		for (const plugin of ["environments", "files", "terminals"]) await t.reload(`@earendil-works/p3-${plugin}`);
+		await until(browser.state, (state) => state.kind === "live", within("Files again", context));
+		await until(panes.state, (state) => state.kind === "live", within("Terminals again", context));
+		await until(held.state, (state) => state.kind === "live", within("the machine again", context));
+		await browser.entries!({ machine, path: tmpdir() }, context);
+		assert.equal(held.info.value.status, "ready");
+		const after = marked();
+		assert.ok(
+			before.every((ref, i) => ref.deref() !== after[i]!.deref()),
+			"new objects",
+		);
+		assert.ok(await collected(before), "the old objects of the three plugins are collected");
 		assert.deepEqual(t.errors, []);
 	});
 
@@ -136,7 +241,7 @@ describe("reloads while in use", () => {
 		assert.equal(session.row.value.id, id);
 		assert.deepEqual(
 			environments.environments.value.map(({ id: environment }) => environment),
-			[THIS_DEVICE],
+			[await thisDevice(owner, context)],
 		);
 		assert.deepEqual(t.errors, []);
 	});
@@ -300,20 +405,48 @@ describe("counted work", () => {
 		await until(session.row, (row) => row.state === "working", within("the report", context));
 	});
 
-	// The route's admission and the worker objects' (`followSession`) read the access index, no query; the worker's
-	// facts read its session's row: one run; a second hold shares it.
-	it("a hold of a session's worker costs one read: its worker's row; a second hold none", async () => {
+	// The route's admission and the worker objects' (`followSession`) read the access index, no query. The worker's
+	// start reads its session's row (its facts; its moved conversations are a document, no query), and its holding this
+	// device's machine's info, once: two runs by the time it holds its machine (Astra, round 5 of the machines: the
+	// start is counted whole, wherever the machine's read lands around the first hold). A second hold shares them all.
+	it("a session's worker costs two reads by the time it holds its machine: its row and the machine's; a second hold none", async () => {
 		const { t, owner, id, pi } = await withSession();
 		await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		const first = counted();
 		await owner.get(SessionWorker, { session: id }, context);
-		const second = counted();
+		// The worker, once started, holds what its agent may use: this device's machine, its info one read, once.
+		const holding = await t.workers.get(id)!.host.registry(HeldThings, context);
+		await until(holding, (held) => held?.has(MACHINE_KIND) === true, within("the worker's holding", context));
+		const settled = counted();
 		await (await t.client(t.owner)).get(SessionWorker, { session: id }, context);
 		const after = counted();
 		assert.deepEqual(
-			[second[0]! - first[0]!, second[1]! - first[1]!, after[0]! - second[0]!, after[1]! - second[1]!],
-			[1, 0, 0, 0],
+			[settled[0]! - first[0]!, settled[1]! - first[1]!, after[0]! - settled[0]!, after[1]! - settled[1]!],
+			[2, 0, 0, 0],
 		);
 	});
 });
+
+/**
+ * Pi, its Files, Terminals and machine, and person Ann put into Pi, whom Who may gives Browse and Watch (the kinds give
+ * people nothing by default).
+ */
+function annInPi(t: Topology) {
+	return t.server.root(async (ctx) => {
+		const things = await ctx.get(ThingsStore, {});
+		const one = async (kind: string) => await seeded(await ctx.get(OneThing, { kind }), ctx);
+		const root = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
+		const by = { kind: "plugin", plugin: "test" } as const;
+		const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
+		const party = { kind: "person", person } as const;
+		await things.putParty({ workspace: root, party, source: by }, ctx);
+		const [files, terminals] = [await one(FilesKind.name), await one(TerminalsKind.name)];
+		const grants = [
+			{ workspace: root, thing: files, party, tick: "browse", gives: true },
+			{ workspace: root, thing: terminals, party, tick: "watch", gives: true },
+		];
+		await things.setGrants({ source: by, grants }, ctx);
+		return [root, files, terminals, await one(MACHINE_KIND), person] as const;
+	}, context);
+}

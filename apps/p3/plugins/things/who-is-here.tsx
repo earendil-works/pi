@@ -16,10 +16,10 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { partyKey } from "./contract.ts";
-import { useScreenId } from "./contract.web.tsx";
+import { useErrorText, useScreenId } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useErrorText, useFromText, usePartyName } from "./use-page.ts";
+import { useFromText, usePartyName } from "./use-page.ts";
 import { FromAboveSwitch } from "./what-is-here.tsx";
 import { Workspace, WorkspacePeople } from "./workspace.ts";
 

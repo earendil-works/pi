@@ -5,6 +5,7 @@
 
 import {
 	arr,
+	bool,
 	int,
 	local,
 	method,
@@ -20,7 +21,7 @@ import {
 	unknown,
 } from "@earendil-works/p3/v1";
 import { Source } from "../things/contract.ts";
-import { Attempt, SignInMethod } from "./contract.ts";
+import { Attempt, LoginDefinitions, LoginModels, ModelOverride, SignInMethod } from "./contract.ts";
 import { RequestAuth } from "./kind.ts";
 
 /**
@@ -153,4 +154,51 @@ export const CatalogStore = local("providers.catalog-store", {
 		/** Marks provider `provider`'s catalog request failed at `at`: the stored body stays. */
 		failed: method(obj({ provider: str(), at: num() })),
 	},
+});
+
+/** A model settings thing's overrides, by its id. */
+export const ModelSettingsRow = obj({ thing: str(), overrides: arr(ModelOverride) });
+
+/** A model settings thing's overrides (see `ModelSettingsRow`). */
+export type ModelSettingsRow = Static<typeof ModelSettingsRow>;
+
+/** The model settings things' overrides (`model-settings-store.ts`), one row per thing. */
+export const ModelSettingsStore = local("providers.model-settings-store", {
+	version: 1,
+	params: {},
+	members: {
+		settings: queries(ModelSettingsRow, { one: obj({ thing: str() }) }),
+		/** Sets model settings thing `thing`'s overrides, replacing its earlier ones. */
+		set: method(obj({ thing: str(), overrides: arr(ModelOverride) })),
+		/** Removes model settings thing `thing`'s overrides (the thing was deleted); safe to run again. */
+		clear: method(obj({ thing: str() })),
+	},
+});
+
+/**
+ * A login's account models (`login-account.ts`): its provider (id and name) and the chat models of its account, its
+ * type's catalog cut to it (pi-ai's definitions, plain data, typed `unknown` here); `null` while no credential is
+ * stored or no plugin offers its provider. One object per login, held by the login's object and by every
+ * `SessionModels` whose agent may Use it.
+ */
+export const AccountModels = obj({ provider: str(), providerName: str(), models: arr(unknown()) });
+
+/** A login's account models (see `AccountModels`). */
+export type AccountModels = Static<typeof AccountModels>;
+
+/** One login's account models, live (see `AccountModels`). */
+export const LoginAccount = local("providers.login-account", {
+	version: 1,
+	params: { thing: str() },
+	members: { account: union([AccountModels, nul()]) },
+});
+
+/**
+ * A session's models, computed once for every holder of its `SessionModels` (`session-models.ts`): the picker's list
+ * and the worker's, and whether they are complete (see `SessionModels`).
+ */
+export const SessionModelSet = local("providers.session-model-set", {
+	version: 1,
+	params: { session: str() },
+	members: { complete: bool(), models: arr(LoginModels), catalog: arr(LoginDefinitions) },
 });

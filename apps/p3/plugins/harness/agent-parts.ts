@@ -4,25 +4,27 @@
 // extension, installed under the kind's name, providers (a login's, one per thing),
 // composed into a new `Models` when they change, and an environment. A kind is given again only when its list of held
 // things (by identity: the holding keeps an unchanged kind's array) or its part changed; a kind no longer held is
-// uninstalled.
+// uninstalled. A `main` tool is installed guarded: it refuses calls from a subagent.
 
-import { BACKGROUND_CONTEXT, type Context, reportError, type TableItem } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Context, forbidden, reportError, type TableItem } from "@earendil-works/p3/v1";
 import {
 	createModels,
 	createRegistry,
 	type ExecutionEnv,
 	type Extension,
 	type Models,
-	type Provider,
 	type Registry,
 } from "@earendil-works/p3/v1/worker";
 import type {
 	HarnessContribution,
+	HarnessExtension,
 	HarnessLocation,
 	HarnessSession,
+	HarnessTool,
 	Held,
 	HeldThing,
 	ThingHarnessPart,
+	ThingProvider,
 } from "../things/contract.worker.ts";
 
 /** The kinds' parts by kind name (the composed `ThingHarnessParts`). */
@@ -36,8 +38,9 @@ type Given = {
 	readonly things: readonly HeldThing[];
 	readonly part: ThingHarnessPart;
 	readonly extension: Extension | undefined;
-	readonly providers: readonly Provider[];
+	readonly providers: readonly ThingProvider[];
 	readonly env: HarnessContribution["env"];
+	readonly ready: HarnessContribution["ready"];
 };
 
 /** The agent's registry, models and environment over the things it holds. */
@@ -106,13 +109,34 @@ export class AgentParts {
 		if (providersChanged(before, next)) this.#models = this.#compose(next);
 	}
 
-	/** The first model of the first kind that gives providers (a login), in the order of the held things. */
+	/**
+	 * Resolves once every kind's contribution is complete (`HarnessContribution.ready`: a login's models); fails with
+	 * the first that `context` cancelled first.
+	 */
+	async ready(context: Context): Promise<void> {
+		await Promise.all([...this.#given.values()].map((given) => given.ready?.(context)));
+	}
+
+	/**
+	 * The first model offered, in the order of the held things and their providers: a provider without models (a
+	 * login whose models are all hidden) is passed over (Astra, round 1 of model settings).
+	 */
 	firstModel(): ModelRef | undefined {
 		for (const given of this.#given.values()) {
-			const provider = given.providers[0];
-			if (provider === undefined) continue;
-			const model = this.#models.getModels(provider.id)[0];
-			return model === undefined ? undefined : { provider: model.provider, modelId: model.id };
+			for (const { provider } of given.providers) {
+				const model = this.#models.getModels(provider.id)[0];
+				if (model !== undefined) return { provider: model.provider, modelId: model.id };
+			}
+		}
+		return undefined;
+	}
+
+	/** The id of the provider held thing `thing` gives (a login's), whatever models it has now; `undefined`: none. */
+	providerOf(thing: string): string | undefined {
+		for (const given of this.#given.values()) {
+			// A kind gives few providers: its list is looked over.
+			const provider = given.providers.find((one) => one.thing === thing)?.provider;
+			if (provider !== undefined) return provider.id;
 		}
 		return undefined;
 	}
@@ -124,18 +148,23 @@ export class AgentParts {
 			return {
 				things,
 				part,
-				extension: given.extension === undefined ? undefined : { ...given.extension, name: kind },
+				extension: given.extension === undefined ? undefined : named(kind, given.extension),
 				providers: given.providers ?? [],
 				env: given.env,
+				ready: given.ready,
 			};
 		} catch (error) {
 			// A kind's part is another plugin's code: its failure gives that kind nothing, the others keep theirs.
 			this.#report(kind, "part", error);
-			return { things, part, extension: undefined, providers: [], env: undefined };
+			return { things, part, extension: undefined, providers: [], env: undefined, ready: undefined };
 		}
 	}
 
-	/** Installs one kind's extension; one Durable refuses (a tool name another kind has) is left out, reported. */
+	/**
+	 * Installs one kind's extension; one Durable refuses (two tools or sections of one name in it, a reserved or malformed
+	 * section key, a task name another extension has) is left out, reported. A tool name another kind has too is not
+	 * refused: the later kind's tool takes the earlier's place.
+	 */
 	#install(kind: string, extension: Extension): void {
 		try {
 			this.registry.install(extension);
@@ -151,7 +180,7 @@ export class AgentParts {
 		const models = createModels();
 		const taken = new Map<string, string>();
 		for (const [kind, { providers }] of given) {
-			for (const provider of providers) {
+			for (const { provider } of providers) {
 				const first = taken.get(provider.id);
 				if (first !== undefined) {
 					this.#report(
@@ -175,6 +204,34 @@ export class AgentParts {
 		this.#reported.add(key);
 		reportError(`p3 harness: session ${this.#session.session}: ${kind}`, error, BACKGROUND_CONTEXT);
 	}
+}
+
+/**
+ * `extension` as the harness installs it: under `kind`'s name, its `main` tools guarded. An installed tool keeps its
+ * `scope` (the guard spreads it): the subagents part reads it from the agent's tools.
+ */
+function named(kind: string, extension: HarnessExtension): Extension {
+	const { tools } = extension;
+	if (tools === undefined || !tools.some((tool) => tool.scope !== undefined)) return { ...extension, name: kind };
+	return { ...extension, name: kind, tools: tools.map((tool) => (tool.scope === undefined ? tool : guarded(tool))) };
+}
+
+/**
+ * The `main` tool `tool` refusing calls from a subagent, whose conversation is the one a task owns (its anchor's). The
+ * subagents part never gives a subagent a `main` tool; the guard holds the scope for any other conversation a task
+ * owns. It costs a read commit per call (the conversation's record): fine for a tool called now and then, not for a hot
+ * one.
+ */
+function guarded(tool: HarnessTool): HarnessTool {
+	return {
+		...tool,
+		execute: async (args, api, context) => {
+			const conversation = await api.commit((tx) => tx.conversation(api.conversationId), context);
+			if (conversation?.owner !== undefined)
+				throw forbidden(`${tool.name} works only in the session's main conversation, not in a subagent`);
+			return tool.execute(args, api, context);
+		},
+	};
 }
 
 /** Whether the providers differ between two applies: other kinds with providers, or other providers of one. */

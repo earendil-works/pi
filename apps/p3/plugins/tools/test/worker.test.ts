@@ -18,6 +18,7 @@ const SESSION = {
 	workspace: "w",
 	call: () => Promise.reject(new Error("no call")),
 	location: async () => undefined,
+	moveLocation: () => Promise.reject(new Error("no move")),
 };
 
 /** A held coding tools thing whose reference has the flags `granted`. */

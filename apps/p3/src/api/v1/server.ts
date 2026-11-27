@@ -36,6 +36,10 @@ export {
 	/** Takes the lock of a name (a session's), owned by the kernel for the holder's life; waits while another holds it. */
 	processLock,
 } from "@earendil-works/chord/workers/child";
+// A machine's files and commands, for the machine plugins' server facets (this device's host) and Files.
+export type { BinaryReader, ExecutionEnv, Result } from "@earendil-works/pi-durable/env";
+export { FileError } from "@earendil-works/pi-durable/env";
+export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
@@ -57,6 +61,8 @@ export * from "./control.ts";
 export type ServerRuntime = {
 	/** The Pi's data directory (a real path, private). */
 	readonly dataDir: string;
+	/** Where a session works when it names no folder (one folder per session), outside the data directory. */
+	readonly workRoot: string;
 	/** The machine the server runs on: its OS user's name and its host name (what the owner and this device are first named). */
 	readonly machine: { readonly user: string; readonly hostname: string };
 	readonly host: Host<P3Principal>;
@@ -99,6 +105,17 @@ export type WorkerRunner = {
 	stop(id: string): Promise<void>;
 	/** Clears session `id`'s failure: it starts again on its next hold (now, when held). */
 	retry(id: string): void;
+	/**
+	 * Stops session `id`'s worker, if one runs, and deletes what its workers keep here (their directory): the session
+	 * is gone. Resolves once it is deleted; a failure rejects, and the caller tries again. An id that names no session
+	 * (empty, a path) is refused (`invalid`) before anything stops or is deleted.
+	 */
+	remove(id: string): Promise<void>;
+	/**
+	 * The ids of the sessions whose workers keep something here (a directory each, named by a session id): what a sweep
+	 * of sessions gone reads.
+	 */
+	stored(): Promise<readonly string[]>;
 	/** What runs: each session's worker by id, `running` or `failed` with the reason. */
 	state(): Readonly<Record<string, WorkerState>>;
 	/**
