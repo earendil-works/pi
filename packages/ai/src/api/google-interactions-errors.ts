@@ -101,8 +101,9 @@ function notOnPlan(modelId: string): string {
 function formatReset(headers: Headers): string {
 	const seconds = Number(headers.get("retry-after"));
 	if (!Number.isFinite(seconds) || seconds <= 0) return "";
-	const hours = Math.floor(seconds / 3600);
-	const minutes = Math.ceil((seconds % 3600) / 60);
+	const totalMinutes = Math.ceil(seconds / 60);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
 	return ` (resets in ${hours > 0 ? `${hours}h ` : ""}${minutes}m)`;
 }
 

@@ -55,6 +55,9 @@ describe("classifyGoogleInteractionsError", () => {
 				"429 Resource exhausted. Daily limit reached for gemini-4-hydrogen (resets in 5h 19m): switch to another model, or use a Gemini API key.",
 			final: true,
 		});
+		expect(classify(429, PER_DAY_QUOTA_BODY("1000000"), { "retry-after": "7199" }).message).toContain(
+			"(resets in 2h 0m)",
+		);
 	});
 
 	it("reports a daily limit of zero as a model the plan does not include", () => {
