@@ -976,6 +976,27 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	const folderShows = (folder: string) =>
 		browser.wait(`document.querySelector('[data-field="folder"]')?.value === ${JSON.stringify(folder)}`);
 
+	/** Sets the new-session step's folder field to `folder` as a person does (its value setter, then its input event). */
+	const setFolder = (folder: string) =>
+		browser.evaluate(
+			`(() => { const field = document.querySelector('[data-field="folder"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(field, ${JSON.stringify(folder)}); field.dispatchEvent(new Event("input", { bubbles: true })); })()`,
+		);
+
+	/** The id of the workspace named `name` once the navigator lists it. */
+	async function madeId(name: string): Promise<string> {
+		const entry = `[...document.querySelectorAll("[data-nav-workspace]")].find((e) => e.textContent === ${JSON.stringify(name)})`;
+		await browser.wait(`${entry} !== undefined`);
+		return browser.evaluate<string>(`${entry}.dataset.navWorkspace`);
+	}
+
+	/** The sessions store's row of session `id`. */
+	function rowOf(id: string) {
+		return t.host.root(
+			async (ctx) => (await (await ctx.get(SessionsStore, {})).sessions.one.page({ id }, 1, ctx)).items[0],
+			context,
+		);
+	}
+
 	/** Applies an edit of the things plugin's add dialog (marked `marker`), which remounts the open dialog. */
 	async function applyAddDialog(marker: string): Promise<void> {
 		const file = join(builtIn, "things/add-thing.tsx");
@@ -1024,10 +1045,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			await press('[data-add-offer="make:sessions.session"]');
 			await browser.type("[data-add-name]", "Own folder");
 			await folderShows("/srv/prefilled");
-			// Emptied as a person does (the input's own value setter, then its input event).
-			await browser.evaluate(
-				`(() => { const field = document.querySelector('[data-field="folder"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(field, ""); field.dispatchEvent(new Event("input", { bubbles: true })); })()`,
-			);
+			await setFolder("");
 			await folderShows("");
 			await configure({ machine, folder: "/srv/changed" });
 			await idles();
@@ -1038,18 +1056,56 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			assert.equal(await folderShown(), "", "emptied, after an apply");
 			await press("[data-add-confirm-button]");
 			await browser.wait(`document.querySelector("[data-add-thing-dialog]") === null`);
-			const entry = `[...document.querySelectorAll("[data-nav-workspace]")].find((e) => e.textContent === "Own folder")`;
-			await browser.wait(`${entry} !== undefined`);
-			const made = await browser.evaluate<string>(`${entry}.dataset.navWorkspace`);
-			const row = await t.host.root(
-				async (ctx) => (await (await ctx.get(SessionsStore, {})).sessions.one.page({ id: made }, 1, ctx)).items[0],
-				context,
-			);
+			const made = await madeId("Own folder");
+			const row = await rowOf(made);
 			// The session's own folder (`<work root>/…/<id>`) on this device, not a defaults' folder.
 			assert.equal(row?.location?.machine, machine);
 			assert.ok(row?.location?.folder.endsWith(`/${made}`), row?.location?.folder);
 		} finally {
 			await configure(before.location);
+		}
+	});
+
+	// Astra, push 5, round 2: the folder edited alone left the machine following the defaults: Add made B:/my/project.
+	it("pins the machine shown once the folder is edited, through a change of the defaults' machine", async () => {
+		const { before, machine, configure } = await piDefaults();
+		const box = await t.host.root(
+			async (ctx) =>
+				(await ctx.get(ThingsStore, {})).create(
+					{
+						kind: MACHINE_KIND,
+						name: "Other box",
+						workspace: pi,
+						by: { kind: "plugin", plugin: "test" },
+						input: { type: "local", settings: {} },
+					},
+					ctx,
+				),
+			context,
+		);
+		await configure({ machine, folder: "/first" });
+		try {
+			await browser.open(`${origin}/w/${pi}/settings`);
+			await press('[data-settings-tab="what"]');
+			await press("[data-add-thing]");
+			await press('[data-add-offer="make:sessions.session"]');
+			await browser.type("[data-add-name]", "Chosen project");
+			await folderShows("/first");
+			await setFolder("/my/project");
+			await folderShows("/my/project");
+			await configure({ machine: box, folder: "/second" });
+			await idles();
+			assert.equal(await folderShown(), "/my/project");
+			await press("[data-add-confirm-button]");
+			await browser.wait(`document.querySelector("[data-add-thing-dialog]") === null`);
+			const row = await rowOf(await madeId("Chosen project"));
+			assert.deepEqual(row?.location, { machine, folder: "/my/project" });
+		} finally {
+			await configure(before.location);
+			await t.host.root(
+				async (ctx) => (await ctx.get(ThingsStore, {})).unlink({ workspace: pi, thing: box }, ctx),
+				context,
+			);
 		}
 	});
 
