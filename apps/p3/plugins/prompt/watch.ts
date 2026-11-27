@@ -9,8 +9,8 @@ import { dirname, sep } from "node:path";
 
 /**
  * A watcher of one folder at a time under `root` (which exists: the set makes it before it watches): `changed` is
- * called after each change. An error (the folder removed) re-arms it. Arming is queued: each `watch` is applied in
- * order, the last one wins.
+ * called after each change, and once whenever it starts watching a folder. An error (the folder removed) re-arms it.
+ * Arming is queued: each `watch` is applied in order, the last one wins.
  */
 export class FolderWatch {
 	readonly #root: string;
@@ -70,6 +70,9 @@ export class FolderWatch {
 				this.#rearm();
 				this.#changed();
 			});
+			// Armed after the folder was looked at: what changed meanwhile (a folder renamed into place) had no watcher to
+			// see it, so a new watcher reports once (Astra, review of the cleanup).
+			this.#changed();
 		} catch {
 			// Gone between the look and the watch: nothing is watched until the next `watch`.
 			this.#watched = undefined;

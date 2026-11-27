@@ -14,7 +14,12 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { type Contract, BACKGROUND_CONTEXT as context, isChordError, until } from "@earendil-works/p3/v1";
 import { within } from "../../../test/until.ts";
 import { ThingHooks } from "../../things/contract.server.ts";
-import { type HarnessExtension, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
+import {
+	type HarnessExtension,
+	type HarnessSession,
+	type HeldThing,
+	ThingHarnessParts,
+} from "../../things/contract.worker.ts";
 import { runTool } from "../../things/test/kind-server.ts";
 import { type Instructions, InstructionsKind } from "../instructions-kind.ts";
 import { type Skills, SkillsKind } from "../skills-kind.ts";
@@ -219,12 +224,31 @@ describe("the agent's skills", () => {
 	it("reuses an unchanged section, reading no skill again (Astra, round 1)", async () => {
 		for (let i = 0; i < 100; i++) await writeSkill("pi", `skill${i}`, "example");
 		const pi = await setOver("pi");
-		await giving([pi], [100], async (extension, [held]) => {
-			const list = held!.ref.skills.value;
+		await giving([pi], [100], async (_extension, [held]) => {
+			// The part again, on the agent's real reference, its list one whose descriptions count their reads.
+			let descriptions = 0;
+			const counted = held!.ref.skills.value.map(({ name, description }) => ({
+				name,
+				get description() {
+					descriptions++;
+					return description;
+				},
+			}));
+			const skills = { value: counted };
+			const ref = new Proxy(held!.ref, {
+				get: (target, key) => (key === "skills" ? skills : Reflect.get(target, key)),
+			});
+			const entry = (await n.worker("s1"))
+				.contributions(ThingHarnessParts)
+				.find(({ value }) => value.kind.name === SkillsKind.name);
+			// The registry's part takes any kind's held things (these are its kind's); the skills part never reads its
+			// session.
+			const things = [{ ...held!, ref }] as unknown as readonly HeldThing[];
+			const extension = entry!.value.part(things, {} as HarnessSession).extension!;
 			const text = await section(extension);
+			assert.equal(descriptions, 100);
 			assert.equal(await section(extension), text);
-			// The section is rebuilt only for a list of another identity: an unchanged list keeps its own.
-			assert.equal(held!.ref.skills.value, list);
+			assert.equal(descriptions, 100, "the second render reads no skill");
 		});
 	});
 });

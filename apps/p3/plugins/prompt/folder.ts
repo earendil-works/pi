@@ -7,7 +7,7 @@
 import { readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { invalid } from "@earendil-works/p3/v1";
-import { openConfined } from "./confined.ts";
+import { type Confined, openConfined } from "./confined.ts";
 import { parseFrontmatter } from "./front-matter.ts";
 import { messages } from "./messages.ts";
 import type { Skill, SkillText } from "./skills-kind.ts";
@@ -38,7 +38,9 @@ export type Listed = { readonly skill: Skill; readonly folder: string };
 
 /**
  * The skills in the folder at `path`, in the order of their folders' names; none when it does not exist or leaves
- * `root` through a link. A name two folders give is the first folder's (pi keeps the first too).
+ * `root` through a link. A skill's folder is one `readSkill` opens (`skillFolder`): dot folders and links are none. A
+ * name two folders give is the first folder's, also when that one is offered by command only (pi's rule: it keeps the
+ * first, then leaves a manual one out of the prompt).
  */
 export async function readSkills(root: string, path: string): Promise<Listed[]> {
 	const set = await openConfined(await realRoot(root), path, "folder");
@@ -48,11 +50,11 @@ export async function readSkills(root: string, path: string): Promise<Listed[]> 
 		const listed: Listed[] = [];
 		const names = new Set<string>();
 		for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
-			const text = await skillFile(set.real, join(set.at, entry.name));
-			const skill = text === undefined ? undefined : skillOf(entry.name, text);
-			if (skill === undefined || names.has(skill.name)) continue;
-			names.add(skill.name);
-			listed.push({ skill, folder: entry.name });
+			const text = await skillText(set, entry.name);
+			const read = text === undefined ? undefined : skillOf(entry.name, text);
+			if (read === undefined || names.has(read.skill.name)) continue;
+			names.add(read.skill.name);
+			if (!read.manual) listed.push({ skill: read.skill, folder: entry.name });
 		}
 		return listed;
 	} finally {
@@ -60,14 +62,17 @@ export async function readSkills(root: string, path: string): Promise<Listed[]> 
 	}
 }
 
+/** A skill as its `SKILL.md` says, and whether it is offered by command only (`disable-model-invocation`). */
+type Read = { readonly skill: Skill; readonly manual: boolean };
+
 /**
  * The skill a `SKILL.md`'s `text` in folder `folder` is, read as pi's `loadSkillFromFile` (coding-agent
  * core/skills.ts) reads it: its front matter's `name`, else the folder's; its `description`, required (none, an empty
  * one, or front matter that does not parse: no skill). pi's warnings (a name or description against the Agent Skills
- * spec) do not stop it either. `disable-model-invocation: true` leaves it out: pi offers such a skill only through a
+ * spec) do not stop it either. `disable-model-invocation: true` makes it manual: pi offers such a skill only through a
  * command, which p3 has not, never in the agent's prompt.
  */
-function skillOf(folder: string, text: string): Skill | undefined {
+function skillOf(folder: string, text: string): Read | undefined {
 	let frontmatter: Readonly<Record<string, unknown>>;
 	try {
 		({ frontmatter } = parseFrontmatter(text));
@@ -76,8 +81,10 @@ function skillOf(folder: string, text: string): Skill | undefined {
 	}
 	const { name, description } = frontmatter;
 	if (typeof description !== "string" || description.trim() === "") return undefined;
-	if (frontmatter["disable-model-invocation"] === true) return undefined;
-	return { name: typeof name === "string" && name !== "" ? name : folder, description };
+	return {
+		skill: { name: typeof name === "string" && name !== "" ? name : folder, description },
+		manual: frontmatter["disable-model-invocation"] === true,
+	};
 }
 
 /**
@@ -85,14 +92,10 @@ function skillOf(folder: string, text: string): Skill | undefined {
  * there is none there.
  */
 export async function readSkill(root: string, path: string, folder: string, name: string): Promise<SkillText> {
-	// A skill's folder is one folder of the set: `..` or a separator would reach outside it.
-	const set =
-		folder.includes("/") || folder.startsWith(".")
-			? undefined
-			: await openConfined(await realRoot(root), path, "folder");
-	const skill = set === undefined ? undefined : await openConfined(set.real, join(set.at, folder), "folder");
+	const set = await openConfined(await realRoot(root), path, "folder");
+	const skill = set === undefined ? undefined : await skillFolder(set, folder);
 	try {
-		const text = skill === undefined ? undefined : await skillFile(skill.real, skill.at);
+		const text = skill === undefined ? undefined : await skillFile(skill);
 		if (skill === undefined || text === undefined) throw invalid("args", `prompt: no skill ${JSON.stringify(name)}`);
 		// Enumerated from the verified folder; links are not followed: a linked file or folder of a skill is not one of
 		// its files.
@@ -108,9 +111,30 @@ export async function readSkill(root: string, path: string, folder: string, name
 	}
 }
 
-/** The `SKILL.md` in the skill folder at `folder`, read only from a regular file opened inside `within` (real). */
-async function skillFile(within: string, folder: string): Promise<string | undefined> {
-	const file = await openConfined(within, join(folder, SKILL_FILE), "file");
+/** The `SKILL.md` text of folder `folder` of the opened set `set`, if it is a skill's folder (`skillFolder`). */
+async function skillText(set: Confined, folder: string): Promise<string | undefined> {
+	const skill = await skillFolder(set, folder);
+	if (skill === undefined) return undefined;
+	try {
+		return await skillFile(skill);
+	} finally {
+		await skill.handle.close();
+	}
+}
+
+/**
+ * Folder `folder` of the opened set `set`, opened confined, when it may be a skill's: one folder of the set (no `..` or
+ * separator), no dot folder (pi skips them too), never a link (a link to another folder of the set would list a skill
+ * twice, or win its name). The caller closes it.
+ */
+async function skillFolder(set: Confined, folder: string): Promise<Confined | undefined> {
+	if (folder.includes("/") || folder.startsWith(".")) return undefined;
+	return openConfined(set.real, join(set.at, folder), "folder");
+}
+
+/** The `SKILL.md` in the opened skill folder `skill`, read only from a regular file opened inside it. */
+async function skillFile(skill: Confined): Promise<string | undefined> {
+	const file = await openConfined(skill.real, join(skill.at, SKILL_FILE), "file");
 	if (file === undefined) return undefined;
 	try {
 		return await file.handle.readFile("utf8");

@@ -2,9 +2,10 @@
 // folder are its subfolders with a regular `SKILL.md`, in the folders' order, read as pi reads them: the front
 // matter's `name`, else the folder's, and its `description` (plain, quoted, folded, a BOM and Windows lines read
 // too), required: none, an empty one or YAML that does not parse is no skill; `disable-model-invocation` leaves it
-// out; a name two folders give is the first's; a missing folder or root has none; a folder, a skill folder or a
-// `SKILL.md` linked out of the set (to another set, out of the root) is not read, and neither is a `SKILL.md` that is
-// a folder; a skill's files are those of its folder, its links left out.
+// out (and still takes its name, as in pi); a name two folders give is the first's, dot folders and links never
+// count; a missing folder or root has none; a folder, a skill folder or a `SKILL.md` linked out of the set (to
+// another set, out of the root) is not read, and neither is a `SKILL.md` that is a folder; a skill's files are those
+// of its folder, its links left out.
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -63,6 +64,26 @@ describe("a folder's skills", () => {
 			{ skill: { name: "folded", description: "Reviews a change line by line.\n" }, folder: "folded" },
 			{ skill: { name: "quoted", description: "Say: hello" }, folder: "quoted" },
 		]);
+	});
+
+	it("are read from the folders that can be read: dot folders and links never win a name (Astra, review)", async () => {
+		await skillMd("coding", ".draft", "---\nname: release\ndescription: A draft\n---\nDraft.\n");
+		await skillMd("coding", "release", "---\nname: release\ndescription: Cut a release\n---\nThe steps.\n");
+		await symlink(join(root, "coding", "release"), join(root, "coding", "a-release"));
+		assert.deepEqual(await readSkills(root, join(root, "coding")), [
+			{ skill: { name: "release", description: "Cut a release" }, folder: "release" },
+		]);
+		assert.match((await readSkill(root, join(root, "coding"), "release", "release")).text, /The steps\./);
+	});
+
+	it("keep the first of two equal names also when it is offered by command only, as pi does (Astra, review)", async () => {
+		await skillMd("coding", "a-manual", "---\nname: release\ndescription: x\ndisable-model-invocation: true\n---\n");
+		await skillMd("coding", "release", "---\nname: release\ndescription: Cut a release\n---\n");
+		await skillMd("coding", "review", "---\ndescription: Review\n---\n");
+		assert.deepEqual(
+			(await readSkills(root, join(root, "coding"))).map(({ folder }) => folder),
+			["review"],
+		);
 	});
 
 	it("are none for a missing folder or root", async () => {
