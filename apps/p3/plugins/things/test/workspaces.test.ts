@@ -1434,3 +1434,33 @@ describe("round 3: Astra's cases", () => {
 		});
 	});
 });
+
+describe("mutations no test caught (things2's run on its push-A line)", () => {
+	it("No access on a workspace takes a person out through their group too, and hides them below", async () => {
+		const { fam, robot } = await family();
+		const b = await store.create({ kind: Board.name, name: "b", workspace: fam, by: BY }, context);
+		const group = await store.makeGroup(
+			{ name: "kids", managedBy: { kind: "plugin", plugin: "test" }, outside: false },
+			context,
+		);
+		const kim = await person("Kim");
+		await store.addToGroup({ group, person: kim.id, source: BY }, context);
+		await store.putParty({ workspace: fam, party: { kind: "group", group }, source: BY }, context);
+		assert.ok((await answers(fam, `person:${kim.id}`))[b], "in through the group");
+		await own(fam, party(kim), ["@open"], false);
+		assert.equal((await answers(fam, `person:${kim.id}`))[b], undefined, "out though the group is here");
+		assert.deepEqual(await answers(robot, `person:${kim.id}`), {}, "and below");
+	});
+
+	it("the maker of a thing whose kind has no tick for them gets in by an `OPEN` row (113)", async () => {
+		const { leo, fam } = await family();
+		// Login's only tick is for agents and its defaults name only the agents: Leo's way in is his maker's row.
+		const login = await store.create({ kind: Login.name, name: "l", workspace: fam, by: source(leo) }, context);
+		assert.deepEqual((await answers(fam, `person:${leo.id}`))[login]?.ticks, []);
+		const rows = w.rows("grants").filter((row) => row.thing === login && String(row.party).includes(leo.id));
+		assert.deepEqual(
+			rows.map((row) => row.tick),
+			["@open"],
+		);
+	});
+});
