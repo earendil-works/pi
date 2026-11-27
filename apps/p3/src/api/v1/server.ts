@@ -105,6 +105,13 @@ export type WorkerRunner = {
 	stop(id: string): Promise<void>;
 	/** Clears session `id`'s failure: it starts again on its next hold (now, when held). */
 	retry(id: string): void;
+	/**
+	 * Stops session `id`'s worker, if one runs, and deletes what its workers keep here (their directory): the session
+	 * is gone. Resolves once it is deleted; a failure rejects, and the caller tries again.
+	 */
+	remove(id: string): Promise<void>;
+	/** The ids of the sessions whose workers keep something here (a directory each): what a sweep of sessions gone reads. */
+	stored(): Promise<readonly string[]>;
 	/** What runs: each session's worker by id, `running` or `failed` with the reason. */
 	state(): Readonly<Record<string, WorkerState>>;
 	/**

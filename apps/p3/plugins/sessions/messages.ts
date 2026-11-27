@@ -16,9 +16,10 @@ export const messages = defineMessages("sessions", {
 		notInSession: "You have no access to this session.",
 		archived: "This session is archived.",
 		noMachine: (machine: string) => `There is no machine ${machine} here.`,
-		noWork: (machine: string) => `The agents here have no Work on machine ${machine}.`,
-		notYourMachine: (machine: string) => `Machine ${machine} is not available to you here.`,
 		notFullPath: "A folder is a full path, starting with /.",
+		tooManyMoved: (max: number) => `This session has ${max} conversations moved already: undo a move first.`,
+		noMachineHere:
+			"This device is not available to you here: the session starts on no machine, and its agent runs no commands until someone who may use a machine here moves it.",
 		machine: "Machine",
 		folder: "Folder",
 		folderHint: "Where the agent works on that machine. Leave it empty for a folder of the session's own.",

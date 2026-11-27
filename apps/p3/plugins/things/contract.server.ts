@@ -36,7 +36,7 @@ import {
 	type Watchable,
 } from "@earendil-works/p3/v1";
 import type { Attachment, Probe, ProbeAttachment } from "./access.ts";
-import { Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
+import { Caller, callerKeyOf, Item, ManagedBy, Party, Source } from "./contract.ts";
 import type { DefaultGrants } from "./kind.ts";
 import type { Answer as Answered } from "./rules.ts";
 import { DefaultsChoice, PartyInfo } from "./workspace.ts";
@@ -360,8 +360,7 @@ export function givesTo(
 	caller: Caller,
 ): Watchable<Readonly<Record<string, Static<typeof Answer>>>> {
 	if (caller.kind === "server") return constant({});
-	const key = caller.kind === "person" ? `person:${caller.person}` : `worker:${caller.session}`;
-	return self.get(Gives, { workspace, caller: key }).answers;
+	return self.get(Gives, { workspace, caller: callerKeyOf(caller) }).answers;
 }
 
 /**

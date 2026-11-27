@@ -123,13 +123,13 @@ export const SessionKind = defineWorkspace("sessions.session", { version: 2, lea
 
 // contract.ts: what the plugin's facets and other plugins import (the worker's own facts among them)
 export const SessionFacts = remote("sessions.facts", { version: 2, params: {}, hostAddress: () => Server(),
-	state: { session: union([SessionRow, nul()]), locations: arr(ConversationLocation) },
+	state: { session: union([SessionRow, nul()]), detail: SessionDetail },
 	methods: { report: method(obj({ state: SessionState })), moveLocation: method(ConversationLocation) } });
 
 // contract.server.ts: the store, for server facets only; other objects read its named queries
 export const SessionsStore = local("sessions.store", { version: 2, params: {}, members: {
 	sessions: queries(SessionRow, { one: obj({ id: str() }) }),
-	locations: queries(ConversationLocation, { ofSession: obj({ session: str() }) }),
+	moved: keyed(SessionDetail, Session),                             // a document per session, read whole
 	insert: method(obj({ id: str(), location: opt(Location), model: … })), archive: …, report: …, working: … } });
 ```
 
@@ -175,7 +175,7 @@ serveThing(host, SessionKind, {
 
 host.serve(SessionFacts, (_params, principal, self) => {
 	if (principal.kind !== "worker") throw forbidden("sessions: a session's worker only");
-	return { session: sessionRow(principal.session, self), locations: movedOf(principal.session, self), report: …,
+	return { session: sessionRow(principal.session, self), detail: store.moved.at(Session({ id: principal.session })), report: …,
 		moveLocation: … };                                                // live queries of the store; writes through it
 });
 ```

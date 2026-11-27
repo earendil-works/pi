@@ -26,7 +26,11 @@ import {
 	str,
 	union,
 } from "@earendil-works/p3/v1";
-import { type ServerRuntime, ServerRuntime as ServerRuntimeRegistry } from "@earendil-works/p3/v1/server";
+import {
+	type ServerRuntime,
+	ServerRuntime as ServerRuntimeRegistry,
+	WorkerRunners,
+} from "@earendil-works/p3/v1/server";
 import { eventually } from "../../../test/until.ts";
 import { MachineHosts } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
@@ -52,7 +56,11 @@ beforeEach(async () => {
 	w = await world(context, [
 		{
 			name: "p3.server",
-			facet: defineFacet((host) => host.serve(ServerRuntimeRegistry, { compose: () => runtime })),
+			facet: defineFacet((host) => {
+				host.serve(ServerRuntimeRegistry, { compose: () => runtime });
+				// No runner: the plugin tier starts no worker, and a removal deletes no worker's data.
+				host.serve(WorkerRunners, { compose: () => undefined });
+			}),
 		},
 		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 		{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
@@ -76,11 +84,16 @@ describe("the sessions store", () => {
 		assert.deepEqual(own?.location, { machine, folder: join(dataDir, "work", "s1") });
 		assert.ok((await stat(own!.location.folder)).isDirectory());
 		assert.deepEqual([own?.state, own?.archivedAt, own?.model], ["settled", null, null]);
-		await store.insert({ id: "s2", location: { machine: machine, folder: "/tmp" }, model: null }, context);
-		assert.equal((await row("s2"))?.location.folder, "/tmp");
+		await store.insert({ id: "s2", location: { machine, folder: "/tmp" }, model: null }, context);
+		assert.equal((await row("s2"))?.location?.folder, "/tmp");
 		await assert.rejects(
 			store.insert({ id: "s3", location: { machine: "nowhere", folder: "/tmp" }, model: null }, context),
 			/no machine nowhere/,
+		);
+		// Fable, round 1: a relative folder was taken at the make and refused only at a move.
+		await assert.rejects(
+			store.insert({ id: "s4", location: { machine, folder: "tmp" }, model: null }, context),
+			/no full path/,
 		);
 	});
 
@@ -170,7 +183,11 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 		w = await world(context, [
 			{
 				name: "p3.server",
-				facet: defineFacet((host) => host.serve(ServerRuntimeRegistry, { compose: () => runtime })),
+				facet: defineFacet((host) => {
+					host.serve(ServerRuntimeRegistry, { compose: () => runtime });
+					// No runner: the plugin tier starts no worker, and a removal deletes no worker's data.
+					host.serve(WorkerRunners, { compose: () => undefined });
+				}),
 			},
 			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 			{ name: "@earendil-works/p3-sessions", facet: older },
@@ -200,18 +217,18 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 		// Version 1's `environment` is version 2's `machine` (decision 24), and the rewrite runs on it.
 		await eventually(
-			async () => (await row("old"))?.location.machine,
+			async () => (await row("old"))?.location?.machine,
 			(found) => found === machine,
 		);
-		assert.equal((await row("old"))?.location.folder, dataDir);
+		assert.equal((await row("old"))?.location?.folder, dataDir);
 		await eventually(
 			async () => (await row("own"))?.location,
 			(location) => location?.machine === machine && location.folder === join(work, "own"),
 		);
 		assert.equal(await readFile(join(work, "own", "marker"), "utf8"), "prior-content");
 		await assert.rejects(stat(own("own")), { code: "ENOENT" });
-		assert.equal((await row("cut"))?.location.folder, join(work, "cut"));
-		assert.equal((await row("taken"))?.location.folder, own("taken"));
+		assert.equal((await row("cut"))?.location?.folder, join(work, "cut"));
+		assert.equal((await row("taken"))?.location?.folder, own("taken"));
 		assert.equal(await readFile(join(own("taken"), "marker"), "utf8"), "here");
 		assert.equal(await readFile(join(work, "taken", "other"), "utf8"), "there");
 		// The machine's host is reached for it, as Files and the harness reach it.

@@ -49,14 +49,21 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   its row, and the kinds are told (`workspaceGone`).
 - **Lists** of sessions are the things plugin's lists of a workspace's children (`WorkspaceChildren`), filtered by
   presence. Listing starts no worker.
-- **Where it works** (decision 24): each conversation has a location. The session's (its row's `location`: the make's,
-  or, left out, this device in a folder of its own, `<work root>/<id>`) is where a top-level conversation works; a
-  subagent's conversation works where its caller works, and follows its moves. A conversation moved
-  (`SessionObject.moveLocation` with Manage, or the agent's `location_move`, the machine part's tool, through
-  `SessionFacts.moveLocation`) works at its own location from its next tool call on; a call under way keeps its
-  environment. A move is refused unless the folder is a full path and the agents have Work on the machine in the
-  session (the answer the machine's harness part asks at each use), and a person's unless the machine is available
-  to them there. Manage shows the moved conversations (`detail`); the worker reads them in `SessionFacts.locations`.
+- **Where it works** (decision 24): each conversation has a location. The session's (its row's `location`) is where a
+  top-level conversation works: the make's, refused unless its maker may use that machine in the parent (R41); left
+  out, this device in a folder of its own (`<work root>/<id>`) if its maker may use this device there, else none (its
+  agent has no environment until a conversation is moved; the new-session step says so). A subagent's conversation
+  works where its caller works, and follows its moves. A conversation moved (`SessionObject.moveLocation` with
+  Manage, or the agent's `location_move`, the machine part's tool, through `SessionFacts.moveLocation`) works at its
+  own location from its next tool call on; a call under way keeps its environment. A move with `location: null` is
+  undone (the conversation follows its owner again); an archived subagent's is undone with it. A move is refused
+  unless the folder is a full path and the agents have Work on the machine in the session, and a person's unless the
+  machine is available to them there (the environments plugin's `checkMachine`, as Files and Terminals). Manage shows
+  the moved conversations (`detail`, one document per session, by conversation id); the worker reads the same in
+  `SessionFacts.detail`.
+- **What its workers keep** (their directory, `<data>/workers/<id>`) goes with the session: removing the session stops
+  its worker and deletes it (the runner's `remove`). A directory of a session with no row is swept, and reported,
+  whenever a runner appears (at every start).
 
 ## Admission: one question
 

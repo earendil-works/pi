@@ -42,18 +42,20 @@ export type HarnessLocation = { readonly machine: string; readonly folder: strin
  * worker (a tool reaches its plugin's objects with it, on the worker or the server), its references released when
  * `fn` settles (`context` is the tool's, Durable's, so cancelling the tool cancels the call), `location`, where
  * conversation `conversation` (Durable's id, a tool's `api.conversationId`) works now (its own location once moved,
- * else its owner conversation's, a subagent's caller's, else the session's; `undefined`: nowhere, an unknown session;
- * it may read Durable once per conversation, so never from Durable's Session line, an observer: a tool, the
- * environment, a prompt section and a hook all run off it), and `moveLocation`, which moves the conversation to `location`: the next tool call works there, a call under way
- * keeps its environment; refused (`invalid`, with a message) unless the agents have Work here on its machine and the
- * folder is a full path.
+ * else its owner conversation's, a subagent's caller's, else the session's; `undefined`: nowhere, an unknown session
+ * or one on no machine; it may read Durable once per conversation, so never from Durable's Session line, an observer:
+ * a tool, the environment, a prompt section and a hook all run off it), and `moveLocation`, which moves the
+ * conversation to `location` (`null`: undoes its move, it follows its owner again): the next tool call works there, a
+ * call under way keeps its environment; refused, with a message, unless the folder is a full path (`invalid`) and the
+ * agents have Work here on its machine (`forbidden`, the machine kind's rule). `HarnessLocation` is the sessions
+ * plugin's `Location`, written again: this plugin never imports that one.
  */
 export type HarnessSession = {
 	readonly session: string;
 	readonly workspace: string;
 	call<T>(fn: (ctx: Ctx<P3Principal>) => Promise<T>, context: Context): Promise<T>;
 	location(conversation: ConversationId, context: Context): Promise<HarnessLocation | undefined>;
-	moveLocation(conversation: ConversationId, location: HarnessLocation, context: Context): Promise<void>;
+	moveLocation(conversation: ConversationId, location: HarnessLocation | null, context: Context): Promise<void>;
 };
 
 /** A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. */

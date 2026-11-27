@@ -1,21 +1,32 @@
 // The session kind on the server (`SessionKind`, decision 13): its object, one per session and caller, admitted by the
 // caller's answer on the session workspace (the things plugin's one admission): the row for everyone let in, and what
 // Manage gives (its detail, where its moved conversations work; archive, restore, the model, moving a conversation).
-// Its create hook, run before the workspace's commit, writes the row
-// (where it works; the model of the defaults that apply) and answers what the defaults say of the new workspace:
+// Its create hook, run before the workspace's commit, writes the row (where it works: a machine its maker may use in
+// the parent, R41, else none; the model of the defaults that apply) and answers what the defaults say of the new
+// workspace:
 // shared (the kind's own default grants: everyone here Read and Send) or private (no grant for everyone, people from
 // above hidden), and the view it opens with (decision 93, item 74). Its delete hook drops the row with the workspace.
 // Archiving changes the row only (one commit): what kinds keep for the session stays until it is unlinked.
 
-import { type Ctx, type FacetHost, invalid, type P3Principal, type Self, type Watchable } from "@earendil-works/p3/v1";
-import { type CreateAnswer, ThingsStore } from "../things/contract.server.ts";
-import type { Caller } from "../things/contract.ts";
+import {
+	type Ctx,
+	type FacetHost,
+	invalid,
+	type P3Principal,
+	type Self,
+	Session,
+	until,
+	type Watchable,
+} from "@earendil-works/p3/v1";
+import { checkMachine, machineAvailable } from "../environments/contract.server.ts";
+import { MACHINE_KIND } from "../environments/contract.ts";
+import { type CreateAnswer, OneThing, ThingsStore } from "../things/contract.server.ts";
+import { type Caller, callerKeyOf, type Source } from "../things/contract.ts";
 import { serveThing } from "../things/serve.ts";
-import { MOVED_MAX, SessionsStore } from "./contract.server.ts";
-import type { ConversationLocation, SessionRow } from "./contract.ts";
+import { SessionsStore } from "./contract.server.ts";
+import type { Location, SessionRow } from "./contract.ts";
 import { nearestDefaults } from "./defaults.ts";
 import { SessionKind } from "./kind.ts";
-import { messages } from "./messages.ts";
 
 /**
  * A private session's default grants: the kind's, with no entry for everyone (decision 93). An empty list would be a
@@ -30,7 +41,7 @@ export function serveSessionKind(host: FacetHost<P3Principal>): void {
 			const store = self.get(SessionsStore, {});
 			return {
 				row: self.derive([sessionRow(session, self)], ([row]) => row ?? missing(session)),
-				detail: () => self.derive([movedOf(session, self)], ([locations]) => ({ locations })),
+				detail: () => store.moved.at(Session({ id: session })),
 				archive: async (ctx) => {
 					await store.archive({ session }, ctx);
 					return null;
@@ -44,15 +55,16 @@ export function serveSessionKind(host: FacetHost<P3Principal>): void {
 					return null;
 				},
 				moveLocation: async (moved, ctx) => {
-					await mayUse(session, moved.location.machine, caller, ctx);
+					if (moved.location !== null) await mayUse(session, moved.location.machine, caller, ctx);
 					await store.moveLocation({ session, ...moved }, ctx);
 					return null;
 				},
 			};
 		},
-		create: async ({ thing: session, input, workspace }, ctx) => {
+		create: async ({ thing: session, input, workspace, by }, ctx) => {
 			const defaults = await nearestDefaults(workspace, ctx);
-			await (await ctx.get(SessionsStore, {})).insert({ id: session, ...input, model: defaults.model }, ctx);
+			const location = await startsAt(input.location, workspace, makerOf(by), ctx);
+			await (await ctx.get(SessionsStore, {})).insert({ id: session, location, model: defaults.model }, ctx);
 			return {
 				...(defaults.shared ? {} : { defaultGrants: PRIVATE, showsPeople: false }),
 				...(defaults.opensWith === null ? {} : { view: defaults.opensWith }),
@@ -71,31 +83,53 @@ export function sessionRow(session: string, self: Self<P3Principal>): Watchable<
 }
 
 /**
- * Session `session`'s moved conversations, live: the whole list (the store bounds it), what its Manage shows and its
- * worker reads.
+ * Where a session made in `parent` by `maker` starts (R41): the location given, refused unless the maker may use its
+ * machine there (`checkMachine`, the machine kind's rule); none given, this device's machine in a folder of its own
+ * (`undefined`, the store's default) if the maker may use it there, else nowhere (`null`: its agent has no environment
+ * until a conversation is moved).
  */
-export function movedOf(session: string, self: Self<P3Principal>): Watchable<ConversationLocation[]> {
-	const found = self.liveQuery(self.get(SessionsStore, {}).locations.ofSession, { session }, { first: MOVED_MAX });
-	return self.derive([found], ([{ rows }]) => [...rows]);
+async function startsAt(
+	given: Location | undefined,
+	parent: string,
+	maker: Caller,
+	ctx: Ctx<P3Principal>,
+): Promise<Location | null | undefined> {
+	if (maker.kind === "server") return given;
+	const things = await ctx.get(ThingsStore, {});
+	const answerOn = async (machine: string) =>
+		(await things.answerOf({ workspace: parent, thing: machine, caller: callerKeyOf(maker) }, ctx)) ?? undefined;
+	if (given !== undefined) {
+		checkMachine(given.machine, maker, await answerOn(given.machine));
+		return given;
+	}
+	const device = await until((await ctx.get(OneThing, { kind: MACHINE_KIND })).thing, (id) => id !== "", ctx);
+	return machineAvailable(maker, await answerOn(device)) ? undefined : null;
+}
+
+/** Who makes a thing, as a caller: a person or a session's agent; anything else (a plugin, a share) is server code. */
+function makerOf(by: Source): Caller {
+	switch (by.kind) {
+		case "person":
+			return { kind: "person", person: by.person };
+		case "agent":
+			return { kind: "agent", session: by.session };
+		case "thing":
+		case "identity":
+		case "plugin":
+			return { kind: "server" };
+	}
 }
 
 /**
- * Throws unless person `caller` is let in on `machine` in the session's workspace (R41): a person moves the agent only
- * to a machine available to them there. The server is no party (it may); an agent has no Manage (`for: "people"`).
+ * Throws unless person `caller` may use `machine` in the session's workspace (`checkMachine`, the machine kind's rule;
+ * R41): a person moves the agent only to a machine available to them there. The server is no party (it may); an agent
+ * has no Manage (`for: "people"`). Whether it is a machine the agents have Work on is the store's check.
  */
 async function mayUse(session: string, machine: string, caller: Caller, ctx: Ctx<P3Principal>): Promise<void> {
 	if (caller.kind !== "person") return;
-	const key = `person:${caller.person}`;
-	const answer = await (await ctx.get(ThingsStore, {})).answerOf(
-		{ workspace: session, thing: machine, caller: key },
-		ctx,
-	);
-	// Whether it is a machine the agents have Work on is the store's check, for every caller.
-	if (answer === null) {
-		throw invalid("args", `sessions: ${machine} is not available to ${key}`, {
-			message: messages.message("notYourMachine", machine),
-		});
-	}
+	const things = await ctx.get(ThingsStore, {});
+	const answer = await things.answerOf({ workspace: session, thing: machine, caller: callerKeyOf(caller) }, ctx);
+	checkMachine(machine, caller, answer ?? undefined);
 }
 
 /** Fails the row of a session the server does not know (a held session object whose workspace went). */

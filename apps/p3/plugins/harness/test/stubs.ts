@@ -10,7 +10,6 @@
 import {
 	arr,
 	bool,
-	type ConversationLocation,
 	constant,
 	contribute,
 	defineFacet,
@@ -20,6 +19,7 @@ import {
 	obj,
 	type P3Principal,
 	type PluginFacet,
+	type SessionDetail,
 	SessionFacts,
 	SessionKind,
 	type SessionRow,
@@ -98,10 +98,8 @@ export type Server = {
 	readonly given: Map<string, number>;
 	/** Sets the session's row (as the server's store would change it). */
 	row(change: Partial<SessionRow>): void;
-	/** The conversations moved (`SessionFacts.locations`, as `moveLocation` or the server set them). */
-	readonly moved: ConversationLocation[];
-	/** Sets the moved conversations (as the server's store would change them). */
-	move(moved: readonly ConversationLocation[]): void;
+	/** The conversations moved, by id (`SessionFacts.detail`, as `moveLocation` set them). */
+	readonly moved: () => SessionDetail["locations"];
 	/**
 	 * Sets what the agent holds (and makes the holding ready); a kind whose entries are the same objects in the same
 	 * order keeps its list.
@@ -175,7 +173,8 @@ export function standIns(
 	let heldValue: Held | undefined = ready ? grouped : undefined;
 	let release: Promise<void> = Promise.resolve();
 	const rows = new Set<Writable<SessionRow>>();
-	const movedLists = new Set<Writable<ConversationLocation[]>>();
+	let movedValue: SessionDetail = { locations: {} };
+	const details = new Set<Writable<SessionDetail>>();
 	const holdings = new Set<Writable<Held | undefined>>();
 	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
 	const answers = new Set<{ caller: string; answer: Writable<{ kind: string; ticks: string[] } | null> }>();
@@ -192,11 +191,7 @@ export function standIns(
 			rowValue = { ...rowValue, ...change };
 			for (const writable of rows) writable.set(rowValue);
 		},
-		moved: [],
-		move: (moved) => {
-			control.moved.splice(0, control.moved.length, ...moved);
-			for (const writable of movedLists) writable.set([...moved]);
-		},
+		moved: () => movedValue.locations,
 		hold: (next) => {
 			grouped = group([...next, DEVICE], grouped);
 			heldValue = grouped;
@@ -218,13 +213,15 @@ export function standIns(
 		host.serve(SessionFacts, (_params, _principal, self) => {
 			const session = self.writable(rowValue);
 			rows.add(session);
-			const moved = self.writable([...control.moved]);
-			movedLists.add(moved);
+			const detail = self.writable(movedValue);
+			details.add(detail);
 			return {
 				session: self.derive([session], ([value]) => value),
-				locations: self.derive([moved], ([value]) => value),
-				moveLocation: async (move) => {
-					control.move([...control.moved.filter(({ conversation }) => conversation !== move.conversation), move]);
+				detail: self.derive([detail], ([value]) => value),
+				moveLocation: async ({ conversation, location }) => {
+					const { [conversation]: _undone, ...others } = movedValue.locations;
+					movedValue = { locations: location === null ? others : { ...others, [conversation]: location } };
+					for (const writable of details) writable.set(movedValue);
 					return null;
 				},
 				report: async ({ state }) => {
@@ -271,7 +268,7 @@ export function standIns(
 					parameters: obj({}),
 					execute: async (_args, _api, context) => {
 						const folder = await session.call(
-							async (ctx) => (await ctx.get(SessionFacts, {})).session.value?.location.folder ?? "",
+							async (ctx) => (await ctx.get(SessionFacts, {})).session.value?.location?.folder ?? "",
 							context,
 						);
 						return { output: [{ type: "text", text: `folder: ${folder}` }] };

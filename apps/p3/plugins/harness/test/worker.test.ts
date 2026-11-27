@@ -396,6 +396,7 @@ describe("the harness plugin on a worker", () => {
 		const script: Step[] = [
 			tool("@spawn", "subagent_spawn", { name: "reader", message: "child-where" }),
 			tool("@again", "subagent_send", { name: "reader", message: "child-where" }),
+			tool("@archive", "subagent_archive", { name: "reader" }),
 			runs("child-where", "pwd"),
 			runs("root-where", "pwd"),
 			says("", "ok"),
@@ -420,7 +421,7 @@ describe("the harness plugin on a worker", () => {
 		assert.ok(session !== undefined);
 		// The root conversation moved: its subagent follows it.
 		await session.moveLocation(ROOT_CONVERSATION_ID, { machine: "m", folder: moved }, context);
-		assert.deepEqual(server.moved, [{ conversation: "1", location: { machine: "m", folder: moved } }]);
+		assert.deepEqual(server.moved(), { "1": { machine: "m", folder: moved } });
 		await ask("@again");
 		await ranIn(moved, 1);
 		// The subagent moved itself: it works there, its caller stays.
@@ -438,6 +439,27 @@ describe("the harness plugin on a worker", () => {
 		await ranIn(moved, 2);
 		assert.deepEqual(await session.location(ROOT_CONVERSATION_ID, context), { machine: "m", folder: moved });
 		assert.deepEqual(await session.location(child, context), { machine: "m", folder: own });
+		// Round 1's decision: an archived subagent's move is undone with it.
+		await ask("@archive");
+		await eventually(server.moved, (locations) => locations[String(child)] === undefined, 5000);
+		assert.deepEqual(Object.keys(server.moved()), ["1"]);
+	});
+
+	// Opus M1, round 1 (R41): a session on no machine (its maker could use none) gives its agent no environment.
+	it("runs no tool for a session on no machine until a conversation is moved", async () => {
+		const script = [runs("where", "pwd"), runs("now", "pwd"), says("", "done")];
+		const machine = (location: { machine: string; folder: string }) =>
+			location.machine === "m" ? new NodeExecutionEnv({ cwd: location.folder }) : undefined;
+		const sessions: HarnessSession[] = [];
+		const held = [login("login", "faux", script), coding(), other("test.machine", "m")];
+		await start(held, { location: null }, [
+			{ kind: "test.machine", env: machine, seen: (session) => sessions.push(session) },
+		]);
+		await ask("where");
+		assert.match(requests().at(-1)?.last ?? "", /No execution environment/);
+		await sessions[0]!.moveLocation(ROOT_CONVERSATION_ID, { machine: "m", folder }, context);
+		await ask("now");
+		assert.equal(requests().at(-1)?.last.trim(), folder);
 	});
 
 	it("starts a subagent, a copy without the subagent tools, whose answer comes back; Use withheld: no tools", async () => {

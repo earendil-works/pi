@@ -17,8 +17,9 @@ export function useWorkLocation(workspace: string): WorkLocation | undefined {
 	const row = useWatch(useLive(session)?.row);
 	const state = useRefState(session);
 	const device = useWatch(useLive(useHold(ThisDevice, {}))?.machine);
-	if (row !== undefined) return { machine: row.location.machine, folder: row.location.folder };
-	// No session's workspace (Pi, a plain one): this device, once its machine was made.
-	if (state?.kind === "failed" && device !== undefined && device !== "") return { machine: device, folder: "/" };
+	if (row?.location) return { machine: row.location.machine, folder: row.location.folder };
+	// No session's workspace (Pi, a plain one), or a session on no machine (R41): this device, once its machine was made.
+	const nowhere = state?.kind === "failed" || row?.location === null;
+	if (nowhere && device !== undefined && device !== "") return { machine: device, folder: "/" };
 	return undefined;
 }

@@ -125,6 +125,31 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
+	// Opus S3, push 4 round 1: Manage's view of the moved conversations and the worker's go on through a reload.
+	it("the sessions plugin on the server: a session's moved conversations, as Manage and its worker see them, go on", async () => {
+		const { t, owner, id } = await withSession();
+		const machine = await thisDevice(owner, context);
+		const session = withGranted(await owner.get(SessionObject, { workspace: id, thing: id }, context), "detail")!;
+		const worker = await t.client({ kind: "worker", session: id });
+		const facts = await worker.get(SessionFacts, {}, context);
+		await until(
+			session.detail,
+			(detail) => Object.keys(detail.locations).length === 0,
+			within("the detail", context),
+		);
+		await t.reload("@earendil-works/p3-sessions");
+		await facts.moveLocation({ conversation: "1", location: { machine, folder: "/srv" } }, context);
+		const moved = { "1": { machine, folder: "/srv" } };
+		await until(
+			session.detail,
+			(detail) => detail.locations["1"]?.folder === "/srv",
+			within("Manage's view", context),
+		);
+		await until(facts.detail, (detail) => detail.locations["1"]?.folder === "/srv", within("the worker's", context));
+		assert.deepEqual(facts.detail.value.locations, moved);
+		assert.deepEqual(t.errors, []);
+	});
+
 	it("the sessions plugin on a worker: its row still follows the server", async () => {
 		const { t, owner, archive, id } = await withSession();
 		const worker = await owner.get(SessionWorker, { session: id }, context);
@@ -381,10 +406,10 @@ describe("counted work", () => {
 	});
 
 	// The route's admission and the worker objects' (`followSession`) read the access index, no query. The worker's
-	// start reads its session's row and its moved conversations (decision 24; its facts), and its holding this device's
-	// machine's info, once: three runs until the worker holds what its agent may use (where the hold resolves in
-	// between depends on timing, so the count spans both). A second hold shares them all.
-	it("a hold of a session's worker costs three reads until it holds its things: its row, its moved conversations, its machine; a second hold none", async () => {
+	// start reads its session's row (its facts; its moved conversations are a document, no query), and its holding this
+	// device's machine's info, once: two runs until the worker holds what its agent may use (where the hold resolves
+	// in between depends on timing, so the count spans both). A second hold shares them all.
+	it("a hold of a session's worker costs two reads until it holds its things: its row, its machine; a second hold none", async () => {
 		const { t, owner, id, pi } = await withSession();
 		await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
@@ -397,7 +422,7 @@ describe("counted work", () => {
 		const after = counted();
 		assert.deepEqual(
 			[settled[0]! - first[0]!, settled[1]! - first[1]!, after[0]! - settled[0]!, after[1]! - settled[1]!],
-			[3, 0, 0, 0],
+			[2, 0, 0, 0],
 		);
 	});
 });

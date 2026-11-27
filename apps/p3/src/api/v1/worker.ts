@@ -38,6 +38,7 @@ export {
 	AssistantEntry,
 	type Conversation,
 	type ConversationId,
+	type ConversationRecord,
 	type ConversationView,
 	configure,
 	createRegistry,

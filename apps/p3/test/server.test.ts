@@ -192,6 +192,8 @@ function passing(inner: WorkerRunner, seen: string[]): WorkerRunner {
 		},
 		stop: (id) => inner.stop(id),
 		retry: (id) => inner.retry(id),
+		remove: (id) => inner.remove(id),
+		stored: () => inner.stored(),
 		state: () => inner.state(),
 		pids: () => inner.pids(),
 		reload: (built, ctx) => {
@@ -376,6 +378,8 @@ describe("the runner the server uses", () => {
 			start: () => Promise.reject(new Error("the second runner was used")),
 			stop: async () => {},
 			retry: () => {},
+			remove: async () => {},
+			stored: async () => [],
 			state: () => ({}),
 			pids: () => [],
 			reload: async () => ({ hosts: [] }),

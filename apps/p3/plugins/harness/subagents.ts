@@ -22,14 +22,14 @@ import {
 	type TaskRuntime,
 	type ToolExecutionApi,
 } from "@earendil-works/p3/v1/worker";
-import { thingHarnessPart } from "../things/contract.worker.ts";
+import { type HarnessSession, thingHarnessPart } from "../things/contract.worker.ts";
 import { SubagentsKind } from "./kind.ts";
 
 /** The subagents' part: the four tools while the nearest reference has `use` (the kind stacks `nearest`). */
-export const subagentsPart = thingHarnessPart(SubagentsKind, (things) => {
+export const subagentsPart = thingHarnessPart(SubagentsKind, (things, session) => {
 	const nearest = things[things.length - 1];
 	if (nearest === undefined || !nearest.ref.granted.has("use")) return {};
-	return { extension: SUBAGENT_TOOLS };
+	return { extension: { tools: [spawnTool, sendTool, listTool, archiveTool(session)] } };
 });
 
 /** A subagent: its conversation, and the answers already reported (several messages may end in one answer). */
@@ -274,23 +274,23 @@ const listTool = defineTool({
 	},
 });
 
-const archiveTool = defineTool({
-	name: "subagent_archive",
-	description:
-		"Archives the subagent `name`: stops what it is doing and drops its queued messages; its name is free again. " +
-		"Its transcript stays in the session.",
-	parameters: obj({ name: str() }),
-	replay: "unsafe",
-	execute: async ({ name }, api, context) => {
-		const agent = (await subagentsOf(api, context))[name];
-		if (agent === undefined) return reply(`No subagent named ${name} (see subagent_list).`);
-		await (await api.conversation(agent.conversationId, context))?.abort(context);
-		await api.commit(async (tx) => {
-			delete (await tx.doc(Subagents, api.conversationId)).agents[name];
-		}, context);
-		return reply(`Archived ${name}.`);
-	},
-});
-
-/** The subagent tools (the harness installs them under the kind's name, which `subagent_spawn` leaves out). */
-const SUBAGENT_TOOLS = { tools: [spawnTool, sendTool, listTool, archiveTool] };
+/** `subagent_archive` for `session`: an archived subagent's move is undone (decision 24: its location is no more). */
+const archiveTool = (session: HarnessSession) =>
+	defineTool({
+		name: "subagent_archive",
+		description:
+			"Archives the subagent `name`: stops what it is doing and drops its queued messages; its name is free again. " +
+			"Its transcript stays in the session.",
+		parameters: obj({ name: str() }),
+		replay: "unsafe",
+		execute: async ({ name }, api, context) => {
+			const agent = (await subagentsOf(api, context))[name];
+			if (agent === undefined) return reply(`No subagent named ${name} (see subagent_list).`);
+			await (await api.conversation(agent.conversationId, context))?.abort(context);
+			await api.commit(async (tx) => {
+				delete (await tx.doc(Subagents, api.conversationId)).agents[name];
+			}, context);
+			await session.moveLocation(agent.conversationId, null, context);
+			return reply(`Archived ${name}.`);
+		},
+	});

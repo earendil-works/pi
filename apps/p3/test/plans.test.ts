@@ -171,7 +171,6 @@ describe("the plans of the stores' queries", () => {
 			const K = "checklist.store:checklist";
 			const cases: readonly (readonly [string, readonly Read[], Expected])[] = [
 				["sessions.one", pages(sessions.sessions.one, { id: one }), {}],
-				["locations.ofSession", pages(sessions.locations.ofSession, { session: one }), {}],
 				["settings.of", pages(settings.settings.of, { thing: "d1" }), {}],
 				["working", [() => sessions.working({}, context)], { index: `${S}.sessions:working` }],
 				["persons.owner", pages(people.persons.owner, {}), { index: `${P}.persons:by_owner` }],

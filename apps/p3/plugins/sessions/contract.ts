@@ -8,6 +8,7 @@
 import {
 	arr,
 	bool,
+	map,
 	method,
 	nul,
 	num,
@@ -40,18 +41,24 @@ export const Location = obj({ machine: str({ max: 200 }), folder: str({ max: 409
 /** Where a conversation works (see `Location`). */
 export type Location = Static<typeof Location>;
 
-/**
- * A conversation moved to a location of its own: Durable's conversation id (as text, as `SessionHarness.submit` takes
- * it) and where it works now. A conversation not moved works where its owner conversation works (a subagent's: its
- * caller's), and a top-level one at the session's `location`.
- */
-export const ConversationLocation = obj({ conversation: str({ max: 20 }), location: Location });
+/** Durable's conversation id as text (as `SessionHarness.submit` takes it): its one spelling, so a move is found by it. */
+export const ConversationKey = str({ max: 20, pattern: "^[1-9][0-9]*$" });
 
-/** A conversation moved to a location of its own (see `ConversationLocation`). */
+/**
+ * A conversation's move (what `moveLocation` takes): its id and where it works from now on; `null` undoes its move, so
+ * it works where its owner conversation works again (a subagent's: its caller's; a top-level one: the session's).
+ */
+export const ConversationLocation = obj({ conversation: ConversationKey, location: union([Location, nul()]) });
+
+/** A conversation's move (see `ConversationLocation`). */
 export type ConversationLocation = Static<typeof ConversationLocation>;
 
-/** What a session's Manage shows besides its row (decision 24's per-conversation detail): its moved conversations. */
-export const SessionDetail = obj({ locations: arr(ConversationLocation) });
+/**
+ * What a session's Manage shows besides its row, and its worker reads (decision 24): where each moved conversation
+ * works, by conversation id. A conversation not moved works where its owner conversation works (a subagent's: its
+ * caller's), and a top-level one at the session's `location`.
+ */
+export const SessionDetail = obj({ locations: map(Location) });
 
 /** What a session's Manage shows (see `SessionDetail`). */
 export type SessionDetail = Static<typeof SessionDetail>;
@@ -67,13 +74,14 @@ export type ModelChoice = Static<typeof ModelChoice>;
 
 /**
  * A session as its holders and its worker see it besides its thing (its name is the thing's, its parent the thing's
- * place): its id (its workspace's), where it works (its conversations unless moved, `SessionDetail`), when it was
- * made, its state, when it was last touched, when it was archived (`null`: it is not) and its model (`null`: the
+ * place): its id (its workspace's), where it works (its conversations unless moved, `SessionDetail`; `null`: nowhere,
+ * its maker was let in on no machine where it was made, R41, until a conversation is moved), when it was made, its
+ * state, when it was last touched, when it was archived (`null`: it is not) and its model (`null`: the
  * agent's default; metadata until the model picker asks the agent's model with it, decision 118).
  */
 export const SessionRow = obj({
 	id: str(),
-	location: Location,
+	location: union([Location, nul()]),
 	createdAt: num(),
 	state: SessionState,
 	lastTouch: num(),
@@ -100,14 +108,14 @@ export type SessionDefaults = Static<typeof SessionDefaults>;
 
 /**
  * A session's own facts for its worker, which holds it as itself: its row (`null` for a session the server does not
- * know), its moved conversations (`locations`), `report`, which says what its agent is doing now, and `moveLocation`,
+ * know), its moved conversations (`detail`), `report`, which says what its agent is doing now, and `moveLocation`,
  * its agent's move of one conversation (refused unless the agents have Work there on that machine).
  */
 export const SessionFacts = remote("sessions.facts", {
 	version: 2,
 	params: {},
 	hostAddress: () => Server(),
-	state: { session: union([SessionRow, nul()]), locations: arr(ConversationLocation) },
+	state: { session: union([SessionRow, nul()]), detail: SessionDetail },
 	methods: { report: method(obj({ state: SessionState })), moveLocation: method(ConversationLocation) },
 });
 

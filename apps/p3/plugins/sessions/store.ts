@@ -1,10 +1,10 @@
 // The sessions store (`SessionsStore`): one row per session (its address, where it works, its state, its model, when
-// it was archived), one per conversation moved to a location of its own, their named queries, and every write. Both
-// are keyed by the session's address, so a session's export, import and delete carry them. Who may do what is the
-// things plugin's (the session's workspace); this store checks no caller and holds no members, but a move needs the
-// agents' Work on the machine (decision 24). Rows older code wrote naming this device as `this-device` are rewritten
-// once per Pi to its machine's id, a session's own folder moved from the data directory to the work root (decision
-// 125).
+// it was archived) with its named query, one document per session with a conversation moved to a location of its own,
+// and every write. Both are keyed by the session's address, so a session's export, import and delete carry them. Who
+// may do what is the things plugin's (the session's workspace); this store checks no caller and holds no members, but
+// a move needs the agents' Work on the machine (decision 24). Rows older code wrote naming this device as `this-device`
+// are rewritten once per Pi to its machine's id, a session's own folder moved from the data directory to the work
+// root (decision 125).
 
 import { cp, mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
@@ -32,11 +32,12 @@ import {
 	union,
 	until,
 } from "@earendil-works/p3/v1";
-import { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
+import { checkMachine } from "../environments/contract.server.ts";
 import { MACHINE_KIND } from "../environments/contract.ts";
 import { OneThing, ThingsStore } from "../things/contract.server.ts";
-import { MOVED_MAX, SessionsStore } from "./contract.server.ts";
-import { type Location, ModelChoice, type SessionState } from "./contract.ts";
+import { SessionsStore } from "./contract.server.ts";
+import { type Location, ModelChoice, SessionDetail, type SessionState } from "./contract.ts";
 import { messages } from "./messages.ts";
 
 /**
@@ -77,15 +78,25 @@ const RowsV1 = defineTable("sessions.sessions", {
 /** Version 2: the machine column named as decision 24 names it (`ROW`); stored rows keep their values. */
 const Rows = evolveTable(RowsV1, (t) => t.rename("environment", "machine"));
 
-/** The conversations moved to a location of their own: one row per session and conversation (Durable's id as text). */
-const Locations = defineTable("sessions.locations", {
+/**
+ * Where each session's moved conversations work: one document per session with a move, read whole by its Manage and
+ * its worker.
+ */
+const Moved = defineState("sessions.moved", {
+	schema: SessionDetail,
 	version: 1,
-	columns: { session: hostColumn(Session), conversation: str(), machine: str(), folder: str() },
-	key: ["session", "conversation"],
+	initial: () => ({ locations: {} }),
+	keyed: Session,
+	persist: true,
+	// A move is rare and the document small: each one is stored whole.
+	checkpointWhen: () => true,
 });
 
-/** The machine kind's tick that lets the agents work on a machine (Work here). */
-const WORK = "work";
+/**
+ * How many conversations of one session may have a location of their own (`moveLocation` refuses more): the bound of
+ * its document (a session's conversations are its main one and its subagents').
+ */
+const MOVED_MAX = 1000;
 
 /**
  * The id a session's location named this device by before the machine was a thing (p3-base's data from 7093618af,
@@ -112,7 +123,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		// This device's machine: where a session works unless it says otherwise.
 		const device = self.get(OneThing, { kind: MACHINE_KIND });
 		const runtime = self.registry(ServerRuntime);
-		const locations = self.table(Locations);
+		const runners = self.registry(WorkerRunners);
+		const moved = self.state(Moved);
 		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now,
 		// and a session's own folder moves to where new sessions get theirs (one read of every row, no index on
 		// `machine`: it runs once, the marker says so after). The folders move outside a transaction: a copy may take
@@ -126,18 +138,18 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				for await (const row of tx.rows(rows, old)) all.push({ id: row.id, folder: row.folder });
 				return all;
 			}, ctx);
-			const moved: typeof found = [];
+			const rewritten: typeof found = [];
 			for (const { id, folder } of found) {
 				const session = id.params.id;
 				const own = join(runtime.value.dataDir, "folders", session);
 				// A location the person chose stays where it is.
-				moved.push({
+				rewritten.push({
 					id,
 					folder: folder === own ? await movedFolder(own, join(runtime.value.workRoot, session)) : folder,
 				});
 			}
 			await self.tx(async (tx) => {
-				for (const { id, folder } of moved) {
+				for (const { id, folder } of rewritten) {
 					// A session deleted while its folder moved stays deleted.
 					if ((await tx.get(rows, { id })) !== undefined) {
 						tx.update(rows, { id }, { machine, folder });
@@ -159,19 +171,14 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			}, ctx);
 		/**
 		 * Throws unless session `session`'s agents can work at `location` (decision 24): a full path, on a machine its
-		 * workspace gives them Work here on, which is what the machine's harness part asks at each use.
+		 * workspace gives them Work here on (`checkMachine`, the machine kind's rule: what its harness part asks at each
+		 * use).
 		 */
 		const agentsWorkAt = async (session: string, { machine, folder }: Location, ctx: Ctx<P3Principal>) => {
-			if (!isAbsolute(folder)) {
-				throw invalid("args", `sessions: ${folder} is no full path`, { message: messages.message("notFullPath") });
-			}
+			fullPath(folder);
 			const answer = await things.answerOf({ workspace: session, thing: machine, caller: `worker:${session}` }, ctx);
 			if (answer?.kind !== MACHINE_KIND) throw noMachine(machine);
-			if (!answer.ticks.includes(WORK)) {
-				throw invalid("args", `sessions: the agents of ${session} have no Work on ${machine}`, {
-					message: messages.message("noWork", machine),
-				});
-			}
+			checkMachine(machine, { kind: "agent", session }, answer);
 		};
 		return {
 			sessions: self.queries(
@@ -182,36 +189,29 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					one: ({ id }: { id: string }) => query(Rows).where((s) => eq(s.id, Session({ id }))),
 				},
 			),
-			locations: self.queries(
-				locations,
-				{ map: ({ conversation, machine, folder }) => ({ conversation, location: { machine, folder } }) },
-				{
-					// The key's prefix, in key order (by conversation).
-					ofSession: ({ session }: { session: string }) =>
-						query(Locations).where((l) => eq(l.session, Session({ id: session }))),
-				},
-			),
+			moved,
 			insert: async ({ id, location, model }, ctx) => {
-				// A session's own folder is outside the data directory (Files never shows that one).
-				const where = location ?? {
-					machine: await until(device.thing, (machine) => machine !== "", ctx),
-					folder: join(runtime.value.workRoot, id),
-				};
-				if (location === undefined) {
+				let where = location;
+				if (where === undefined) {
+					// A session's own folder is outside the data directory (Files never shows that one).
+					const machine = await until(device.thing, (id) => id !== "", ctx);
+					where = { machine, folder: join(runtime.value.workRoot, id) };
 					// An empty folder a failed commit leaves is harmless; a session without its folder is not.
 					await mkdir(where.folder, { recursive: true, mode: 0o700 });
-				} else {
-					// A trust boundary: the make's input comes from a page. A location names a machine thing.
-					const found = await things.things.one.page({ thing: location.machine }, 1, ctx);
-					if (found.items[0]?.kind !== MACHINE_KIND) throw noMachine(location.machine);
+				} else if (where !== null) {
+					// A trust boundary: the make's input comes from a page. A location names a machine thing and a full path.
+					fullPath(where.folder);
+					const found = await things.things.one.page({ thing: where.machine }, 1, ctx);
+					if (found.items[0]?.kind !== MACHINE_KIND) throw noMachine(where.machine);
 				}
 				return self.tx(async (tx) => {
 					const now = Date.now();
 					const state: SessionState = "settled";
 					tx.put(rows, {
 						id: Session({ id }),
-						machine: where.machine,
-						folder: where.folder,
+						// On no machine: empty (a column is never optional where a row is read whole; `shown` says `null`).
+						machine: where?.machine ?? "",
+						folder: where?.folder ?? "",
 						createdAt: now,
 						state,
 						lastTouch: now,
@@ -225,22 +225,21 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			restore: ({ session }, ctx) => update(session, { archivedAt: 0 }, ctx),
 			setModel: ({ session, model }, ctx) => update(session, { model }, ctx),
 			moveLocation: async ({ session, conversation, location }, ctx) => {
-				await agentsWorkAt(session, location, ctx);
+				if (location !== null) await agentsWorkAt(session, location, ctx);
 				return self.tx(async (tx) => {
 					const id = Session({ id: session });
 					if ((await tx.get(rows, { id })) === undefined) throw invalid("args", `sessions: no session ${session}`);
-					const key = { session: id, conversation };
-					if ((await tx.get(locations, key)) === undefined) {
-						// Index: the key's prefix. Bounded by the writes, so the worker's read of them is whole.
-						const moved = await tx.page(
-							locations,
-							query(Locations).where((l) => eq(l.session, id)),
-							MOVED_MAX,
-						);
-						if (moved.items.length >= MOVED_MAX)
-							throw invalid("args", `sessions: ${session} has ${MOVED_MAX} moved`);
+					const { locations } = await tx.draft(moved, id);
+					if (location === null) {
+						delete locations[conversation];
+						return null;
 					}
-					tx.put(locations, { ...key, machine: location.machine, folder: location.folder });
+					if (locations[conversation] === undefined && Object.keys(locations).length >= MOVED_MAX) {
+						throw invalid("args", `sessions: ${session} has ${MOVED_MAX} moved`, {
+							message: messages.message("tooManyMoved", MOVED_MAX),
+						});
+					}
+					locations[conversation] = location;
 					return null;
 				}, ctx);
 			},
@@ -257,19 +256,18 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					tx.update(rows, key, { state, lastTouch: Date.now() });
 					return null;
 				}, ctx),
-			remove: ({ session }, ctx) =>
-				self.tx(async (tx) => {
+			remove: async ({ session }, ctx) => {
+				await self.tx(async (tx) => {
 					const id = Session({ id: session });
 					tx.delete(rows, { id });
-					// The key's prefix: a session's moved conversations, few (`MOVED_MAX`).
-					for await (const { conversation } of tx.rows(
-						locations,
-						query(Locations).where((l) => eq(l.session, id)),
-					)) {
-						tx.delete(locations, { session: id, conversation });
-					}
+					await tx.retire(moved, id);
 					return null;
-				}, ctx),
+				}, ctx);
+				// Its worker stopped and what it kept deleted (a failure rejects, so the kind's delete is tried again). No
+				// runner now (its plugin reloading): the sweep at the next runner finds the directory.
+				await runners.value?.remove(session);
+				return null;
+			},
 			working: (_args, ctx) =>
 				self.tx(async (tx) => {
 					// Index `working`; every row, no cap: a session left out would never resume.
@@ -284,6 +282,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				}, ctx),
 		};
 	});
+}
+
+/** Throws unless `folder` is a full path: a relative one would be read from wherever the machine's process runs. */
+function fullPath(folder: string): void {
+	if (isAbsolute(folder)) return;
+	throw invalid("args", `sessions: ${folder} is no full path`, { message: messages.message("notFullPath") });
 }
 
 /** The refusal of a location on `machine`, which is no machine here. */
@@ -332,7 +336,8 @@ function shown({ id, machine, folder, state, archivedAt, model, ...row }: RowOf<
 	return {
 		id: id.params.id,
 		...row,
-		location: { machine, folder },
+		// On no machine (R41): both empty.
+		location: machine === "" ? null : { machine, folder },
 		// `state` and `model` hold only what this plugin wrote: a `SessionState`, a `ModelChoice` or null.
 		state: state as SessionState,
 		archivedAt: archivedAt === 0 ? null : archivedAt,
