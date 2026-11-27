@@ -115,7 +115,9 @@ export type SessionDefaults = Static<typeof SessionDefaults>;
 /**
  * A session's own facts for its worker, which holds it as itself: its row (`null` for a session the server does not
  * know), its moved conversations (`detail`), `report`, which says what its agent is doing now, and `moveLocation`,
- * its agent's move of one conversation (refused unless the agents have Work there on that machine).
+ * its agent's move of one conversation (refused unless the agents have Work there on that machine). Whether the
+ * conversation exists is not checked here, the server cannot see it: the harness checks it for its agent's tool, and
+ * the worker is trusted plugin code (decision 111).
  */
 export const SessionFacts = remote("sessions.facts", {
 	// Version 2: the row's model choice names a login (decision 118). Version 3: its moved conversations (`detail`,

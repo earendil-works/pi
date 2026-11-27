@@ -39,16 +39,17 @@ export type HarnessLocation = { readonly machine: string; readonly folder: strin
 /**
  * What a kind's part has of the session's agent: the session's id, the workspace the agent holds its things in (the
  * session's workspace; a part never assumes it equals the session's id), `call`, which runs `fn` as the session's
- * worker (a tool reaches its plugin's objects with it, on the worker or the server), its references released when
- * `fn` settles (`context` is the tool's, Durable's, so cancelling the tool cancels the call), `location`, where
- * conversation `conversation` (Durable's id, a tool's `api.conversationId`) works now (its own location once moved,
- * else its owner conversation's, a subagent's caller's, else the session's; `undefined`: nowhere, an unknown session
- * or one on no machine; it may read Durable once per conversation, so never from Durable's Session line, an observer:
- * a tool, the environment, a prompt section and a hook all run off it), and `moveLocation`, which moves the
- * conversation to `location` (`null`: undoes its move, it follows its owner again): the next tool call works there, a
- * call under way keeps its environment; refused, with a message, unless the folder is a full path (`invalid`) and the
- * agents have Work here on its machine (`forbidden`, the machine kind's rule). `HarnessLocation` is the sessions
- * plugin's `Location`, written again: this plugin never imports that one.
+ * worker (a tool reaches its plugin's objects with it, on the worker or the server), its references released when `fn`
+ * settles (`context` is the tool's, Durable's, so cancelling the tool cancels the call), `location`, where conversation
+ * `conversation` (Durable's id, a tool's `api.conversationId`) works now (its own location once moved, else its owner
+ * conversation's, a subagent's caller's, else the session's; `undefined`: nowhere, an unknown session or one on no
+ * machine; it may read Durable once per conversation, so never from Durable's Session line, an observer: a tool, the
+ * environment, a prompt section and a hook all run off it), and `moveLocation`, which moves the conversation to
+ * `location` (`null`: undoes its move, it follows its owner again): the next tool call works there, a call under way
+ * keeps its environment; a move is refused for a conversation the session does not have (`invalid`; an undo always goes
+ * through, `SessionFacts.moveLocation` itself checks no conversation), and, with a message, unless the folder is a full
+ * path (`invalid`) and the agents have Work here on its machine (`forbidden`, the machine kind's rule).
+ * `HarnessLocation` is the sessions plugin's `Location`, written again: this plugin never imports that one.
  */
 export type HarnessSession = {
 	readonly session: string;
