@@ -5,6 +5,7 @@
 // (through the harness's `submit`, the one way to start work), Stop the stop: the caller's ticks on the session.
 
 import {
+	BACKGROUND_CONTEXT,
 	type Context,
 	defineFacet,
 	type FollowObserver,
@@ -14,6 +15,7 @@ import {
 	type JsonValue,
 	local,
 	type RegistryValue,
+	reportError,
 	SessionFacts,
 	str,
 	unknown,
@@ -43,7 +45,8 @@ export default defineFacet((host) => {
 	// No linger: a follower left after its last reader would keep the worker from its idle stop.
 	host.serve(Followed, ({ conversation }, self) => {
 		const harness = self.registry(SessionHarness);
-		// A harness that fails its follow (not one replaced: that one is followed across) retries with the next.
+		// The follow fails on an end of the harness still given, a failed first observation, or a next harness that
+		// cannot be observed (one replaced is followed across): the next harness given retries it.
 		self.retryOn(harness);
 		const view = self.follow((observer, context) =>
 			followAcross(harness, Number(conversation) as ConversationId, observer, context),
@@ -93,9 +96,12 @@ export default defineFacet((host) => {
  * Follows conversation `id`'s view across the harnesses `harness` gives, as one source: waits for the first (the
  * registry is `undefined` before the harness is open; a reader may come while it opens or reopens), and when another
  * one comes (the harness plugin reloaded: Chord withdraws the old one's contribution before it closes its Durable),
- * observes the conversation there and gives its view as a whole replacement. The old Durable's end ("session closed")
- * then belongs to an observation detached already, so a reload fails no follower (Astra, slice 5 round 1, should 8);
- * an end of the harness still given fails the follow, as before.
+ * observes the conversation there and gives its view as a whole replacement, then what that harness committed while
+ * its observation attached. The old Durable's end ("session closed") is then a withdrawn harness's, so a reload fails
+ * no follower (Astra, slice 5 round 1, should 8). A harness withdrawn with none after it is let go of, its last view
+ * kept. An end of the harness still given fails the follow, as before, and so does a next harness that cannot be
+ * observed: the object's retry follows again (round 1 of this change: Opus, Astra, Fable). A follow option of Chord's
+ * is to replace this (main files it).
  */
 async function followAcross(
 	harness: RegistryValue<OpenHarness | undefined>,
@@ -103,52 +109,91 @@ async function followAcross(
 	observer: FollowObserver<unknown>,
 	context: Context,
 ): Promise<{ value: ConversationView; detach(): void }> {
-	const first = await until(harness, (value) => value !== undefined, context);
-	if (first === undefined) throw new Error("transcript: no harness");
-	let current: OpenHarness = first;
+	// Acquired first: every harness given from here on is one of its calls, also while an observation attaches.
+	const watch = await harness.watch(context);
+	/** The harness followed; none: withdrawn (its last view stays). */
+	let followed: OpenHarness | undefined;
+	let observation: { readonly value: ConversationView; detach(): void } | undefined;
 	let detached = false;
+	/** A next harness's calls while its observation still attaches (Durable may call before it resolves). */
+	let early: (() => void)[] | undefined;
 	/** Observes the conversation on `open`, forwarding its calls while it is the one followed. */
 	const observe = (open: OpenHarness) =>
 		open.durable.observeConversation(
 			id,
 			{
 				advance: (call, ctx) => {
-					if (open === current) observer.advance(call, ctx);
+					if (open !== followed) return;
+					const give = (): void => observer.advance(call, ctx);
+					if (early === undefined) give();
+					else early.push(give);
 				},
 				end: (end) => {
-					// A replaced harness's end is expected: the next one is followed already, or will be.
-					if (open === current && harness.value === open) observer.end(end);
+					// A withdrawn harness's end is expected: the next one is followed already, or will be.
+					if (open === followed && harness.value === open) observer.end(end);
 				},
 			},
 			context,
 		);
-	let observation = await observe(current);
-	const watch = await harness.watch(context);
-	// One rebinding at a time, in the order the values came.
-	let rebinding = Promise.resolve();
-	watch.start(async (call) => {
-		if (call.kind !== "value" || call.value === undefined || call.value === current) return;
-		const next = call.value;
-		rebinding = rebinding.then(async () => {
-			if (detached || next !== harness.value) return;
-			observation.detach();
-			current = next;
-			observation = await observe(next);
-			if (detached) return observation.detach();
+	/** Lets go of the harness followed and its observation (the last view stays with Chord's source). */
+	const letGo = (): void => {
+		observation?.detach();
+		observation = undefined;
+		followed = undefined;
+	};
+	try {
+		const first = await until(harness, (value) => value !== undefined, context);
+		if (first === undefined) throw new Error("transcript: no harness");
+		followed = first;
+		observation = await observe(first);
+		const value = observation.value;
+		// The watch calls one at a time, in the order the harnesses came.
+		watch.start(async (call) => {
+			const next = call.kind === "value" ? call.value : undefined;
+			// Only the harness given now: one replaced meanwhile is skipped, its successor's call follows.
+			if (detached || next === followed || next !== harness.value) return;
+			letGo();
+			if (next === undefined) return;
+			followed = next;
+			early = [];
+			try {
+				observation = await observe(next);
+			} catch (error) {
+				early = undefined;
+				if (detached || harness.value !== next) return;
+				followed = undefined;
+				observer.end({ kind: "failed", error });
+				return;
+			}
+			if (detached || followed !== next) return observation.detach();
 			// The view is plain JSON (Durable's own calls carry it in their ops); typed readonly, as Durable keeps it.
 			const replaced = observation.value as unknown as JsonValue;
 			observer.advance({ kind: "value", value: observation.value, ops: [["r", replaced]], retired: false }, context);
+			// What the observation gave while it attached starts from its value (Durable's `Observer`).
+			const held = early;
+			early = undefined;
+			for (const give of held) give();
 		});
-		await rebinding;
-	});
-	return {
-		value: observation.value,
-		detach: () => {
-			detached = true;
-			observation.detach();
-			void watch.stop();
-		},
-	};
+		return {
+			value,
+			detach: () => {
+				detached = true;
+				letGo();
+				stop(watch);
+			},
+		};
+	} catch (error) {
+		// Abandoned or failed while attaching: nothing it acquired stays (Astra, round 1 of this change).
+		detached = true;
+		letGo();
+		stop(watch);
+		throw error;
+	}
+}
+
+/** Stops `watch`; a stop that fails is reported, since nothing awaits it. */
+function stop(watch: { stop(): Promise<unknown> }): void {
+	watch.stop().catch((error: unknown) => reportError("transcript: the harness's watch", error, BACKGROUND_CONTEXT));
 }
 
 /** A page of the root conversation's entries, newest last: the ones right before `maxEntryId` unless `ascending`. */
