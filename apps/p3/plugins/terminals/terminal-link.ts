@@ -5,7 +5,14 @@
 // person refused or no longer let in (`SOCKET_REFUSED`) is not attached again.
 
 import { BACKGROUND_CONTEXT, isChordError, type Reference, reportError } from "@earendil-works/p3/v1";
-import { SOCKET_REFUSED, type Terminals } from "./kind.ts";
+import {
+	SOCKET_ENDED,
+	SOCKET_FRAME,
+	SOCKET_REFUSED,
+	type SocketMessage,
+	type SocketTold,
+	type Terminals,
+} from "./kind.ts";
 import type { ScreenFeed, TerminalLink } from "./screen.ts";
 
 /** Terminal `terminal` of the held Terminals `live`, typable and resizable where `live` gives Use. */
@@ -14,15 +21,22 @@ export function terminalLink(live: Reference<typeof Terminals>, terminal: string
 	const send = (data: string | Uint8Array<ArrayBuffer>) => {
 		if (open.socket?.readyState === WebSocket.OPEN) open.socket.send(data);
 	};
+	const tell = (message: SocketMessage) => send(JSON.stringify(message));
 	const link: TerminalLink = {
 		follow: (feed) => follow(live, terminal, feed, open),
-		drawn: (bytes) => send(JSON.stringify({ kind: "drawn", bytes })),
+		drawn: (bytes) => tell({ kind: "drawn", bytes }),
 	};
-	if (live.type === undefined || live.resize === undefined) return link;
+	if (live.type === undefined) return link;
 	return {
 		...link,
-		type: (bytes) => send(bytes as Uint8Array<ArrayBuffer>),
-		resize: (columns, rows) => send(JSON.stringify({ kind: "resize", columns, rows })),
+		// The socket takes frames of at most `SOCKET_FRAME` bytes: a long paste goes in pieces, in order. The screen
+		// hands over arrays of its own (an `ArrayBuffer` each).
+		type: (bytes) => {
+			for (let at = 0; at < bytes.length; at += SOCKET_FRAME) {
+				send(bytes.subarray(at, at + SOCKET_FRAME) as Uint8Array<ArrayBuffer>);
+			}
+		},
+		resize: (columns, rows) => tell({ kind: "resize", columns, rows }),
 	};
 }
 
@@ -31,14 +45,6 @@ const FIRST_RETRY = 500;
 
 /** The longest wait between two attempts to attach again. */
 const MAX_RETRY = 10_000;
-
-/** The attach socket's close code of a terminal that ended or closed. */
-const ENDED = 1000;
-
-/** What the socket sends as text (the server's frames: trusted). */
-type Told =
-	| { readonly kind: "kept"; readonly bytes: number }
-	| { readonly kind: "size"; columns: number; rows: number };
 
 /** Tells `feed` about the terminal until the returned stop; `open.socket` is the socket open now. */
 function follow(
@@ -67,13 +73,19 @@ function follow(
 		socket.onmessage = (event: MessageEvent<ArrayBuffer | string>) => {
 			if (typeof event.data !== "string") return feed.output(new Uint8Array(event.data));
 			// The server's own frames (socket.ts).
-			const told = JSON.parse(event.data) as Told;
-			if (told.kind === "kept") feed.restart(told.bytes);
-			else feed.size(told.columns, told.rows);
+			const told = JSON.parse(event.data) as SocketTold;
+			switch (told.kind) {
+				case "kept":
+					return feed.restart(told.bytes);
+				case "size":
+					return feed.size(told.columns, told.rows);
+				case "answer":
+					return feed.answer(told.yes);
+			}
 		};
 		socket.onclose = (event) => {
 			if (open.socket === socket) open.socket = undefined;
-			if (!stopped && event.code !== ENDED && event.code !== SOCKET_REFUSED) again();
+			if (!stopped && event.code !== SOCKET_ENDED && event.code !== SOCKET_REFUSED) again();
 		};
 	};
 	const start = () => {

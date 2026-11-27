@@ -55,9 +55,15 @@ try {
 	ten.send("stty -echo; echo READY-$((1+1))\r");
 	await ten.until(/READY-2/);
 	const began = performance.now();
+	const before = ten.received();
 	ten.send("head -c 10485760 /dev/zero | tr '\\0' x; echo END-$((1+1))\r");
 	await ten.until(/END-2/);
-	console.log(`10 MiB to one viewer: ${(10 / ((performance.now() - began) / 1000)).toFixed(0)} MiB/s`);
+	// What reached the viewer, not what the program printed: a viewer that falls behind skips to the oldest byte kept.
+	const got = (ten.received() - before) / 1024 / 1024;
+	const seconds = (performance.now() - began) / 1000;
+	console.log(
+		`10 MiB printed to one viewer: ${got.toFixed(2)} MiB received (${(100 - got * 10).toFixed(1)} % skipped) in ${seconds.toFixed(2)} s, ${(got / seconds).toFixed(0)} MiB/s received`,
+	);
 	await owner.close(context);
 } finally {
 	await t.close(context);
@@ -73,16 +79,19 @@ async function viewer(terminals: Reference<typeof Terminals>, machine: string, c
 	});
 	await new Promise((resolve) => socket.once("open", resolve));
 	let tail = "";
+	let received = 0;
 	let heard: (() => void) | undefined;
 	socket.on("message", (data, binary) => {
 		if (!binary) return;
 		// ws's default binary type: a Buffer per message.
 		const bytes = data as Buffer;
+		received += bytes.length;
 		socket.send(JSON.stringify({ kind: "drawn", bytes: bytes.length }));
 		tail = (tail + bytes.toString("latin1")).slice(-4096);
 		heard?.();
 	});
 	return {
+		received: () => received,
 		send: (text: string) => socket.send(Buffer.from(text)),
 		/** Resolves at the next output. */
 		next: () =>

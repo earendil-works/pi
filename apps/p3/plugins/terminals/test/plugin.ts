@@ -2,12 +2,19 @@
 // server facets and a stand-in machine whose terminals are fake programs, environments/test/fake-machine.ts): Pi, its
 // Terminals and this device's machine, people and agents put in, grants, holds, and the attach socket's handler driven
 // through a stand-in socket (`FakeSocket`: the HTTP component, which upgrades a browser's request, is not on this
-// tier; the socket end to end is e2e.test.ts's).
+// tier; the socket end to end is e2e.test.ts's), with stand-in sign-ins (`LinkOpened`, as the sign-in plugin
+// contributes it: a request's `x-sign-in` header names its sign-in, `revoke` ends one).
 
 import { EventEmitter } from "node:events";
 import { fileURLToPath } from "node:url";
-import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, type Reference } from "@earendil-works/p3/v1";
-import { Http, type HttpRequest, type WebSocketHandle } from "@earendil-works/p3/v1/server";
+import {
+	type Ctx,
+	BACKGROUND_CONTEXT as context,
+	defineFacet,
+	type P3Principal,
+	type Reference,
+} from "@earendil-works/p3/v1";
+import { Http, type HttpRequest, LinkOpened, type WebSocketHandle } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
@@ -49,14 +56,32 @@ export type TerminalsPlugin = {
 		fn: (terminals: Reference<typeof Terminals>, ctx: Ctx<P3Principal>) => Promise<T>,
 		where?: string,
 	): Promise<T>;
-	/** Terminal `id`'s attach socket as `ctx`'s caller, at the address `r.attach` answers, once its handler set up. */
-	socket(r: Reference<typeof Terminals>, id: string, ctx: Ctx<P3Principal>): Promise<FakeSocket>;
+	/**
+	 * Terminal `id`'s attach socket as `ctx`'s caller, at the address `r.attach` answers, once its handler set up;
+	 * opened by sign-in `signIn` ("s" by default).
+	 */
+	socket(r: Reference<typeof Terminals>, id: string, ctx: Ctx<P3Principal>, signIn?: string): Promise<FakeSocket>;
+	/** Ends sign-in `signIn`: the links and sockets it opened close. */
+	revoke(signIn: string): void;
 };
 
 /** The terminals plugin with Pi set up; every person in Pi watches (as Who may would: the kind gives them nothing). */
 export async function terminalsPlugin(): Promise<TerminalsPlugin> {
 	const fake = fakeMachine();
+	const signIns = new Map<string, Set<() => void>>();
 	const stubs = [
+		{
+			name: "@earendil-works/p3-sign-in",
+			facet: defineFacet((_host, self) =>
+				self.contribute(LinkOpened, (request, close) => {
+					const id = request.headers.get("x-sign-in");
+					if (id === null) return undefined;
+					const closes = signIns.get(id) ?? new Set();
+					signIns.set(id, closes.add(close));
+					return () => closes.delete(close);
+				}),
+			),
+		},
 		// Sorts first, so its type wins this device's name over the environments plugin's, whose programs are real.
 		{ name: "@earendil-works/p3-a-fake-machine", facet: fakeType(() => fake.host) },
 		{ name: "@earendil-works/p3-things", facet: thingsServer },
@@ -95,27 +120,42 @@ export async function terminalsPlugin(): Promise<TerminalsPlugin> {
 				context,
 				{ principal },
 			),
-		socket: async (r, id, ctx) => {
+		socket: async (r, id, ctx, signIn = "s") => {
 			const { url } = await r.attach!({ terminal: id }, ctx);
-			const socket = attachSocket(t, url, ctx);
+			const socket = attachSocket(t, url, ctx, signIn);
 			await socket.ready;
 			return socket;
+		},
+		revoke: (signIn) => {
+			for (const close of signIns.get(signIn) ?? []) close();
 		},
 	};
 	await grant(pi, plugin.terminals, { kind: "everyone" }, ["watch"]);
 	return plugin;
 }
 
-/** The attach socket's handler, as the HTTP component would run it for a request to `url`, on a `FakeSocket`. */
-export function attachSocket(t: TestedPlugin<P3Principal>, url: string, ctx: Ctx<P3Principal>): FakeSocket {
+/**
+ * The attach socket's handler, as the HTTP component would run it for a request to `url` of sign-in `signIn` (none:
+ * a request no sign-in tracks), on a `FakeSocket`.
+ */
+export function attachSocket(
+	t: TestedPlugin<P3Principal>,
+	url: string,
+	ctx: Ctx<P3Principal>,
+	signIn: string | null = "s",
+): FakeSocket {
 	const entry = t
 		.contributions(Http)
 		.flatMap(({ value }) => Object.entries(value.sockets ?? {}))
 		.find(([pattern]) => pattern === SOCKET_PATH)![1];
 	const handler = typeof entry === "function" ? entry : entry.handler;
 	const socket = new FakeSocket();
-	// The handler reads the request's query only.
-	const request = { method: "GET", query: new URL(url, "http://p3").searchParams } as unknown as HttpRequest;
+	// The handler and the sign-ins read the request's query and the one header only.
+	const request = {
+		method: "GET",
+		query: new URL(url, "http://p3").searchParams,
+		headers: new Headers(signIn === null ? {} : { "x-sign-in": signIn }),
+	} as unknown as HttpRequest;
 	// The stand-in has the members of `ws`'s WebSocket the handler uses (`on`, `send`, `close`).
 	void Promise.resolve(handler(socket as unknown as WebSocketHandle, request, ctx)).catch((error: unknown) =>
 		socket.failed(error),
@@ -141,6 +181,15 @@ export class FakeSocket extends EventEmitter {
 	readonly ready: Promise<void>;
 	#close: (code: number) => void = () => {};
 	#ready: () => void = () => {};
+	/** Whether frames stay in the socket's buffer (a peer that stopped reading) until `release`. */
+	hold = false;
+	readonly #held: (() => void)[] = [];
+
+	/** Lets the frames held in the buffer go. */
+	release(): void {
+		this.hold = false;
+		for (const sent of this.#held.splice(0)) sent();
+	}
 
 	constructor() {
 		super();
@@ -152,8 +201,15 @@ export class FakeSocket extends EventEmitter {
 		});
 	}
 
-	/** The handler's send. */
-	send(data: string | Uint8Array): void {
+	/** What the socket's own buffer holds: nothing, the stand-in hands each frame over at once. */
+	readonly bufferedAmount = 0;
+
+	/** The handler's send; `sent` runs once the frame left (here: on the next microtask, unless `hold` holds it). */
+	send(data: string | Uint8Array, sent?: () => void): void {
+		if (sent !== undefined) {
+			if (this.hold) this.#held.push(sent);
+			else queueMicrotask(sent);
+		}
 		if (typeof data === "string") {
 			const told = JSON.parse(data) as { kind?: string };
 			this.told.push(told);

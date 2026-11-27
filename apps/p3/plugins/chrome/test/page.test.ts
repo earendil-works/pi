@@ -378,7 +378,30 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await shows("clean-25");
 		await line("printf '\\033[c'; read -rs -t 2 -d c a; [ -n \"$a\" ] && echo live-$((40+2))");
 		await shows("live-42");
+		// A second page with Use on the same terminal: one query, one answer (Opus, Astra, round 1, S2).
+		const second = await Browser.start();
+		try {
+			await second.signIn(origin, await t.cookie(context));
+			await second.size(DESKTOP);
+			await second.open(`${origin}/w/${pi}/t/${terminals}`);
+			await second.wait(`${screen}?.textContent.includes("live-42")`);
+			await line(
+				"printf '\\033[c'; read -rs -t 2 -d c a; read -rs -t 1 -d c b; [ -n \"$b\" ] && echo replies-$((1+1)) || echo replies-$((0+1))",
+			);
+			await browser.wait(`/replies-[12]/.test(${screen}?.textContent)`);
+			assert.equal(await browser.evaluate(`/replies-[12]/.exec(${screen}.textContent)[0]`), "replies-1");
+		} finally {
+			await second.close();
+		}
 		await browser.size(PHONE);
+		// A phone's keyboard composes a word, then corrects it: the field's change is what the shell gets (Opus, round
+		// 1, S4): "ehco" typed, corrected to "echo", sends three Backspaces and "cho".
+		await browser.click("[data-terminal-screen]");
+		await browser.call("Input.imeSetComposition", { text: "ehco", selectionStart: 4, selectionEnd: 4 });
+		await browser.call("Input.insertText", { text: "echo" });
+		await browser.call("Input.insertText", { text: " typed-$((2*21))" });
+		await browser.enter();
+		await shows("typed-42");
 		await line("echo phone-$(stty size | tr ' ' x)");
 		await browser.wait(`/phone-\\d+x\\d+/.test(${screen}?.textContent)`);
 		const columns = await browser.evaluate<number>(`Number(/phone-\\d+x(\\d+)/.exec(${screen}.textContent)[1])`);

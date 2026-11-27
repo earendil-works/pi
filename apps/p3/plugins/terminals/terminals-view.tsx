@@ -4,11 +4,11 @@
 // `attach` answers); Watch and Use withheld take the list away at once and end the socket.
 
 import { Button, IconButton } from "@earendil-works/elanor-react";
-import { BACKGROUND_CONTEXT, type Context, type Reference } from "@earendil-works/p3/v1";
+import type { Reference } from "@earendil-works/p3/v1";
 import { CloseIcon, useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useWorkLocation } from "../environments/contract.web.tsx";
-import { type ThingViewProps, useErrorText } from "../things/contract.web.tsx";
+import { type ThingViewProps, useAction } from "../things/contract.web.tsx";
 import { GhosttyScreen } from "./ghostty-screen.tsx";
 import { Terminals } from "./kind.ts";
 import { messages } from "./messages.ts";
@@ -120,30 +120,4 @@ function Shown(props: {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `typable` is what the link reads of `live`'s members.
 	const link = useMemo(() => terminalLink(live, terminal), [live, terminal, typable]);
 	return <GhosttyScreen label={props.label} link={link} />;
-}
-
-/** A call the view makes: whether one runs and the text of the last failure. */
-type Action = {
-	readonly pending: boolean;
-	readonly error: string | undefined;
-	/** Runs `call`; its failure is kept as `error`, never thrown. */
-	run(call: (context: Context) => Promise<unknown>): void;
-};
-
-/** The view's call state and its `run`. */
-function useAction(): Action {
-	const errorText = useErrorText();
-	const [pending, setPending] = useState(false);
-	const [error, setError] = useState<string | undefined>(undefined);
-	const run = useCallback(
-		(call: (context: Context) => Promise<unknown>) => {
-			setPending(true);
-			setError(undefined);
-			call(BACKGROUND_CONTEXT)
-				.catch((failure: unknown) => setError(errorText(failure)))
-				.finally(() => setPending(false));
-		},
-		[errorText],
-	);
-	return { pending, error, run };
 }

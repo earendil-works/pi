@@ -5,13 +5,15 @@
 // viewer's resize reaches every viewer; a viewer is sent at most `WINDOW` bytes it has not drawn, and one that fell
 // behind 10 MiB gets the kept tail; it closes 1000 when the terminal ends, and `SOCKET_REFUSED` for a person not let
 // in or in the flush that withholds Watch and Use, the machine, or the workspace (decision 25), a read under way
-// included and nothing printed after.
+// included and nothing printed after, and with the sign-in that opened it; a page's claim of what it drew counts only
+// what was sent, the socket's buffer holds at most `WINDOW`, and a flood before the check closes it; one viewer that
+// may type answers the program's queries.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, until } from "@earendil-works/p3/v1";
-import { within } from "../../../test/until.ts";
-import { TERMINAL_BACKLOG, TERMINAL_FRAME } from "../../environments/contract.terminal-host.server.ts";
+import { eventually, within } from "../../../test/until.ts";
+import { TERMINAL_BACKLOG } from "../../environments/contract.terminal-host.server.ts";
 import { SOCKET_PATH, SOCKET_REFUSED } from "../kind.ts";
 import { WINDOW } from "../socket.ts";
 import { attachSocket, SIZE, type TerminalsPlugin, terminalsPlugin } from "./plugin.ts";
@@ -137,17 +139,17 @@ describe("flow", () => {
 		const ann = await p.person("Ann");
 		await p.holding(ann, async (a, ctx) => {
 			const socket = await p.socket(a, id, ctx);
-			const piece = new Uint8Array(64 * 1024).fill(66);
+			const piece = new Uint8Array(48 * 1024).fill(66);
 			let received = 0;
-			// Piece by piece, each sent while the window allows: then one past it.
-			while (received <= WINDOW) {
+			// Piece by piece while the window has room: then exactly the window, the last piece cut.
+			while (received < WINDOW) {
 				started()[0]!.options.onData(piece);
 				await socket.frame();
 				received += socket.take();
 			}
-			assert.ok(received <= WINDOW + TERMINAL_FRAME, `${received} bytes before anything was drawn`);
+			assert.equal(received, WINDOW);
 			for (let sent = 0; sent < 10 * 1024 * 1024; sent += piece.length) started()[0]!.options.onData(piece);
-			// A stream's wake and its send run in microtasks, all done before the next macrotask: past its window it
+			// A stream's wake and its send run in microtasks, all done before the next macrotask: with a full window it
 			// sent nothing of the 10 MiB.
 			await new Promise((resolve) => setImmediate(resolve));
 			assert.equal(socket.unread, 0);
@@ -163,9 +165,104 @@ describe("flow", () => {
 			assert.equal(after, TERMINAL_BACKLOG);
 		});
 	});
+
+	// Opus, round 1, S1: one `drawn` of a terabyte, then a page that reads no more.
+	it("counts as drawn only what was sent: a page that claims more gets no more ahead", async () => {
+		const id = await opened();
+		const ann = await p.person("Ann");
+		await p.holding(ann, async (a, ctx) => {
+			const socket = await p.socket(a, id, ctx);
+			socket.tell({ kind: "drawn", bytes: 1024 ** 4 });
+			const piece = new Uint8Array(64 * 1024).fill(67);
+			for (let sent = 0; sent < 10 * 1024 * 1024; sent += piece.length) {
+				started()[0]!.options.onData(piece);
+				await new Promise((resolve) => setImmediate(resolve));
+			}
+			assert.ok(socket.unread <= WINDOW, `${socket.unread} bytes sent to a page that drew none`);
+		});
+	});
+
+	it("keeps at most WINDOW in the socket's buffer for a page that stopped reading, whatever it says it drew", async () => {
+		const id = await opened();
+		const ann = await p.person("Ann");
+		await p.holding(ann, async (a, ctx) => {
+			const socket = await p.socket(a, id, ctx);
+			socket.hold = true;
+			const piece = new Uint8Array(64 * 1024).fill(68);
+			for (let sent = 0; sent < 4 * 1024 * 1024; sent += piece.length) {
+				started()[0]!.options.onData(piece);
+				await new Promise((resolve) => setImmediate(resolve));
+				socket.tell({ kind: "drawn", bytes: socket.unread });
+			}
+			assert.ok(socket.unread <= WINDOW, `${socket.unread} bytes in the buffer`);
+			socket.take();
+			socket.release();
+			await socket.frame();
+			assert.ok(socket.unread > 0, "it goes on once the buffer emptied");
+		});
+	});
+
+	it("closes a socket whose page sends more than it may before the socket was checked", async () => {
+		const id = await opened();
+		await p.holding(await p.agent("s1"), async (w, ctx) => {
+			const { url } = await w.attach!({ terminal: id }, ctx);
+			const socket = attachSocket(p.t, url, ctx);
+			for (let piece = 0; piece < 3; piece++) socket.type("x".repeat(32 * 1024));
+			assert.equal(await socket.closed, SOCKET_REFUSED);
+			assert.deepEqual(started()[0]!.typed, []);
+		});
+	});
+});
+
+describe("who answers a program's queries", () => {
+	// Opus and Astra, round 1, S2: two viewers with Use each typed the answer to one query.
+	it("is one viewer that may type: the first, then the one that typed last, then the next when it goes", async () => {
+		const id = await opened();
+		const [ann, kim, sam] = [await p.person("Ann"), await p.person("Kim"), await p.person("Sam")];
+		for (const person of [ann, kim]) await p.grant(p.pi, p.terminals, { kind: "person", person: person.id }, ["use"]);
+		const answers = (socket: { told: unknown[] }) =>
+			socket.told
+				.filter((told) => (told as { kind: string }).kind === "answer")
+				.map((told) => (told as { yes: boolean }).yes);
+		await p.holding(ann, async (a, actx) => {
+			const anns = await p.socket(a, id, actx);
+			await p.holding(sam, async (s, sctx) => {
+				const sams = await p.socket(s, id, sctx);
+				await p.holding(kim, async (k, kctx) => {
+					const kims = await p.socket(k, id, kctx);
+					assert.deepEqual([answers(anns), answers(kims), answers(sams)], [[true], [], []]);
+					kims.type("x");
+					assert.deepEqual([answers(anns), answers(kims)], [[true, false], [true]]);
+				});
+				assert.deepEqual(answers(sams), [], "a viewer who only watches never answers");
+				// Kim's socket ends with her hold, then the next viewer that may type answers.
+				await eventually(
+					() => answers(anns),
+					(told) => told.length === 3,
+				);
+				assert.deepEqual(answers(anns), [true, false, true], "Kim gone: Ann answers again");
+			});
+		});
+	});
 });
 
 describe("a socket holds what lets its viewer in (decision 25)", () => {
+	// Astra, round 1, M3: revoking a sign-in left its terminal socket open.
+	it("closes with the sign-in that opened it; another sign-in's socket stays; none, refused", async () => {
+		const id = await opened();
+		const ann = await p.person("Ann");
+		await p.holding(ann, async (a, ctx) => {
+			const phone = await p.socket(a, id, ctx, "phone");
+			const desk = await p.socket(a, id, ctx, "desk");
+			p.revoke("phone");
+			assert.equal(await phone.closed, SOCKET_REFUSED);
+			started()[0]!.say("still");
+			assert.equal(await desk.next(), "still");
+			const { url } = await a.attach!({ terminal: id }, ctx);
+			assert.equal(await attachSocket(p.t, url, ctx, null).closed, SOCKET_REFUSED);
+		});
+	});
+
 	it("is refused to a person not let in, and for a query that names nothing", async () => {
 		const id = await opened();
 		const url = `${SOCKET_PATH}?${new URLSearchParams({ workspace: p.pi, thing: p.terminals, terminal: id })}`;

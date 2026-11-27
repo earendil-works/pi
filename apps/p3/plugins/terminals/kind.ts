@@ -4,10 +4,11 @@
 // listed there only. One terminal, many viewers: each viewer attaches through the WebSocket at the address `attach`
 // answers (socket.ts: its kept output, then what follows, raw; with Use, what is typed and the size back), the agent
 // reads its kept output with `backlog`. Watch (for people) lists terminals and attaches to them; Use (people and
-// agents) does that too, and opens terminals, types in them, reads their kept output, resizes and closes them. By
+// agents) does that too, and opens terminals, types in them (and sizes them, on the socket), reads their kept output
+// and closes them. By
 // default only the agents get Use; people get a tick through Who may.
 
-import { arr, bool, int, method, obj, opt, str } from "@earendil-works/p3/v1";
+import { arr, bool, int, lit, method, obj, opt, type Static, str, union } from "@earendil-works/p3/v1";
 import { TerminalRow } from "../environments/contract.ts";
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";
@@ -37,7 +38,7 @@ export const MAX_WAIT = 30_000;
  */
 export const TerminalsKind = defineThing("terminals.pane", {
 	// Version 3: `terminals` is the list again (version 2's `opens` went with this device's terminals); `backlog`
-	// answers text and may wait.
+	// answers text and may wait; `resize` went (a viewer's size travels on its socket).
 	version: 3,
 	makers: "plugin",
 	workspaces: "one",
@@ -68,8 +69,6 @@ export const TerminalsKind = defineThing("terminals.pane", {
 		),
 		/** Types `bytes` into a terminal (keys as the terminal reads them: `\r` is Enter); refused once its program ends. */
 		type: method(obj({ terminal: TerminalId, bytes: str({ max: 64 * 1024 }) })),
-		/** Gives a terminal a new size. */
-		resize: method(obj({ terminal: TerminalId, columns: Columns, rows: Rows })),
 		/** Ends a terminal's program, if it still runs, and removes it from the list. */
 		close: method(obj({ terminal: TerminalId })),
 	},
@@ -78,7 +77,7 @@ export const TerminalsKind = defineThing("terminals.pane", {
 		watch: { label: messages.message("tickWatch"), for: "people", gives: ["terminals", "attach"] },
 		use: {
 			label: messages.message("tickUse"),
-			gives: ["terminals", "attach", "backlog", "open", "type", "resize", "close"],
+			gives: ["terminals", "attach", "backlog", "open", "type", "close"],
 		},
 	},
 	// The agents use them (the terminal tool); people, guests too, only once Who may lets them: a terminal shows what
@@ -92,8 +91,32 @@ export const Terminals = TerminalsKind.contract;
 /** The attach socket's path; its query names the workspace, the thing and the terminal. */
 export const SOCKET_PATH = "/terminals/socket";
 
+/** The attach socket's close code of a terminal that ended or closed. */
+export const SOCKET_ENDED = 1000;
+
 /** The attach socket's close code for a person it refused, or who lost the terminal: the page does not attach again. */
 export const SOCKET_REFUSED = 4403;
+
+/** The largest frame a page sends on the attach socket (what is typed, a paste, in pieces of at most this). */
+export const SOCKET_FRAME = 64 * 1024;
+
+/** What a page sends on the attach socket besides typed bytes (socket.ts checks it: the page's frame). */
+export const SocketMessage = union([
+	obj({ kind: lit("drawn"), bytes: int({ min: 0 }) }),
+	obj({ kind: lit("resize"), columns: Columns, rows: Rows }),
+]);
+
+/** What a page sends on the attach socket besides typed bytes (see `SocketMessage`). */
+export type SocketMessage = Static<typeof SocketMessage>;
+
+/**
+ * What the attach socket tells a page as text: how much kept output comes first (`kept`), the terminal's size, and
+ * whether this page answers the program's queries (`answer`: one viewer that may type per terminal does).
+ */
+export type SocketTold =
+	| { readonly kind: "kept"; readonly bytes: number }
+	| { readonly kind: "size"; readonly columns: number; readonly rows: number }
+	| { readonly kind: "answer"; readonly yes: boolean };
 
 /** How long a terminal's output must pause for `backlog` to count it as quiet. */
 export const QUIET = 500;

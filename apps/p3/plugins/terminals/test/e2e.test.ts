@@ -2,7 +2,8 @@
 // shell in pi-env's daemon, browsers' cookies, the attach socket over a real WebSocket): the owner opens a terminal,
 // attaches to it with their browser's cookie, types into it, reads its output on the socket and with `backlog` (as the
 // agent's read does), resizes it (the shell sees the size), and ends it (the socket closes 1000, the list is empty). No
-// cookie, a page of another site, and a signed-in person without Watch or Use are refused.
+// cookie, a page of another site, and a signed-in person without Watch or Use are refused; a revoked sign-in's socket
+// closes.
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -65,23 +66,32 @@ function attachSocket(url: string, headers: Record<string, string>) {
 		return output;
 	};
 	const opened = new Promise<void>((resolve) => socket.once("open", () => resolve()));
-	return { socket, told, printed, closed, opened };
+	// The first frame (`kept`) comes once the socket was checked.
+	const checked = new Promise<void>((resolve) => socket.once("message", () => resolve()));
+	return { socket, told, printed, closed, opened, checked };
 }
 
 /** The origin a page of this server has. */
 const origin = () => `http://127.0.0.1:${t.port}`;
 
-/** A person, put into Pi with no tick on Terminals, and their browser's cookie. */
-async function stranger(): Promise<string> {
+/** A person put into Pi (given Use on Terminals `use` when set), and their browser's sign-in: its id and cookie. */
+async function signedIn(use?: string): Promise<{ id: string; cookie: string }> {
 	return t.host.root(async (ctx: Ctx<P3Principal>) => {
 		const things = await ctx.get(ThingsStore, {});
 		const by = { kind: "plugin", plugin: "test" } as const;
 		const pi = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
 		const id = await things.createPerson({ name: "Sam", madeBy: by }, ctx);
-		await things.putParty({ workspace: pi, party: { kind: "person", person: id }, source: by }, ctx);
+		const party = { kind: "person", person: id } as const;
+		await things.putParty({ workspace: pi, party, source: by }, ctx);
+		if (use !== undefined) {
+			await things.setGrants(
+				{ source: by, grants: [{ workspace: pi, thing: use, party, tick: "use", gives: true }] },
+				ctx,
+			);
+		}
 		const principal = { kind: "person", id, name: "Sam" } as const;
 		const issued = await (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind: "browser" }, ctx);
-		return issued.cookie.split(";")[0]!;
+		return { id: issued.id, cookie: issued.cookie.split(";")[0]! };
 	}, context);
 }
 
@@ -123,7 +133,7 @@ describe("a terminal on this device", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
-	it("refuses a socket without a cookie, from another site's page, and to a person without Watch or Use", async () => {
+	it("refuses a socket without a cookie, from another site's page, to a person without Watch or Use; ends with its sign-in", async () => {
 		const owner = await t.client(context);
 		const pi = await piOf(owner, context);
 		const thing = await t.host.root(
@@ -140,7 +150,14 @@ describe("a terminal on this device", () => {
 		assert.equal(await attachSocket(url, { origin: origin() }).closed, 401);
 		const cookie = await t.cookie(context);
 		assert.equal(await attachSocket(url, { cookie, origin: "https://elsewhere.example" }).closed, 403);
-		assert.equal(await attachSocket(url, { cookie: await stranger(), origin: origin() }).closed, SOCKET_REFUSED);
+		const stranger = await signedIn();
+		assert.equal(await attachSocket(url, { cookie: stranger.cookie, origin: origin() }).closed, SOCKET_REFUSED);
+		// Astra, round 1, M3: the socket ends with the sign-in that opened it.
+		const sam = await signedIn(thing);
+		const sams = attachSocket(url, { cookie: sam.cookie, origin: origin() });
+		await sams.checked;
+		await t.host.root(async (ctx) => (await ctx.get(SignIns, {})).revoke(sam.id, ctx), context);
+		assert.equal(await sams.closed, SOCKET_REFUSED);
 		await terminals.close!({ terminal: id }, context);
 	});
 });

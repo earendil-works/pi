@@ -7,12 +7,15 @@ its cause is known.
 ## Setup and commands
 
 p3 needs Node 26.3.1 or newer, tests included. On slayer the default `node` is 24:
-`export PATH=/home/badlogic/node-v26.11.1-linux-x64/bin:$PATH`.
+`export PATH=/home/badlogic/node-v26.11.1-linux-x64/bin:$PATH`. This device's terminals run in pi-env's daemon, which a
+checkout builds with Rust (`cargo`, https://rustup.rs): `npm run build:daemon`; `npm test` runs it first, a single test
+file run by hand needs it built once (and again after a change of `packages/env/daemon`).
 
 | Command (in `apps/p3`) | What |
 | --- | --- |
 | `npm run check` | Biome and TypeScript over p3 (the root check skips `apps/`); clean before every report |
-| `npm test` | every `test/*.test.ts` and `plugins/*/test/*.test.ts`, from source |
+| `npm run build:daemon` | builds pi-env's daemon from `packages/env/daemon` (`cargo build --release --locked`, about 1 s when nothing changed): this device's terminals in a checkout |
+| `npm test` | builds the daemon (`pretest`), then every `test/*.test.ts` and `plugins/*/test/*.test.ts`, from source |
 | `node --conditions=source --disable-warning=ExperimentalWarning --test <file>` | one test file |
 | `npm run release:p3:local -- --out /tmp/p3-release --force` (from the repository root) | builds and installs the release outside the repository and runs `test/release/*.test.ts` against it; `--bench` runs `bench/skeleton.ts` against it. The memory test is not ported yet: the old base's is in git at `753bc0bb2` (`apps/p3/old/test/release/`), ported with the harness core (ERNDL-855) |
 

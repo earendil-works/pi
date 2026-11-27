@@ -75,7 +75,7 @@ function thisDevice(dataDir: string): MachineHost {
 	};
 }
 
-/** What a terminal's program finds in its environment besides the server's: a terminal with colours, as the page has. */
+/** What a terminal's program finds in its environment besides the server's: a terminal with colours, as the page. */
 const TERMINAL_ENV = { TERM: "xterm-256color", COLORTERM: "truecolor" };
 
 /**

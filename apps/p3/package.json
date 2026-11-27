@@ -47,6 +47,8 @@
 		"build": "node --disable-warning=ExperimentalWarning scripts/build-release.ts",
 		"check": "node ../../scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node ../../scripts/biome-check.mjs --write",
+		"build:daemon": "node --disable-warning=ExperimentalWarning scripts/build-daemon.ts",
+		"pretest": "npm run build:daemon",
 		"test": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-timeout=120000 --test-force-exit --test-reporter=dot \"test/*.test.ts\" \"plugins/*/test/*.test.ts\"",
 		"test:release": "node --conditions=source --disable-warning=ExperimentalWarning --test --test-concurrency=1 --test-timeout=900000 --test-force-exit \"test/release/*.test.ts\""
 	},

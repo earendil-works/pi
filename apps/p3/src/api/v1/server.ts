@@ -42,14 +42,7 @@ export { FileError } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 // pi-env's daemon and its terminals, for the machine types' (this device's). `Connection` is a name of Chord's HTTP
 // surface's too (an HTTP connection's info).
-export {
-	Connection as DaemonConnection,
-	isConnectionLost,
-	openTerminal,
-	RemoteError,
-	type RemoteTerminal,
-	type TerminalOptions,
-} from "@earendil-works/pi-env";
+export { Connection as DaemonConnection, openTerminal, RemoteError } from "@earendil-works/pi-env";
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
@@ -178,8 +171,9 @@ export const WorkerRunnerWraps = defineRegistry<WorkerRunnerWrap, readonly Worke
 );
 
 /**
- * A hook on each `/chord` link the HTTP component accepts: `close` ends the link; the hook returns what to call once
- * the link closed (the sign-in plugin closes the links of a sign-in that ends).
+ * A hook on each `/chord` link the HTTP component accepts, and on each plugin socket whose handler calls it (the
+ * terminals' attach socket): `close` ends the link; the hook returns what to call once the link closed (the sign-in
+ * plugin closes the links of a sign-in that ends).
  */
 export type LinkOpenedHook = (request: HttpRequest, close: () => void) => (() => void) | undefined;
 

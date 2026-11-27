@@ -9,7 +9,7 @@
 // Run from the repository root: npm run release:p3:local -- --out /tmp/p3-release [--force] [--skip-test] [--bench]
 
 import { execFileSync } from "node:child_process";
-import { access, chmod, copyFile, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { terminalDaemon } from "../src/api/v1/terminal-daemon.ts";
@@ -63,22 +63,16 @@ function buildPackage(found: WorkspacePackage): void {
 const PI_ENV = "@earendil-works/pi-env";
 
 /**
- * Puts this system's terminal daemon into pi-env's `bin/` (gitignored: what its package ships) when it is not there,
- * from the checkout's build (`terminalDaemon`: `cargo build --release --target <the system's>` in
- * `packages/env/daemon`); without one the release fails, naming where it looked.
+ * Puts this system's terminal daemon into pi-env's `bin/` (gitignored: what its package ships): the checkout's build
+ * (`npm run build:daemon`), which `terminalDaemon` finds first, replacing what an earlier release put there; without a
+ * build, what is there already; without either the release fails, naming the command.
  */
 async function shipDaemon(found: WorkspacePackage): Promise<void> {
 	const shipped = join(found.directory, "bin", `pi-env-${process.platform}-${process.arch}`, "pi-env");
-	if (
-		await access(shipped).then(
-			() => true,
-			() => false,
-		)
-	)
-		return;
-	const built = await terminalDaemon();
+	const daemon = await terminalDaemon();
+	if (daemon === shipped) return;
 	await mkdir(dirname(shipped), { recursive: true });
-	await copyFile(built, shipped);
+	await copyFile(daemon, shipped);
 	await chmod(shipped, 0o755);
 }
 

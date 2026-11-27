@@ -1,7 +1,7 @@
 // The terminals plugin on the server (plugin.ts: `testPlugin` beside the things, environments and people plugins'
 // server facets, and a stand-in machine host whose terminals are fake programs): Terminals is made in Pi once and gives
 // the agents Use, people nothing until Who may gives them a tick; Watch is for people and lists and attaches, Use also
-// opens, types, reads the kept output (at once, or once it went quiet), resizes and closes. Every call reaches the
+// opens, types, reads the kept output (at once, or once it went quiet) and closes. Every call reaches the
 // machine as the caller: a machine withheld from a person is refused and its terminals are not listed; closing needs
 // only Use. A terminal outlives its viewers and the agent's Use; it ends with its machine, its Terminals thing, its
 // workspace, or the environments plugin's host. The attach socket's own cases are socket.test.ts's.
@@ -71,7 +71,7 @@ describe("Terminals and its ticks", () => {
 		const ann = await person("Ann");
 		assert.deepEqual(await holding(ann, async (r) => [...r.granted].sort()), ["attach", "terminals"]);
 		const worker = await agent("s1");
-		const use = ["attach", "backlog", "close", "open", "resize", "terminals", "type"];
+		const use = ["attach", "backlog", "close", "open", "terminals", "type"];
 		assert.deepEqual(await holding(worker, async (r) => [...r.granted].sort()), use);
 		await grant(pi, terminals, { kind: "person", person: ann.id }, ["use"]);
 		await grant(pi, terminals, { kind: "person", person: ann.id }, ["watch"], false);
@@ -109,7 +109,6 @@ describe("the owner, guests and the one thing (slice 1's rules)", () => {
 			"backlog",
 			"close",
 			"open",
-			"resize",
 			"terminals",
 			"type",
 		]);
@@ -154,7 +153,7 @@ describe("the owner, guests and the one thing (slice 1's rules)", () => {
 });
 
 describe("a terminal's calls", () => {
-	it("types into the program, reads its kept output, resizes it, shows its exit and closes it", async () => {
+	it("types into the program, reads its kept output, shows its exit and closes it", async () => {
 		const ann = await person("Ann");
 		const kim = await person("Kim");
 		await grant(pi, terminals, { kind: "person", person: ann.id }, ["use"]);
@@ -168,8 +167,6 @@ describe("a terminal's calls", () => {
 			assert.deepEqual(backlog, { text: "lo ", ended: false }, "at most `max` bytes");
 			await a.type!({ terminal: id, bytes: "ls\r" }, ctx);
 			assert.deepEqual(started()[0]!.typed, ["ls\r"]);
-			await a.resize!({ terminal: id, columns: 100, rows: 30 }, ctx);
-			assert.deepEqual(started()[0]!.size, [100, 30]);
 			started()[0]!.exit(3);
 			await until(a.terminals!, (list) => list[0]?.exitCode === 3, within("the exit", ctx));
 			assert.deepEqual(await a.backlog!({ terminal: id }, ctx), { text: "hello ", ended: true });
@@ -200,6 +197,21 @@ describe("a terminal's calls", () => {
 			const ending = w.backlog!({ terminal: id, wait: 10_000 }, ctx);
 			program.exit(0);
 			assert.equal((await ending).ended, true);
+		});
+	});
+
+	// Astra, round 1, M4: a waiting read checked the machine before the wait, not before it read.
+	it("refuses a waiting read once the machine is withheld from the caller meanwhile", async () => {
+		const ann = await person("Ann");
+		await grant(pi, terminals, { kind: "person", person: ann.id }, ["use"]);
+		await holding(ann, async (a, ctx) => {
+			const id = await a.open!({ machine, folder: "/tmp", ...SIZE }, ctx);
+			const reading = a.backlog!({ terminal: id, wait: 10_000 }, ctx);
+			started()[0]!.say("secret");
+			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
+			const began = Date.now();
+			await refused(reading, "forbidden", "notHere");
+			assert.ok(Date.now() - began < 5_000, "ended by the loss, not by the wait");
 		});
 	});
 

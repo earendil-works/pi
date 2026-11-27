@@ -3,8 +3,8 @@
 // the arguments it needs (decision 120: a kind with many actions has one tool; every tool costs every request). Its
 // actions: list the terminals here, open one at the conversation's location, type a line (Enter after it) or keys (as
 // given), read the output so far as plain text (after waiting until it went quiet, if asked), close one. Answers are
-// JSON, but a read's, which is the terminal's text. Every call goes through the agent's held reference, so Use withheld meanwhile refuses
-// it. People watch the same terminals in the Terminals view.
+// JSON, but a read's, which is the terminal's text. Every call goes through the agent's held reference, so Use
+// withheld meanwhile refuses it. People watch the same terminals in the Terminals view.
 
 import { defineFacet, forbidden, int, invalid, lit, obj, opt, str, union } from "@earendil-works/p3/v1";
 import { defineExtension, defineTool } from "@earendil-works/p3/v1/worker";

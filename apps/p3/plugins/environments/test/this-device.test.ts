@@ -188,6 +188,34 @@ describe("this device's host", () => {
 			assert.match(missing.ok ? "opened" : missing.error.message, /does not exist/);
 		});
 
+		// Astra, round 1, M2: a shell's background job (a group of its own) outlived the terminal's close.
+		for (const end of ["the terminal's close", "the connection's close"]) {
+			it(`ends a shell's background jobs with ${end}`, async () => {
+				const host = await (await t.host.registry(MachineTypes, context)).value
+					.get(THIS_DEVICE_TYPE)!
+					.value.connect({}, context);
+				const marker = join(root, end === "the terminal's close" ? "job-terminal" : "job-connection");
+				try {
+					const { pty, printed } = await shell(host, root);
+					// A finite job: no nohup, disown, session change or trap; its file says whether it ran on.
+					pty.write(`(sleep 0.6; echo finished > ${marker}) & echo started-$((6*7))\r`);
+					await printed(/started-42/);
+					if (end === "the terminal's close") pty.close();
+					else await host.close(context);
+					await pty.exited;
+					// Longer than the job would have taken.
+					await new Promise((resolve) => setTimeout(resolve, 1_000));
+					assert.equal(
+						await readFile(marker, "utf8").catch(() => "absent"),
+						"absent",
+						"the job ended with its terminal",
+					);
+				} finally {
+					await host.close(context);
+				}
+			});
+		}
+
 		it("ends its programs with the connection's close", async () => {
 			const types = await t.host.registry(MachineTypes, context);
 			const host = await types.value.get(THIS_DEVICE_TYPE)!.value.connect({}, context);
