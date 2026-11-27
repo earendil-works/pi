@@ -1,11 +1,12 @@
-// The harness plugin's texts people see: the subagents' tick label (decision 65), as the things plugin's Settings view
-// shows it. Imported by the contract.
+// The harness plugin's texts people see: the subagents' title and tick label (decision 65), as the things plugin's
+// Settings view shows it. Imported by the contract.
 
 import { defineMessages } from "@earendil-works/p3/v1";
 
 /** The harness plugin's messages, by key. */
 export const messages = defineMessages("harness", {
 	en: {
+		kindSubagents: "Subagents",
 		tickUse: "Start subagents",
 	},
 });

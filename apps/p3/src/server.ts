@@ -9,7 +9,7 @@
 
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { hostname, userInfo } from "node:os";
+import { homedir, hostname, userInfo } from "node:os";
 import { dirname, extname, join } from "node:path";
 import {
 	type Address,
@@ -43,7 +43,7 @@ import {
 import { createPlugins, type PluginsError, type PluginsState, type RolloutStep } from "@earendil-works/chord/plugins";
 import { type PageAssets, pageScripts, webSurface } from "@earendil-works/chord/surfaces";
 import * as v1 from "@earendil-works/p3/v1";
-import { reportError, Server, Session, SessionAccess, until } from "@earendil-works/p3/v1";
+import { MyAnswer, reportError, Server, Session, SessionKind, until } from "@earendil-works/p3/v1";
 import * as v1server from "@earendil-works/p3/v1/server";
 import {
 	LinkOpened,
@@ -63,6 +63,8 @@ import { type ServerAnswer, type ServerStatus, serverSocket, takeSocket } from "
 /** What the server's start takes. */
 export type ServerOptions = {
 	readonly dataDir: string;
+	/** Where sessions work by default (a folder each); `~/p3-work` unless given. */
+	readonly workRoot?: string;
 	/** The plugin roots: p3's built-in one first (`required`: a plugin of it failing fails the start). */
 	readonly roots: readonly { readonly path: string; readonly required: boolean }[];
 	/** Where it listens: `127.0.0.1` and this port (0: a free one). */
@@ -214,6 +216,7 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 		let listening: ListenAddress | undefined;
 		const runtime: ServerRuntime = {
 			dataDir,
+			workRoot: options.workRoot ?? join(homedir(), "p3-work"),
 			machine: { user: userInfo().username, hostname: hostname() },
 			host,
 			store,
@@ -475,15 +478,17 @@ function isolated<T>(plugin: string, run: () => T): T | undefined {
 }
 
 /**
- * The route's admission: a caller reaches a session's worker only with access to the session, as the sessions
- * plugin answers it live (`SessionAccess`): no worker starts for a caller who would be denied, and one who loses
- * access is cut off. A worker never reaches another session's worker.
+ * The route's admission: a caller reaches a session's worker only if the session's workspace (of the session kind)
+ * gives them anything, as the things plugin answers it live (`MyAnswer` on the session's own thing): no worker starts
+ * for a caller who would be denied, and one who loses it is cut off. A worker never reaches another session's worker.
  */
 export function admitRoute(principal: P3Principal, address: Address<typeof Session>, self: AdmitSelf) {
 	if (principal.kind === "worker") return constant(deny("a worker reaches no other session's worker"));
-	const answer = self.get(SessionAccess, { session: address.params.id, caller: callerKey(principal) });
-	return self.derive([answer.access], ([access]) =>
-		access === "none" ? deny("no access to this session") : allow(null),
+	const session = address.params.id;
+	const mine = self.get(MyAnswer, { workspace: session, thing: session, caller: callerKey(principal) });
+	// A plain workspace answers on itself too: only a session workspace has a worker.
+	return self.derive([mine.answer], ([answer]) =>
+		answer === null || answer.kind !== SessionKind.name ? deny("no access to this session") : allow(null),
 	);
 }
 

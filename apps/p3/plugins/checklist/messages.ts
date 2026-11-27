@@ -9,6 +9,8 @@ export const messages = defineMessages("checklist", {
 		tickAdd: "Add items",
 		tickTick: "Tick items",
 		untitled: "Checklist",
+		view: "Checklist",
+		plugin: "Checklist",
 		denied: "You may not read this checklist.",
 		unavailable: "This checklist cannot be shown now.",
 		loading: "Loading…",

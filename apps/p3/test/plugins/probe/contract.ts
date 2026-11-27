@@ -1,6 +1,6 @@
 // The probe's contract: what the end-to-end tests drive a session's worker with.
 
-import { bool, method, num, OwnerAdmission, obj, remote, Session, SessionState, str } from "@earendil-works/p3/v1";
+import { arr, bool, method, num, OwnerAdmission, obj, remote, Session, SessionState, str } from "@earendil-works/p3/v1";
 
 /** The probe on a session's worker, for the owner. */
 export const Probe = remote("probe.probe", {
@@ -18,5 +18,7 @@ export const Probe = remote("probe.probe", {
 		crash: method(),
 		/** Switches the session store's outbox, as the backup plugin does (`store.setOutbox`). */
 		outbox: method(bool()),
+		/** Every line the worker reported since it loaded the probe (`reportError`, the host's `onError`). */
+		reported: method(obj({}), arr(str())),
 	},
 });

@@ -1,6 +1,6 @@
 // The holding on a session's worker: one reference per thing the session's workspace gives its agent (`AgentThings`),
 // held as the worker (the agent), of the kinds with a harness part here (`ThingHarnessParts`), contributed to
-// `HeldThings` for the harness, by thing id within a kind (until the index gives depth) and the kinds in the order of
+// `HeldThings` for the harness, each kind's things nearest last (by depth, then id) and the kinds in the order of
 // their first things. `undefined` until every reference of the first sync settled (live, failed or ended), at most
 // 4 s, so the harness runs no step against a partial set. A thing is listed while its reference is live. A new map
 // whenever a list changes; a kind whose list did not change keeps its array. A kind is published once none of its new
@@ -100,21 +100,21 @@ class Holding {
 
 	/** Holds what `given` names of the kinds with a part in `parts`, releases the rest, and publishes the change. */
 	sync(
-		given: readonly { readonly thing: string; readonly kind: string }[],
+		given: readonly { readonly thing: string; readonly kind: string; readonly depth: number }[],
 		parts: ReadonlyMap<string, TableItem<ThingHarnessPart>>,
 	): void {
 		const before = this.#entries;
 		const entries = new Map<string, Entry>();
-		for (const { thing, kind } of given) {
+		for (const { thing, kind, depth } of given) {
 			const part = parts.get(kind)?.value;
 			if (part === undefined) continue;
 			const entry = before.get(thing);
 			if (entry === undefined || entry.ended || !sameContract(entry.part.kind, part.kind)) {
-				entries.set(thing, this.#hold(thing, part));
+				entries.set(thing, this.#hold(thing, depth, part));
 				this.#changed.add(kind);
-			} else if (entry.part !== part) {
-				// The same contract (a kind's plugin reloaded): the reference stays, so calls under way go on.
-				entries.set(thing, { ...entry, part });
+			} else if (entry.part !== part || entry.held.depth !== depth) {
+				// The same contract (a kind's plugin reloaded) or a link moved: the reference stays, so calls under way go on.
+				entries.set(thing, { ...entry, part, held: { ...entry.held, depth } });
 				this.#changed.add(kind);
 			} else entries.set(thing, entry);
 		}
@@ -148,14 +148,20 @@ class Holding {
 		}, HAND_OVER_MS).unref();
 	}
 
-	/** Holds `thing` as the worker, of `part`'s kind, and follows its state. */
-	#hold(thing: string, part: ThingHarnessPart): Entry {
+	/** Holds `thing` (linked `depth` above the session) as the worker, of `part`'s kind, and follows its state. */
+	#hold(thing: string, depth: number, part: ThingHarnessPart): Entry {
 		// The session's workspace is the session's id: the agent holds its things there.
 		const workspace = this.#runtime.session;
 		// Every kind's contract has the things' params (`defineThing` makes it with them); held as the worker's own principal.
 		const params = { workspace, thing } as unknown as ParamsOf<Contract>;
 		const ref = this.#runtime.host.hold(part.kind.contract, params, this.#context);
-		const entry: Entry = { part, held: { thing, workspace, ref }, granted: undefined, settled: false, ended: false };
+		const entry: Entry = {
+			part,
+			held: { thing, workspace, depth, ref },
+			granted: undefined,
+			settled: false,
+			ended: false,
+		};
 		// The watch ends with the reference. Its first value too: a thing another holder here has live is live at once.
 		ref.state.watch(this.#context).then(
 			(watch) => {

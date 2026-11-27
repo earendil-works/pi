@@ -58,6 +58,14 @@ export type Touched = {
 	readonly presence: Set<string>;
 };
 
+/** The index's `offered` inside an operation (`commitIf`): what the picker offers a caller there. */
+export type Offered = (
+	workspace: string | undefined,
+	candidates: Iterable<string>,
+	caller: Caller,
+	context: Context,
+) => Promise<ReadonlySet<string>>;
+
 /** An attached watcher: the answers now, and how to stop. */
 export type Attachment = { readonly value: Answers; detach(): void };
 
@@ -241,25 +249,28 @@ export class AccessIndex {
 	 */
 	commit<R>(transaction: (touched: Touched) => Promise<R>): Promise<R> {
 		const queued = performance.now();
-		return this.#run(async () => {
-			const touched: Touched = {
-				workspaces: new Set(),
-				persons: new Set(),
-				things: new Set(),
-				lines: new Set(),
-				members: new Set(),
-				presence: new Set(),
-			};
-			const started = performance.now();
-			this.#context.telemetry.metrics?.histogram("things.store.wait").record(started - queued);
-			const result = await transaction(touched);
-			const metrics = this.#context.telemetry.metrics;
-			metrics?.histogram("things.store.commit").record(performance.now() - started);
-			const adopting = performance.now();
-			await this.#adopt(touched);
-			metrics?.histogram("things.access.adopt").record(performance.now() - adopting);
-			return result;
-		});
+		return this.#run(() => this.#committed(transaction, queued));
+	}
+
+	/** `commit`'s work, inside the queue (`queued`: when it was asked for). */
+	async #committed<R>(transaction: (touched: Touched) => Promise<R>, queued: number): Promise<R> {
+		const touched: Touched = {
+			workspaces: new Set(),
+			persons: new Set(),
+			things: new Set(),
+			lines: new Set(),
+			members: new Set(),
+			presence: new Set(),
+		};
+		const started = performance.now();
+		this.#context.telemetry.metrics?.histogram("things.store.wait").record(started - queued);
+		const result = await transaction(touched);
+		const metrics = this.#context.telemetry.metrics;
+		metrics?.histogram("things.store.commit").record(performance.now() - started);
+		const adopting = performance.now();
+		await this.#adopt(touched);
+		metrics?.histogram("things.access.adopt").record(performance.now() - adopting);
+		return result;
 	}
 
 	/**
@@ -275,6 +286,62 @@ export class AccessIndex {
 			this.#ask(this.#views);
 			await this.#askProbes(this.#probes);
 		});
+	}
+
+	/**
+	 * What the picker offers `caller` (R18, decision 106): the parties present in `workspace` (if any) and in every one
+	 * of `candidates` where the caller counts as present (put in, through a group, or shown from above; a person hidden
+	 * by every route counts nowhere), persons hidden there left out. One operation in the queue; what it loaded beyond
+	 * the budget is forgotten again (no watcher keeps it).
+	 */
+	offered(
+		workspace: string | undefined,
+		candidates: Iterable<string>,
+		caller: Caller,
+		context: Context,
+	): Promise<ReadonlySet<string>> {
+		return this.#run(() => this.#offered(workspace, candidates, caller, context));
+	}
+
+	/**
+	 * `transaction` as `commit` runs it, if `allowed` (asked first, in the same operation: what it reads through
+	 * `offered` cannot change before the write); else `refused`'s throw. The picker's check and its write as one.
+	 */
+	commitIf<R>(
+		allowed: (offered: Offered) => Promise<boolean>,
+		transaction: (touched: Touched) => Promise<R>,
+		refused: () => never,
+	): Promise<R> {
+		return this.#run(async () => {
+			const offered: Offered = (workspace, candidates, caller, context) =>
+				this.#offered(workspace, candidates, caller, context);
+			if (!(await allowed(offered))) refused();
+			return this.#committed(transaction, performance.now());
+		});
+	}
+
+	async #offered(
+		workspace: string | undefined,
+		candidates: Iterable<string>,
+		caller: Caller,
+		context: Context,
+	): Promise<ReadonlySet<string>> {
+		if (caller.kind === "person") await this.#ensurePerson(caller.person, context);
+		const parties = new Set<string>();
+		const add = (access: WorkspaceAccess) => {
+			for (const party of access.present) if (!access.hidden.has(party)) parties.add(party);
+		};
+		if (workspace !== undefined) {
+			await this.#ensure(workspace, context);
+			add(this.#accessOf(workspace, context));
+		}
+		for (const at of candidates) {
+			await this.#ensure(at, context);
+			const access = this.#accessOf(at, context);
+			if (this.#counted(access, caller) !== NOBODY) add(access);
+		}
+		if (this.#workspaces.size + this.#persons.size > this.#forgetWhenAbove) this.forgetUnwatched();
+		return parties;
 	}
 
 	/** Drops every workspace with no view at or below it and every person nobody watches as. */

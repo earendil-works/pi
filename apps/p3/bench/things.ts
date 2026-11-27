@@ -14,8 +14,9 @@
 // - in `things`, a change at the root (a tick given to the agents on one of Pi's things, then taken back): the write
 //   as its caller waits for it, its wait in the queue (`things.store.wait`), its transaction (`things.store.commit`),
 //   the index's work after it (`things.access.adopt`), and the last of its holders rebound; the same at a leaf; a new
-//   session; a workspace made by a person (slice 2: its maker's ticks and membership in the same commit) and a
-//   removal's first commit (the line cut).
+//   session; a workspace made by a person (slice 2: its maker's ticks and membership in the same commit), a
+//   removal's first commit (the line cut), and a share with 50 guests removed (slice 3, test 8: the cleanup of its
+//   grants, its guest group and the guests it made, one commit; the target is under 20 ms).
 // Run from apps/p3 with Node 26:
 //   node --expose-gc --conditions=source --disable-warning=ExperimentalWarning bench/things.ts
 
@@ -47,6 +48,7 @@ import { type Source, THING_PARAMS } from "../plugins/things/contract.ts";
 import { defineThing } from "../plugins/things/kind.ts";
 import thingsServer from "../plugins/things/server.ts";
 import { BOARD, Board } from "../plugins/things/test/kinds.ts";
+import { signInsStub } from "../plugins/things/test/world.ts";
 
 /** A tick's label in the bench. */
 const LABEL = { namespace: "bench", key: "tick", params: [] };
@@ -168,6 +170,8 @@ async function measure(which: Variant): Promise<void> {
 		{ name: "@earendil-works/p3-things", facet: thingsServer },
 		BOARD,
 		{ name: "bench", facet: benchFacet },
+		// The sign-ins the share's cleanup ends.
+		signInsStub().plugin,
 	];
 	await server.load(plugins, context);
 	const { holders, piThings, sessions } = await seed(server, await server.get(ThingsStore, {}, context));
@@ -461,6 +465,21 @@ async function changes(
 		await things.removeWorkspace({ workspace: id }, context);
 		cuts.push(performance.now() - t1);
 	}
+	// Slice 3: a share with 50 guests (its guest group put into a project, the guests it made in it), removed.
+	const cleanups: number[] = [];
+	for (let round = 0; round < 10; round++) {
+		const share: Source = { kind: "thing", thing: `share-${round}` };
+		const managedBy = { kind: "thing", thing: share.thing } as const;
+		const group = await things.makeGroup({ name: "guests", managedBy, outside: true }, context);
+		await things.putParty({ workspace: project, party: { kind: "group", group }, source: share }, context);
+		for (let i = 0; i < 50; i++) {
+			const person = await things.createPerson({ name: `guest ${i}`, madeBy: share }, context);
+			await things.addToGroup({ group, person, source: share }, context);
+		}
+		const t0 = performance.now();
+		await things.deleteEverythingFrom({ source: share }, context);
+		cleanups.push(performance.now() - t0);
+	}
 	return {
 		rootHolders: affected.length,
 		...medians("root", roots),
@@ -470,6 +489,8 @@ async function changes(
 		newWorkspaceMaxMs: Math.max(...made),
 		removeCutMs: median(cuts),
 		removeCutMaxMs: Math.max(...cuts),
+		shareCleanupMs: median(cleanups),
+		shareCleanupMaxMs: Math.max(...cleanups),
 	};
 }
 

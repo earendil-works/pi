@@ -25,6 +25,8 @@ import type { ThingKind } from "./kind.ts";
 export type HeldThing<C extends Contract = Contract> = {
 	readonly thing: string;
 	readonly workspace: string;
+	/** How far above the session's workspace the thing is linked: 0 in it, 1 in its parent (a kind's list: nearest last). */
+	readonly depth: number;
 	readonly ref: Reference<C>;
 };
 
@@ -62,11 +64,14 @@ export type HarnessTool = NonNullable<Extension["tools"]>[number] & { readonly s
  */
 export type HarnessExtension = Omit<Extension, "name" | "tools"> & { readonly tools?: readonly HarnessTool[] };
 
+/** A model provider a held thing gives, with that thing (a login's provider: a model choice names the login). */
+export type ThingProvider = { readonly thing: string; readonly provider: Provider };
+
 /**
  * What the things of one kind give the agent together: an extension (its tools take the thing they act on as an
  * argument, and a list tool names the things, so descriptions stay fixed text), the execution environment at a
  * conversation's location (a machine's: `undefined` for a location on a machine it does not give, at each use) and
- * model providers (a login's, one per thing).
+ * model providers (a login's, one per thing, with it), and when they are complete.
  */
 export type HarnessContribution = {
 	readonly extension?: HarnessExtension;
@@ -74,23 +79,23 @@ export type HarnessContribution = {
 		location: HarnessLocation,
 		context: Context,
 	) => ExecutionEnv | undefined | Promise<ExecutionEnv | undefined>;
-	readonly providers?: readonly Provider[];
+	readonly providers?: readonly ThingProvider[];
+	/**
+	 * Resolves once what it gives is complete (a login's: the session's models, every login and override in), so the
+	 * harness picks a model only then; cancelled first by `context`, it fails saying what is still loading.
+	 */
+	readonly ready?: (context: Context) => Promise<void>;
 };
 
 /**
  * A kind's harness part: the kind, and what every thing of it the agent holds gives. `part` is called with the
- * held things in a stable order (nearest last once the holding knows depth; open), again whenever that list changes
+ * held things nearest last (by depth, then id), again whenever that list changes
  * (a reference added, removed or granted anew), and never with none. State a part reads at use (a setting in a
  * prompt section) is read there, live.
  */
 export type ThingHarnessPart = {
 	readonly kind: ThingKind;
 	readonly part: (things: readonly HeldThing[], session: HarnessSession) => HarnessContribution;
-	/**
-	 * Whether the part gives environments (a machine's). Once one such part is registered, the agent's tools run only
-	 * in the environments parts give: a machine withheld or let go of leaves none (no fallback).
-	 */
-	readonly givesEnv: boolean;
 };
 
 /** The kinds' harness parts by kind name (the first by plugin name wins a kind; a second is reported). */
@@ -99,23 +104,19 @@ export const ThingHarnessParts = defineRegistry<ThingHarnessPart, ReadonlyMap<st
 	{ version: 1 },
 );
 
-/**
- * The harness part of `Kind`: `part` gets the things of it the agent holds, typed by the kind's contract. A part that
- * gives environments says so (`{ env: "gives" }`).
- */
+/** The harness part of `Kind`: `part` gets the things of it the agent holds, typed by the kind's contract. */
 export function thingHarnessPart<C extends Contract>(
 	Kind: ThingKind<C>,
 	part: (things: readonly HeldThing<C>[], session: HarnessSession) => HarnessContribution,
-	options: { readonly env?: "gives" } = {},
 ): ThingHarnessPart {
 	// The holding gives a kind's part only things of that kind, which are of its contract.
 	const typed = part as unknown as ThingHarnessPart["part"];
-	return { kind: Kind as unknown as ThingKind, part: typed, givesEnv: options.env === "gives" };
+	return { kind: Kind as unknown as ThingKind, part: typed };
 }
 
 /**
  * What the session's worker holds as its agent, by kind name: one entry per thing available to the agent, in a stable
- * order (nearest last once the holding knows depth; open), only of kinds with a part in `ThingHarnessParts` here. A
+ * order (each kind's nearest last: by depth, then id), only of kinds with a part in `ThingHarnessParts` here. A
  * new map whenever a list changes; a kind whose list did not change keeps the same array, so the harness gives only
  * kinds whose array is new (a reference granted anew makes its kind's array new). `undefined`: not ready yet (no
  * contribution, or the holding still waits for a wanted reference to be live or failed once); the harness keeps what

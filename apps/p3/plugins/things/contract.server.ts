@@ -1,13 +1,15 @@
 // The things plugin's contracts for server facets only: the store (`ThingsStore`: every table's rows as named
 // queries, and every write; trusted server code, it checks no caller), `Gives` (what a workspace gives one caller,
 // what every thing's admission derives from), the registry the store hands its access index to admissions through
-// (`AccessHandles`), the kinds' hooks (`ThingHooks`), and a kind's seeded thing (`OneThing`).
+// (`AccessHandles`), the kinds' hooks (`ThingHooks`), a kind's seeded thing (`OneThing`), and for kinds whose calls or
+// streams name another thing, what a workspace gives a caller (`givesTo`) and a stream's hold on it (`abortWhen`).
 
 import {
 	arr,
 	bool,
 	type Context,
 	type Ctx,
+	constant,
 	defineRegistry,
 	type FollowObserver,
 	int,
@@ -15,23 +17,29 @@ import {
 	local,
 	map,
 	method,
+	type NativeWatchable,
 	nul,
 	num,
 	obj,
+	oneOf,
 	opt,
 	type P3Principal,
 	queries,
+	type RefState,
+	type Self,
 	type Static,
 	str,
 	type TableItem,
 	union,
 	unknown,
+	until,
+	type Watchable,
 } from "@earendil-works/p3/v1";
 import type { Attachment, Probe, ProbeAttachment } from "./access.ts";
-import { type Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
+import { Caller, Item, ManagedBy, Party, Source } from "./contract.ts";
 import type { DefaultGrants } from "./kind.ts";
 import type { Answer as Answered } from "./rules.ts";
-import { DefaultsChoice } from "./workspace.ts";
+import { DefaultsChoice, PartyInfo } from "./workspace.ts";
 
 /** A thing: its id, kind, name, its own default view (`""`: none, item 74), who made it and when. */
 export const ThingRow = obj({
@@ -103,8 +111,11 @@ export type GrantInput = Static<typeof GrantInput>;
 /** A person: their id, name, whether they have the owner flag, and who made them. */
 export const PersonRow = obj({ person: str(), name: str(), owner: bool(), madeBy: Source });
 
-/** A group: its id, name, and whether it is outside (its members never count as everyone here). */
-export const GroupRow = obj({ group: str(), name: str(), outside: bool() });
+/** A group: its id, name, who changes its members, and whether it is outside. */
+export const GroupRow = obj({ group: str(), name: str(), managedBy: ManagedBy, outside: bool() });
+
+/** A party with a group's own tick. */
+export const GroupManagerRow = obj({ group: str(), party: Party });
 
 /** A person in a group, as one source put them there, with whether the group is outside. */
 export const GroupMemberRow = obj({ group: str(), person: str(), source: Source, outside: bool() });
@@ -122,6 +133,29 @@ export const Answer = obj({
 	makes: opt(arr(str())),
 	above: opt(arr(str())),
 });
+
+/**
+ * What an invite link is made with (R39): into `workspace`, made by `by`, `as` a member or a guest, valid `expires`
+ * milliseconds (7 days by default), spent by its first use unless `uses` is `several`, its redeemer also put into
+ * `group`.
+ */
+export const InviteInput = obj({
+	workspace: str(),
+	name: str({ min: 1, max: 200 }),
+	as: oneOf("member", "guest"),
+	expires: opt(int({ min: 1 })),
+	uses: opt(oneOf("one", "several")),
+	group: opt(str()),
+	by: Source,
+});
+export type InviteInput = Static<typeof InviteInput>;
+
+/** Whom a redeemed invite link signs in. */
+export const Invited = obj({ person: str(), name: str() });
+export type Invited = Static<typeof Invited>;
+
+/** A person in a group as the group's page lists them: with their name. */
+export const GroupMemberNameRow = obj({ group: str(), person: str(), name: str(), source: Source });
 
 /** The things plugin's store: every table's rows as named queries (each a key or index search), and every write. */
 export const ThingsStore = local("things.store", {
@@ -146,9 +180,22 @@ export const ThingsStore = local("things.store", {
 		switches: queries(SwitchRow, { here: obj({ workspace: str() }) }),
 		grants: queries(GrantRow, { here: obj({ workspace: str() }) }),
 		// `ofIds`: the persons of a list in one read (the notes plugin reads its notes' authors' names with it).
-		persons: queries(PersonRow, { one: obj({ person: str() }), ofIds: obj({ persons: arr(str()) }) }),
-		groupMembers: queries(GroupMemberRow, { ofPerson: obj({ person: str() }) }),
-		groups: queries(GroupRow, { ofIds: obj({ groups: arr(str()) }) }),
+		persons: queries(PersonRow, {
+			one: obj({ person: str() }),
+			ofIds: obj({ persons: arr(str()) }),
+			owners: obj({}),
+			all: obj({}),
+		}),
+		groups: queries(GroupRow, { one: obj({ group: str() }), ofIds: obj({ groups: arr(str()) }), all: obj({}) }),
+		groupManagers: queries(GroupManagerRow, {
+			of: obj({ group: str() }),
+			among: obj({ group: str(), partyKeys: arr(str()) }),
+		}),
+		groupMembers: queries(GroupMemberRow, {
+			ofPerson: obj({ person: str() }),
+			of: obj({ group: str(), person: str() }),
+		}),
+		groupMembersNamed: queries(GroupMemberNameRow, { ofGroup: obj({ group: str() }) }),
 		/**
 		 * Makes a thing of `kind` in `workspace`: the kind's `create` hook first, with the new id (item 34), then one
 		 * commit: the thing, its link, the kind's default grants, and every tick for its maker (`by`, a person or a
@@ -173,8 +220,8 @@ export const ThingsStore = local("things.store", {
 		 */
 		ensure: method(obj({ kind: str() }), str()),
 		/**
-		 * Links a thing into a workspace, with its kind's default grants there (`defaults`: those left ticked, item 93; a
-		 * workspace is placed by its parent, never linked).
+		 * Links a thing into a workspace, with its kind's default grants there (`defaults`: without those the person
+		 * removed, item 93; a workspace is placed by its parent, never linked).
 		 */
 		link: method(obj({ workspace: str(), thing: str(), defaults: opt(DefaultsChoice) })),
 		/** Unlinks a thing and what the workspace wrote for it (R15); with its last link the thing goes. */
@@ -205,15 +252,11 @@ export const ThingsStore = local("things.store", {
 		),
 		/**
 		 * Removes workspace `workspace` and everything below it: its line goes in one commit (the subtree gives nothing
-		 * from then on), the rest in background commits, one workspace each (links, grants, switches, members; things
-		 * linked nowhere else go with their delete hooks); each workspace's kinds are told (`workspaceGone`). Pi stays.
+		 * from then on), the rest in background commits, one workspace each (links, grants, switches, members, its own
+		 * groups and invite links; things linked nowhere else go with their delete hooks and cleanup); each workspace's
+		 * kinds are told (`workspaceGone`). Pi stays.
 		 */
 		removeWorkspace: method(obj({ workspace: str() })),
-		/**
-		 * Tells every kind that workspace `workspace` is gone though it stays (a session archived): their
-		 * `workspaceGone` hooks run, durably, as after a removal.
-		 */
-		workspaceGone: method(obj({ workspace: str() })),
 		/** Shows or hides a thing or party from above; `shown` left out removes the switch (the default decides). */
 		setSwitch: method(obj({ workspace: str(), item: Item, shown: opt(bool()) })),
 		setDefaults: method(obj({ workspace: str(), showsThings: opt(bool()), showsPeople: opt(bool()) })),
@@ -229,17 +272,63 @@ export const ThingsStore = local("things.store", {
 		setTick: method(
 			obj({ workspace: str(), thing: str(), party: Party, tick: str(), gives: opt(bool()), source: Source }),
 		),
-		putParty: method(obj({ workspace: str(), party: Party, source: Source })),
+		/**
+		 * Puts a party into a workspace. With `caller` (a person or an agent, not the owner), only a party the picker
+		 * offers them there, checked in the same operation as the write (R18).
+		 */
+		putParty: method(obj({ workspace: str(), party: Party, source: Source, caller: opt(Caller) })),
 		removeParty: method(obj({ workspace: str(), party: Party })),
-		createPerson: method(obj({ name: str(), madeBy: Source }), str()),
+		/** Makes a person (no owner flag), made by `madeBy` (the cleanup of that source takes them, step 3). */
+		createPerson: method(obj({ name: str({ min: 1, max: 200 }), madeBy: Source }), str()),
+		renamePerson: method(obj({ person: str(), name: str({ min: 1, max: 200 }) })),
 		/** Gives or takes the owner flag; refuses taking it from the last owner. */
 		setOwner: method(obj({ person: str(), owner: bool() })),
-		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool() }), str()),
-		addToGroup: method(obj({ group: str(), person: str(), source: Source })),
+		/**
+		 * Removes a person, never one with the owner flag: the cleanup of their source, everything naming them, their
+		 * row; their sign-ins end right after the commit (retried until done).
+		 */
+		removePerson: method(obj({ person: str() })),
+		/** Makes a global group; `managers` get its own tick (its maker, as `Workspace.makeGroup` writes it). */
+		makeGroup: method(obj({ name: str(), managedBy: ManagedBy, outside: bool(), managers: opt(arr(Party)) }), str()),
+		renameGroup: method(obj({ group: str(), name: str() })),
+		/** Replaces who has the group's own tick (changing its members, renaming, removing it: decision 68). */
+		setGroupManagers: method(obj({ group: str(), parties: arr(Party) })),
+		/** Removes a group: its members, managers, every entry, grant and switch naming it, whoever wrote them. */
+		removeGroup: method(obj({ group: str() })),
+		/** Puts a person into a group; with `caller`, only one the picker offers them, checked as `putParty` does. */
+		addToGroup: method(obj({ group: str(), person: str(), source: Source, caller: opt(Caller) })),
+		/**
+		 * What Manage people's picker offers `caller` in `workspace` (R18): the persons, groups and named agents present
+		 * there and in every workspace where the caller is present (an owner: every person and group), whose name has
+		 * `query` in it (any case).
+		 */
+		picker: method(obj({ workspace: opt(str()), caller: Caller, query: str() }), arr(PartyInfo)),
+		/** Whether the picker offers `caller` the party `party` in `workspace` (what `putParty` and `addMember` check). */
+		offers: method(obj({ workspace: opt(str()), caller: Caller, party: Party }), bool()),
+		/**
+		 * Writes an invite link; answers its secret (kept hashed only); `invalid` for a workspace or group that does not
+		 * exist.
+		 */
+		createInvite: method(InviteInput, str()),
+		/**
+		 * Redeems an invite link's secret for `person` (signed in already) or, left out, a new person named as the link
+		 * says, made by its maker; answers whom to sign in, `null` for a secret used up, expired or unknown.
+		 */
+		redeemInvite: method(obj({ secret: str(), person: opt(str()) }), union([Invited, nul()])),
 		removeFromGroup: method(obj({ group: str(), person: str(), source: Source })),
 		/**
-		 * Removes what `source` wrote (grants, group members, workspace members) and the groups it manages, with all
-		 * naming them.
+		 * Takes `person` out of `group` in one commit: every row of theirs there but a provider's and a share's (theirs
+		 * to rewrite: they would come back).
+		 */
+		removeMember: method(obj({ group: str(), person: str() })),
+		/**
+		 * The people plugin's owner made the owner here, with the same id, once (the bridge, ERNDL-1144 push B removes
+		 * it): `owner-bridge.ts` calls it with the people plugin's seed.
+		 */
+		adoptOwner: method(obj({ person: str(), name: str() })),
+		/**
+		 * The cleanup when a source goes, one commit: what `source` wrote (grants, group members, workspace members), the
+		 * groups it manages with all naming them, and the persons it made of whom nothing else is left.
 		 */
 		deleteEverythingFrom: method(obj({ source: Source })),
 		/**
@@ -260,6 +349,49 @@ export const Gives = local("things.gives", {
 	params: { workspace: str(), caller: str() },
 	members: { answers: map(Answer) },
 });
+
+/**
+ * What `workspace` gives `caller`, live, for a kind's object whose calls name another thing (Files and Terminals: a
+ * machine). The server (trusted code) is no party anywhere: nothing.
+ */
+export function givesTo(
+	self: Self<P3Principal>,
+	workspace: string,
+	caller: Caller,
+): Watchable<Readonly<Record<string, Static<typeof Answer>>>> {
+	if (caller.kind === "server") return constant({});
+	const key = caller.kind === "person" ? `person:${caller.person}` : `worker:${caller.session}`;
+	return self.get(Gives, { workspace, caller: key }).answers;
+}
+
+/**
+ * Aborts `controller` once `lost` holds for `source`'s value (the current one included) or its watch ends, unless
+ * `context` aborts first: how a kind's stream (a download, a terminal's bytes) holds what lets its caller in
+ * (decision 25) and ends the moment that goes.
+ */
+export function abortWhen<T>(
+	source: NativeWatchable<T>,
+	lost: (value: T) => boolean,
+	controller: AbortController,
+	context: Context,
+): void {
+	const end = () => controller.abort();
+	void until(source, lost, context).then(end, end);
+}
+
+/**
+ * `abortWhen` for the reference a stream's caller holds: aborts `controller` once `ref` fails, ends or no longer has
+ * its member `member` (the tick that gave it was withheld).
+ */
+export function abortWhenLost<R extends { readonly state: NativeWatchable<RefState> }>(
+	ref: R,
+	member: keyof R,
+	controller: AbortController,
+	context: Context,
+): void {
+	const lost = (state: RefState) => state.kind === "failed" || state.kind === "ended" || ref[member] === undefined;
+	abortWhen(ref.state, lost, controller, context);
+}
 
 /**
  * What the store's object hands admissions: attaching to its index (`Gives` follows it with `self.follow`; `undefined`
@@ -317,22 +449,23 @@ export type ThingHook = {
 	 */
 	readonly delete?: (thing: string, ctx: Ctx<P3Principal>) => Promise<void>;
 	/**
-	 * Clears what the kind keeps for workspace `workspace` (a session's terminals), which is gone: removed, or a session
-	 * archived. Called once per workspace after the commit that removed it, tried again with backoff and at every
+	 * Clears what the kind keeps for workspace `workspace` (a session's terminals), which is gone: removed (an archived
+	 * session keeps what kinds keep for it, decision 122). Called once per workspace after the commit that removed it, tried again with backoff and at every
 	 * start until it succeeds; may run again after a crash (it must be safe to repeat).
 	 */
 	readonly workspaceGone?: (workspace: string, ctx: Ctx<P3Principal>) => Promise<void>;
 	/**
 	 * The plugin's seeded thing of the kind, named `name`: made in Pi once the kind is registered, and again at once
-	 * when it is deleted (`ensure`, `OneThing`).
+	 * when it is deleted (`ensure`, `OneThing`), through the create path with `input` (checked against the kind's
+	 * `create.input` like any other).
 	 */
-	readonly one?: { readonly name: string };
+	readonly one?: { readonly name: string; readonly input?: unknown };
 };
 
 /**
  * What a kind's `create` hook may answer: the new thing's own default view; for a workspace kind also the new
- * workspace's default grants instead of the kind's (a private session, decisions 17, 93; the person's `defaults`
- * choice applies within them), and whether people from above are shown in it.
+ * workspace's default grants instead of the kind's (a private session, decisions 17, 93; what the person's `defaults`
+ * removes is taken from them), and whether people from above are shown in it.
  */
 export type CreateAnswer = {
 	readonly defaultGrants?: DefaultGrants;
@@ -362,4 +495,24 @@ export const OneThing = local("things.one", {
 	version: 1,
 	params: { kind: str() },
 	members: { thing: str() },
+});
+
+/** The people plugin's owner as it hands it over (see `OwnerSeeds`): their person, `null` while there is none. */
+export type OwnerSeed = { readonly person: string; readonly name: string } | null;
+
+/**
+ * A bridge until the people plugin goes (ERNDL-1144's push B removes it): the people plugin contributes its owner's
+ * person, and the things store makes that person, with the same id, its owner, so the owner the owner link signs in
+ * as has the owner flag in the access index. Composed: the people plugin's contribution, `null` without one.
+ */
+export const OwnerSeeds = defineRegistry<OwnerSeed, OwnerSeed>("things.owner-seed", { version: 1 });
+
+/**
+ * Whether group `group` is present for person `person`: present where they are present (the picker's rule, R18), so
+ * they may hold the group's object (1141 §7). Followed over the access index: a hold gains and loses it live.
+ */
+export const GroupPresence = local("things.group-presence", {
+	version: 1,
+	params: { group: str(), person: str() },
+	members: { present: bool() },
 });

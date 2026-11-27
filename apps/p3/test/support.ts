@@ -11,24 +11,36 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	type Context,
+	type Ctx,
 	type Host,
+	type Location,
 	type P3Principal,
+	Roots,
 	remote,
 	Session,
-	Sessions,
-	SessionsList,
+	SessionKind,
+	SessionObject,
 	str,
-	THIS_DEVICE,
-	TRANSCRIPT_WRITES,
+	ThisDevice,
 	Transcript,
 	until,
+	Workspace,
+	withGranted,
 } from "@earendil-works/p3/v1";
 import { ensureLogin, setCredential } from "../plugins/providers/logins.ts";
-import { assertGranted } from "./granted.ts";
-import { FAUX_PROVIDER, keyOf, type Step } from "./plugins/faux-login/contract.ts";
+import { FAUX_PROVIDER, FauxScript, keyOf, type Step } from "./plugins/faux-login/contract.ts";
+import { Probe } from "./plugins/probe/contract.ts";
 
 /** The probe (`test/plugins/probe/`): a test server's plugin under test (`testServer({ plugins: [PROBE] })`). */
 export const PROBE = fileURLToPath(new URL("./plugins/probe/", import.meta.url));
+
+/**
+ * What session `session`'s worker reported since its start (a failed object, a failure nobody awaited), read through
+ * the probe as `client`'s owner: a worker's reports go to its stderr, never to the test server's `errors`.
+ */
+export function workerReports(client: Host<P3Principal>, session: string, context: Context): Promise<string[]> {
+	return client.root(async (ctx) => (await ctx.get(Probe, { session })).reported({}, ctx), context);
+}
 
 /** The faux login (`test/plugins/faux-login/`): a model login answering from a script, a plugin under test. */
 export const FAUX = fileURLToPath(new URL("./plugins/faux-login/", import.meta.url));
@@ -57,8 +69,24 @@ export async function scriptFaux(
 }
 
 /**
- * A coding session titled `title` in `folder`, made by the owner of `client`, with the faux login made in it by
- * `server` (the test server's host; `scriptFaux`), whose agent works until `folder` has a file `gate` (`openGate`):
+ * As `scriptFaux`, over a link: `client` is the owner's (a launched server's, the bench's), which reaches no store of
+ * the server (Astra, round 1); the faux login plugin's `FauxScript` does it there. Answers the login's thing id.
+ */
+export async function scriptFauxAs(
+	client: Host<P3Principal>,
+	workspace: string,
+	script: readonly Step[],
+	context: Context,
+): Promise<string> {
+	return client.root(
+		async (ctx) => (await ctx.get(FauxScript, {})).script({ workspace, script: [...script] }, ctx),
+		context,
+	);
+}
+
+/**
+ * A session titled `title` working in `folder`, made in Pi by the owner of `client`, with the faux login made in it
+ * by `server` (the test server's host; `scriptFaux`), whose agent works until `folder` has a file `gate` (`openGate`):
  * the faux login answers every request with a bash call waiting for it (a run cut off asks again and waits again)
  * until the gate is open. Its row says `working` because the harness says so, as for any run: a test never reports a
  * state the harness owns.
@@ -75,11 +103,7 @@ export async function gatedSession(
 		{ when: "opened", reply: [{ kind: "text", text: "done" }] },
 		{ when: "", reply: [wait] },
 	];
-	const sessions = await client.get(Sessions, {}, context);
-	const session = await sessions.create(
-		{ app: "coding", title, location: { environment: THIS_DEVICE, folder } },
-		context,
-	);
+	const session = await newSession(client, title, context, { folder });
 	await scriptFaux(server, session, script, context);
 	return session;
 }
@@ -90,23 +114,67 @@ export function openGate(folder: string): Promise<void> {
 }
 
 /**
- * Starts the agent's run in `session` (the owner's send through its transcript) and waits until the owner's list
- * shows the session `working`; holds nothing afterwards.
+ * Starts the agent's run in `session` (the owner's send through its transcript) and waits until the session's row
+ * says `working`; holds nothing afterwards.
  */
 export async function startRun(client: Host<P3Principal>, session: string, context: Context): Promise<void> {
 	await client.root(async (ctx) => {
-		const transcript = await ctx.get(Transcript, { session });
-		assertGranted(transcript, ...TRANSCRIPT_WRITES);
+		const transcript = withGranted(await ctx.get(Transcript, { session }), "send")!;
 		await transcript.send({ text: "go", requestId: "go" }, ctx);
-		const list = await ctx.get(SessionsList, { app: "coding", set: "active", view: `run-${session}` });
-		await until(list.list, (value) => value.rows.some((row) => row.id === session && row.state === "working"), ctx);
+		const held = await ctx.get(SessionObject, { workspace: session, thing: session });
+		await until(held.row, (row) => row.state === "working", ctx);
 	}, context);
 }
 
-/** What the owner's `Sessions.create` takes for a new coding session titled `title` (on this device, in `/tmp`). */
-export function coding(title: string) {
-	return { app: "coding", title, location: { environment: THIS_DEVICE, folder: tmpdir() } };
+/** Where a test's session works: a folder, on this device's machine unless `environment` names another. */
+export type TestLocation = { readonly environment?: string; readonly folder: string };
+
+/**
+ * A new session titled `title`, made in Pi by `client` (the owner: every tick of it) with `Workspace.make`, working at
+ * `location` (left out: this device, in a folder of its own); answers its id.
+ */
+export function newSession(
+	client: Host<P3Principal>,
+	title: string,
+	context: Context,
+	location?: TestLocation,
+): Promise<string> {
+	return client.root((ctx) => makeSession(ctx, title, location), context);
 }
+
+/** As `newSession`, as the caller of `ctx` (the owner, or anyone with Make of sessions in Pi). */
+export async function makeSession(ctx: Ctx<P3Principal>, title: string, location?: TestLocation): Promise<string> {
+	const workspace = withGranted(await ctx.get(Workspace, { workspace: await piIn(ctx) }), "make")!;
+	const at: Location | undefined =
+		location === undefined
+			? undefined
+			: { environment: location.environment ?? (await thisDeviceIn(ctx)), folder: location.folder };
+	return workspace.make({ kind: SessionKind.name, name: title, input: at === undefined ? {} : { location: at } }, ctx);
+}
+
+/** This device's machine (what a location on it names), as `client` reads it. */
+export function thisDevice(client: Host<P3Principal>, context: Context): Promise<string> {
+	return client.root(thisDeviceIn, context);
+}
+
+/** This device's machine, as the caller of `ctx` reads it (once the store seeded it). */
+async function thisDeviceIn(ctx: Ctx<P3Principal>): Promise<string> {
+	return until((await ctx.get(ThisDevice, {})).machine, (machine) => machine !== "", ctx);
+}
+
+/** Pi, the root workspace, as `client` (the owner) sees it. */
+export function piOf(client: Host<P3Principal>, context: Context): Promise<string> {
+	return client.root(piIn, context);
+}
+
+/** Pi, as the caller of `ctx` sees it (their topmost workspace). */
+async function piIn(ctx: Ctx<P3Principal>): Promise<string> {
+	const roots = await ctx.get(Roots, { view: "test-pi" });
+	return (await until(roots.list, (value) => value.rows.length > 0, ctx)).rows[0]!.workspace;
+}
+
+/** A location on this device in `/tmp`, for sessions whose folder no test reads. */
+export const TMP: TestLocation = { folder: tmpdir() };
 
 /** Whether process `pid` lives. */
 export function alive(pid: number): boolean {

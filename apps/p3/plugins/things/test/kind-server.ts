@@ -1,5 +1,5 @@
 // A kind's tests' server: the kind's server facet beside the things plugin's on the things plugin's test host (`world`:
-// a SQLite store, counted work), with what a kind's cases set up there: people put into a workspace, workspaces with a
+// a SQLite store, counted work), and the facets the kind needs beside it (another plugin, a stand-in), with what a kind's cases set up there: people put into a workspace, workspaces with a
 // session's agent, things of the kind, ticks given or withheld, a thing held by one caller or several at once, the
 // counted work, a reload of the kind's facet, and the kind's harness part (its worker facet, built as a session's
 // worker builds it) given the things an agent holds.
@@ -13,12 +13,14 @@ import {
 	isChordError,
 	type P3Principal,
 	type ParamsOf,
+	type PluginFacet,
 	type Reference,
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { ThingsStore } from "../contract.server.ts";
 import type { Party, Source } from "../contract.ts";
 import {
+	type HarnessContribution,
 	type HarnessExtension,
 	type HarnessLocation,
 	type HarnessSession,
@@ -74,25 +76,32 @@ export type KindServer<C extends Contract> = {
 	reload(): Promise<void>;
 	/**
 	 * Runs `fn` with session `session`'s agent holding `things` in `workspace`, its conversations working at
-	 * `location` (none by default): the extension the kind's harness part gives for them, and the held things.
+	 * `location` (none by default): the extension the kind's harness part gives for them, the held things, and the
+	 * part's whole contribution (its environments, for a part that gives them).
 	 */
 	giving<T>(
 		at: { readonly session: string; readonly workspace: string; readonly location?: HarnessLocation },
 		things: readonly string[],
-		fn: (extension: HarnessExtension, ctx: Ctx<P3Principal>, held: readonly HeldThing<C>[]) => Promise<T>,
+		fn: (
+			extension: HarnessExtension,
+			ctx: Ctx<P3Principal>,
+			held: readonly HeldThing<C>[],
+			contribution: HarnessContribution,
+		) => Promise<T>,
 	): Promise<T>;
 	/** The kind's worker facet, built for session `session`'s worker as it builds it (once per session). */
 	worker(session: string): Promise<TestedPlugin<P3Principal>>;
 	close(): Promise<void>;
 };
 
-/** Starts `plugin`'s server facet, the plugin of `Kind`, beside the things plugin's. */
+/** Starts `plugin`'s server facet, the plugin of `Kind`, beside the things plugin's and the facets `beside`. */
 export async function kindServer<C extends Contract>(
 	plugin: KindPlugin,
 	Kind: ThingKind<C>,
 	context: Context,
+	beside: readonly PluginFacet<P3Principal>[] = [],
 ): Promise<KindServer<C>> {
-	const w = await world(context, [{ name: plugin.name, facet: plugin.server }]);
+	const w = await world(context, [...beside, { name: plugin.name, facet: plugin.server }]);
 	const { host } = w;
 	const things = await host.get(ThingsStore, {}, context);
 	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
@@ -155,11 +164,13 @@ export async function kindServer<C extends Contract>(
 			return host.root(
 				async (ctx) => {
 					const held: HeldThing<C>[] = [];
-					for (const thing of ids) held.push({ thing, workspace, ref: await get(ctx, workspace, thing) });
+					for (const thing of ids)
+						held.push({ thing, workspace, depth: 0, ref: await get(ctx, workspace, thing) });
 					// The registry's part takes any kind's held things; these are its kind's.
-					const { extension } = entry.value.part(held as unknown as readonly HeldThing[], harness);
+					const contribution = entry.value.part(held as unknown as readonly HeldThing[], harness);
+					const { extension } = contribution;
 					if (extension === undefined) throw new Error(`${Kind.name}: the harness part gave no extension`);
-					return fn(extension, ctx, held);
+					return fn(extension, ctx, held, contribution);
 				},
 				context,
 				{ principal },

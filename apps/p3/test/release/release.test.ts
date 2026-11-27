@@ -16,8 +16,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
-import { Sessions, SessionWorker } from "../../plugins/sessions/contract.ts";
-import { childrenOf, coding, launch, offline } from "../support.ts";
+import { SessionWorker } from "../../plugins/sessions/contract.ts";
+import { childrenOf, launch, newSession, offline, TMP } from "../support.ts";
 import { eventually } from "../until.ts";
 
 const run = promisify(execFile);
@@ -72,7 +72,7 @@ describe("the installed release", () => {
 		const server = await launch(P3, join(root, "workers"));
 		try {
 			const client = await ownerClient(server.dataDir, server.port, context, 30_000);
-			const id = await (await client.get(Sessions, {}, context)).create(coding("one"), context);
+			const id = await newSession(client, "one", context, TMP);
 			const worker = await client.get(SessionWorker, { session: id }, context);
 			assert.equal(worker.state.value.kind, "live");
 			// Besides the worker, the server has esbuild's service as a child (it builds the plugins).
@@ -151,7 +151,7 @@ const HELLO = {
 		include: ["contract.ts", "server.ts", "worker.ts"],
 	}),
 	"contract.ts": [
-		'import { method, obj, oneOf, OwnerAdmission, remote, Server, Session, SessionAdmission, str } from "@earendil-works/p3/v1";',
+		'import { method, obj, oneOf, OwnerAdmission, remote, Server, Session, str } from "@earendil-works/p3/v1";',
 		"",
 		"/** A greeting the server has for its owner, plain or loud. */",
 		'export const Hello = remote("hello.greeting", {',
@@ -163,12 +163,12 @@ const HELLO = {
 		"	methods: { greet: method(obj({ name: str() }), str()) },",
 		"});",
 		"",
-		"/** The session whose worker serves it, as that worker's runtime says, for whoever works in the session. */",
+		"/** The session whose worker serves it, as that worker's runtime says, for whoever the session gives anything. */",
 		'export const Where = remote("hello.where", {',
 		"	version: 1,",
 		"	params: { session: str() },",
 		"	hostAddress: ({ session }) => Session({ id: session }),",
-		"	admission: SessionAdmission,",
+		"	admission: obj({}),",
 		"	state: { session: str() },",
 		"});",
 	].join("\n"),
@@ -188,7 +188,7 @@ const HELLO = {
 		"});",
 	].join("\n"),
 	"worker.ts": [
-		'import { admitSession, constant, defineFacet } from "@earendil-works/p3/v1";',
+		'import { constant, defineFacet, followSession } from "@earendil-works/p3/v1";',
 		'import { WorkerRuntime } from "@earendil-works/p3/v1/worker";',
 		'import { Where } from "./contract.ts";',
 		"",
@@ -196,7 +196,7 @@ const HELLO = {
 		"	host.serve(",
 		"		Where,",
 		"		(_params, _principal, _admitted, self) => ({ session: constant(self.registry(WorkerRuntime).value.session) }),",
-		"		{ admit: admitSession() },",
+		"		{ admit: followSession() },",
 		"	);",
 		"});",
 	].join("\n"),
@@ -243,7 +243,7 @@ const HELLO = {
 		'import assert from "node:assert/strict";',
 		'import { it } from "node:test";',
 		'import { fileURLToPath } from "node:url";',
-		'import { BACKGROUND_CONTEXT as context, Sessions, THIS_DEVICE } from "@earendil-works/p3/v1";',
+		'import { BACKGROUND_CONTEXT as context, Roots, SessionKind, ThisDevice, until, withGranted, Workspace } from "@earendil-works/p3/v1";',
 		'import { testServer } from "@earendil-works/p3/v1/testing";',
 		'import { Hello, Where } from "../contract.ts";',
 		"",
@@ -253,8 +253,14 @@ const HELLO = {
 		"		const client = await t.client(context);",
 		'		const hello = await client.get(Hello, { tone: "plain" }, context);',
 		'		assert.equal(await hello.greet({ name: "p3" }, context), "hello, p3");',
-		"		const location = { environment: THIS_DEVICE, folder: t.dataDir };",
-		'		const session = await (await client.get(Sessions, {}, context)).create({ app: "coding", title: "one", location }, context);',
+		"		const device = await client.get(ThisDevice, {}, context);",
+		'		const machine = await until(device.machine, (id) => id !== "", context);',
+		"		const location = { environment: machine, folder: t.dataDir };",
+		'		const roots = await client.get(Roots, { view: "e2e" }, context);',
+		"		const [pi] = (await until(roots.list, (list) => list.rows.length > 0, context)).rows;",
+		"		const workspace = await client.get(Workspace, { workspace: pi.workspace }, context);",
+		'		const maker = withGranted(workspace, "make")!;',
+		'		const session = await maker.make({ kind: SessionKind.name, name: "one", input: { location } }, context);',
 		"		const where = await client.get(Where, { session }, context);",
 		"		assert.equal(where.session.value, session);",
 		'		assert.equal((await t.workers(context))[session]?.status, "running");',

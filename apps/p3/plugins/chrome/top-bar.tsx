@@ -1,61 +1,86 @@
-// The top bar, as Inkling's app header: Elanor's `Layout.Header` with `TopNavigation`. On the left the app switcher
-// (the apps the caller may enter), on the right the connection and the person menu (My things; for the owner: "Invite a
-// person").
+// The top bar, as Inkling's app header: Elanor's `Layout.Header` with `TopNavigation`. On the left the wordmark and
+// where the page is (the workspace, the thing, Settings), on the right the connection and the person menu (who is
+// signed in, their own page).
 
-import { Button, Layout, Menu, ProjectSwitcher, TopNavigation } from "@earendil-works/elanor-react";
-import type { AppInfo } from "@earendil-works/p3/v1";
-import { FolderIcon, KeyboardArrowDownIcon, navigate, PersonAddIcon } from "@earendil-works/p3/v1/web";
+import { Button, Layout, Menu, TopNavigation } from "@earendil-works/elanor-react";
+import {
+	ChevronRightIcon,
+	KeyboardArrowDownIcon,
+	navigate,
+	PersonIcon,
+	type Target,
+	targetPath,
+	useHold,
+	useLive,
+	useMessages,
+	useWatch,
+} from "@earendil-works/p3/v1/web";
+// Other plugins' web contracts by path, never through `/v1/web` (see `frame.tsx`).
+import { useNames } from "../things/contract.web.tsx";
+import { ThingInfo, Workspace } from "../things/workspace.ts";
 import { ConnectionStatus } from "./connection.tsx";
 import styles from "./frame.module.css";
-import type { Caller, ChromeProps } from "./frame.tsx";
+import type { ChromeProps } from "./frame.tsx";
+import { messages } from "./messages.ts";
 
-/** The bar: `apps` to switch to (`current` shown), the connection's `state`, and the caller's menu. */
+/** The bar: where the page is, the connection, and the person's menu. */
 export function TopBar(props: ChromeProps) {
 	return (
 		<Layout.Header className={styles.masthead} data-top-bar="" render={<TopNavigation.Root />}>
 			<TopNavigation.Identity className={styles.identity}>
 				<span className={styles.wordmark}>Pi</span>
-				<AppSwitcher apps={props.apps} current={props.current} />
+				{props.target === undefined ? null : <Crumbs settings={props.settings} target={props.target} />}
 			</TopNavigation.Identity>
 			<TopNavigation.Actions className={styles.actions}>
 				<ConnectionStatus state={props.connection} />
-				{props.caller === undefined ? null : (
-					<PersonMenu caller={props.caller} onInvite={props.onInvite} onMyThings={props.onMyThings} />
-				)}
+				{props.person === undefined ? null : <PersonMenu name={props.person} />}
 			</TopNavigation.Actions>
 		</Layout.Header>
 	);
 }
 
-/** The app switcher: the current app's title, a menu of the apps the caller may enter. */
-function AppSwitcher(props: { readonly apps: readonly AppInfo[]; readonly current: AppInfo | undefined }) {
+/** Where the page is: its workspace, the thing shown there, and "Settings" on a Settings view. */
+function Crumbs(props: { readonly target: Target; readonly settings: boolean }) {
+	const { t } = useMessages(messages);
+	const { target } = props;
+	const workspace = useWatch(useLive(useHold(Workspace, { workspace: target.workspace }))?.info);
+	const names = useNames();
 	return (
-		<ProjectSwitcher.Root>
-			<ProjectSwitcher.Trigger className={styles.switcher} data-app-switcher="">
-				{props.current?.title ?? "Apps"}
-			</ProjectSwitcher.Trigger>
-			<ProjectSwitcher.Portal>
-				<ProjectSwitcher.Positioner align="start" sideOffset={4}>
-					<ProjectSwitcher.Popup data-app-menu="">
-						{props.apps.map((app) => (
-							<ProjectSwitcher.Item data-app={app.id} key={app.id} onClick={() => navigate(`/${app.id}`)}>
-								{app.title}
-							</ProjectSwitcher.Item>
-						))}
-					</ProjectSwitcher.Popup>
-				</ProjectSwitcher.Positioner>
-			</ProjectSwitcher.Portal>
-		</ProjectSwitcher.Root>
+		<nav className={styles.crumbs} data-crumbs="">
+			<Button
+				density="compact"
+				hierarchy="tertiary"
+				onClick={() => navigate(targetPath({ kind: "workspace", workspace: target.workspace }))}
+			>
+				{workspace === undefined ? "" : names.thing(workspace.kind, workspace.name)}
+			</Button>
+			{target.kind === "thing" ? <ThingCrumb thing={target.thing} workspace={target.workspace} /> : null}
+			{props.settings ? (
+				<>
+					<ChevronRightIcon />
+					<span className={styles.crumb}>{t("settings")}</span>
+				</>
+			) : null}
+		</nav>
 	);
 }
 
-/** The caller's menu: who is signed in, their things, and for the owner the invite. */
-function PersonMenu(props: {
-	readonly caller: Caller;
-	readonly onInvite: () => void;
-	readonly onMyThings: () => void;
-}) {
-	const name = callerName(props.caller);
+/** The thing's name in the crumbs. */
+function ThingCrumb(props: { readonly workspace: string; readonly thing: string }) {
+	const info = useWatch(useLive(useHold(ThingInfo, props))?.info);
+	const names = useNames();
+	return (
+		<>
+			<ChevronRightIcon />
+			<span className={styles.crumb}>{info === undefined ? "" : names.thing(info.kind, info.name)}</span>
+		</>
+	);
+}
+
+/** The person's menu: who is signed in, and their own page. */
+function PersonMenu(props: { readonly name: string }) {
+	const { t } = useMessages(messages);
+	const { name } = props;
 	return (
 		<Menu.Root>
 			<Menu.Trigger
@@ -69,26 +94,14 @@ function PersonMenu(props: {
 				<Menu.Positioner align="end" sideOffset={4}>
 					<Menu.Popup data-person-popup="">
 						<Menu.Group>
-							<Menu.GroupLabel>Signed in as {name}</Menu.GroupLabel>
+							<Menu.GroupLabel>{t("signedInAs", name)}</Menu.GroupLabel>
 						</Menu.Group>
-						{props.caller.kind === "person" ? (
-							<Menu.Item data-my-things-open="" icon={<FolderIcon />} onClick={props.onMyThings}>
-								My things
-							</Menu.Item>
-						) : null}
-						{props.caller.kind === "person" && props.caller.owner ? (
-							<Menu.Item data-invite-open="" icon={<PersonAddIcon />} onClick={props.onInvite}>
-								Invite a person
-							</Menu.Item>
-						) : null}
+						<Menu.Item data-me-open="" icon={<PersonIcon />} onClick={() => navigate("/me")}>
+							{t("me")}
+						</Menu.Item>
 					</Menu.Popup>
 				</Menu.Positioner>
 			</Menu.Portal>
 		</Menu.Root>
 	);
-}
-
-/** How the chrome names the caller: a person (the owner too) by their name; a session's agent as "Agent". */
-export function callerName(caller: Caller): string {
-	return caller.kind === "person" ? caller.name : "Agent";
 }

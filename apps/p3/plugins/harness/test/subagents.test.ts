@@ -451,7 +451,7 @@ describe("the subagents' part", () => {
 			calls("@b", "subagent", { action: "models", model: "faux b" }),
 			says("", "ok"),
 		];
-		const { ask } = await start([login("a", "faux-a", script), login("b", "faux-b", []), subagents()]);
+		const { ask } = await start([login("a", "faux-a", script), login("b", "faux-b", [says("", "b")]), subagents()]);
 		await ask("@all");
 		await ask("@b");
 		const listed = requests()
@@ -559,7 +559,12 @@ describe("the subagents' part", () => {
 			on("@status", "status"),
 			says("", "ok"),
 		];
-		const { ask } = await start([login("a", "faux-a", script), login("b", "faux-b", []), coding(), subagents()]);
+		const { ask } = await start([
+			login("a", "faux-a", script),
+			login("b", "faux-b", [says("", "b")]),
+			coding(),
+			subagents(),
+		]);
 		await ask("@spawn");
 		await reported("[subagent reader answered] done");
 		await ask("@both");

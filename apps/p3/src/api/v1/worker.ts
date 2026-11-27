@@ -73,7 +73,6 @@ export type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 export { StoreStorage } from "@earendil-works/pi-durable/storage/store";
 export { createCodingTools } from "@earendil-works/pi-durable/tools";
-export * from "../../../plugins/environments/contract.worker.ts";
 export * from "../../../plugins/harness/contract.worker.ts";
 export { loadProvider } from "./providers.ts";
 
