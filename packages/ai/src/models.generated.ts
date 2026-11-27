@@ -9,6 +9,7 @@ import { BASETEN_CLASSIFIER_MODELS, BASETEN_IMAGE_MODELS, BASETEN_MODELS } from 
 import { CEREBRAS_CLASSIFIER_MODELS, CEREBRAS_IMAGE_MODELS, CEREBRAS_MODELS } from "./providers/cerebras.models.ts";
 import { CLOUDFLARE_AI_GATEWAY_CLASSIFIER_MODELS, CLOUDFLARE_AI_GATEWAY_IMAGE_MODELS, CLOUDFLARE_AI_GATEWAY_MODELS } from "./providers/cloudflare-ai-gateway.models.ts";
 import { CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS, CLOUDFLARE_WORKERS_AI_IMAGE_MODELS, CLOUDFLARE_WORKERS_AI_MODELS } from "./providers/cloudflare-workers-ai.models.ts";
+import { CTYUN_TOKEN_PLAN_CLASSIFIER_MODELS, CTYUN_TOKEN_PLAN_IMAGE_MODELS, CTYUN_TOKEN_PLAN_MODELS } from "./providers/ctyun-token-plan.models.ts";
 import { DEEPSEEK_CLASSIFIER_MODELS, DEEPSEEK_IMAGE_MODELS, DEEPSEEK_MODELS } from "./providers/deepseek.models.ts";
 import { FIREWORKS_CLASSIFIER_MODELS, FIREWORKS_IMAGE_MODELS, FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_CLASSIFIER_MODELS, GITHUB_COPILOT_IMAGE_MODELS, GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
@@ -54,6 +55,7 @@ export const MODELS: {
 	readonly "cerebras": typeof CEREBRAS_MODELS;
 	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_MODELS;
 	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_MODELS;
+	readonly "ctyun-token-plan": typeof CTYUN_TOKEN_PLAN_MODELS;
 	readonly "deepseek": typeof DEEPSEEK_MODELS;
 	readonly "fireworks": typeof FIREWORKS_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_MODELS;
@@ -98,6 +100,7 @@ export const MODELS: {
 	"cerebras": CEREBRAS_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_MODELS,
+	"ctyun-token-plan": CTYUN_TOKEN_PLAN_MODELS,
 	"deepseek": DEEPSEEK_MODELS,
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
@@ -144,6 +147,7 @@ export const IMAGE_MODELS: {
 	readonly "cerebras": typeof CEREBRAS_IMAGE_MODELS;
 	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_IMAGE_MODELS;
 	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_IMAGE_MODELS;
+	readonly "ctyun-token-plan": typeof CTYUN_TOKEN_PLAN_IMAGE_MODELS;
 	readonly "deepseek": typeof DEEPSEEK_IMAGE_MODELS;
 	readonly "fireworks": typeof FIREWORKS_IMAGE_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_IMAGE_MODELS;
@@ -188,6 +192,7 @@ export const IMAGE_MODELS: {
 	"cerebras": CEREBRAS_IMAGE_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_IMAGE_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_IMAGE_MODELS,
+	"ctyun-token-plan": CTYUN_TOKEN_PLAN_IMAGE_MODELS,
 	"deepseek": DEEPSEEK_IMAGE_MODELS,
 	"fireworks": FIREWORKS_IMAGE_MODELS,
 	"github-copilot": GITHUB_COPILOT_IMAGE_MODELS,
@@ -234,6 +239,7 @@ export const CLASSIFIER_MODELS: {
 	readonly "cerebras": typeof CEREBRAS_CLASSIFIER_MODELS;
 	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_CLASSIFIER_MODELS;
 	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS;
+	readonly "ctyun-token-plan": typeof CTYUN_TOKEN_PLAN_CLASSIFIER_MODELS;
 	readonly "deepseek": typeof DEEPSEEK_CLASSIFIER_MODELS;
 	readonly "fireworks": typeof FIREWORKS_CLASSIFIER_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_CLASSIFIER_MODELS;
@@ -278,6 +284,7 @@ export const CLASSIFIER_MODELS: {
 	"cerebras": CEREBRAS_CLASSIFIER_MODELS,
 	"cloudflare-ai-gateway": CLOUDFLARE_AI_GATEWAY_CLASSIFIER_MODELS,
 	"cloudflare-workers-ai": CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS,
+	"ctyun-token-plan": CTYUN_TOKEN_PLAN_CLASSIFIER_MODELS,
 	"deepseek": DEEPSEEK_CLASSIFIER_MODELS,
 	"fireworks": FIREWORKS_CLASSIFIER_MODELS,
 	"github-copilot": GITHUB_COPILOT_CLASSIFIER_MODELS,

@@ -84,6 +84,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 	// Qwen Token Plan: the per-plan variable first, then the region variable both plans used to share.
 	const envMap: Record<string, string | readonly string[]> = {
 		"ant-ling": "ANT_LING_API_KEY",
+		"ctyun-token-plan": "CTYUN_TOKEN_PLAN_API_KEY",
 		"qwen-token-plan": ["QWEN_TOKEN_PLAN_TEAM_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"],
 		"qwen-token-plan-cn": ["QWEN_TOKEN_PLAN_TEAM_CN_API_KEY", "QWEN_TOKEN_PLAN_CN_API_KEY"],
 		"qwen-token-plan-individual": ["QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY", "QWEN_TOKEN_PLAN_API_KEY"],

@@ -94,6 +94,7 @@ export type KnownProvider =
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
+	| "ctyun-token-plan"
 	| "google"
 	| "google-vertex"
 	| "openai"

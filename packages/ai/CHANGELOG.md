@@ -8,6 +8,7 @@
 
 ### Added
 
+- Added the `ctyun-token-plan` provider with seven OpenAI-compatible models (minimax-m3, kimi-k2.6, glm-5.1, glm-5.2, deepseek-v4-flash-0731-new, deepseek-v4-pro-0813, ctyun-smart-router), authenticated with `CTYUN_TOKEN_PLAN_API_KEY`
 - Added `compat.supportsReasoningReplay` to the `bedrock-converse-stream` API. When `false`, reasoning from earlier assistant messages is not sent back
 - Added `aspectRatio` and `size` to `ImagesOptions`, forwarded by `openrouter-images` to OpenRouter's `image_config`
 
