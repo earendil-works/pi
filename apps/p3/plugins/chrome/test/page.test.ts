@@ -893,14 +893,14 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.settled("[data-add-thing-dialog]");
 		await press('[data-add-offer="make:sessions.session"]');
 		await browser.type("[data-add-name]", "Alpha");
-		await browser.type('[data-field="folder"]', "custom/folder");
+		await browser.type('[data-field="folder"]', "/custom/folder");
 		await press('[data-add-default="everyone/send"]');
 		const draft = () =>
 			browser.evaluate<string>(
 				`JSON.stringify([document.querySelector("[data-add-name]").value, document.querySelector('[data-field="folder"]').value, document.querySelector('[data-add-default="everyone/send"]').getAttribute("aria-checked")])`,
 			);
 		const before = await draft();
-		assert.equal(before, JSON.stringify(["Alpha", "custom/folder", "false"]));
+		assert.equal(before, JSON.stringify(["Alpha", "/custom/folder", "false"]));
 		// Astra, review round 2: an apply of the things plugin remounted the dialog and lost the folder and the removal.
 		const file = join(builtIn, "things/add-thing.tsx");
 		await writeFile(

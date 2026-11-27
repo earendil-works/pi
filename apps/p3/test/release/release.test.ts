@@ -255,7 +255,7 @@ const HELLO = {
 		'		assert.equal(await hello.greet({ name: "p3" }, context), "hello, p3");',
 		"		const device = await client.get(ThisDevice, {}, context);",
 		'		const machine = await until(device.machine, (id) => id !== "", context);',
-		"		const location = { environment: machine, folder: t.dataDir };",
+		"		const location = { machine, folder: t.dataDir };",
 		'		const roots = await client.get(Roots, { view: "e2e" }, context);',
 		"		const [pi] = (await until(roots.list, (list) => list.rows.length > 0, context)).rows;",
 		"		const workspace = await client.get(Workspace, { workspace: pi.workspace }, context);",

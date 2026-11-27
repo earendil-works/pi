@@ -22,6 +22,7 @@ import {
 	obj,
 	type P3Principal,
 	type PluginFacet,
+	type SessionDetail,
 	SessionFacts,
 	SessionKind,
 	type SessionRow,
@@ -124,6 +125,8 @@ export type Server = {
 	readonly given: Map<string, number>;
 	/** Sets the session's row (as the server's store would change it). */
 	row(change: Partial<SessionRow>): void;
+	/** The conversations moved, by id (`SessionFacts.detail`, as `moveLocation` set them). */
+	readonly moved: () => SessionDetail["locations"];
 	/**
 	 * Sets what the agent holds (and makes the holding ready); a kind whose entries are the same objects in the same
 	 * order keeps its list.
@@ -149,7 +152,7 @@ const DEVICE: Holding = { kind: DeviceKind.name, held: heldThing("this-device", 
 export function sessionRow(id: string, folder: string): SessionRow {
 	return {
 		id,
-		location: { environment: "this-device", folder },
+		location: { machine: "this-device", folder },
 		createdAt: 1,
 		state: "settled",
 		lastTouch: 1,
@@ -210,6 +213,8 @@ export function standIns(
 	let complete: Promise<void> = Promise.resolve();
 	let readies = 0;
 	const rows = new Set<Writable<SessionRow>>();
+	let movedValue: SessionDetail = { locations: {} };
+	const details = new Set<Writable<SessionDetail>>();
 	const holdings = new Set<Writable<Held | undefined>>();
 	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
 	const answers = new Set<{ caller: string; answer: Writable<{ kind: string; ticks: string[] } | null> }>();
@@ -226,6 +231,7 @@ export function standIns(
 			rowValue = { ...rowValue, ...change };
 			for (const writable of rows) writable.set(rowValue);
 		},
+		moved: () => movedValue.locations,
 		hold: (next) => {
 			grouped = group([...next, DEVICE], grouped);
 			heldValue = grouped;
@@ -259,8 +265,17 @@ export function standIns(
 				);
 			const session = self.writable(rowValue);
 			rows.add(session);
+			const detail = self.writable(movedValue);
+			details.add(detail);
 			return {
 				session: self.derive([session], ([value]) => value),
+				detail: self.derive([detail], ([value]) => value),
+				moveLocation: async ({ conversation, location }) => {
+					const { [conversation]: _undone, ...others } = movedValue.locations;
+					movedValue = { locations: location === null ? others : { ...others, [conversation]: location } };
+					for (const writable of details) writable.set(movedValue);
+					return null;
+				},
 				report: async ({ state }) => {
 					await release;
 					control.reports.push(state);
@@ -313,7 +328,7 @@ export function standIns(
 					parameters: obj({}),
 					execute: async (_args, _api, context) => {
 						const folder = await session.call(
-							async (ctx) => (await ctx.get(SessionFacts, {})).session.value?.location.folder ?? "",
+							async (ctx) => (await ctx.get(SessionFacts, {})).session.value?.location?.folder ?? "",
 							context,
 						);
 						return { output: [{ type: "text", text: `folder: ${folder}` }] };

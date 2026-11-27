@@ -60,7 +60,7 @@ async function withSession(idleMs?: number) {
 	running = t;
 	const owner = await t.client(t.owner);
 	// Where the topology's sessions work: this device's machine, in /tmp.
-	const here = { environment: await thisDevice(owner, context), folder: "/tmp" };
+	const here = { machine: await thisDevice(owner, context), folder: "/tmp" };
 	const make = (title: string) => newSession(owner, title, context, here);
 	const archive = async (session: string) => {
 		const held = await owner.get(SessionObject, { workspace: session, thing: session }, context);
@@ -122,6 +122,31 @@ describe("reloads while in use", () => {
 		await archive(id);
 		await until(worker.session, (row) => row?.archivedAt !== null, within("the archived row", context));
 		await until(session.row, (row) => row.archivedAt !== null, within("the archived object", context));
+		assert.deepEqual(t.errors, []);
+	});
+
+	// Opus S3, push 4 round 1: Manage's view of the moved conversations and the worker's go on through a reload.
+	it("the sessions plugin on the server: a session's moved conversations, as Manage and its worker see them, go on", async () => {
+		const { t, owner, id } = await withSession();
+		const machine = await thisDevice(owner, context);
+		const session = withGranted(await owner.get(SessionObject, { workspace: id, thing: id }, context), "detail")!;
+		const worker = await t.client({ kind: "worker", session: id });
+		const facts = await worker.get(SessionFacts, {}, context);
+		await until(
+			session.detail,
+			(detail) => Object.keys(detail.locations).length === 0,
+			within("the detail", context),
+		);
+		await t.reload("@earendil-works/p3-sessions");
+		await facts.moveLocation({ conversation: "1", location: { machine, folder: "/srv" } }, context);
+		const moved = { "1": { machine, folder: "/srv" } };
+		await until(
+			session.detail,
+			(detail) => detail.locations["1"]?.folder === "/srv",
+			within("Manage's view", context),
+		);
+		await until(facts.detail, (detail) => detail.locations["1"]?.folder === "/srv", within("the worker's", context));
+		assert.deepEqual(facts.detail.value.locations, moved);
 		assert.deepEqual(t.errors, []);
 	});
 
@@ -380,9 +405,10 @@ describe("counted work", () => {
 		await until(session.row, (row) => row.state === "working", within("the report", context));
 	});
 
-	// The route's admission and the worker objects' (`followSession`) read the access index, no query; the worker's
-	// facts read its session's row: one run; a second hold shares it.
-	// Astra, round 5: the worker's start is counted whole, wherever its machine read lands around the first hold.
+	// The route's admission and the worker objects' (`followSession`) read the access index, no query. The worker's
+	// start reads its session's row (its facts; its moved conversations are a document, no query), and its holding this
+	// device's machine's info, once: two runs by the time it holds its machine (Astra, round 5 of the machines: the
+	// start is counted whole, wherever the machine's read lands around the first hold). A second hold shares them all.
 	it("a session's worker costs two reads by the time it holds its machine: its row and the machine's; a second hold none", async () => {
 		const { t, owner, id, pi } = await withSession();
 		await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);

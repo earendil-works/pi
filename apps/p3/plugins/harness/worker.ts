@@ -28,6 +28,7 @@ import {
 import {
 	type Conversation,
 	type ConversationId,
+	type ConversationRecord,
 	Harness,
 	LiveDoc,
 	type OpenHarness,
@@ -207,32 +208,35 @@ type Sources = {
 async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentParts }> {
 	const { runtime, facts, parts, held } = sources;
 	const { session, host: worker, store } = runtime;
-	// Every conversation works at the session's location until slice 5 gives each its own.
-	const location = (): HarnessLocation | undefined => {
-		const row = facts.session.value;
-		return row === null ? undefined : { machine: row.location.environment, folder: row.location.folder };
-	};
+	// Set once Durable is open; a location asked before (a part at its apply) is the session's.
+	let durable: Harness | undefined;
+	const location = locations(facts, async (conversation, context) =>
+		durable === undefined ? undefined : durable.commit((tx) => tx.conversation(conversation), context),
+	);
 	const things = new AgentParts({
 		session,
 		// The session's workspace has the session's id (slice 5); the parts take it from here, never assume it.
 		workspace: session,
 		call: (fn, context) => worker.root(fn, context),
-		location: async () => location(),
+		location,
+		moveLocation: async (conversation, location, context) => {
+			await facts.moveLocation({ conversation: String(conversation), location }, context);
+		},
 	});
 	// The subagents' tasks, whatever the agent holds: a reporter under way finishes when Use is withheld.
 	things.registry.install(SUBAGENT_TASKS);
 	// Not ready yet: nothing to give before the first submit or resume waits for it.
 	if (held.value !== undefined) things.apply(held.value, parts.value);
-	const durable = await openHarness(
+	durable = await openHarness(
 		store,
 		{
 			models: () => things.models,
 			registry: things.registry,
-			// The environment at the session's location (per conversation with slice 5), read at each use; it never
-			// changes while a tool call runs. Only kinds give environments (a machine's): a location on no machine the
-			// agent holds with what that machine asks (Work here) has none, and nothing falls back.
-			env: (_target, context) => {
-				const at = location();
+			// The environment at the conversation's location, read at each use; it never changes while a tool call runs.
+			// Only kinds give environments (a machine's): a location on no machine the agent holds with what that machine
+			// asks (Work here) has none, and nothing falls back.
+			env: async ({ conversationId }, context) => {
+				const at = await location(conversationId, context);
 				return at === undefined ? undefined : things.env(at, context);
 			},
 			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
@@ -240,6 +244,36 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 		opening,
 	);
 	return { durable, things };
+}
+
+/**
+ * Where each conversation works (decision 24), read at each use: its own location once moved (`SessionFacts`'
+ * `detail`), else its owner conversation's (a subagent works where its caller works, and follows its moves),
+ * else the session's (its row); `undefined` for an unknown session or one on no machine. A conversation's owner never
+ * changes: read once from its record (`record`, with a commit, which is why it is never asked on Durable's Session
+ * line: the environment is built off it, and a request's prompt sections render off it right after, the owner already
+ * read), kept for the harness's life (one entry per conversation that ever asked), and not kept while there is no
+ * record yet.
+ */
+function locations(
+	facts: Reference<typeof SessionFacts>,
+	record: (conversation: ConversationId, context: Context) => Promise<ConversationRecord | undefined>,
+): (conversation: ConversationId, context: Context) => Promise<HarnessLocation | undefined> {
+	const owners = new Map<ConversationId, ConversationId | undefined>();
+	const ownerOf = async (conversation: ConversationId, context: Context) => {
+		if (owners.has(conversation)) return owners.get(conversation);
+		const found = await record(conversation, context);
+		if (found !== undefined) owners.set(conversation, found.owner?.conversationId);
+		return found?.owner?.conversationId;
+	};
+	const at = async (conversation: ConversationId, context: Context): Promise<HarnessLocation | undefined> => {
+		const own = facts.detail.value.locations[String(conversation)];
+		if (own !== undefined) return own;
+		const above = await ownerOf(conversation, context);
+		if (above !== undefined) return at(above, context);
+		return facts.session.value?.location ?? undefined;
+	};
+	return at;
 }
 
 /** Whether the kinds' contributions were complete when a submit picked its model, or still loading past the bound. */

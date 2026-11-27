@@ -2,10 +2,11 @@
 // machine of `Environments` and a folder there; none given, this device in a folder of the session's own. It hands the
 // session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`, and
 // starts from the input it last handed (`input`: a live apply keeps the machine and folder chosen; a machine without a
-// folder is no input, as it makes no difference to the session, so it is not kept).
+// folder is no input, as it makes no difference to the session, so it is not kept). With no folder, it says when this
+// device is not available to the person where the session is made: the session then starts on no machine (R41).
 
 import { Dropdown, Field, Input } from "@earendil-works/elanor-react";
-import { Environments, type JsonValue } from "@earendil-works/p3/v1";
+import { Environments, type JsonValue, Me, MyAnswer, ThisDevice } from "@earendil-works/p3/v1";
 import { CodeIcon, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
 import { useEffect, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web` (see `web.tsx`).
@@ -25,14 +26,16 @@ export function SessionCreate(props: ThingCreateProps) {
 	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
 	const last = locationOf(props.input);
 	const [folder, setFolder] = useState(last?.folder ?? "");
-	const [chosen, setChosen] = useState<string | null>(last?.environment ?? null);
+	const [chosen, setChosen] = useState<string | null>(last?.machine ?? null);
+	const me = useWatch(useLive(useHold(Me, {}))?.me);
+	const device = useWatch(useLive(useHold(ThisDevice, {}))?.machine);
 	const items = (environments ?? []).map((environment) => ({ value: environment.id, label: environment.name }));
 	// This device's machine is the list's first.
 	const machine = chosen ?? items[0]?.value ?? null;
 	const { onReady } = props;
 	useEffect(() => {
 		const trimmed = folder.trim();
-		onReady(trimmed === "" || machine === null ? {} : { location: { environment: machine, folder: trimmed } });
+		onReady(trimmed === "" || machine === null ? {} : { location: { machine, folder: trimmed } });
 	}, [folder, machine, onReady]);
 	return (
 		<div className={styles.form} data-new-session="">
@@ -61,21 +64,33 @@ export function SessionCreate(props: ThingCreateProps) {
 				<Field.Label>{t("folder")}</Field.Label>
 				<Input data-field="folder" onValueChange={setFolder} placeholder="/home/me/project" value={folder} />
 				<Field.Description>{t("folderHint")}</Field.Description>
+				{folder.trim() === "" && me?.kind === "person" && device !== undefined && device !== "" ? (
+					<DeviceNote workspace={props.workspace} caller={`person:${me.id}`} device={device} />
+				) : null}
 			</Field.Root>
 		</div>
 	);
 }
 
 /**
+ * Says that a session made in `workspace` with no folder starts on no machine, when this device (`device`) is not
+ * available to `caller` there (their answer on it: none; the store decides the same at the make).
+ */
+function DeviceNote(props: { readonly workspace: string; readonly caller: string; readonly device: string }) {
+	const { t } = useMessages(messages);
+	const params = { workspace: props.workspace, thing: props.device, caller: props.caller };
+	const answer = useWatch(useLive(useHold(MyAnswer, params))?.answer);
+	return answer === null ? <Field.Description data-no-machine="">{t("noMachineHere")}</Field.Description> : null;
+}
+
+/**
  * The location in an input this step handed before (`{ location }`), if any. The dialog keeps it as `JsonValue`, so
  * its shape is read again here.
  */
-function locationOf(
-	input: JsonValue | undefined,
-): { readonly environment: string; readonly folder: string } | undefined {
+function locationOf(input: JsonValue | undefined): { readonly machine: string; readonly folder: string } | undefined {
 	if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
 	const location = input.location;
 	if (typeof location !== "object" || location === null || Array.isArray(location)) return undefined;
-	const { environment, folder } = location;
-	return typeof environment === "string" && typeof folder === "string" ? { environment, folder } : undefined;
+	const { machine, folder } = location;
+	return typeof machine === "string" && typeof folder === "string" ? { machine, folder } : undefined;
 }

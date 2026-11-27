@@ -1,8 +1,10 @@
 // A new session's commit (ERNDL-704: "a new session's commit under 30 ms"): `Workspace.make` of the session kind in a
 // workspace, by a person with Make of sessions there, as the page's add dialog calls it, until it answers the id:
 // the create hook (the nearest defaults, the row), the things store's commit (the workspace, its grants, its maker
-// and agent put in). A server host in one process with the things, sessions and environments plugins; medians of 50
-// after 5 warm-up makes, min and max beside them; with no other session, and with 500 sessions made before.
+// and agent put in). And a conversation's move by Manage (`SessionObject.moveLocation`, the same 30 ms): the checks
+// (the person's answer on the machine, the agents' Work) and the session's moved document's commit. A server host in
+// one process with the things, sessions and environments plugins; medians of 50 after 5 warm-up calls, min and max
+// beside them; makes with no other session, and with 500 sessions made before.
 // Run from apps/p3 with Node 26:
 //   node --conditions=source --disable-warning=ExperimentalWarning bench/sessions.ts
 
@@ -10,12 +12,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { defineFacet, type P3Principal, withGranted } from "@earendil-works/p3/v1";
-import { type ServerRuntime, ServerRuntime as ServerRuntimeRegistry } from "@earendil-works/p3/v1/server";
+import { defineFacet, type P3Principal, until, withGranted } from "@earendil-works/p3/v1";
+import {
+	type ServerRuntime,
+	ServerRuntime as ServerRuntimeRegistry,
+	WorkerRunners,
+} from "@earendil-works/p3/v1/server";
+import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import environmentsServer from "../plugins/environments/server.ts";
-import { SessionKind } from "../plugins/sessions/kind.ts";
+import { SessionKind, SessionObject } from "../plugins/sessions/kind.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
-import { ThingsStore } from "../plugins/things/contract.server.ts";
+import { OneThing, ThingsStore } from "../plugins/things/contract.server.ts";
 import { makeTick, type Source } from "../plugins/things/contract.ts";
 import { world } from "../plugins/things/test/world.ts";
 import { Workspace } from "../plugins/things/workspace.ts";
@@ -24,9 +31,20 @@ import { WorkspaceKind } from "../plugins/things/workspaces.ts";
 const BY: Source = { kind: "plugin", plugin: "bench" };
 
 const dataDir = await mkdtemp(join(tmpdir(), "p3-bench-sessions-"));
-const runtime = { dataDir, machine: { user: "bench", hostname: "bench" } } as ServerRuntime;
+const runtime = {
+	dataDir,
+	workRoot: join(dataDir, "work"),
+	machine: { user: "bench", hostname: "bench" },
+} as ServerRuntime;
 const w = await world(context, [
-	{ name: "p3.server", facet: defineFacet((host) => host.serve(ServerRuntimeRegistry, { compose: () => runtime })) },
+	{
+		name: "p3.server",
+		facet: defineFacet((host) => {
+			host.serve(ServerRuntimeRegistry, { compose: () => runtime });
+			// No runner: the plugin tier starts no worker, and a removal deletes no worker's data.
+			host.serve(WorkerRunners, { compose: () => undefined });
+		}),
+	},
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 ]);
@@ -61,6 +79,32 @@ async function makes(n: number, warm: number): Promise<number[]> {
 	);
 }
 
+/** The time of `n` moves of conversations of session `session` by Leo (Manage), after `warm` unmeasured ones. */
+async function moves(session: string, n: number, warm: number): Promise<number[]> {
+	const machine = await until(
+		(await w.host.get(OneThing, { kind: MACHINE_KIND }, context)).thing,
+		(id) => id !== "",
+		context,
+	);
+	return w.host.root(
+		async (ctx) => {
+			const held = withGranted(
+				await ctx.get(SessionObject, { workspace: session, thing: session }),
+				"moveLocation",
+			)!;
+			const times: number[] = [];
+			for (let i = 0; i < warm + n; i++) {
+				const started = performance.now();
+				await held.moveLocation({ conversation: String(i + 1), location: { machine, folder: `/srv/${i}` } }, ctx);
+				if (i >= warm) times.push(performance.now() - started);
+			}
+			return times;
+		},
+		context,
+		{ principal: leo },
+	);
+}
+
 /** The median, min and max of `xs`, in ms. */
 function stats(xs: readonly number[]): string {
 	const sorted = xs.toSorted((a, b) => a - b);
@@ -71,5 +115,15 @@ function stats(xs: readonly number[]): string {
 console.log(`a new session's commit, few sessions: ${stats(await makes(50, 5))}`);
 await makes(500, 0);
 console.log(`a new session's commit, 555 sessions made before: ${stats(await makes(50, 0))}`);
+const moving = await w.host.root(
+	async (ctx) =>
+		withGranted(await ctx.get(Workspace, { workspace: family }), "make")!.make(
+			{ kind: SessionKind.name, name: "moving", input: {} },
+			ctx,
+		),
+	context,
+	{ principal: leo },
+);
+console.log(`a conversation's move (its commit, the checks before it): ${stats(await moves(moving, 50, 5))}`);
 await w.close(context);
 await rm(dataDir, { recursive: true, force: true });

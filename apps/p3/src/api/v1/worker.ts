@@ -44,6 +44,7 @@ export {
 	type Conversation,
 	type ConversationHandle,
 	type ConversationId,
+	type ConversationRecord,
 	type ConversationView,
 	configure,
 	createRegistry,
