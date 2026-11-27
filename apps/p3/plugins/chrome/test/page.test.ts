@@ -65,6 +65,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	let family: string;
 	/** Ada, invited and put into Pi (her person id). */
 	let ada: string;
+	/** Ada's sign-in cookie, once she signed in. */
+	let adaCookie: string;
 
 	before(async () => {
 		await mkdir(SHOTS, { recursive: true });
@@ -428,6 +430,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.signOut();
 		await browser.open(`${origin}${link}`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Ada")`);
+		adaCookie = await browser.cookie(origin);
 		await browser.open(`${origin}/w/${session}`);
 		await browser.wait(`document.querySelector('[data-session-view="${session}"] [data-transcript="reader"]')`);
 		await browser.wait(
@@ -608,6 +611,46 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		for (const banned of ["Family", family, pi]) assert.ok(!page.includes(banned), `the page names ${banned}`);
 		await browser.signOut();
 		await browser.signIn(origin, await t.cookie(context));
+	});
+
+	it("opens links from the invite dialog: a new member and a new guest are signed in, a signed-in person is put in", async () => {
+		/** A link into Family made in its invite dialog, `as` a member or a guest, for `name`. */
+		const link = async (as: "member" | "guest", name: string) => {
+			await browser.open(`${origin}/w/${family}/settings`);
+			await press("[data-invite-open]");
+			await browser.settled("[data-invite-dialog]");
+			await press(`[data-invite-as="${as}"]`);
+			await browser.type("[data-invite-name]", name);
+			await press("[data-invite-create]");
+			await browser.wait(`document.querySelector("[data-invite-url]")?.value.length > 0`);
+			return browser.evaluate<string>(`document.querySelector("[data-invite-url]").value`);
+		};
+		const ownerCookie = await browser.cookie(origin);
+		for (const [as, name] of [
+			["member", "Mia"],
+			["guest", "Gus"],
+		] as const) {
+			const url = await link(as, name);
+			await browser.signOut();
+			await browser.open(url);
+			await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("${name}")`);
+			await browser.wait(`location.pathname.startsWith("/w/${family}")`);
+			await browser.signOut();
+			await browser.signIn(origin, ownerCookie);
+		}
+		// Ada, signed in, keeps her sign-in and is put into Family herself (she was there only from Pi).
+		const url = await link("member", "Ada again");
+		await browser.signOut();
+		await browser.signIn(origin, adaCookie);
+		await browser.open(url);
+		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Ada")`);
+		await browser.signOut();
+		await browser.signIn(origin, ownerCookie);
+		await browser.open(`${origin}/w/${family}/settings`);
+		await press('[data-settings-tab="who"]');
+		await browser.wait(
+			`document.querySelector('[data-here-party="person/${ada}"]')?.textContent.includes("from Pi") === false`,
+		);
 	});
 
 	it("keeps the chosen view (?view=) through the gear and Back", async () => {
