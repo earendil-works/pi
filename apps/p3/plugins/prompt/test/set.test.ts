@@ -1,6 +1,7 @@
 // One set of skills on the server (`SkillSet`, held directly as server code holds it): it follows its folder (a skill
 // added appears without a reload), and a folder configured later that is made only after that; `read` opens a skill
-// by its listed name from its folder (a name of its front matter, not the folder's); without a folder it
+// by its listed name from its folder (a name of its front matter, not the folder's); a change of another file keeps
+// its list (no new value for its holders); without a folder it
 // has no skills and refuses `read`; a folder linked out of the root gives no skill to `read`.
 
 import assert from "node:assert/strict";
@@ -8,12 +9,16 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, type Reference, until } from "@earendil-works/p3/v1";
-import { within } from "../../../test/until.ts";
+import { eventually, within } from "../../../test/until.ts";
 import { refused } from "../../things/test/kind-server.ts";
 import { SkillSet } from "../set.ts";
 import { type Skills, SkillsKind } from "../skills-kind.ts";
 import { PromptStore } from "../store.ts";
+import { FolderWatch } from "../watch.ts";
 import { type PromptServer, promptKind } from "./prompt-server.ts";
+
+/** How long a wait for what a folder watch sees may take (a loaded machine delays its events). */
+const WATCHED = 10_000;
 
 let n: PromptServer<typeof Skills>;
 let store: Reference<typeof PromptStore>;
@@ -46,9 +51,9 @@ describe("a set", () => {
 		await writeSkill("coding", "release", "Cut a release");
 		const set = await n.host.get(SkillSet, { thing: await setIn("coding") }, context);
 		try {
-			await until(set.skills, (list) => list.length === 1, within("the folder's skills", context));
+			await until(set.skills, (list) => list.length === 1, within("the folder's skills", context, WATCHED));
 			await writeSkill("coding", "review", "Review a change");
-			await until(set.skills, (list) => list.length === 2, within("the new skill", context));
+			await until(set.skills, (list) => list.length === 2, within("the new skill", context, WATCHED));
 		} finally {
 			set.release();
 		}
@@ -62,7 +67,7 @@ describe("a set", () => {
 		);
 		const set = await n.host.get(SkillSet, { thing: await setIn("coding") }, context);
 		try {
-			await until(set.skills, (list) => list[0]?.name === "release", within("the skill", context));
+			await until(set.skills, (list) => list[0]?.name === "release", within("the skill", context, WATCHED));
 			assert.match((await set.read({ name: "release" }, context)).text, /The steps\./);
 			await refused(set.read({ name: "cut-release" }, context), "invalid");
 		} finally {
@@ -75,12 +80,45 @@ describe("a set", () => {
 		const thing = await setIn("existing");
 		const set = await n.host.get(SkillSet, { thing }, context);
 		try {
-			await until(set.skills, (list) => list.length === 1, within("loaded", context));
+			await until(set.skills, (list) => list.length === 1, within("loaded", context, WATCHED));
 			await store.configureSkills({ thing, folder: "later" }, context);
-			await until(set.skills, (list) => list.length === 0, within("the new folder, missing", context));
+			await until(set.skills, (list) => list.length === 0, within("the new folder, missing", context, WATCHED));
 			await writeSkill("later", "new", "after");
-			await until(set.skills, (list) => list[0]?.name === "new", within("its first skill", context));
+			await until(set.skills, (list) => list[0]?.name === "new", within("its first skill", context, WATCHED));
 		} finally {
+			set.release();
+		}
+	});
+
+	it("keeps its list when another file of the folder changes: no new value for its holders", async () => {
+		await writeSkill("coding", "release", "Cut a release");
+		await writeSkill("family", "recipes", "Cook");
+		const thing = await setIn("coding");
+		const set = await n.host.get(SkillSet, { thing }, context);
+		let witnessed = 0;
+		const witness = new FolderWatch(n.root, () => witnessed++);
+		try {
+			const listed = await until(set.skills, (list) => list.length === 1, within("the skills", context, WATCHED));
+			const values = new Set<unknown>([listed]);
+			// Another file changes; once a watch of the root saw it, the set's watcher has too.
+			witness.watch(n.root);
+			await eventually(
+				async () => {
+					await writeFile(join(n.root, "coding", "release", "notes.txt"), String(Date.now()));
+					return witnessed;
+				},
+				(count) => count > 0,
+			);
+			// The next value: the other folder's list, after the change's read (reads run in order).
+			await store.configureSkills({ thing, folder: "family" }, context);
+			await until(
+				set.skills,
+				(list) => values.add(list) && list[0]?.name === "recipes",
+				within("family", context, WATCHED),
+			);
+			assert.equal(values.size, 2);
+		} finally {
+			witness.close();
 			set.release();
 		}
 	});

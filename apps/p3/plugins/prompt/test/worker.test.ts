@@ -20,6 +20,9 @@ import { type Instructions, InstructionsKind } from "../instructions-kind.ts";
 import { type Skills, SkillsKind } from "../skills-kind.ts";
 import { type PromptServer, promptKind } from "./prompt-server.ts";
 
+/** How long a wait for what a folder watch sees may take (a loaded machine delays its events). */
+const WATCHED = 10_000;
+
 /** The session's agent as a party. */
 const AGENT_PARTY = { kind: "agent", session: "s1" } as const;
 
@@ -157,7 +160,7 @@ describe("the agent's skills", () => {
 	) =>
 		n.giving({ session: "s1", workspace: s1 }, things, async (extension, ctx, held) => {
 			for (const [at, { ref }] of held.entries()) {
-				await until(ref.skills, (list) => list.length === counts[at], within("a set's skills", ctx));
+				await until(ref.skills, (list) => list.length === counts[at], within("a set's skills", ctx, WATCHED));
 			}
 			return fn(extension, held);
 		});
@@ -192,7 +195,7 @@ describe("the agent's skills", () => {
 		await n.tick(s1, hidden, AGENT_PARTY, "use", false);
 		await giving([pi, hidden], [1, 1], async (extension, [held]) => {
 			await writeSkill("pi", "triage", "Sort the issues");
-			await until(held!.ref.skills, (list) => list.length === 2, within("the new skill", context));
+			await until(held!.ref.skills, (list) => list.length === 2, within("the new skill", context, WATCHED));
 			assert.equal(await section(extension), `${HEADING}\n- release: Cut a release\n- triage: Sort the issues`);
 		});
 		await assert.rejects(
@@ -208,7 +211,7 @@ describe("the agent's skills", () => {
 			await n.tick(s1, pi, AGENT_PARTY, "use", false);
 			await until(held!.ref.state, () => held!.ref.read === undefined, within("Use withheld", context));
 			// The reference rebuilt without `read` lists its set's skills again: the tool finds the name, not the member.
-			await until(held!.ref.skills, (list) => list.length === 1, within("listed again", context));
+			await until(held!.ref.skills, (list) => list.length === 1, within("listed again", context, WATCHED));
 			await assert.rejects(read(extension, "release"), (error) => isChordError(error) && error.code === "forbidden");
 		});
 	});

@@ -24,6 +24,9 @@ import { type Skills, SkillsKind } from "../skills-kind.ts";
 import { PromptStore } from "../store.ts";
 import { type PromptServer, promptKind } from "./prompt-server.ts";
 
+/** How long a wait for what a folder watch sees may take (a loaded machine delays its events). */
+const WATCHED = 10_000;
+
 /** The session's agent of workspace `s1`. */
 const AGENT: P3Principal = { kind: "worker", session: "s1" };
 
@@ -183,7 +186,7 @@ describe("a set of skills", () => {
 		const thing = await setIn("coding");
 		await n.holding(AGENT, s1, thing, async (skills, ctx) => {
 			assert.deepEqual([...skills.granted], ["read"]);
-			await until(skills.skills, (list) => list.length === 1, within("the folder's skills", ctx));
+			await until(skills.skills, (list) => list.length === 1, within("the folder's skills", ctx, WATCHED));
 			assert.deepEqual(skills.skills.value, [{ name: "release", description: "Cut a release" }]);
 			assert.equal(skills.folder.value, "coding");
 			const read = await skills.read!({ name: "release" }, ctx);
@@ -201,7 +204,7 @@ describe("a set of skills", () => {
 		await n.holding(AGENT, s1, thing, async (skills, ctx) => {
 			await configure(thing, { folder: "family" });
 			await until(skills.folder, (folder) => folder === "family", within("the new folder", ctx));
-			await until(skills.skills, (list) => list[0]?.name === "recipes", within("its skills", ctx));
+			await until(skills.skills, (list) => list[0]?.name === "recipes", within("its skills", ctx, WATCHED));
 		});
 	});
 
@@ -235,7 +238,7 @@ describe("a set of skills", () => {
 		const [ann, ben, cy] = [await n.person("Ann"), await n.person("Ben"), await n.person("Cy")];
 		await n.tick(n.pi, thing, { kind: "everyone" }, OPEN, true);
 		const first = await n.holders([ann, ben], n.pi, thing);
-		await until(first.held[0]!.ref.skills, (list) => list.length === 1, within("the skills", context));
+		await until(first.held[0]!.ref.skills, (list) => list.length === 1, within("the skills", context, WATCHED));
 		// Another holder joins the set's open read (one object per set, one watcher): it reads nothing.
 		const joined = n.count("chord.query.runs");
 		const third = await n.holders([cy], n.pi, thing);
@@ -259,10 +262,10 @@ describe("a set of skills", () => {
 		await writeSkill("coding", "release", "Cut a release");
 		const thing = await setIn("coding");
 		await n.holding(AGENT, s1, thing, async (skills, ctx) => {
-			await until(skills.skills, (list) => list.length === 1, within("the skills", ctx));
+			await until(skills.skills, (list) => list.length === 1, within("the skills", ctx, WATCHED));
 			await n.reload();
 			await writeSkill("coding", "review", "Review a change");
-			await until(skills.skills, (list) => list.length === 2, within("the new skill", ctx));
+			await until(skills.skills, (list) => list.length === 2, within("the new skill", ctx, WATCHED));
 		});
 	});
 

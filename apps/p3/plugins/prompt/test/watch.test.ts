@@ -1,7 +1,8 @@
 // The folder watcher (`watch.ts`): which folder it watches (`watchable`: the folder itself when it exists, else its
 // nearest existing ancestor up to the root; nothing for a folder linked out of the root, or with no root); a change
 // under the watched folder is reported, also once a folder waited for is made and then changed; a move to another
-// folder reports that one's changes; after `close` nothing is reported.
+// folder reports that one's changes; once a folder waited for is made the watch moves there, changes beside it no
+// longer reported; after `close` nothing is reported.
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -72,6 +73,32 @@ describe("a folder watch", () => {
 			await seen(reports, join(root, "later", "SKILL.md"));
 		} finally {
 			watch.close();
+		}
+	});
+
+	it("moves to a folder waited for once it is made: changes beside it are not reported", async () => {
+		const { watch, reports } = counted();
+		const { watch: witness, reports: witnessed } = counted();
+		try {
+			watch.watch(join(root, "later"));
+			await seen(reports, join(root, "probe"));
+			await mkdir(join(root, "later"));
+			await seen(reports, join(root, "later", "SKILL.md"));
+			witness.watch(root);
+			// Writes beside the folder until the witness saw five of them in a row that the watch did not report: it moved.
+			const samples: (readonly [number, number])[] = [];
+			await eventually(
+				async () => {
+					await writeFile(join(root, "probe"), String(Date.now()));
+					samples.push([witnessed(), reports()]);
+					return samples.slice(-6);
+				},
+				(last) =>
+					last.length === 6 && last.every(([, count]) => count === last[0]![1]) && last[5]![0] - last[0]![0] >= 5,
+			);
+		} finally {
+			watch.close();
+			witness.close();
 		}
 	});
 
