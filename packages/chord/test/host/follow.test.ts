@@ -2359,3 +2359,19 @@ describe("over a changing source: an idle value and its source's batch", () => {
 		},
 	);
 });
+
+// Astra, round 7 of this change: every detach of the over form goes through its cleanup, which reports a throw.
+describe("over a changing source: a throwing detach on every path", () => {
+	it.each(["stale", "release", "replace"])(
+		"%s: cleanup is observed exactly once without ending the host process",
+		(mode) => {
+			const entry = fileURLToPath(new URL("./fixtures/follow-cleanup-paths.ts", import.meta.url));
+			const proc = spawnSync(process.execPath, ["--conditions=source", entry, mode], { encoding: "utf8" });
+			expect(proc.status, proc.stderr).toBe(0);
+			expect(JSON.parse(proc.stdout)).toMatchObject({
+				detached: 1,
+				reports: ["follow_failed:Error: cleanup failure"],
+			});
+		},
+	);
+});

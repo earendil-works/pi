@@ -257,7 +257,7 @@ class FollowOver implements Dependent {
 		}
 		if (!this.#counts(attachment) || this.#sealed) {
 			if (this.#current === attachment) this.#current = undefined;
-			attached?.detach();
+			if (attached !== undefined) this.#cleanUp(attached);
 			return;
 		}
 		if (attached === undefined) {
@@ -429,7 +429,7 @@ class FollowOver implements Dependent {
 		this.#current = undefined;
 		// As a plain follow's at its attempt's end.
 		this.#left();
-		current?.observation?.detach();
+		if (current?.observation !== undefined) this.#cleanUp(current.observation);
 	}
 }
 
