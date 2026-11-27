@@ -301,8 +301,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				const found = await self.tx((tx) => writes.one(tx, kind, by), ctx);
 				if (found !== undefined) return found;
 				const workspace = (await self.tx((tx) => rootOf(tx, t), ctx))!;
-				const args = { kind, name: entry.value.one.name, workspace, by };
-				return make(args, (tx, changes, thing) => writes.makeOne(tx, changes, { ...args, thing }), ctx);
+				const { name, input } = entry.value.one;
+				const made = { kind, name, workspace, by };
+				return make(
+					{ ...made, input },
+					(tx, changes, thing) => writes.makeOne(tx, changes, { ...made, thing }),
+					ctx,
+				);
 			})();
 			seeding.set(kind, seeded);
 			void seeded.then(

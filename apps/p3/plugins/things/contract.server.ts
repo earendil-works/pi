@@ -411,9 +411,10 @@ export type ThingHook = {
 	readonly workspaceGone?: (workspace: string, ctx: Ctx<P3Principal>) => Promise<void>;
 	/**
 	 * The plugin's seeded thing of the kind, named `name`: made in Pi once the kind is registered, and again at once
-	 * when it is deleted (`ensure`, `OneThing`).
+	 * when it is deleted (`ensure`, `OneThing`), through the create path with `input` (checked against the kind's
+	 * `create.input` like any other).
 	 */
-	readonly one?: { readonly name: string };
+	readonly one?: { readonly name: string; readonly input?: unknown };
 };
 
 /**
