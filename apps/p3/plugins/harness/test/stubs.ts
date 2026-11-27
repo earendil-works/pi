@@ -178,12 +178,18 @@ export type Extra = {
 	readonly seen?: (session: HarnessSession) => void;
 };
 
+/**
+ * How the stand-ins start: `ready: false`, the holding not ready until the test holds something; `facts`, the
+ * session's row not served until it resolves (so the harness opens only then: a case writes the store first).
+ */
+export type StandInOptions = { readonly ready?: boolean; readonly facts?: Promise<void> };
+
 /** The stand-ins (plus the things and tools plugins) for session `row.id`, the extra parts, and the controls. */
 export function standIns(
 	row: SessionRow,
 	held: readonly Holding[],
 	extras: readonly Extra[] = [],
-	{ ready = true }: { readonly ready?: boolean } = {},
+	{ ready = true, facts }: StandInOptions = {},
 ): { stubs: PluginFacet<P3Principal>[]; server: PluginFacet<P3Principal>[]; control: Server } {
 	let rowValue = row;
 	let grouped = group(held, new Map());
@@ -218,6 +224,12 @@ export function standIns(
 	const count = (kind: string) => control.given.set(kind, (control.given.get(kind) ?? 0) + 1);
 	const server = defineFacet((host) => {
 		host.serve(SessionFacts, (_params, _principal, self) => {
+			// Held back until `facts` resolves: the harness opens only once the session's row is known.
+			if (facts !== undefined)
+				self.open(
+					() => facts,
+					() => {},
+				);
 			const session = self.writable(rowValue);
 			rows.add(session);
 			return {
@@ -325,7 +337,7 @@ export async function harnessed(
 	held: readonly Holding[],
 	context: Context,
 	extras: readonly Extra[] = [],
-	options: { readonly ready?: boolean } = {},
+	options: StandInOptions = {},
 ): Promise<Harnessed> {
 	const { stubs, server, control } = standIns(row, held, extras, options);
 	const t = await testPlugin(

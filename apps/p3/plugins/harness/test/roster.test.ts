@@ -3,12 +3,36 @@
 // message of an older generation started it, never work of the stop's own generation; it clears the subagent's mark
 // in the commit that ends it, only while the mark is its own; aborted itself, it clears the mark too. A message's
 // request id carries its generation. Version 1's per-conversation documents are moved into the session's, once
-// (decision 125).
+// (decision 125): on its own, and on a worker whose store holds what main at 7093618af wrote (two top-level
+// conversations listing one name each, a reported answer, a reporter of version 1 in flight).
 
 import assert from "node:assert/strict";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
-import { adoptConversationRosters, requestOf, Stopper, Subagents } from "../roster.ts";
+import { fileURLToPath } from "node:url";
+import { BACKGROUND_CONTEXT as context, contribute, defineFacet, until } from "@earendil-works/p3/v1";
+import { testPlugin } from "@earendil-works/p3/v1/testing";
+import {
+	AssistantEntry,
+	type ConversationId,
+	configure,
+	createModels,
+	createRegistry,
+	defineDoc,
+	defineExtension,
+	defineTask,
+	type EntryId,
+	fauxAssistantMessage,
+	Harness,
+	SessionHarness,
+	StoreStorage,
+	WorkerRuntime,
+} from "@earendil-works/p3/v1/worker";
+import { eventually, within } from "../../../test/until.ts";
+import { Anchor, adoptConversationRosters, requestOf, Stopper, Subagents } from "../roster.ts";
+import { login, says, sessionRow, standIns, subagents } from "./stubs.ts";
 
 /** The stopper's phase `name`, or its abort handler, as the scheduler calls them. */
 function phase(name: "decide" | "abort" | "clear" | "aborted") {
@@ -140,5 +164,134 @@ describe("the move of version 1's documents", () => {
 		);
 		await adoptConversationRosters(durable, context);
 		assert.deepEqual(written.agents, {});
+	});
+});
+
+/** Version 1 of the subagents' document, as main at 7093618af defined it: each conversation's subagents. */
+const SubagentsV1 = defineDoc<{ agents: Record<string, { conversationId: ConversationId; reported: EntryId[] }> }>({
+	checkpointWhen: () => false,
+	kind: "harness.subagents",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	fork: "initial",
+	initial: () => ({ agents: {} }),
+});
+
+/** Version 1 of the reporter, as main at 7093618af stored it: its name, version, input and first phase (never run here). */
+const ReporterV1 = defineTask<
+	{ name: string; conversationId: ConversationId; message: string; followUp: boolean },
+	{ phase: "deliver" },
+	null
+>({
+	name: "harness.subagent-reporter",
+	version: 1,
+	initial: () => ({ phase: "deliver" }),
+	phases: { deliver: async () => {} },
+	abort: async () => {},
+});
+
+/** What the case wrote: the two subagents' conversations and the answer reported. */
+type Written = { readonly first: ConversationId; readonly second: ConversationId; readonly answer: EntryId };
+
+/**
+ * Writes into the worker's store what main at 7093618af left: the root conversation and another top-level one, each
+ * listing a subagent `reader` in its version 1 document, the root's with one reported answer, and a reporter of version
+ * 1 in flight (created, not run) with a message to the root's `reader`. Durable is opened on the store paused, closed
+ * before the harness opens.
+ */
+async function writeV1(store: WorkerRuntime["store"], ctx: typeof context): Promise<Written> {
+	const storage = await StoreStorage.open(store, "harness", ctx);
+	const registry = createRegistry();
+	registry.install(defineExtension({ name: "harness.subagent-tasks", tasks: [Anchor, ReporterV1] }));
+	const durable = await Harness.open(storage, { models: createModels(), registry }, ctx);
+	try {
+		const root = await durable.root(ctx);
+		return await durable.commit(async (tx) => {
+			const background = { ownership: { kind: "conversation" }, background: true } as const;
+			// The agent's model, as the harness's first submit gave it.
+			await configure(tx, root.id, { model: { provider: "faux", modelId: "faux-model" } });
+			const branch = await tx.createConversation({ ownership: { kind: "ownerless" } });
+			const child = async (parent: ConversationId) => {
+				const anchor = await tx.createTask(Anchor, null, { ...background, conversationId: parent });
+				const created = await tx.createConversation({ ownership: { kind: "task", taskId: anchor } });
+				await configure(tx, created.id, { model: { provider: "faux", modelId: "faux-model" } });
+				return created.id;
+			};
+			const first = await child(root.id);
+			const second = await child(branch.id);
+			const answer = await tx.appendEntry(AssistantEntry, first, {
+				model: [fauxAssistantMessage("an earlier answer")],
+			});
+			(await tx.doc(SubagentsV1, root.id)).agents.reader = { conversationId: first, reported: [answer.id] };
+			(await tx.doc(SubagentsV1, branch.id)).agents.reader = { conversationId: second, reported: [] };
+			const input = { name: "reader", conversationId: first, message: "in flight", followUp: false };
+			await tx.createTask(ReporterV1, input, { ...background, conversationId: root.id });
+			return { first, second, answer: answer.id };
+		}, ctx);
+	} finally {
+		await durable.close(ctx);
+	}
+}
+
+describe("a worker whose store version 1 of the subagents wrote", () => {
+	it("moves both subagents into the session's document and delivers the message in flight once (decision 125)", async () => {
+		const folder = await realpath(await mkdtemp(join(tmpdir(), "p3-roster-")));
+		const written = Promise.withResolvers<Written>();
+		const facts = written.promise.then(() => {});
+		// Writes the store before the session's row is served, so the harness opens on it only then.
+		const v1 = defineFacet((host) => {
+			contribute(host, "test.v1", (self) => {
+				const runtime = self.registry(WorkerRuntime);
+				self.open(
+					async (ctx) => {
+						written.resolve(await writeV1(runtime.value.store, ctx));
+						return null;
+					},
+					() => {},
+				);
+			});
+		});
+		const script = [says("in flight", "handled"), says("", "ok")];
+		const { stubs, server, control } = standIns(
+			sessionRow("s1", folder),
+			[login("l", "faux", script), subagents()],
+			[],
+			{
+				facts,
+			},
+		);
+		const t = await testPlugin(
+			fileURLToPath(new URL("../", import.meta.url)),
+			{ kind: "worker", session: "s1", stubs: [{ name: "test.v1", facet: v1 }, ...stubs], server },
+			context,
+		);
+		try {
+			const { first, second, answer } = await written.promise;
+			const open = await until(
+				await t.host.registry(SessionHarness, context),
+				(value) => value !== undefined,
+				within("the harness", context, 10_000),
+			);
+			assert.ok(open !== undefined);
+			await eventually(
+				() => control.requests.filter(({ last }) => last === "[subagent reader answered] handled").length,
+				(count) => count === 1,
+				10_000,
+			);
+			await open.durable.waitForIdle(context);
+			const roster = (await open.durable.snapshot(Subagents, context))?.agents ?? {};
+			assert.deepEqual(Object.keys(roster), ["reader", `reader-${second}`]);
+			const [reader, other] = [roster.reader, roster[`reader-${second}`]];
+			// The earlier answer kept, the one to the message in flight added.
+			assert.deepEqual([reader?.conversationId, reader?.reported[0], reader?.reported.length], [first, answer, 2]);
+			assert.deepEqual(reader?.reportedTo[0], { answer, to: 1 });
+			assert.deepEqual([other?.conversationId, other?.reported], [second, []]);
+			// The message in flight reached the subagent once, and its answer came back once.
+			assert.equal(control.requests.filter(({ last }) => last === "in flight").length, 1);
+		} finally {
+			await t.close(context);
+			await rm(folder, { recursive: true, force: true });
+		}
 	});
 });
