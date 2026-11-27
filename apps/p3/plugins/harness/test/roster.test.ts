@@ -43,9 +43,9 @@ function runtimeOf(agent: object, inputs: number[] = [], requests: Record<number
 	return { runtime, states, aborted };
 }
 
-/** Stopper `id` of the subagent `reader`, conversation 2, generation 1. */
+/** Stopper `id` of the subagent `reader`, conversation 2. */
 function stopperOf(id: number) {
-	return { id, input: { name: "reader", conversationId: 2, generation: 1 } };
+	return { id, input: { name: "reader", conversationId: 2 } };
 }
 
 describe("a subagent's stopper", () => {
@@ -59,6 +59,13 @@ describe("a subagent's stopper", () => {
 		const { runtime, states, aborted } = runtimeOf(agentOf(5), [8], { 8: requestOf(31, 1) });
 		await phase("decide")(stopperOf(5), runtime, context);
 		assert.deepEqual([states, aborted], [[{ status: "running", checkpoint: { phase: "clear" } }], []]);
+	});
+
+	it("decides by the subagent's current generation: a stop that reused it makes the first stop's work older (Astra, port 5)", async () => {
+		const agent = { ...agentOf(5), generation: 2 };
+		const { runtime, states } = runtimeOf(agent, [8], { 8: requestOf(31, 1) });
+		await phase("decide")(stopperOf(5), runtime, context);
+		assert.deepEqual(states, [{ status: "running", checkpoint: { phase: "abort" } }]);
 	});
 
 	it("aborts the subagent's conversation, then goes on to clear", async () => {

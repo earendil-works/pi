@@ -135,19 +135,20 @@ function generationOf(requestId: string | undefined): number | undefined {
 	return Number.isSafeInteger(generation) ? generation : undefined;
 }
 
-/** What a stopper ends: the subagent `name`, its conversation, and the generation the stop began. */
-type StopperInput = { name: string; conversationId: ConversationId; generation: number };
+/** What a stopper ends: the subagent `name`, and its conversation. */
+type StopperInput = { name: string; conversationId: ConversationId };
 
 /** A stopper's phases: decide whether older work runs, abort it, then clear the subagent's mark. */
 type StopperState = { phase: "decide" } | { phase: "abort" } | { phase: "clear" };
 
 /**
  * Ends the work of a subagent's older generations, after a stop's or an archive's commit (which bumped the generation
- * and marked the subagent `stopping` with this task): aborts its current run only if a message of an older generation
- * started it, never work of the stop's own generation, then clears the mark in the commit that ends the task, so the
- * messages held back for the stop wait for this task's end (Astra, rounds 2 and 3 of the port). A background task
- * with its own context: a stop whose caller is cancelled (the agent stopped meanwhile) still finishes, and a restart
- * resumes it at its phase.
+ * and marked the subagent `stopping` with this task): aborts its current run only if a message of a generation before
+ * the subagent's current one started it, then clears the mark in the commit that ends the task, so the messages held
+ * back for the stop wait for this task's end (Astra, rounds 2 and 3 of the port). A stop while one is pending bumps
+ * the generation again and reuses this task: one stopper decides and clears, so no stopper outlives the mark and aborts
+ * work admitted after it (Astra, round 5 of the port). A background task with its own context: a stop whose caller is
+ * cancelled (the agent stopped meanwhile) still finishes, and a restart resumes it at its phase.
  */
 export const Stopper = defineTask<StopperInput, StopperState, null>({
 	name: "harness.subagent-stopper",
@@ -155,8 +156,9 @@ export const Stopper = defineTask<StopperInput, StopperState, null>({
 	initial: () => ({ phase: "decide" }),
 	phases: {
 		decide: async (stopper, runtime, context) => {
-			const { conversationId, generation } = stopper.input;
+			const { name, conversationId } = stopper.input;
 			await runtime.commit(async (tx) => {
+				const generation = subagentOf((await tx.doc(Subagents)).agents, name)?.generation ?? 0;
 				for (const input of (await tx.doc(LiveDoc, conversationId)).run?.inputs ?? []) {
 					const sent = generationOf((await tx.submission(input))?.requestId);
 					if (sent === undefined || sent < generation)

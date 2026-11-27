@@ -16,7 +16,9 @@ import { BACKGROUND_CONTEXT as context, obj } from "@earendil-works/p3/v1";
 import { configure, defineTool, type OpenHarness } from "@earendil-works/p3/v1/worker";
 import { eventually } from "../../../test/until.ts";
 import type { HarnessTool } from "../../things/contract.worker.ts";
+import { SESSION } from "../../things/test/part.ts";
 import { Subagents } from "../roster.ts";
+import { subagentsPart } from "../subagents.ts";
 import {
 	calls,
 	coding,
@@ -865,6 +867,36 @@ describe("the subagents' part", () => {
 		);
 		await ask("@again");
 		await reported("[subagent reader answered] after answer");
+	});
+
+	it("reuses a pending stop's stopper for a second archive, so one stopper decides and clears (Astra, port round 5)", async () => {
+		// The subagents' tool as the agent's call runs it, over a stand-in of the commits and the waits it makes.
+		const tool = subagentsPart.part([subagents().held], SESSION).extension?.tools?.[0];
+		assert.ok(tool !== undefined);
+		const reader = { conversationId: 2, generation: 1, reported: [], reportedTo: [], followUps: [] } as {
+			generation: number;
+			stopping?: number;
+			archived?: true;
+		};
+		const created: unknown[] = [];
+		const waited: number[] = [];
+		const tx = {
+			doc: async () => ({ agents: { reader } }),
+			createTask: async (_task: unknown, input: unknown) => created.push(input) + 40,
+		};
+		const api = {
+			conversationId: 1,
+			commit: async (change: (tx: unknown) => unknown) => change(tx),
+			waitForTask: async (id: number) => void waited.push(id),
+		};
+		const archive = () => tool.execute({ action: "archive", name: "reader" } as never, api as never, context);
+		await archive();
+		// The first stopper is still pending (its wait here ended early): a second archive takes it over.
+		await archive();
+		assert.deepEqual(
+			[created.length, waited, reader.stopping, reader.generation, reader.archived],
+			[1, [41, 41], 41, 3, true],
+		);
 	});
 
 	it("never delivers a follow-up withdrawn by a withhold, also after a regrant (Astra, port round 3)", async () => {

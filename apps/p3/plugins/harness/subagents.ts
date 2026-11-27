@@ -238,8 +238,8 @@ async function archive(call: Call, api: ToolExecutionApi, context: Context): Pro
 
 /**
  * Stops the call's subagent: one commit bumps its generation (and makes `also`'s change) and starts the stopper that
- * aborts the older generation's work (`Stopper`, a background task: it finishes also when this call is cancelled);
- * the call answers once it ended. A send whose commit comes later restores it, waits for the stopper, and is delivered;
+ * aborts the older generation's work (`Stopper`, a background task: it finishes also when this call is cancelled), or
+ * reuses the one pending; the call answers once it ended. A send whose commit comes later restores it, waits for the stopper, and is delivered;
  * one before is dropped (Astra, rounds 1 to 3 of the port).
  */
 async function halt(
@@ -253,8 +253,10 @@ async function halt(
 		const agent = subagentNamed((await tx.doc(Subagents)).agents, name);
 		agent.generation += 1;
 		also?.(agent);
-		const input = { name, conversationId: agent.conversationId, generation: agent.generation };
-		const id = await tx.createTask(Stopper, input, BACKGROUND);
+		// A stop pending already ends this generation's work too: nothing was admitted past it (Astra, round 5 of the
+		// port).
+		if (agent.stopping !== undefined) return agent.stopping;
+		const id = await tx.createTask(Stopper, { name, conversationId: agent.conversationId }, BACKGROUND);
 		agent.stopping = id;
 		return id;
 	}, context);
