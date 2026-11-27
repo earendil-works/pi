@@ -43,7 +43,7 @@ import { AgentParts, type ModelRef, type Parts } from "./agent-parts.ts";
 import { SubagentsKind } from "./kind.ts";
 import { recordUse, SUBAGENT_TASKS } from "./reporter.ts";
 import { adoptConversationRosters } from "./roster.ts";
-import { subagentsPart } from "./subagents.ts";
+import { hasUse, subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
 const SessionAgent = local("harness.agent", { version: 1, params: {}, members: {} });
@@ -66,7 +66,10 @@ export default defineFacet((host, facet) => {
 		const facts = self.get(SessionFacts, {});
 		const opened = self.open(
 			(opening) => openAgent({ runtime: runtime.value, facts, parts, held }, opening),
-			({ durable }, _reason, context) => durable.close(context),
+			async ({ durable, uses }, _reason, context) => {
+				await uses.stop();
+				await durable.close(context);
+			},
 		);
 		const graph = self.follow((observer, context) => opened.value.durable.observeTaskGraph(observer, context));
 		const live = self.follow((observer, context) =>
@@ -81,27 +84,10 @@ export default defineFacet((host, facet) => {
 			const row = facts.session.value;
 			if (row !== null && row.state !== now) await facts.report({ state: now }, context);
 		};
-		/** Whether the agent had Use of the subagents at the last apply that held the thing (none yet: unknown). */
-		let subagents: boolean | undefined;
-		/**
-		 * Applies what the agent holds; not ready yet: what was given stays. Whether the agent has Use of the subagents
-		 * (the `subagent` tool, which the thing gives with it) is recorded when it changes (and once at start); withheld,
-		 * the messages to subagents still queued are withdrawn. Only a held thing says it: one let go of (hidden,
-		 * unlinked, its reference failed or its kind reloaded) takes the tool, records nothing and withdraws nothing, so
-		 * the messages sent before it went are still delivered (Opus, check of the port's explainer).
-		 */
+		/** Applies what the agent holds now; not ready yet: what was given stays. */
 		const apply = (): void => {
 			const now = held.value;
-			if (now === undefined) return;
-			const { things, durable } = opened.value;
-			things.apply(now, parts.value);
-			if (!now.has(SubagentsKind.name)) return;
-			const offered = things.registry.snapshot().extension(SubagentsKind.name) !== undefined;
-			if (offered !== subagents)
-				recordUse(durable, offered, BACKGROUND_CONTEXT).catch((error: unknown) =>
-					reportError(`p3 harness: session ${runtime.value.session}: subagents' Use`, error, BACKGROUND_CONTEXT),
-				);
-			subagents = offered;
+			if (now !== undefined) opened.value.things.apply(now, parts.value);
 		};
 		/**
 		 * Waits until the holding is ready and the kinds' contributions are complete (a login's models), then applies;
@@ -206,8 +192,17 @@ type Sources = {
 	readonly held: RegistryValue<Held | undefined>;
 };
 
-/** The session's agent: what it holds applied, then Durable opened over it (paused). */
-async function openAgent(sources: Sources, opening: Context): Promise<{ durable: Harness; things: AgentParts }> {
+/** The opened agent: Durable's harness, what the agent holds applied, and the watch recording its Use of subagents. */
+type OpenedAgent = { durable: Harness; things: AgentParts; uses: HeldWatch };
+
+/** A watch of what the agent holds (p3's API names no watch type). */
+type HeldWatch = Awaited<ReturnType<RegistryValue<Held | undefined>["watch"]>>;
+
+/**
+ * The session's agent: what it holds applied, then Durable opened over it (paused), then its Use of the subagents
+ * followed.
+ */
+async function openAgent(sources: Sources, opening: Context): Promise<OpenedAgent> {
 	const { runtime, facts, parts, held } = sources;
 	const { session, host: worker, store } = runtime;
 	// Every conversation works at the session's location until slice 5 gives each its own.
@@ -242,7 +237,36 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 		},
 		opening,
 	);
-	return { durable, things };
+	const uses = await followUse(durable, held, session);
+	return { durable, things, uses };
+}
+
+/**
+ * Records whether the agent has Use of the subagents (`recordUse`: withheld, the messages to subagents still queued
+ * are withdrawn) from every value the holding publishes, the current one first, then each in order: a routine would
+ * fold the values published during a call into the newest, so a withhold a hide follows at once was lost (Astra,
+ * round 5 of the port). Only a value holding the thing says it: one let go of (hidden, unlinked, its reference failed
+ * or its kind reloaded) takes the tool, records nothing and withdraws nothing, so the messages sent before it went
+ * are still delivered (Opus, check of the port's explainer; decision 116's spirit).
+ */
+async function followUse(durable: Harness, held: RegistryValue<Held | undefined>, session: string): Promise<HeldWatch> {
+	let recorded: boolean | undefined;
+	const record = async (now: Held | undefined): Promise<void> => {
+		const things = now?.get(SubagentsKind.name);
+		const offered = things === undefined ? recorded : hasUse(things);
+		if (offered === undefined || offered === recorded) return;
+		recorded = offered;
+		// A failure is reported, not thrown: a listener that throws ends its watch.
+		await recordUse(durable, offered, BACKGROUND_CONTEXT).catch((error: unknown) =>
+			reportError(`p3 harness: session ${session}: subagents' Use`, error, BACKGROUND_CONTEXT),
+		);
+	};
+	const watch = await held.watch(BACKGROUND_CONTEXT);
+	await record(watch.value);
+	watch.start(async (call) => {
+		if (call.kind === "value") await record(call.value);
+	});
+	return watch;
 }
 
 /** Whether the kinds' contributions were complete when a submit picked its model, or still loading past the bound. */

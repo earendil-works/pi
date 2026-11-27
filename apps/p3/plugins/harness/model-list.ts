@@ -1,7 +1,7 @@
 // The models the `subagent` tool names: each model's name for the agent (`modelNames`: the shortest of its model id,
-// `<provider>/<model id>` and `<login>/<model id>` that names it alone; a login's provider id, `<provider>~<login>`,
-// is no name an agent could guess), the `models` action's listing of the models with credentials (all, or those a
-// query matches), and the close matches it suggests for a model it does not know.
+// `<provider>/<model id>` and `<login>/<model id>` that names it alone, else its reference; a login's provider id,
+// `<provider>~<login>`, is no name an agent could guess), the `models` action's listing of the models with credentials
+// (all, or those a query matches), and the close matches it suggests for a model it does not know.
 
 import type { Api, Model } from "@earendil-works/p3/v1";
 import { loginOfProvider } from "../providers/contract.ts";
@@ -10,10 +10,12 @@ import { loginOfProvider } from "../providers/contract.ts";
 export type ListedModel = Pick<Model<Api>, "provider" | "id" | "name">;
 
 /**
- * The models' names: the models each text names (`named`: any of their forms; one model, or several when the text is
- * ambiguous) and each model's name, by its reference (`provider/id`, as the roster records it).
+ * The models' names: each model by its reference (`refs`: `provider/id`, as the registry has it and the roster records
+ * it), the models each shorter form names (`named`: one model, or several when the form is ambiguous), and each
+ * model's name, by its reference.
  */
 export type ModelNames = {
+	readonly refs: ReadonlyMap<string, ListedModel>;
 	readonly named: ReadonlyMap<string, readonly ListedModel[]>;
 	readonly names: ReadonlyMap<string, string>;
 };
@@ -21,11 +23,14 @@ export type ModelNames = {
 /**
  * The names of the models `models` (the registry's): a model is named by its id alone when no other model has that id,
  * else by `<provider>/<id>` when no other login of its provider offers it, else by `<login>/<id>` (the login's thing
- * id; ERNDL-705 gives logins names later), else by its reference. Every form names it, unless another model has it too.
+ * id; ERNDL-705 gives logins names later), else by its reference. A reference always names its model, so a shorter
+ * form that is another model's reference names that one: every name selects exactly its model (Astra, round 5 of the
+ * port: a model of a provider of its own beside two logins of that provider offering its id).
  */
 export function modelNames(models: readonly ListedModel[]): ModelNames {
+	const refs = new Map(models.map((model) => [refOf(model), model]));
 	const named = new Map<string, ListedModel[]>();
-	const forms = models.map((model) => ({ model, forms: formsOf(model) }));
+	const forms = models.map((model) => ({ model, forms: shortFormsOf(model).filter((form) => !refs.has(form)) }));
 	for (const { model, forms: each } of forms) {
 		for (const form of new Set(each)) {
 			const list = named.get(form);
@@ -38,7 +43,7 @@ export function modelNames(models: readonly ListedModel[]): ModelNames {
 		const ref = refOf(model);
 		names.set(ref, each.find((form) => named.get(form)?.length === 1) ?? ref);
 	}
-	return { named, names };
+	return { refs, named, names };
 }
 
 /** What a text names: one model, several (the names of each), or none. */
@@ -47,8 +52,10 @@ export type Resolved =
 	| { readonly kind: "several"; readonly names: readonly string[] }
 	| { readonly kind: "none" };
 
-/** The model `text` names: by any of its forms (its name, or a longer one). */
+/** The model `text` names: by its reference, else by a shorter form (its name, or a longer one). */
 export function resolveModel(names: ModelNames, text: string): Resolved {
+	const ref = names.refs.get(text);
+	if (ref !== undefined) return { kind: "one", model: ref };
 	const named = names.named.get(text) ?? [];
 	const [first] = named;
 	if (first === undefined) return { kind: "none" };
@@ -66,12 +73,11 @@ function nameOf(names: ModelNames, model: ListedModel): string {
 	return modelName(names, refOf(model));
 }
 
-/** A model's forms, shortest first: its id, `<provider>/<id>`, `<login>/<id>` (a login's model), its reference. */
-function formsOf(model: ListedModel): string[] {
+/** A model's forms shorter than its reference, shortest first: its id; a login's `<provider>/<id>`, `<login>/<id>`. */
+function shortFormsOf(model: ListedModel): string[] {
 	const login = loginOfProvider(model.provider);
-	const ref = refOf(model);
-	if (login === undefined) return [model.id, ref];
-	return [model.id, `${login.provider}/${model.id}`, `${login.login}/${model.id}`, ref];
+	if (login === undefined) return [model.id];
+	return [model.id, `${login.provider}/${model.id}`, `${login.login}/${model.id}`];
 }
 
 /** A model's reference: `provider/id`, its provider's id as the registry has it. */

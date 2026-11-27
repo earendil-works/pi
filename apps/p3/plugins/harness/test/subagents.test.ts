@@ -992,14 +992,25 @@ describe("the subagents' part", () => {
 		await reported("[subagent reader answered] revived");
 	});
 
+	it("records a withhold a hide follows at once, and a hide alone records none (Astra, round 5 of the port)", async () => {
+		const held = [login("a", "faux", [says("", "ok")]), subagents()];
+		const { harness, control } = await start(held);
+		const { durable } = await harness();
+		const roster = () => durable.snapshot(Subagents, context);
+		await eventually(roster, (v) => v !== undefined);
+		control.hold([held[0]!]);
+		control.hold(held);
+		control.hold([held[0]!, subagents(false)]);
+		control.hold([held[0]!]);
+		await eventually(roster, (v) => v?.withheld === true);
+		assert.equal((await roster())?.withholds, 1);
+		control.hold(held);
+		await eventually(roster, (v) => v?.withheld === undefined);
+		assert.equal((await roster())?.withholds, 1);
+	});
+
 	it("names a model two real logins of one provider offer by its login, one only one offers by its id", async () => {
 		// Opus, check of the port's explainer: a login's provider is `<provider>~<login thing>` (ERNDL-705).
-		const both = fauxProvider({ provider: FAUX_PROVIDER, api: "faux", models: [{ id: FAUX_MODEL }] }).models;
-		const solo = fauxProvider({ provider: FAUX_PROVIDER, api: "faux", models: [{ id: "faux-solo" }] }).models;
-		const catalog: LoginDefinitions[] = [
-			{ login: "one", models: [...both, ...solo] },
-			{ login: "two", models: [...both] },
-		];
 		const one = [
 			calls("@models", "subagent", { action: "models" }),
 			spawn("@ambiguous", "child", { model: `${FAUX_PROVIDER}/${FAUX_MODEL}` }),
@@ -1008,6 +1019,70 @@ describe("the subagents' part", () => {
 			says("", "ok"),
 		];
 		const two = [says("child", "from two"), says("", "ok two")];
+		const { ask, lasts } = await withLogins([realLogin("one", one), realLogin("two", two), subagents()]);
+		for (const text of ["@models", "@ambiguous", "@spawn"]) await ask(text);
+		await eventually(lasts, (all) => all.includes("[subagent reader answered] from two"), 5000);
+		await ask("@status");
+		const all = await lasts();
+		assert.deepEqual(listedOf(all), [
+			[`one/${FAUX_MODEL}`, FAUX_PROVIDER, "one"],
+			["faux-solo", FAUX_PROVIDER, "one"],
+			[`two/${FAUX_MODEL}`, FAUX_PROVIDER, "two"],
+		]);
+		assert.ok(
+			all.some((last) =>
+				last.includes(`names more than one model; name one: one/${FAUX_MODEL}, two/${FAUX_MODEL}.`),
+			),
+			all.join(" | "),
+		);
+		assert.deepEqual(modelsOf(all), { reader: `two/${FAUX_MODEL}` });
+	});
+
+	it("lists every model by a name spawn takes: a provider's own model beside two logins of it (Astra, port 5)", async () => {
+		// The provider's own `faux/faux-model` is also the logins' `<provider>/<model id>`: its reference names it.
+		const names = [`one/${FAUX_MODEL}`, "faux-solo", `two/${FAUX_MODEL}`, `${FAUX_PROVIDER}/${FAUX_MODEL}`];
+		const script = [
+			calls("@models", "subagent", { action: "models" }),
+			calls("@ambiguous", "subagent", { action: "spawn", name: "any", message: "work", model: FAUX_MODEL }),
+			...names.map((model, at) =>
+				calls(`@spawn-${at}`, "subagent", { action: "spawn", name: `s${at}`, message: "work", model }),
+			),
+			on("@status", "status", { name: undefined }),
+			says("", "ok"),
+		];
+		const held = [realLogin("one", script), realLogin("two", script), login("own", FAUX_PROVIDER, script)];
+		const { ask, lasts } = await withLogins([...held, subagents()]);
+		await ask("@models");
+		await ask("@ambiguous");
+		for (const at of names.keys()) await ask(`@spawn-${at}`);
+		await ask("@status");
+		const all = await lasts();
+		assert.deepEqual(listedOf(all), [
+			[`one/${FAUX_MODEL}`, FAUX_PROVIDER, "one"],
+			["faux-solo", FAUX_PROVIDER, "one"],
+			[`two/${FAUX_MODEL}`, FAUX_PROVIDER, "two"],
+			[`${FAUX_PROVIDER}/${FAUX_MODEL}`, FAUX_PROVIDER, undefined],
+		]);
+		const ambiguous = `names more than one model; name one: one/${FAUX_MODEL}, two/${FAUX_MODEL}, faux/${FAUX_MODEL}.`;
+		assert.ok(
+			all.some((last) => last.includes(ambiguous)),
+			all.join(" | "),
+		);
+		assert.deepEqual(modelsOf(all), Object.fromEntries(names.map((model, at) => [`s${at}`, model])));
+	});
+
+	/**
+	 * Loads the harness with the real providers worker over `held` (real logins: `realLogin`), whose session's catalog
+	 * has login `one` offering `faux-model` and `faux-solo` and login `two` offering `faux-model`; `lasts` are the
+	 * texts the faux provider and the scripted logins got last, in that order.
+	 */
+	async function withLogins(held: Holding[]) {
+		const both = fauxProvider({ provider: FAUX_PROVIDER, api: "faux", models: [{ id: FAUX_MODEL }] }).models;
+		const solo = fauxProvider({ provider: FAUX_PROVIDER, api: "faux", models: [{ id: "faux-solo" }] }).models;
+		const catalog: LoginDefinitions[] = [
+			{ login: "one", models: [...both, ...solo] },
+			{ login: "two", models: [...both] },
+		];
 		const models = defineFacet((host) =>
 			host.serve(
 				SessionModels,
@@ -1020,49 +1095,37 @@ describe("the subagents' part", () => {
 				{ admit: () => constant(allow({ granted: ["catalog" as const] })) },
 			),
 		);
-		loaded = await harnessed(
-			sessionRow("s1", folder),
-			[realLogin("one", one), realLogin("two", two), subagents()],
-			context,
-			[],
-			{
-				stubs: [
-					{ name: "p3-providers", facet: providersWorker },
-					{ name: "p3-test-faux-login", facet: fauxWorker },
-				],
-				server: [{ name: "p3-test-models", facet: models }],
-			},
-		);
-		const { t, ask } = loaded;
-		const lasts = async () =>
-			(await t.host.get(FauxRequests, { session: "s1" }, context)).requests.value.map(({ last }) => last);
-		for (const text of ["@models", "@ambiguous", "@spawn"]) await ask(text);
-		await eventually(lasts, (all) => all.includes("[subagent reader answered] from two"), 5000);
-		await ask("@status");
-		const all = await lasts();
-		const listed = all.find((last) => last.startsWith('{"models"'));
-		assert.ok(listed !== undefined, all.join(" | "));
-		assert.deepEqual(
-			(JSON.parse(listed) as { models: { model: string; provider: string; login: string }[] }).models.map(
-				({ model, provider, login }) => [model, provider, login],
-			),
-			[
-				[`one/${FAUX_MODEL}`, FAUX_PROVIDER, "one"],
-				["faux-solo", FAUX_PROVIDER, "one"],
-				[`two/${FAUX_MODEL}`, FAUX_PROVIDER, "two"],
+		const harness = await harnessed(sessionRow("s1", folder), held, context, [], {
+			stubs: [
+				{ name: "p3-providers", facet: providersWorker },
+				{ name: "p3-test-faux-login", facet: fauxWorker },
 			],
-		);
-		assert.ok(
-			all.some((last) =>
-				last.includes(`names more than one model; name one: one/${FAUX_MODEL}, two/${FAUX_MODEL}.`),
-			),
-			all.join(" | "),
-		);
-		const status = all.find((last) => last.startsWith('{"subagents"'));
-		assert.ok(status !== undefined, all.join(" | "));
-		assert.equal((JSON.parse(status) as { subagents: { model: string }[] }).subagents[0]?.model, `two/${FAUX_MODEL}`);
-	});
+			server: [{ name: "p3-test-models", facet: models }],
+		});
+		loaded = harness;
+		const lasts = async () => [
+			...(await harness.t.host.get(FauxRequests, { session: "s1" }, context)).requests.value.map(({ last }) => last),
+			...harness.control.requests.map(({ last }) => last),
+		];
+		return { ask: harness.ask, lasts };
+	}
 });
+
+/** The models a `models` answer among `lasts` lists: each as name, provider and login. */
+function listedOf(lasts: readonly string[]) {
+	const listed = lasts.find((last) => last.startsWith('{"models"'));
+	assert.ok(listed !== undefined, lasts.join(" | "));
+	const { models } = JSON.parse(listed) as { models: { model: string; provider: string; login?: string }[] };
+	return models.map(({ model, provider, login }) => [model, provider, login]);
+}
+
+/** Each subagent's model as the last `status` answer among `lasts` shows it, by name. */
+function modelsOf(lasts: readonly string[]): Record<string, string> {
+	const status = lasts.findLast((last) => last.startsWith('{"subagents"'));
+	assert.ok(status !== undefined, lasts.join(" | "));
+	const { subagents } = JSON.parse(status) as { subagents: { name: string; model: string }[] };
+	return Object.fromEntries(subagents.map(({ name, model }) => [name, model]));
+}
 
 /** A real login `thing` of the faux provider for the providers worker, answering from `script` (its credential). */
 function realLogin(thing: string, script: Step[]): Holding {

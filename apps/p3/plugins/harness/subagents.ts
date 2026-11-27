@@ -20,7 +20,7 @@ import {
 	type ModelThinkingLevel,
 	type ToolExecutionApi,
 } from "@earendil-works/p3/v1/worker";
-import { type HarnessExtension, thingHarnessPart } from "../things/contract.worker.ts";
+import { type HarnessExtension, type HeldThing, thingHarnessPart } from "../things/contract.worker.ts";
 import type { ModelRef } from "./agent-parts.ts";
 import { SubagentsKind } from "./kind.ts";
 import { closeModels, listModels, type ModelNames, modelName, modelNames, resolveModel } from "./model-list.ts";
@@ -39,12 +39,15 @@ import {
 	toolsOf,
 } from "./roster.ts";
 
-/** The subagents' part: the `subagent` tool while the nearest reference has `use` (the kind stacks `nearest`). */
-export const subagentsPart = thingHarnessPart(SubagentsKind, (things) => {
-	const nearest = things[things.length - 1];
-	if (nearest === undefined || !nearest.ref.granted.has("use")) return {};
-	return { extension: SUBAGENT_TOOLS };
-});
+/** The subagents' part: the `subagent` tool while the agent has Use of the subagents (`hasUse`). */
+export const subagentsPart = thingHarnessPart(SubagentsKind, (things) =>
+	hasUse(things) ? { extension: SUBAGENT_TOOLS } : {},
+);
+
+/** Whether the agent holding `things` (nearest last) has Use of the subagents: the kind stacks `nearest`. */
+export function hasUse(things: readonly HeldThing[]): boolean {
+	return things.at(-1)?.ref.granted.has("use") === true;
+}
 
 /** The thinking levels a subagent may be given, clamped to its model (pi-ai's list; its index does not export it). */
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies ModelThinkingLevel[];
