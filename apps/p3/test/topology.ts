@@ -26,8 +26,6 @@ import { type P3Principal, Server, Session } from "@earendil-works/p3/v1";
 import { PeopleStore, type ServerRuntime } from "@earendil-works/p3/v1/server";
 import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
-import appsServer from "../plugins/apps/server.ts";
-import codingServer from "../plugins/coding/server.ts";
 import controlServer from "../plugins/control/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import environmentsWorker from "../plugins/environments/worker.ts";
@@ -38,6 +36,7 @@ import sessionsServer from "../plugins/sessions/server.ts";
 import sessionsWorker from "../plugins/sessions/worker.ts";
 import signInServer from "../plugins/sign-in/server.ts";
 import thingsServer from "../plugins/things/server.ts";
+import thingsWorker from "../plugins/things/worker.ts";
 import { SERVER, workerPrincipal } from "../src/app.ts";
 import { admitRoute, serverCoreFacet } from "../src/server.ts";
 import { workerCoreFacet } from "../src/worker.ts";
@@ -51,8 +50,6 @@ type Plugin = { readonly name: string; readonly facet: Facet<P3Principal> };
 
 /** The server's plugins, by name. */
 const SERVER_PLUGINS: readonly Plugin[] = [
-	{ name: "@earendil-works/p3-apps", facet: appsServer },
-	{ name: "@earendil-works/p3-coding", facet: codingServer },
 	{ name: "@earendil-works/p3-control", facet: controlServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 	{ name: "@earendil-works/p3-people", facet: peopleServer },
@@ -68,6 +65,7 @@ const WORKER_PLUGINS: readonly Plugin[] = [
 	{ name: "@earendil-works/p3-environments", facet: environmentsWorker },
 	{ name: "@earendil-works/p3-runner", facet: runnerWorker },
 	{ name: "@earendil-works/p3-sessions", facet: sessionsWorker },
+	{ name: "@earendil-works/p3-things", facet: thingsWorker },
 	{ name: "p3-test-probe", facet: probeWorker },
 ];
 

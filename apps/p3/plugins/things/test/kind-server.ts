@@ -155,7 +155,8 @@ export async function kindServer<C extends Contract>(
 			return host.root(
 				async (ctx) => {
 					const held: HeldThing<C>[] = [];
-					for (const thing of ids) held.push({ thing, workspace, ref: await get(ctx, workspace, thing) });
+					for (const thing of ids)
+						held.push({ thing, workspace, depth: 0, ref: await get(ctx, workspace, thing) });
 					// The registry's part takes any kind's held things; these are its kind's.
 					const { extension } = entry.value.part(held as unknown as readonly HeldThing[], harness);
 					if (extension === undefined) throw new Error(`${Kind.name}: the harness part gave no extension`);

@@ -1,0 +1,236 @@
+/*
+ * The things plugin's page parts: the navigator, the Settings view (its tabs, the who-may table as a table on wide
+ * screens and one card per party on a phone, the rows of what and who is here), the picker and the invite dialog.
+ * Elanor's tokens only.
+ */
+
+.navigator {
+	padding-block: var(--semantic-dimension-space-padding-small);
+}
+
+.nested {
+	padding-inline-start: var(--semantic-dimension-space-padding-medium);
+}
+
+.groups {
+	padding-inline-start: var(--semantic-dimension-space-padding-medium);
+}
+
+.faded {
+	color: var(--semantic-color-text-secondary);
+}
+
+/* A navigator entry from above: its name, cut short when it must be, and where it comes from. */
+.entry {
+	display: flex;
+	min-inline-size: 0;
+}
+
+.entryName {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.from {
+	flex: none;
+	margin-inline-start: auto;
+	padding-inline-start: var(--semantic-dimension-space-gap-medium);
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+	white-space: nowrap;
+}
+
+.folded {
+	display: flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+	padding: var(--semantic-dimension-space-padding-x-small) var(--semantic-dimension-space-padding-small);
+	border: 0;
+	background: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+	cursor: pointer;
+}
+
+.note {
+	margin: 0;
+	padding: var(--semantic-dimension-space-padding-large);
+	color: var(--semantic-color-text-secondary);
+}
+
+.settings {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-large);
+	padding: var(--semantic-dimension-space-padding-large);
+	overflow: auto;
+}
+
+.tabs {
+	overflow-x: auto;
+}
+
+.part,
+.whoMay {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-medium);
+	padding-block-start: var(--semantic-dimension-space-padding-medium);
+}
+
+.partHead {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--semantic-dimension-space-gap-medium);
+}
+
+.partTitle {
+	margin: 0;
+	font: var(--semantic-typography-heading-app-5);
+}
+
+.hint {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
+.rows {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.row {
+	display: flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-medium);
+	min-block-size: var(--semantic-dimension-size-large);
+	border-block-end: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+}
+
+.rowName {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+}
+
+.struck {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+	color: var(--semantic-color-text-secondary);
+	text-decoration: line-through;
+}
+
+.tick {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-small);
+}
+
+.tick[data-look="inherited"] {
+	opacity: var(--semantic-number-opacity-pulse);
+}
+
+.source {
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+	white-space: nowrap;
+}
+
+.withheldMark {
+	color: var(--semantic-color-icon-negative);
+}
+
+.access {
+	color: var(--semantic-color-text-secondary);
+	white-space: nowrap;
+}
+
+.makePopup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-small);
+	max-inline-size: 22rem;
+}
+
+/* The who-may table's cards, on a phone. */
+.cards {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-small);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.card {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--semantic-dimension-space-gap-medium);
+	padding: var(--semantic-dimension-space-padding-medium);
+	border: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+	border-radius: var(--semantic-dimension-radius-medium);
+}
+
+.card > strong {
+	flex: 1 0 100%;
+}
+
+.dialog {
+	border-color: var(--semantic-color-border-secondary);
+}
+
+.picker,
+.invitePart {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-small);
+}
+
+.invitePart {
+	padding-block: var(--semantic-dimension-space-padding-medium);
+	border-block-start: var(--semantic-dimension-border-width-small) solid var(--semantic-color-border-secondary);
+}
+
+.pickerGroup {
+	display: flex;
+	flex-direction: column;
+}
+
+.pickerTitle {
+	margin: 0;
+	font: var(--semantic-typography-heading-app-6);
+}
+
+.offer {
+	justify-content: flex-start;
+	inline-size: 100%;
+}
+
+.preview {
+	display: flex;
+	flex-direction: column;
+	gap: var(--semantic-dimension-space-flow-x-small);
+}
+
+.preview > p {
+	margin: 0;
+}
+
+.grow {
+	flex: 1 1 auto;
+	min-inline-size: 0;
+}
+
+.error {
+	margin: 0;
+	color: var(--semantic-color-text-negative);
+	font: var(--semantic-typography-ui-secondary);
+}

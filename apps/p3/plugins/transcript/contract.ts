@@ -1,10 +1,10 @@
-// The transcript plugin's contract: a session's main conversation as its members see it. Readers get Durable's live
-// view (a window over the entries, the running answer, the queue) and page what lies before it; writers also send and
-// stop. One object per session's conversation on the worker follows Durable once, however many people watch.
+// The transcript plugin's contract: a session's main conversation as the people let into the session see it, by the
+// session's ticks (decision 76: the transcript is no thing, the session kind owns it): Read gives Durable's live view
+// (a window over the entries, the running answer, the queue) and the older entries, Send the composer's call, Stop
+// the stop. One object per session's conversation on the worker follows Durable once, however many people watch.
 // `/v1` re-exports it.
 
 import { arr, bool, grantable, int, method, obj, opt, remote, Session, str, unknown } from "@earendil-works/p3/v1";
-import { SessionAdmission } from "../sessions/contract.ts";
 
 /** A page of entries before (or between) what a view holds: Durable's entries, newest last, and whether more lie before. */
 export const EntriesPage = obj({ items: arr(unknown()), more: bool() });
@@ -21,17 +21,21 @@ export const EntriesQuery = obj({
 export const Send = obj({ text: str({ min: 1, max: 1_000_000 }), requestId: str({ min: 1, max: 200 }) });
 
 /**
- * A session's main conversation, for its members: Durable's conversation view (`null` until it arrived) and older
- * entries; writers are also granted `send` and `stop` (`TRANSCRIPT_WRITES`).
+ * A session's main conversation: Durable's conversation view (`null` until it arrived) and older entries (Read),
+ * `send` (Send) and `stop` (Stop), each granted by the caller's ticks on the session (`TRANSCRIPT_GRANTS`).
  */
 export const Transcript = remote("transcript.transcript", {
 	version: 1,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
-	admission: SessionAdmission,
-	state: { view: unknown() },
-	methods: { entries: method(EntriesQuery, EntriesPage), send: grantable(method(Send)), stop: grantable(method()) },
+	admission: obj({}),
+	state: { view: grantable(unknown()) },
+	methods: {
+		entries: grantable(method(EntriesQuery, EntriesPage)),
+		send: grantable(method(Send)),
+		stop: grantable(method()),
+	},
 });
 
-/** What a writer of a session is granted of its transcript. */
-export const TRANSCRIPT_WRITES = ["send", "stop"] as const;
+/** What each of the session kind's ticks grants of its transcript (`followSession`'s table). */
+export const TRANSCRIPT_GRANTS = { read: ["view", "entries"], send: ["send"], stop: ["stop"] } as const;

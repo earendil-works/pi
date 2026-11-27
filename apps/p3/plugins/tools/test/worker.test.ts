@@ -23,7 +23,7 @@ const SESSION = {
 /** A held coding tools thing whose reference has the flags `granted`. */
 function held(thing: string, ...granted: string[]): HeldThing {
 	// A stand-in for the holding's reference until `kindServer.giving` is on main: the part reads only `granted`.
-	return { thing, workspace: "w", ref: { granted: new Set(granted) } as unknown as HeldThing["ref"] };
+	return { thing, workspace: "w", depth: 0, ref: { granted: new Set(granted) } as unknown as HeldThing["ref"] };
 }
 
 describe("the coding tools' harness part", () => {

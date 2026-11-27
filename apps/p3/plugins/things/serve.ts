@@ -45,7 +45,7 @@ export type ThingImplementation<C extends Contract, St extends string = string, 
 		ctx: Ctx<P3Principal>,
 	) => Promise<void>;
 	readonly delete?: ThingHook["delete"];
-	/** Clears what the kind keeps for a workspace that is gone (removed, or a session archived); see `ThingHook`. */
+	/** Clears what the kind keeps for a workspace that is gone (removed); see `ThingHook`. */
 	readonly workspaceGone?: ThingHook["workspaceGone"];
 	/**
 	 * The plugin's one thing of the kind, seeded in Pi once the kind is registered (any kind: `makers` says only who

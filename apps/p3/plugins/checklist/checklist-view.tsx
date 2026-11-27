@@ -11,16 +11,18 @@ import {
 	type MessagesOf,
 	type Translator,
 } from "@earendil-works/p3/v1";
-import { type ThingViewProps, useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
+// Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
+// its page started with, whose `/v1/web` may not have a newer contract yet.
+import type { ThingViewProps } from "../things/contract.web.tsx";
 import styles from "./checklist-view.module.css";
 import { Checklist } from "./kind.ts";
 import { messages } from "./messages.ts";
 
 /** Checklist `thing`, as the viewer's admission allows: Tick ticks items, Add adds them. */
 export function ChecklistView(props: ThingViewProps) {
-	// Until sessions are workspaces (slice 5) a checklist is held in the workspace named by the session's id.
-	const ref = useHold(Checklist, { workspace: props.session, thing: props.thing });
+	const ref = useHold(Checklist, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const state = useRefState(ref);
 	const name = useWatch(live?.name);

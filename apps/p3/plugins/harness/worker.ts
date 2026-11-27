@@ -110,10 +110,24 @@ export default defineFacet((host, facet) => {
 		self.on(held, () => apply());
 		self.on(parts, () => apply());
 		// The work a previous worker left runs once the registry has what the agent holds, never for an archived session.
+		// An archive stops the run under way as Stop does (decision 122; Astra, round 2): a tool already running may
+		// finish, no next model call is made. A restore resumes nothing by itself: the next send does.
+		let seen = false;
 		self.on(archived, async ({ value }, ctx) => {
-			if (value) return;
+			const { durable } = opened.value;
+			const first = !seen;
+			seen = true;
+			if (value) {
+				// Only a scheduler that runs has a run to stop: an abort would enable a paused one (the cut-off run of an
+				// archived session's fresh worker).
+				if ((await durable.inspect(ctx)).scheduling === "running") await (await durable.root(ctx)).abort(ctx);
+				return;
+			}
+			if (!first) return;
 			await ready(ctx);
-			opened.value.durable.resume();
+			// An archive seen while the holding got ready (Astra, round 1): nothing resumes.
+			if (archived.value) return;
+			durable.resume();
 		});
 		const harness: OpenHarness = {
 			get durable() {
@@ -130,6 +144,9 @@ export default defineFacet((host, facet) => {
 				if (target === undefined) throw invalid("args", `harness: no conversation ${conversation}`);
 				await offerModel(target, things, context);
 				await serial(async () => {
+					// An archive seen during the waits above takes nothing (Astra, round 1); the server refuses `working` for an
+					// archived session besides, so a worker that sees it later still starts no run the waker would wake.
+					if (archived.value) throw forbidden("harness: the session is archived");
 					// Working before Durable takes the input: a crash in between leaves a `working` row, which the waker starts.
 					await push("working", context);
 					try {

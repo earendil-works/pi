@@ -1,86 +1,80 @@
-// The view `NewSessionView`: the owner's form that makes a session of an app, with a title (optional), a location
-// (an environment of `Environments` and a folder on it) and the things the app gives every new session.
+// The session kind's create step (`SessionCreate`, a kind's `Create` in `ThingParts`): where the new session works, a
+// machine of `Environments` and a folder there; none given, this device in a folder of the session's own. It hands the
+// session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`, and
+// starts from the input it last handed (`input`: a live apply keeps the machine and folder chosen; a machine without a
+// folder is no input, as it makes no difference to the session, so it is not kept).
 
-import { Button, Field, Form, Heading, Input } from "@earendil-works/elanor-react";
-import { Environments, Sessions, THIS_DEVICE, type ThingUse } from "@earendil-works/p3/v1";
-import { useHold, useLive, useRefState, useWatch } from "@earendil-works/p3/v1/web";
-import { useState } from "react";
-import { useAction } from "./action.ts";
-import { Choice } from "./choice.tsx";
+import { Dropdown, Field, Input } from "@earendil-works/elanor-react";
+import { Environments, type JsonValue, THIS_DEVICE } from "@earendil-works/p3/v1";
+import { CodeIcon, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
+import { useEffect, useState } from "react";
+// Other plugins' web contracts by path, never through `/v1/web` (see `web.tsx`).
+import type { ThingCreateProps } from "../things/contract.web.tsx";
+import { messages } from "./messages.ts";
 import styles from "./new-session.module.css";
 
-/** The form; `onCreated` gets the new session's id. A caller who is not the owner is told so. */
-export function NewSession(props: {
-	readonly app: string;
-	readonly things?: readonly ThingUse[];
-	readonly onCreated: (session: string) => void;
-}) {
-	const sessionsRef = useHold(Sessions, {});
-	const sessions = useLive(sessionsRef);
-	const refused = useRefState(sessionsRef)?.kind === "failed";
+/** The session kind's icon. */
+export const SessionIcon = CodeIcon;
+
+/**
+ * The create step: a machine (this device first) and a folder; `onReady` gets `{}` while the folder is empty (the
+ * session's own folder) and `{ location }` once one is given.
+ */
+export function SessionCreate(props: ThingCreateProps) {
+	const { t } = useMessages(messages);
 	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
-	const [title, setTitle] = useState("");
-	const [folder, setFolder] = useState("");
-	const [chosen, setChosen] = useState<string | undefined>(undefined);
-	const create = useAction();
-	if (refused) return <p className={styles.note}>Only the owner makes sessions here.</p>;
+	const last = locationOf(props.input);
+	const [folder, setFolder] = useState(last?.folder ?? "");
+	const [chosen, setChosen] = useState<string | null>(last?.environment ?? null);
 	const items = (environments ?? []).map((environment) => ({ value: environment.id, label: environment.name }));
-	// This device by default, else the first environment: a Pi has a few.
-	const environment = chosen ?? items.find((item) => item.value === THIS_DEVICE)?.value ?? items[0]?.value;
-	const submit = () => {
-		if (sessions === undefined || environment === undefined || folder.trim() === "") return;
-		create.run(async (ctx) => {
-			const location = { environment, folder: folder.trim() };
-			const things = props.things === undefined ? {} : { things: [...props.things] };
-			const id = await sessions.create({ app: props.app, title: title.trim(), location, ...things }, ctx);
-			props.onCreated(id);
-		});
-	};
+	const machine = chosen ?? items.find((item) => item.value === THIS_DEVICE)?.value ?? items[0]?.value ?? null;
+	const { onReady } = props;
+	useEffect(() => {
+		const trimmed = folder.trim();
+		onReady(trimmed === "" || machine === null ? {} : { location: { environment: machine, folder: trimmed } });
+	}, [folder, machine, onReady]);
 	return (
-		<Form
-			className={styles.form}
-			data-new-session=""
-			onSubmit={(event) => {
-				event.preventDefault();
-				submit();
-			}}
-		>
-			<Heading level={2} size={4}>
-				New session
-			</Heading>
+		<div className={styles.form} data-new-session="">
+			<Dropdown.Root items={items} onValueChange={(value: string | null) => setChosen(value)} value={machine}>
+				<Dropdown.Label>{t("machine")}</Dropdown.Label>
+				<Dropdown.Trigger data-field="machine">
+					<Dropdown.Value />
+					<Dropdown.Icon />
+				</Dropdown.Trigger>
+				<Dropdown.Portal>
+					<Dropdown.Positioner>
+						<Dropdown.Popup>
+							<Dropdown.List>
+								{items.map((item) => (
+									<Dropdown.Item data-choice={item.value} key={item.value} value={item.value}>
+										<Dropdown.ItemText>{item.label}</Dropdown.ItemText>
+										<Dropdown.ItemIndicator />
+									</Dropdown.Item>
+								))}
+							</Dropdown.List>
+						</Dropdown.Popup>
+					</Dropdown.Positioner>
+				</Dropdown.Portal>
+			</Dropdown.Root>
 			<Field.Root>
-				<Field.Label>Title</Field.Label>
-				<Input data-field="title" onValueChange={setTitle} placeholder="New session" value={title} />
+				<Field.Label>{t("folder")}</Field.Label>
+				<Input data-field="folder" onValueChange={setFolder} placeholder="/home/me/project" value={folder} />
+				<Field.Description>{t("folderHint")}</Field.Description>
 			</Field.Root>
-			<Choice
-				items={items}
-				label="Environment"
-				name="environment"
-				onChange={setChosen}
-				value={environment ?? null}
-			/>
-			<Field.Root>
-				<Field.Label>Folder</Field.Label>
-				<Input
-					data-field="folder"
-					onValueChange={setFolder}
-					placeholder="/home/me/project"
-					required
-					value={folder}
-				/>
-				<Field.Description>Where the agent works on that environment.</Field.Description>
-			</Field.Root>
-			{create.error === undefined ? null : <p className={styles.error}>{create.error}</p>}
-			<div className={styles.actions}>
-				<Button
-					disabled={sessions === undefined || environment === undefined || folder.trim() === ""}
-					hierarchy="primary"
-					pending={create.pending}
-					type="submit"
-				>
-					Create
-				</Button>
-			</div>
-		</Form>
+		</div>
 	);
+}
+
+/**
+ * The location in an input this step handed before (`{ location }`), if any. The dialog keeps it as `JsonValue`, so
+ * its shape is read again here.
+ */
+function locationOf(
+	input: JsonValue | undefined,
+): { readonly environment: string; readonly folder: string } | undefined {
+	if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
+	const location = input.location;
+	if (typeof location !== "object" || location === null || Array.isArray(location)) return undefined;
+	const { environment, folder } = location;
+	return typeof environment === "string" && typeof folder === "string" ? { environment, folder } : undefined;
 }

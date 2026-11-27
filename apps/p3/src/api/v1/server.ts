@@ -1,6 +1,6 @@
 // p3's API v1 for server facets (`@earendil-works/p3/v1/server`): Chord's HTTP surface, the registries the base
 // serves, what a runner needs (the worker's control messages, Chord's process locks), and the built-in plugins' server
-// contracts p3 promises (the stores apps manage their sessions and people with, the apps and thing kinds registries).
+// contracts p3 promises (the sessions' and people's stores, the things store and `serveThing`, a kind's server side).
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
@@ -36,10 +36,21 @@ export {
 	/** Takes the lock of a name (a session's), owned by the kernel for the holder's life; waits while another holds it. */
 	processLock,
 } from "@earendil-works/chord/workers/child";
-export * from "../../../plugins/apps/contract.server.ts";
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
+// The things plugin's store and what a kind's server side needs; the index's handles and the owner bridge stay out.
+export {
+	type CreateAnswer,
+	Gives,
+	type Made,
+	OneThing,
+	type ThingHook,
+	ThingRow,
+	ThingsStore,
+	WorkspaceRow,
+} from "../../../plugins/things/contract.server.ts";
+export { serveThing, type ThingCaller, type ThingImplementation } from "../../../plugins/things/serve.ts";
 export * from "./control.ts";
 
 /** The server's process values, for plugins: what only the base has. */
