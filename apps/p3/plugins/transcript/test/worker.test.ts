@@ -704,6 +704,18 @@ describe("the follower across harnesses, raced at the observation's attachment (
 		);
 	});
 
+	it("fails no reader when a superseded first attachment rejects (Astra, round 2 of the follower)", async () => {
+		const g = c.delay("before");
+		const first = read();
+		await g.entered.promise;
+		await c.swap();
+		await c.say("fresh");
+		g.ready.resolve();
+		const ref = await first;
+		await until(ref.view, (v) => textsOf(v).includes("ok: fresh"), within("the current harness", context));
+		assert.deepEqual(t.errors, []);
+	});
+
 	it("a superseded attach rejecting does not prevent the third harness", async () => {
 		const ref = await read();
 		const g = c.delay("before");
@@ -872,6 +884,42 @@ describe("the follower across stand-in harnesses (Opus, round 1 of the follower)
 					);
 					await new Promise((resolve) => setTimeout(resolve, 200));
 					assert.equal(marker(transcript.view.value), "B2", "B's state is B2");
+				},
+				context,
+				{ principal: OWNER },
+			);
+		});
+
+		it("skips a superseded replacement's successful attachment (Astra, round 2 of the follower)", async () => {
+			await t.root(
+				async (ctx) => {
+					const transcript = withGranted(await ctx.get(Transcript, { session: SESSION }), "view")!;
+					const b = Promise.withResolvers<void>(),
+						c = Promise.withResolvers<void>();
+					const arrivedB = Promise.withResolvers<void>(),
+						arrivedC = Promise.withResolvers<void>();
+					control.give!(
+						fake(async () => {
+							arrivedB.resolve();
+							await b.promise;
+							return { value: view("obsolete B"), detach() {} };
+						}),
+					);
+					await arrivedB.promise;
+					control.give!(
+						fake(async () => {
+							arrivedC.resolve();
+							await c.promise;
+							return { value: view("C"), detach() {} };
+						}),
+					);
+					b.resolve();
+					await arrivedC.promise;
+					await turn();
+					const duringC = marker(transcript.view.value);
+					c.resolve();
+					await until(transcript.view, (v) => marker(v) === "C", within("C", ctx));
+					assert.equal(duringC, "A", "a superseded attach never became the current view");
 				},
 				context,
 				{ principal: OWNER },

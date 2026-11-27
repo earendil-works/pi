@@ -142,10 +142,22 @@ async function followAcross(
 		followed = undefined;
 	};
 	try {
-		const first = await until(harness, (value) => value !== undefined, context);
-		if (first === undefined) throw new Error("transcript: no harness");
-		followed = first;
-		observation = await observe(first);
+		// The first harness observed while it is the one given: one replaced while it attached (it failed or not) is let
+		// go of, and the one given now is observed instead (Astra, round 2 of this change).
+		for (;;) {
+			const first = await until(harness, (value) => value !== undefined, context);
+			if (first === undefined) throw new Error("transcript: no harness");
+			followed = first;
+			try {
+				observation = await observe(first);
+			} catch (error) {
+				if (harness.value === first) throw error;
+				followed = undefined;
+				continue;
+			}
+			if (harness.value === first) break;
+			letGo();
+		}
 		const value = observation.value;
 		// The watch calls one at a time, in the order the harnesses came.
 		watch.start(async (call) => {
@@ -160,12 +172,17 @@ async function followAcross(
 				observation = await observe(next);
 			} catch (error) {
 				early = undefined;
-				if (detached || harness.value !== next) return;
 				followed = undefined;
-				observer.end({ kind: "failed", error });
+				// Replaced meanwhile: its successor's call follows; the one given failed: so does the follow.
+				if (!detached && harness.value === next) observer.end({ kind: "failed", error });
 				return;
 			}
-			if (detached || followed !== next) return observation.detach();
+			// Replaced (or let go of) while it attached: it neither publishes nor reports (Astra, round 2 of this change).
+			if (detached || harness.value !== next) {
+				early = undefined;
+				letGo();
+				return;
+			}
 			// The view is plain JSON (Durable's own calls carry it in their ops); typed readonly, as Durable keeps it.
 			const replaced = observation.value as unknown as JsonValue;
 			observer.advance({ kind: "value", value: observation.value, ops: [["r", replaced]], retired: false }, context);
