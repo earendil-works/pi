@@ -1,12 +1,11 @@
-// The terminals kind: Terminals (`terminals.pane`), the one thing in Pi through which people and agents
-// open terminals on the machines a workspace sees and watch them (decision 24). A terminal runs on its machine's
-// terminal host (the environments plugin's), belongs to the Terminals thing and the workspace it was opened in, and is
-// listed there only. One terminal, many viewers: each viewer attaches through the WebSocket at the address `attach`
-// answers (socket.ts: its kept output, then what follows, raw; with Use, what is typed and the size back), the agent
-// reads its kept output with `backlog`. Watch (for people) lists terminals and attaches to them; Use (people and
-// agents) does that too, and opens terminals, types in them (and sizes them, on the socket), reads their kept output
-// and closes them. By
-// default only the agents get Use; people get a tick through Who may.
+// The terminals kind: Terminals (`terminals.pane`), the one thing in Pi through which people and agents open terminals
+// on the machines a workspace sees and watch them (decision 24). A terminal runs on its machine's terminal host (the
+// environments plugin's), belongs to the Terminals thing and the workspace it was opened in, and is listed there only.
+// One terminal, many viewers: each viewer attaches through the WebSocket at the address `attach` answers (socket.ts:
+// its kept output, then what follows, raw; with Use, what is typed and the size back), the agent reads its kept output
+// with `backlog`. Watch (for people) lists terminals and attaches to them; Use (people and agents) does that too, and
+// opens terminals, types in them (and sizes them, on the socket), reads their kept output and closes them. By default
+// only the agents get Use; people get a tick through Who may.
 
 import { arr, bool, int, lit, method, obj, opt, type Static, str, union } from "@earendil-works/p3/v1";
 import { TerminalRow } from "../environments/contract.ts";
@@ -104,6 +103,9 @@ export const SOCKET_FRAME = 64 * 1024;
 export const SocketMessage = union([
 	obj({ kind: lit("drawn"), bytes: int({ min: 0 }) }),
 	obj({ kind: lit("resize"), columns: Columns, rows: Rows }),
+	// An answer to the program's query, which the page's terminal makes (device attributes, the cursor's position):
+	// written like typing, but no person typed it.
+	obj({ kind: lit("reply"), text: str({ max: SOCKET_FRAME }) }),
 ]);
 
 /** What a page sends on the attach socket besides typed bytes (see `SocketMessage`). */
@@ -111,12 +113,14 @@ export type SocketMessage = Static<typeof SocketMessage>;
 
 /**
  * What the attach socket tells a page as text: how much kept output comes first (`kept`), the terminal's size, and
- * whether this page answers the program's queries (`answer`: one viewer that may type per terminal does).
+ * whether this page answers the program's queries (`answer`: one viewer that may type per terminal does), from the
+ * output byte `at` on (counted from this socket's first output byte), so a page that draws late answers what it drew
+ * as it was then.
  */
 export type SocketTold =
 	| { readonly kind: "kept"; readonly bytes: number }
 	| { readonly kind: "size"; readonly columns: number; readonly rows: number }
-	| { readonly kind: "answer"; readonly yes: boolean };
+	| { readonly kind: "answer"; readonly yes: boolean; readonly at: number };
 
 /** How long a terminal's output must pause for `backlog` to count it as quiet. */
 export const QUIET = 500;

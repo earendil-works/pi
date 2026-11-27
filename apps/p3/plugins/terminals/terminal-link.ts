@@ -37,6 +37,7 @@ export function terminalLink(live: Reference<typeof Terminals>, terminal: string
 			}
 		},
 		resize: (columns, rows) => tell({ kind: "resize", columns, rows }),
+		reply: (text) => tell({ kind: "reply", text }),
 	};
 }
 
@@ -80,11 +81,12 @@ function follow(
 				case "size":
 					return feed.size(told.columns, told.rows);
 				case "answer":
-					return feed.answer(told.yes);
+					return feed.answer(told.yes, told.at);
 			}
 		};
 		socket.onclose = (event) => {
 			if (open.socket === socket) open.socket = undefined;
+			if (!stopped) feed.lost();
 			if (!stopped && event.code !== SOCKET_ENDED && event.code !== SOCKET_REFUSED) again();
 		};
 	};

@@ -216,6 +216,17 @@ describe("this device's host", () => {
 			});
 		}
 
+		// Astra, round 2, M1: a job outlived a shell that exited on its own (the daemon reaped it, then forgot the session).
+		it("ends a shell's background jobs when the shell exits on its own, keeping its exit code", async () => {
+			const marker = join(root, "job-exit");
+			const { pty } = await shell(at, root);
+			pty.write(`(sleep 0.6; echo finished > ${marker}) & exit 7\r`);
+			assert.equal(await pty.exited, 7);
+			// Longer than the job would have taken.
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+			assert.equal(await readFile(marker, "utf8").catch(() => "absent"), "absent", "the job ended with its shell");
+		});
+
 		it("ends its programs with the connection's close", async () => {
 			const types = await t.host.registry(MachineTypes, context);
 			const host = await types.value.get(THIS_DEVICE_TYPE)!.value.connect({}, context);

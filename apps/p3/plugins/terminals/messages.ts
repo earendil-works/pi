@@ -27,5 +27,6 @@ export const messages = defineMessages("terminals", {
 		screenKeys: "Keys",
 		screenPaste: "Paste",
 		screenFailed: "The terminal cannot be drawn here.",
+		screenConnecting: "Connecting…",
 	},
 });

@@ -177,18 +177,35 @@ export class FakeSocket extends EventEmitter {
 	#error: unknown;
 	/** Settles with the close code once the handler closed the socket. */
 	readonly closed: Promise<number>;
+
+	/** The close code, failing after `ms` without one (a regression fails fast, naming itself). */
+	closedWithin(ms = 5_000): Promise<number> {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error(`the socket did not close within ${ms} ms`)), ms);
+			void this.closed.then((code) => {
+				clearTimeout(timer);
+				resolve(code);
+			});
+		});
+	}
 	/** Settles once the handler told the size (it set the socket up), or closed it. */
 	readonly ready: Promise<void>;
 	#close: (code: number) => void = () => {};
 	#ready: () => void = () => {};
 	/** Whether frames stay in the socket's buffer (a peer that stopped reading) until `release`. */
 	hold = false;
-	readonly #held: (() => void)[] = [];
+	readonly #held: { readonly size: number; readonly sent: () => void }[] = [];
+	/** The bytes in the socket's buffer now, and the most it ever held. */
+	#buffered = 0;
+	most = 0;
 
-	/** Lets the frames held in the buffer go. */
-	release(): void {
-		this.hold = false;
-		for (const sent of this.#held.splice(0)) sent();
+	/** Lets the frames held in the buffer go, `count` of them (all by default): a writer that drains slowly. */
+	release(count = Number.POSITIVE_INFINITY): void {
+		if (count === Number.POSITIVE_INFINITY) this.hold = false;
+		for (const { size, sent } of this.#held.splice(0, count)) {
+			this.#buffered -= size;
+			sent();
+		}
 	}
 
 	constructor() {
@@ -201,14 +218,19 @@ export class FakeSocket extends EventEmitter {
 		});
 	}
 
-	/** What the socket's own buffer holds: nothing, the stand-in hands each frame over at once. */
-	readonly bufferedAmount = 0;
-
 	/** The handler's send; `sent` runs once the frame left (here: on the next microtask, unless `hold` holds it). */
 	send(data: string | Uint8Array, sent?: () => void): void {
 		if (sent !== undefined) {
-			if (this.hold) this.#held.push(sent);
-			else queueMicrotask(sent);
+			const size = typeof data === "string" ? Buffer.byteLength(data) : data.length;
+			this.#buffered += size;
+			this.most = Math.max(this.most, this.#buffered);
+			if (this.hold) this.#held.push({ size, sent });
+			else {
+				queueMicrotask(() => {
+					this.#buffered -= size;
+					sent();
+				});
+			}
 		}
 		if (typeof data === "string") {
 			const told = JSON.parse(data) as { kind?: string };

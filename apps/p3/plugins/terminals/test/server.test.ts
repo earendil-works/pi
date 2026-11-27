@@ -215,6 +215,26 @@ describe("a terminal's calls", () => {
 		});
 	});
 
+	// Fable, round 2: the case above ends by going quiet; a program that keeps printing shows what ends the wait.
+	it("ends a waiting read of a terminal that keeps printing once the machine is withheld, long before its wait", async () => {
+		const ann = await person("Ann");
+		await grant(pi, terminals, { kind: "person", person: ann.id }, ["use"]);
+		await holding(ann, async (a, ctx) => {
+			const id = await a.open!({ machine, folder: "/tmp", ...SIZE }, ctx);
+			// Never quiet: a piece every 100 ms.
+			const printing = setInterval(() => started()[0]!.say("."), 100);
+			try {
+				const reading = a.backlog!({ terminal: id, wait: 20_000 }, ctx);
+				await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
+				const began = Date.now();
+				await refused(reading, "forbidden", "notHere");
+				assert.ok(Date.now() - began < 5_000, `ended by the loss, not by the wait: ${Date.now() - began} ms`);
+			} finally {
+				clearInterval(printing);
+			}
+		});
+	});
+
 	it("outlives its viewers, and ends with the environments plugin's host", async () => {
 		const ann = await person("Ann");
 		await grant(pi, terminals, { kind: "person", person: ann.id }, ["use"]);

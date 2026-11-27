@@ -164,6 +164,12 @@
 	color: var(--semantic-color-text-primary);
 }
 
+.waiting {
+	margin: 0;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-ui-secondary);
+}
+
 .failed {
 	margin: 0;
 	color: var(--semantic-color-text-negative);

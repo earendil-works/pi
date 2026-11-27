@@ -13,8 +13,13 @@ export type ScreenFeed = {
 	output(bytes: Uint8Array): void;
 	/** The terminal's size: at each start and after each change (another viewer resized it). */
 	size(columns: number, rows: number): void;
-	/** Whether this screen answers the program's queries in live output: one per terminal does (none by default). */
-	answer(yes: boolean): void;
+	/**
+	 * Whether this screen answers the program's queries in live output, from the output byte `at` of this connection on
+	 * (one screen per terminal does; none by default).
+	 */
+	answer(yes: boolean, at: number): void;
+	/** The connection was lost: nothing typed can be delivered until the next `restart`. */
+	lost(): void;
 };
 
 /** One terminal as a screen reaches it. */
@@ -27,6 +32,8 @@ export type TerminalLink = {
 	readonly type?: (bytes: Uint8Array) => void;
 	/** Gives the terminal a new size; absent where the person may only watch. */
 	readonly resize?: (columns: number, rows: number) => void;
+	/** Sends the screen's answer to a program's query; absent where the person may only watch. */
+	readonly reply?: (text: string) => void;
 };
 
 /** What a screen gets: its terminal's link, and its label for assistive technology. */

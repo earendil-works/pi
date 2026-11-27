@@ -348,15 +348,15 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
 		await press("[data-terminals-open]");
 		const screen = `document.querySelector("[data-terminal-screen] [role=log]")`;
-		/** Types `line` into the terminal, Enter after it, as a keyboard does (text, then the Enter key). */
+		/** Types `line` into the terminal, Enter after it, as a keyboard does (text, then the Enter key), once it takes input. */
 		const line = async (text: string) => {
+			await browser.wait(`document.querySelector('[data-terminal-input="ready"]') !== null`);
 			await browser.click("[data-terminal-screen]");
 			await browser.call("Input.insertText", { text });
 			await browser.enter();
 		};
 		/** Waits until the screen shows `text`. */
 		const shows = (text: string) => browser.wait(`${screen}?.textContent.includes(${JSON.stringify(text)})`);
-		await browser.wait(`document.querySelector("[data-terminal-input]") !== null`);
 		await line("echo page-$((6*7))");
 		await shows("page-42");
 		await line("printf '\\033[31mred-text\\033[0m\\n'");
@@ -390,10 +390,29 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			);
 			await browser.wait(`/replies-[12]/.test(${screen}?.textContent)`);
 			assert.equal(await browser.evaluate(`/replies-[12]/.exec(${screen}.textContent)[0]`), "replies-1");
+			// Astra, round 2, S1: the second page draws late (its frames held, its socket still reading), then becomes
+			// the one that answers by typing: the query it draws afterwards was the first page's, answered once.
+			await second.evaluate(`(() => {
+				const frame = window.requestAnimationFrame;
+				const held = [];
+				window.requestAnimationFrame = (fn) => { held.push(fn); return 1; };
+				window.drawAgain = () => { window.requestAnimationFrame = frame; for (const fn of held) frame(fn); };
+			})()`);
+			await line(
+				"printf '\\033[c'; read -rs -t 2 -d c a; echo first-$((5*5)); read -rs -t 4 -n1 key; echo next-$((4*4)); read -rs -t 2 -d c b; [ -n \"$b\" ] && echo handover-$((1+1)) || echo handover-$((0+1))",
+			);
+			await shows("first-25");
+			await second.evaluate(`document.querySelector('[data-terminal-input]').focus()`);
+			await second.call("Input.insertText", { text: "v" });
+			await shows("next-16");
+			await second.evaluate("window.drawAgain()");
+			await browser.wait(`/handover-[12]/.test(${screen}?.textContent)`);
+			assert.equal(await browser.evaluate(`/handover-[12]/.exec(${screen}.textContent)[0]`), "handover-1");
 		} finally {
 			await second.close();
 		}
 		await browser.size(PHONE);
+		await browser.wait(`document.querySelector('[data-terminal-input="ready"]') !== null`);
 		// A phone's keyboard composes a word, then corrects it: the field's change is what the shell gets (Opus, round
 		// 1, S4): "ehco" typed, corrected to "echo", sends three Backspaces and "cho".
 		await browser.click("[data-terminal-screen]");

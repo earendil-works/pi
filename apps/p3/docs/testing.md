@@ -8,8 +8,11 @@ its cause is known.
 
 p3 needs Node 26.3.1 or newer, tests included. On slayer the default `node` is 24:
 `export PATH=/home/badlogic/node-v26.11.1-linux-x64/bin:$PATH`. This device's terminals run in pi-env's daemon, which a
-checkout builds with Rust (`cargo`, https://rustup.rs): `npm run build:daemon`; `npm test` runs it first, a single test
-file run by hand needs it built once (and again after a change of `packages/env/daemon`).
+checkout builds with Rust (`cargo`, on the `PATH` or in rustup's `~/.cargo/bin`; https://rustup.rs): `npm run
+build:daemon`; `npm test` runs it first, a single test file run by hand needs it built once (and again after a change
+of `packages/env/daemon`). On slayer `cc` is a zig shim, whose linker warning ("ignoring deprecated linker optimization
+setting") each build prints: harmless. The daemon's own Rust tests (`cargo test` in `packages/env/daemon`) need a
+temporary directory outside a git repository, and slayer's `/tmp` has a `.git`: `TMPDIR=$(mktemp -d /var/tmp/x-XXXXXX)`.
 
 | Command (in `apps/p3`) | What |
 | --- | --- |
@@ -182,6 +185,8 @@ p3 runs on Android under Termux (Node 26.3.1). Known differences:
   Android 14 and later, Developer options, "Disable child process restrictions"; on Android 12 and 13, from a computer,
   `adb shell device_config set_sync_disabled_for_tests persistent` and
   `adb shell device_config put activity_manager max_phantom_processes 2147483647`;
-- everything is about ten times slower to start than on slayer.
+- everything is about ten times slower to start than on slayer;
+- the terminals' daemon is built with Rust in Termux (`pkg install rust`), the first build several minutes, then a few
+  seconds.
 
 A package that touches processes, files or the network runs its tests on the phone before sign-off.

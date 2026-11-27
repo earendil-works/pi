@@ -63,14 +63,15 @@ function buildPackage(found: WorkspacePackage): void {
 const PI_ENV = "@earendil-works/pi-env";
 
 /**
- * Puts this system's terminal daemon into pi-env's `bin/` (gitignored: what its package ships): the checkout's build
- * (`npm run build:daemon`), which `terminalDaemon` finds first, replacing what an earlier release put there; without a
- * build, what is there already; without either the release fails, naming the command.
+ * Puts this system's terminal daemon into pi-env's `bin/` (gitignored: what its package ships): the checkout's build,
+ * made now (`scripts/build-daemon.ts`, so a release never ships a daemon older than its source), which `terminalDaemon`
+ * finds first, replacing what an earlier release put there.
  */
 async function shipDaemon(found: WorkspacePackage): Promise<void> {
+	execFileSync(process.execPath, [join(P3, "scripts", "build-daemon.ts")], { stdio: "inherit" });
 	const shipped = join(found.directory, "bin", `pi-env-${process.platform}-${process.arch}`, "pi-env");
 	const daemon = await terminalDaemon();
-	if (daemon === shipped) return;
+	if (daemon === shipped) throw new Error(`release-local: no build of the daemon beside ${shipped}`);
 	await mkdir(dirname(shipped), { recursive: true });
 	await copyFile(daemon, shipped);
 	await chmod(shipped, 0o755);

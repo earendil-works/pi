@@ -8,15 +8,7 @@
 // (decision 89). A Terminals thing that goes takes its terminals with it (its delete hook), and a workspace that goes
 // takes the terminals opened there (`workspaceGone`, ERNDL-1143).
 
-import {
-	type Context,
-	contribute,
-	defineFacet,
-	forbidden,
-	invalid,
-	withAbortSignal,
-	withCancel,
-} from "@earendil-works/p3/v1";
+import { type Context, contribute, defineFacet, forbidden, invalid, withCancel } from "@earendil-works/p3/v1";
 import { Http } from "@earendil-works/p3/v1/server";
 import { checkMachine, machineAvailable } from "../environments/contract.server.ts";
 import {
@@ -27,7 +19,7 @@ import {
 	TerminalList,
 	type TerminalOwner,
 } from "../environments/contract.terminal-host.server.ts";
-import { abortWhen, givesTo } from "../things/contract.server.ts";
+import { givesTo } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
 import { QUIET, SOCKET_PATH, TerminalsKind } from "./kind.ts";
 import { messages } from "./messages.ts";
@@ -74,24 +66,10 @@ export default defineFacet((host) => {
 				backlog: async ({ terminal, max, wait }, ctx) => {
 					const id = usable(terminal);
 					const host = at();
-					if (wait !== undefined && wait > 0) {
-						// The wait ends when the caller loses the machine here or the terminal leaves the list, and the
-						// terminal is checked again before it is read (Astra, round 1, M4).
-						const { machine } = here(id);
-						const lost = new AbortController();
-						const done = new AbortController();
-						const watching = withAbortSignal(done.signal, ctx);
-						abortWhen(answers, (given) => !machineAvailable(caller, given[machine]), lost, watching);
-						abortWhen(list, (rows) => !rows.some((row) => row.id === id), lost, watching);
-						try {
-							await quieted(host, id, wait, withAbortSignal(lost.signal, ctx));
-						} catch (error) {
-							if (!lost.signal.aborted) throw error;
-						} finally {
-							done.abort();
-						}
-						usable(id);
-					}
+					// The caller's hold on the terminal is checked at each piece of output while it waits (no later than
+					// `QUIET` apart), so a loss ends the wait, and again before it is read (Astra, round 1, M4).
+					if (wait !== undefined && wait > 0) await quieted(host, id, wait, () => usable(id), ctx);
+					usable(id);
 					const ended = host.list(owner).find((row) => row.id === id)?.exitCode !== null;
 					return { text: TEXT.decode(host.tail(id, max ?? TERMINAL_BACKLOG).bytes), ended };
 				},
@@ -142,12 +120,14 @@ const TEXT = new TextDecoder();
 
 /**
  * Waits until terminal `id`'s output paused for `QUIET` (no output after the call started counts too), its program
- * ended or it closed, or `wait` milliseconds passed; rejects when `ctx` aborts.
+ * ended or it closed, or `wait` milliseconds passed; rejects when `ctx` aborts, or when `check` throws (called before
+ * each wait for a piece).
  */
-async function quieted(host: TerminalHost, id: string, wait: number, ctx: Context): Promise<void> {
+async function quieted(host: TerminalHost, id: string, wait: number, check: () => void, ctx: Context): Promise<void> {
 	const deadline = Date.now() + wait;
 	let from = host.tail(id, 0).end;
 	for (let left = wait; left > 0; left = deadline - Date.now()) {
+		check();
 		const { context, cancel } = withCancel(ctx);
 		const timer = setTimeout(cancel, Math.min(QUIET, left));
 		try {
