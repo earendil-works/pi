@@ -54,6 +54,23 @@ last column are under `apps/p3/plugins/`.
 | `slices/01-base-and-sessions/walkthrough/`, `slices/26-release/walkthrough/` | how slices 1 (base and sessions) and 26 (release, the `p3` command) were built, with the real code |
 | `archive/` | older designs and notes; uses older names. Not a reference for building |
 
+## Reference artifacts
+
+Radius artifacts, visible to the Earendil organization. Background reading; the guides above win where they differ.
+
+- [p3: how to work](https://radius.earendil.com/artifact/01m8e87dp4ex0t0pdt3gptzfvh), Mario: the working process as
+  a deck (as a video: https://mariozechner.at/uploads/p3-how-to-work.mp4); the text version is `process.md`.
+- [Pi Roam: the product](https://radius.earendil.com/artifact/01m8e6wx16f3b8cw0ye8awwtgz), Max: the problem Pi Roam
+  solves and how it solves it.
+- [Pi Roam: concepts and open UI questions](https://radius.earendil.com/artifact/01m8e6x0gjexgbxtbdn1reree6), Max:
+  the product's concepts and the UI questions still open.
+- [Message component spec](https://radius.earendil.com/artifact/01m8eyjht2e1d8anth59tfaf6c), Max: design spec for
+  message bubbles (first draft).
+- [ImageGrid component spec](https://radius.earendil.com/artifact/01m8eyjrjre2fv43hv68emv65z), Max: design spec for
+  the image grid in messages (first draft).
+- [ImageViewer component spec](https://radius.earendil.com/artifact/01m8eyjz1teahsx76b5v2ag5qb), Max: design spec
+  for the image viewer (first draft).
+
 ## The code, at a glance
 
 | Path | What |
