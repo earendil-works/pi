@@ -32,8 +32,10 @@ afterEach(async () => {
 });
 
 describe("what a session's workers keep", () => {
-	it("goes with the session: its worker stops and its directory is deleted when the session is unlinked", async () => {
-		running = await testServer({}, context);
+	// p3-base (00e4bc5e8): workers of removed sessions ran on until idle and kept their directories. A minute of idle
+	// time here: the stop must be the removal's, not the idle one's.
+	it("goes with the session: its worker stops at once and its directory is deleted when the session is unlinked", async () => {
+		running = await testServer({ idleMs: 60_000 }, context);
 		const t = running;
 		const client = await t.client(context);
 		const id = await newSession(client, "one", context);
@@ -53,7 +55,11 @@ describe("what a session's workers keep", () => {
 			(left) => !left,
 			10_000,
 		);
-		assert.equal((await t.workers(context))[id], undefined, "no worker runs for it");
+		await eventually(
+			async () => (await t.workers(context))[id],
+			(worker) => worker === undefined,
+			10_000,
+		);
 		assert.deepEqual(t.errors, []);
 	});
 
