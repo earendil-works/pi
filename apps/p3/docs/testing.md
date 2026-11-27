@@ -137,6 +137,72 @@ loaded from the Pi's user root, called by a client of the compiled API). Run the
 10. **Serial and loaded:** the suite passes with `--test-concurrency=1` and with four `npm test` at once.
 11. **No leaks:** a failed case closes its sockets and processes (`t.after`, `finally`); one leak hangs the runner.
 
+## A kind's tests
+
+What a kind plugin tests and with which helper, tier by tier. The helpers are in `plugins/things/test/`; the worked
+example is the notes plugin's `test/` folder, one file per source file (the sample below is
+`plugins/notes/test/server.test.ts:143-159`, shortened).
+
+| Helper | What it is | Where |
+| --- | --- | --- |
+| `kindServer(plugin, Kind, context, beside?)` | the plugin tier for a kind: the kind's server facet beside the things plugin's on a counted host. It gives `person(name, workspace?)`, `workspace(session)` (a workspace with that session's agent put in), `thingIn(where, name?)`, `tick(where, thing, party, tick, gives)`, `holding(principal, where, thing, fn)`, `granted(principal, where, thing)`, `holders(principals, where, thing)`, `count(metric)`, `reload()`, `giving(at, things, fn)`, `worker(session)`, `close()` | `plugins/things/test/kind-server.ts:49-95` (each method with its doc comment) |
+| `giving` | the kind's harness part, taken from its built worker facet, given real references held as the session's worker: `fn` gets the part's extension. `runTool(extension, name, args, context)` runs a tool as the agent would; `toolNames(extension)` lists them | `plugins/notes/test/worker.test.ts:38-41` |
+| `refused(promise, code, key?)` | asserts a refusal's code and the key of its message | `plugins/things/test/kind-server.ts:240-248` |
+| `kindE2E(context)` | tier 3 for a kind: p3's real server on a copy of the built-in plugins, with `person`, `thingIn`, `ticks`, `client(principal)` (over `/chord`, as a page) and `reload(folder, plugin)`, a real edit of the facet and an apply | `plugins/things/test/kind-e2e.ts:45-88` |
+| `checkCatalog(messages)` | every key of the catalog has a text, and a second catalog renders in its place | `plugins/things/test/catalog.ts:8-28` |
+| `Browser`, `PHONE`, `DESKTOP`, `BROWSER_SKIP` | the browser driver for a view's test (below, "UI tests") | `plugins/chrome/test/browser.ts` |
+
+```ts
+// plugins/notes/test/server.test.ts: every case gets its own server
+let n: KindServer<typeof Notes>;
+beforeEach(async () => {
+	n = await kindServer({ name: "@earendil-works/p3-notes", root: ROOT, server: notesServer }, NotesKind, context);
+});
+afterEach(() => n.close());
+
+it("follows the grants live, on the same hold: Write withheld leaves a reader, removed from Pi denied", async () => {
+	const ann = await n.person("Ann");
+	const notebook = await n.thingIn(n.pi);
+	await n.holding(ann, n.pi, notebook, async (notes, ctx) => {
+		await notes.add!({ text: "first" }, ctx);
+		await n.tick(n.pi, notebook, { kind: "person", person: ann.id }, "write", false);
+		await until(notes.state, (state) => state.kind === "live" && notes.add === undefined, within("a reader", ctx));
+		assert.deepEqual([notes.edit, notes.remove, notes.granted.size], [undefined, undefined, 0]);
+		// … then removed from Pi: `notes.state` fails, denied
+	});
+});
+```
+
+| What is tested (guide §8) | How | The notes plugin's case |
+| --- | --- | --- |
+| the kind (8.4) | registered by its plugin; named by its thing; its content gone with its last link, only its own; `delete` run again | `plugins/notes/test/server.test.ts:52-95` |
+| who gets what (8.1) | a person put in, the agent, each tick alone, `@open` alone, the owner, nobody outside: assert the granted names and the members. Guests: with shares | `plugins/notes/test/server.test.ts:98-108`, `plugins/notes/test/server.test.ts:110-133`, `plugins/notes/test/server.test.ts:135-141`; each tick alone: `plugins/checklist/test/server.test.ts:108-122` |
+| a grant changed while held (8.2) | the same hold loses or gains the member, live; removed from the workspace: denied | `plugins/notes/test/server.test.ts:143-159` |
+| hidden (8.3) | hidden in a workspace: denied there, live, still there where shown | `plugins/notes/test/server.test.ts:161-176` |
+| refusals | the code and the message's key; values outside the schema | `plugins/notes/test/server.test.ts:242-256` |
+| lists | each caller's pages; no gap and no duplicate as rows move; a page read now | `plugins/notes/test/server.test.ts:259-364` |
+| settings | the default; `configure` reaching every holder; a value outside the schema refused; gone with the thing. Notes calls the hook as the server does; who may configure (Configure where the thing is linked, through `Workspace.configure`) is pinned once, in the things plugin | `plugins/notes/test/server.test.ts:366-478`; `plugins/things/test/workspaces.test.ts:544-558` |
+| making a thing | `n.thingIn` makes one through the things store, with no input and no maker's grant: enough for a kind without `create.input`. A kind with one tests the real path: a person with Make calls `Workspace.make({ kind, name, input })` on a held workspace | `plugins/things/test/workspaces.test.ts:784-787` |
+| reload (8.6) | plugin tier: `n.reload()` while held, pages and holds kept. End to end: `kindE2E`'s `reload`, both holders rebind, nothing reported | `plugins/notes/test/server.test.ts:327-344`; `plugins/notes/test/e2e.test.ts:31-69` |
+| counted work | `n.count("chord.query.runs")` per common action, the number pinned: a shared live query runs once however many hold it, a list once per holder, nothing for what did not change | `plugins/notes/test/server.test.ts:480-506`; one read for many holders: `plugins/checklist/test/server.test.ts:232-256` |
+| GC (8.7) | every hold released: `assert.ok(await collected([ref]))`; a shared read is released with its last holder | `plugins/notes/test/server.test.ts:508-518`; `plugins/checklist/test/server.test.ts:258-290` |
+| the store alone | order, uniqueness, bounds, what a clock gone back does (a mocked clock, never a sleep) | `plugins/notes/test/store.test.ts:18-56` |
+| a migration (decision 125) | a store the old version wrote is opened by the new one: every old row reads as the new shape | `plugins/canvas/test/store.test.ts:135-205` |
+| plans (8.5) | every named query's statement searches the index its comment names, with no temporary B-tree: add the kind's queries to the plans test | `test/plans.test.ts:179` in `test/plans.test.ts` |
+| messages (8.9) | `checkCatalog(messages)` | `plugins/notes/test/messages.test.ts:7-11` |
+| the harness part | through `giving`: the part is the facet's one part; the tools offered with one and two things and as ticks go; list, read, change; refused where the tick is not given, also when taken back after offering; an unknown id | `plugins/notes/test/worker.test.ts:43-181`; a flag kind: `plugins/tools/test/worker.test.ts:46-69` |
+| a tick withheld, a thing let go of | the next request has no tool; a coding tool already running on the machine finishes (`plugins/harness/test/worker.test.ts:158-168`). A method call under way on a thing whose grant changes can fail `unavailable` today (Chord seals the admitted object on a regrant; `plugins/sessions/test/holding.test.ts:565-568`): a tool reports that refusal, it does not retry | – |
+| routes | the handler called as the HTTP component calls it (plugin tier), and end to end with a browser's cookie | `plugins/files/test/server.test.ts:355-356` (and the cases below it); `plugins/files/test/transfers.test.ts:84-145` |
+| the view (8.10) | in Chromium through `kindE2E` and `Browser`: each mode of the view (with and without the tick), live changes, a refusal said as its message, an apply of the web facet keeping page state; at `PHONE` and `DESKTOP`, light and dark. Each case sets up for itself. Runs only with `P3_BROWSER_TESTS=1` | `plugins/canvas/test/view.test.ts:30-47` (the setup; the cases follow) |
+| the worker's memory (8.11), frozen values (8.12) | not available yet: the memory test is not ported (ERNDL-855), and no helper freezes what a kind hands to Chord | – |
+
+Rules of form: the test file's header lists what it pins, in the words of the `it` names; one `describe` per
+mechanism; an `it` reads as a sentence with its `describe`; a regression is named after the rule it pins, the
+reviewer and round in a comment beside it; `until(member, done, within("what", ctx))` for effects, never a sleep, and
+never an assertion on elapsed time; shared setup in `before` or `beforeEach`, never in an earlier case. A harness part
+whose tools depend on a tick is tested with real references (`giving`), never with a stand-in object that imitates
+one.
+
 ## UI tests
 
 The page (the base's `src/web/` and the plugins' web facets) is tested in a real browser; the terminal client does

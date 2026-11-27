@@ -26,6 +26,7 @@ import type { Watchable } from "../watch.ts";
 import { type AdmitSelf, type AdmittedValue, refuseAdmittedJob } from "./admission.ts";
 import type { StoreSelf } from "./attempt.ts";
 import { type Facet, type FacetContribution, type ServedEntry, setUp } from "./facet.ts";
+import { followedOver } from "./follow-over.ts";
 import { grantedImplementation } from "./members.ts";
 import type { ChordObject, LocalContract, RemoteContract, Served, ServedAdmission } from "./object.ts";
 import type { Presence } from "./presence.ts";
@@ -294,6 +295,9 @@ const INERT_TABLE = inert(() => INERT);
 /** What `self.queries` returns and each named query of it: what readers take, and `self.query` does not. */
 const INERT_NAMED = inert();
 
+/** A writable's handle: one source `self.follow(over, attach)` takes, as the registry values staging has. */
+const INERT_WRITABLE = inert(() => INERT);
+
 /** A factory's `self` during staging: it records declarations and checks them; it activates nothing. */
 class RecordingSelf {
 	declaring = true;
@@ -433,7 +437,7 @@ class RecordingSelf {
 
 	writable(): never {
 		this.#assertDeclaring("writable");
-		return INERT;
+		return INERT_WRITABLE;
 	}
 
 	events(): never {
@@ -467,8 +471,10 @@ class RecordingSelf {
 		throw new Error(`${this.#object.label}: self.tx runs in calls, not in a factory`);
 	}
 
-	follow(): never {
+	follow(first?: unknown, attach?: unknown): never {
 		this.#assertDeclaring("follow");
+		// Over a changing source: a registry value (the host's own) or a writable; anything else is refused.
+		if (attach !== undefined && first !== INERT_WRITABLE) followedOver(first, this.#object.label);
 		return INERT;
 	}
 

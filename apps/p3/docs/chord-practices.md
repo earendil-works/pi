@@ -15,8 +15,9 @@ session workers           one process per session: host at Session({ id }), its 
 
 - **A host** is one participant; **a link** joins two. A plugin never sees processes: it serves objects on a host
   kind and asks for objects by contract (`ctx.get`, `self.get`); Chord routes and relays.
-- **A plugin** is a folder in a plugins root with one file per facet kind: `server.ts`, `worker.ts` (p3's kinds today;
-  `web` and `terminal` come with the UI). The server builds its server facets with esbuild at each start, and the
+- **A plugin** is a folder in a plugins root with one file per facet kind: `server.ts`, `worker.ts`, `web.tsx`
+  (p3's kinds today; `terminal` comes with the terminal client). The server builds its server facets with esbuild at
+  each start, and the
   worker facets when they are first needed (the first worker's start or the first apply, whichever comes first; a
   later apply builds what changed), then ships them to the workers: a broken worker facet shows its error there, in
   the first worker's start and the server's log, not at the server's start. A built-in plugin failing fails the start;
@@ -88,10 +89,14 @@ A plugin of another root (a third party's, in `<data directory>/plugins`) reache
 through the API (Chord decision "The app kit, point 5"): a relative path out of its root is a build error. The sessions
 plugin's `contract.ts` is part of `/v1` through that re-export (v1 stays changeable until p3 is done).
 
-Missing today (ask Mario, `process.md`): `withoutAbortSignal` and `pluginFile` are not exported; there is no `web` or
+Missing today (ask Mario, `process.md`): `withoutAbortSignal` and `pluginFile` are not exported; there is no
 `terminal` facet kind yet.
 
 ## The shape of a p3 plugin (the sessions plugin, `apps/p3/plugins/sessions/`)
+
+A feature people or the agent use is a kind of thing: it follows `kind-pattern.md`, file by file, with notes as the
+example to copy. This section shows the Chord side every plugin with a store has (contracts per audience, the store,
+views that forward, lists) on the sessions plugin, a workspace kind with objects of its own.
 
 ```text
 package.json         { "name": "@earendil-works/p3-sessions", "private": true, "type": "module" }

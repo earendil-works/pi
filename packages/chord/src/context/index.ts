@@ -138,7 +138,11 @@ export function withCancel(context: Context): {
 export function awaitWithContext<T>(promise: Promise<T>, context: Context): Promise<T> {
 	const signal = context.abortSignal;
 	if (signal === undefined) return promise;
-	if (signal.aborted) return Promise.reject(abortError(signal));
+	if (signal.aborted) {
+		// Its rejection is observed as on the other path: work abandoned before it settled crashes nothing.
+		void promise.catch(() => {});
+		return Promise.reject(abortError(signal));
+	}
 	return new Promise<T>((resolve, reject) => {
 		const onAbort = (): void => reject(abortError(signal));
 		signal.addEventListener("abort", onAbort, { once: true });

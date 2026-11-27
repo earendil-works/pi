@@ -1,54 +1,69 @@
-// The tools plugin's worker facet (`testPlugin`): its harness part, taken from the facet, gives Durable's coding tools
-// whose flag the nearest coding tools thing has (`stacking: "nearest"`: the farther links' flags do not add up), and
-// nothing when it has none. A tool withheld while a call runs is the harness's test (the call finishes).
+// The coding tools' harness part, as the worker facet contributes it to `ThingHarnessParts`, given the coding tools
+// an agent holds (real references, held as the session's worker on a server with the things plugin, `kindServer`): it
+// is the facet's one part; it gives Durable's coding tools whose tick the agent has, only the tools (the harness names
+// the extension), and nothing once every tick is withheld. Which coding tools thing an agent holds (the nearest) is the
+// admission's (`server.test.ts`); a tick withheld while a call runs is the harness's test (the call finishes).
 
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
-import { testPlugin } from "@earendil-works/p3/v1/testing";
-import { type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
-import { CodingToolsKind } from "../kind.ts";
+import { BACKGROUND_CONTEXT as context, until } from "@earendil-works/p3/v1";
+import { within } from "../../../test/until.ts";
+import { OneThing } from "../../things/contract.server.ts";
+import { type HarnessExtension, ThingHarnessParts } from "../../things/contract.worker.ts";
+import { type KindServer, kindServer, toolNames } from "../../things/test/kind-server.ts";
+import { type CodingTools, CodingToolsKind } from "../kind.ts";
+import toolsServer from "../server.ts";
 
+/** The tools plugin's root. */
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
-/** The session, whose `call` and `location` the coding tools never use. */
-const SESSION = {
-	session: "s",
-	workspace: "w",
-	call: () => Promise.reject(new Error("no call")),
-	location: async () => undefined,
-	moveLocation: () => Promise.reject(new Error("no move")),
-};
+/** The session's agent as a party. */
+const AGENT_PARTY = { kind: "agent", session: "s1" } as const;
 
-/** A held coding tools thing whose reference has the flags `granted`. */
-function held(thing: string, ...granted: string[]): HeldThing {
-	// A stand-in for the holding's reference until `kindServer.giving` is on main: the part reads only `granted`.
-	const flags = new Set(granted);
-	return { thing, workspace: "w", depth: 0, ref: { granted: flags } as unknown as HeldThing["ref"], granted: flags };
-}
+let n: KindServer<typeof CodingTools>;
+let s1: string;
+let tools: string;
+
+beforeEach(async () => {
+	n = await kindServer(
+		{ name: "@earendil-works/p3-tools", root: ROOT, server: toolsServer },
+		CodingToolsKind,
+		context,
+	);
+	s1 = await n.workspace("s1");
+	const one = await n.host.get(OneThing, { kind: CodingToolsKind.name }, context);
+	tools = await until(one.thing, (thing) => thing !== "", within("the coding tools", context));
+	one.release();
+});
+
+afterEach(() => n.close());
+
+/** The names of the tools s1's agent gets holding `things` there, in that order. */
+const given = (...things: string[]) =>
+	n.giving({ session: "s1", workspace: s1 }, things, async (extension: HarnessExtension) => toolNames(extension));
 
 describe("the coding tools' harness part", () => {
-	it("gives each coding tool while its flag is granted on the nearest thing", async () => {
-		const t = await testPlugin(ROOT, { kind: "worker", session: "s" }, context);
-		try {
-			const [entry] = t.contributions(ThingHarnessParts);
-			assert.equal(entry?.value.kind.name, CodingToolsKind.name);
-			const tools = (...things: HeldThing[]) =>
-				entry.value
-					.part(things, SESSION)
-					.extension?.tools?.map((tool) => tool.name)
-					.toSorted();
-			assert.deepEqual(tools(held("t", "read", "write", "edit", "bash")), ["bash", "edit", "read", "write"]);
-			// Bash withheld: the rest stay.
-			assert.deepEqual(tools(held("t", "read", "write", "edit")), ["edit", "read", "write"]);
-			assert.deepEqual(tools(held("t", "read")), ["read"]);
-			// Let in with no flag: no extension at all.
-			assert.equal(entry.value.part([held("t")], SESSION).extension, undefined);
-			// Two links: the nearest (last) decides, the farther one's flags do not add up.
-			assert.deepEqual(tools(held("pi", "read", "write", "edit", "bash"), held("team", "read")), ["read"]);
-		} finally {
-			await t.close(context);
-		}
+	it("is the worker facet's one part, for the coding tools", async () => {
+		assert.deepEqual(
+			(await n.worker("s1")).contributions(ThingHarnessParts).map(({ value }) => value.kind.name),
+			[CodingToolsKind.name],
+		);
+	});
+
+	it("gives each coding tool while its tick is granted, and only the tools", async () => {
+		await n.giving({ session: "s1", workspace: s1 }, [tools], async (extension) => {
+			assert.deepEqual(Object.keys(extension), ["tools"]);
+			assert.deepEqual(toolNames(extension), ["bash", "edit", "read", "write"]);
+		});
+		await n.tick(n.pi, tools, AGENT_PARTY, "bash", false);
+		assert.deepEqual(await given(tools), ["edit", "read", "write"]);
+		for (const tick of ["write", "edit"]) await n.tick(n.pi, tools, AGENT_PARTY, tick, false);
+		assert.deepEqual(await given(tools), ["read"]);
+	});
+
+	it("gives nothing once every tick is withheld", async () => {
+		for (const tick of ["read", "write", "edit", "bash"]) await n.tick(n.pi, tools, AGENT_PARTY, tick, false);
+		await assert.rejects(given(tools), /gave no extension/);
 	});
 });

@@ -10,8 +10,9 @@ agent needs while building, and the record of how p3 got here.
 1. `process.md`: how a package goes from its Linear issue to the nightly; whose the base files are.
 2. `chord-practices.md`: how p3 fits together and how a p3 plugin is built on Chord: the shape, the rules, the
    mistakes made and their fixes.
-3. `kind-pattern.md`: how a kind plugin is built, file by file: the layout, the declaration, serving, the harness
-   part and its tools, views and messages, refusals, tests, with the built-in plugin that shows each point.
+3. `kind-pattern.md`: how a kind plugin is built, file by file: the layout, the declaration, serving, the store and
+   its migrations, lists, settings, the harness part and its tools, the web facet, messages, refusals, routes; each
+   with a worked example in the built-in plugin that does it best.
 4. `testing.md`: the tiers, what every package tests, the commands.
 5. `performance.md`: the budgets, how to measure, the traps.
 6. `names.md`: one name per thing; use these words in code, contracts and text.
@@ -19,6 +20,30 @@ agent needs while building, and the record of how p3 got here.
 For depth, only when a guide sends you there: Chord's design (`packages/chord/docs/design.md`; §3 hosts and links, §6
 objects and admission, §§9-11 documents, tables, queries, lists, §17 registries, §21 reload, §23 HTTP, workers and
 surfaces) and its plugin guide (`packages/chord/docs/plugin-authoring.md`).
+
+## Where each topic is
+
+One place per topic, each with a worked example that points into the built-in plugin that does it best. Paths in the
+last column are under `apps/p3/plugins/`.
+
+| Topic | The place | The example |
+| --- | --- | --- |
+| a plugin's files and their names | `kind-pattern.md` §1; `names.md`, "Names inside a plugin" | `notes/` |
+| declaring a kind: members, ticks, default grants | `kind-pattern.md` §3 | `notes/kind.ts:61-89` |
+| serving it: `implement` and the hooks | `kind-pattern.md` §4 | `notes/server.ts:23-64` |
+| the store, its tables and migrations | `kind-pattern.md` §5; the rules: `chord-practices.md`, "Data" | `notes/store.ts:95-175`; a migration: `canvas/store.ts:63-81` |
+| lists and reads | `kind-pattern.md` §6; the rules: `chord-practices.md`, "Lists" | `notes/server.ts:29-49` |
+| settings and the Settings form | `kind-pattern.md` §7 | `notes/store.ts:137-143` |
+| the harness part and its tools | `kind-pattern.md` §8 | `notes/worker.ts:43-47` and the tools below it; a flag kind: `tools/worker.ts:17-25` |
+| the web facet in React: views, components, hooks, `data-*`, phone and desktop | `kind-pattern.md` §9 | `notes/notes-view.tsx:33-82`; components: `canvas/board-view.tsx` with `canvas/toolbar.tsx` |
+| messages and their test | `kind-pattern.md` §10 | `notes/messages.ts:8-35` |
+| errors and refusals | `kind-pattern.md` §11 | `notes/store.ts:178-180`; `files/places.ts` |
+| HTTP routes | `kind-pattern.md` §12 | `terminals/attach.ts:35-73` |
+| tests, tier by tier | `testing.md`; for a kind: "A kind's tests" | `notes/test/`; a view in a browser: `canvas/test/view.test.ts` |
+| budgets and numbers | `performance.md`; for a kind: "A kind's numbers" | `apps/p3/bench/machine-kinds.ts` |
+| names | `names.md` | – |
+| how a package goes from its issue to done | `process.md` | – |
+| what went wrong before, and its fix | `chord-practices.md`, "Mistakes we made" | – |
 
 ## Reference (not instructions)
 
@@ -44,17 +69,17 @@ surfaces) and its plugin guide (`packages/chord/docs/plugin-authoring.md`).
 
 Copy the shape from these. Where `kind-pattern.md` says "being changed", or the mistakes table of
 `chord-practices.md` says otherwise, follow those, not the example. "Still rough" is what the hackiness review of
-2026-11-27 found in each and its cleanup has not yet removed (checked against main that day, 09:50 UTC): do not copy
+2026-11-27 found in each and its cleanup has not yet removed (checked against main that day, 12:00 UTC): do not copy
 it.
 
 | Plugin | The shape it shows | Still rough: do not copy |
 | --- | --- | --- |
 | `notes` (the reference), `checklist` | a kind with a store and a view | `useAction` and `failureText` copied into both views (use `useErrorText` of `plugins/things/contract.web.tsx`); a draft kept in `useState` is lost on an apply (`usePageState` if it must survive); neither has a browser test of its view (`canvas/test/view.test.ts` has); the `gone` mark in its store is a per-kind workaround for a race every kind with a store has (a write begun before the delete, committed after): keep the guard and its test (the late write is refused in its transaction), but a shared answer from the things plugin is to replace it (notes and checklist: a table `<plugin>.gone`); notes' page cursor is a joined text (`<order>:<cursor>`), and its authors' read with `first: Number.MAX_SAFE_INTEGER` is no model for a bounded read |
-| `tools` | a flag kind with a harness part and no view | its part is tested with a stand-in reference (use `kindServer.giving`), reads `ref.granted` where `HeldThing.granted` is meant, and answers `{ ...coding, name, tools }` where `{ extension: { tools } }` is enough (the harness names the extension) |
-| `prompt` | two kinds in one plugin | both parts are tested with stand-in references and read `ref.granted` where `HeldThing.granted` is meant; `server.ts` compares `by.plugin` with its own package name written out (declare a `create.input` instead) |
+| `tools` | a flag kind with a harness part and no view | – (cleaned up in `2798b9be8`) |
+| `prompt` | two kinds in one plugin | `server.ts` compares `by.plugin` with its own package name written out to seed the first instructions (declare a `create.input` instead) |
 | `environments`, `files` | a family of types; HTTP routes held as the person | the machine's worker part builds this device's environment itself, by the type's name; `files/transfers.ts` checks one right in several overlapping ways and races the request's body by hand; `files/test/server.test.ts` holds the routes' cases named after a review round |
 | `sessions` | a workspace kind | a joined text key built by hand (`person:<id>` in `new-session.tsx`), which also holds the old owner-only `Environments` list (no model for a machine picker); a one-time rewrite of rows in `store.ts`; `serveStore` is one function of about 180 lines |
-| every kind with a harness part | – | what a part does with nothing held: main skips empty kinds, so not every part checks (tools and terminals do; notes and canvas would still offer their list and read tools). Write `kind-pattern.md`'s section 6, "nothing held": `if (things.length === 0) return {};`, tasks kept |
+| every kind with a harness part | – | what a part does with nothing held: main skips empty kinds, so not every part checks (tools and terminals do; notes and canvas would still offer their list and read tools). Write `kind-pattern.md`'s section 8, "nothing held": `if (things.length === 0) return {};`, tasks kept |
 | `canvas` | flag ticks, a people-only tick, a member's behaviour by a flag (`granted.has`), live events, a view split into components (`board-view.tsx`, `toolbar.tsx`, `drawing.tsx`), a browser test of the view (`test/view.test.ts`) | its view runs its changes by hand (`run`, `failure`; the text through `useErrorText`), as each view does until the shared hook exists; the `gone` mark in its store is a per-kind workaround for a race every kind with a store has (a write begun before the delete, committed after): keep the guard and its test (the late write is refused in its transaction), but a shared answer from the things plugin is to replace it (canvas: a bit beside each board's count); in `test/view.test.ts` one case sets up the next (`ownerName`: shared setup belongs in `before`), and some `it` names carry a reviewer and round |
 
 Rules for this folder: the guides stay current (fix one the moment it is wrong or silent, in the commit that shows

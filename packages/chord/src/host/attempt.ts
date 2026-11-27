@@ -57,6 +57,7 @@ import { Deadline } from "./deadline.ts";
 import { checkDependencies, type Dependency, ParkedLong, type Parking, parkedCause, pinKeys } from "./dependencies.ts";
 import { type EventNode, OwnEventSource, type SourceOwner } from "./events.ts";
 import { type FollowAttach, FollowSource } from "./follow.ts";
+import { type FollowOverAttach, followedOver, followOver } from "./follow-over.ts";
 import type { HostError } from "./host.ts";
 import type { ListOptions } from "./list.ts";
 import {
@@ -178,6 +179,17 @@ export interface Self<P extends Principal = Principal> extends RoutineDeclaratio
 	 * source keeping its last value. A state member, a derive source, an `on` source.
 	 */
 	follow<T>(attach: FollowAttach<T>): Watchable<T>;
+	/**
+	 * A followed source over a changing source (ERNDL-1191): `attach` runs for each value of `over` (a registry value
+	 * or a writable) that is not `undefined`. Activation waits for a value; a new value replaces the attachment (the
+	 * old one detached, the new one's calls held until it attached, then one replacement with its newest value), and
+	 * one overtaken while it attaches never shows; `undefined` keeps the last value. A failure of the source still
+	 * given while live (its attach rejecting, its runtime failing) makes the member failed (`follow_failed`), retried
+	 * after a backoff or at the next value; the object stays live. A failure while the object activates fails it
+	 * `transient`, as a plain follow's: over a registry value, declare `self.retryOn(over)` so that its next value wakes
+	 * it (else it waits for its backoff, up to 60 s); a writable is the attempt's own and wakes nothing.
+	 */
+	follow<S, T>(over: NativeWatchable<S | undefined>, attach: FollowOverAttach<S, T>): Watchable<T>;
 	/**
 	 * This object's job `definition` (§15), once per job name: `run` runs each started run outside transactions,
 	 * `finish` records its outcome in one. Starts are taken once the object is live.
@@ -365,8 +377,9 @@ export type Activated =
 	| { readonly kind: "ended" };
 
 /** The error of an object, or a getter, that waited `ms` without the object going live. */
-export function notLive(label: string, ms: number): ChordError {
-	return new ChordError({ code: "unavailable", message: `${label}: did not become live within ${ms} ms` });
+export function notLive(label: string, ms: number, waitingFor?: string): ChordError {
+	const waiting = waitingFor === undefined ? "" : ` (waiting for ${waitingFor})`;
+	return new ChordError({ code: "unavailable", message: `${label}: did not become live within ${ms} ms${waiting}` });
 }
 
 /**
@@ -393,6 +406,8 @@ type AttemptExtras = {
 	runs: Work | undefined;
 	/** A followed source's end while this attempt activated: it fails as it goes live (if its activation returned). */
 	endedEarly: ChordError | undefined;
+	/** What a follow over a changing source waits for while it activates (a value of its source), for the deadline's error. */
+	followWaitingFor: string | undefined;
 	/** Its registry reads, contributions, wake signals and writables, made by the first. */
 	registryDeclarations: RegistryDeclarations | undefined;
 	/** What its own event sources check (its seal) and count with, made by the first `self.events()`. */
@@ -760,12 +775,32 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		return this.#object.documents.tx(fn, this.#token, context);
 	}
 
-	follow<T>(attach: FollowAttach<T>): Watchable<T> {
+	follow<T>(attach: FollowAttach<T>): Watchable<T>;
+	follow<S, T>(over: NativeWatchable<S | undefined>, attach: FollowOverAttach<S, T>): Watchable<T>;
+	follow<S, T>(
+		first: FollowAttach<T> | NativeWatchable<S | undefined>,
+		attach?: FollowOverAttach<S, T>,
+	): Watchable<T> {
 		this.#assertDeclaring("follow");
 		const object = this.#object;
-		const owner = { label: object.label, context: this.#context, ended: (end: WatchEnd) => this.#followEnded(end) };
-		// The source holds what the runtime gives it, `T`, as Chord's JSON sources do.
-		const source = new FollowSource(attach as unknown as FollowAttach<JsonValue>, owner, object.host.batch);
+		const { host, label } = object;
+		// The source holds what the runtime gives it, `T`, as Chord's JSON sources do; the forms differ by their arity.
+		const attached =
+			attach === undefined
+				? (first as unknown as FollowAttach<JsonValue>)
+				: followOver(followedOver(first, label), attach as unknown as FollowOverAttach<unknown, JsonValue>, {
+						label,
+						// Its later attachments run as the live object's work: no activation span, no opener mark.
+						context: withAbortSignal(this.#abort.signal, this.#context),
+						metrics: host.metrics,
+						live: () => this.#isLive,
+						waiting: (what) => {
+							if (what !== undefined || this.#extras !== undefined) this.#more().followWaitingFor = what;
+						},
+						report: (error) => host.report({ kind: "follow_failed", object: label, error }),
+					});
+		const owner = { label, context: this.#context, ended: (end: WatchEnd) => this.#followEnded(end) };
+		const source = new FollowSource(attached, owner, host.batch);
 		this.#follows = appended(this.#follows, source);
 		return source as unknown as Watchable<T>;
 	}
@@ -829,7 +864,8 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#startActivation(this.#trace.trigger);
 		const { ready } = this.#object.host.timeouts;
 		const deadline = new Deadline(ready, () => {
-			this.abandon({ kind: "failed", cause: { kind: "transient", error: notLive(this.#object.label, ready) } });
+			const error = notLive(this.#object.label, ready, this.#extras?.followWaitingFor);
+			this.abandon({ kind: "failed", cause: { kind: "transient", error } });
 		});
 		try {
 			const served = this.#served;
@@ -1034,6 +1070,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 	/** The object went live: its jobs take starts and its routines start, in this turn; both stop when it is sealed. */
 	live(): void {
 		this.#isLive = true;
+		for (const follow of this.#follows) follow.live();
 		const early = this.#extras?.endedEarly;
 		if (early !== undefined) {
 			this.#object.failLive(this, { kind: "transient", error: early });
@@ -1889,6 +1926,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 			listed: undefined,
 			runs: undefined,
 			endedEarly: undefined,
+			followWaitingFor: undefined,
 			registryDeclarations: undefined,
 			sourceOwner: undefined,
 			sources: undefined,

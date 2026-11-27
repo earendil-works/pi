@@ -2,18 +2,23 @@
 // runtime (Durable's `observeConversation`, `observeTaskGraph`, `observeDoc`). Attached during its attempt's
 // activation, detached at the attempt's end. Calls inside a running batch (Durable adopting in the store's commit step)
 // are marked in that batch, calls outside one are grouped into one batch on the next microtask, so a derive over two
-// views of one commit computes once with both changes.
+// views of one commit computes once with both changes. `self.follow(over, attach)` is this source over an attach that
+// attaches again to each value of `over` (`follow-over.ts`).
 
 import type { Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
 import type { Op } from "../delta/index.ts";
 import type { JsonValue } from "../json.ts";
-import { type Batch, Source, type Subscriber } from "../state/internal.ts";
+import { type Batch, Source, type Subscriber, type WatchStart } from "../state/internal.ts";
 import type { Watch, WatchCall, WatchEnd } from "../watch.ts";
 
 /** The observer a followed runtime is given: Chord's watch shapes (Durable's `Observer`). */
 export type FollowObserver<T> = {
-	/** One change, synchronously and quickly: Chord only records it. */
+	/**
+	 * One change, synchronously and quickly: Chord only records it. A `failed` call makes the source a failed member
+	 * (its last value kept) until its next value, which replaces the value whole (`[["r", value]]`); while its object
+	 * activates it fails the activation `transient` instead (R4), before the attachment resolved only as the last call.
+	 */
 	advance(call: WatchCall<T>, context: Context): void;
 	/** The followed source ended: `failed` (its runtime failed), or `ended` for good. */
 	end(end: WatchEnd): void;
@@ -63,7 +68,11 @@ export class FollowSource extends Source {
 	readonly #owner: FollowOwner;
 	#state: FollowState = { kind: "attaching", end: undefined };
 	#value: JsonValue | undefined;
-	/** Calls not applied yet: before the attachment resolved, and outside a batch until the next microtask. */
+	/** Whether its attempt went live: before, a `failed` call is the activation's failure, as a `failed` end. */
+	#live = false;
+	/** Its failure while it is a failed member (a `failed` call), its last value kept. */
+	#failed: { readonly error: unknown } | undefined;
+	/** Calls not applied yet: before the attachment resolved (only the last), and outside a batch until the next microtask. */
 	#queued: WatchCall<JsonValue>[] = [];
 	/** Whether a microtask is queued to apply `#queued` in a batch of its own. */
 	#scheduled = false;
@@ -84,6 +93,7 @@ export class FollowSource extends Source {
 	}
 
 	get value(): JsonValue {
+		if (this.#failed !== undefined) throw this.#failed.error;
 		if (this.#value === undefined) {
 			throw new ChordError({
 				code: "not_ready",
@@ -93,10 +103,18 @@ export class FollowSource extends Source {
 		return this.#value;
 	}
 
+	/** Its value, or while it is a failed member its failure and last value. */
+	override start(): WatchStart {
+		const failed = this.#failed;
+		if (failed !== undefined) return { kind: "failed", error: failed.error, last: this.#value };
+		return { kind: "value", value: this.value };
+	}
+
 	/**
 	 * Attaches (activation, after the natives opened): the calls that came meanwhile apply on the attachment's value,
-	 * and an end that came meanwhile takes effect then (the value stays). A rejected attachment, or `undefined` (an
-	 * absent address), throws; an attachment arriving after its attempt detached the source is detached at once.
+	 * and an end that came meanwhile takes effect then (the value stays). A rejected attachment, `undefined` (an absent
+	 * address), or a last call before it that failed throws; an attachment arriving after its attempt detached the
+	 * source is detached at once.
 	 */
 	async attach(context: Context): Promise<void> {
 		const observer: FollowObserver<JsonValue> = {
@@ -114,10 +132,24 @@ export class FollowSource extends Source {
 			return;
 		}
 		this.#value = attached.value;
-		// Nothing watches it yet (members are checked after this): the queued calls only move the value on.
-		for (const call of this.#queued) if (call.kind === "value") this.#value = call.value;
+		// Nothing watches it yet (members are checked after this): the last call before it resolved decides (`#advance`
+		// keeps only that one). Failed: the activation's failure (R4: transient, retried), never a member failed from
+		// the start.
+		const last = this.#queued[0];
 		this.#queued = [];
+		if (last?.kind === "failed") {
+			// Discarded before its cleanup runs: an end the cleanup makes changes nothing, the error stays this one.
+			this.#state = { kind: "detached" };
+			detach();
+			throw last.error;
+		}
+		if (last !== undefined) this.#value = last.value;
 		this.#state = state.end?.kind === "ended" ? { kind: "ended", detach } : { kind: "attached", detach };
+	}
+
+	/** Its attempt went live: a `failed` call fails the member from now on (a flag here: a closure per follow costs 61 B). */
+	live(): void {
+		this.#live = true;
 	}
 
 	/** Its attempt ended: the observer is detached (also after the runtime ended it) and its watches end `ended`. */
@@ -148,7 +180,9 @@ export class FollowSource extends Source {
 		this.#ops = [];
 		this.#retired = false;
 		this.#listed = false;
-		this.publish(this.#value!, ops.length === 0 ? NO_OPS : ops, retired, context);
+		const failed = this.#failed;
+		if (failed !== undefined) this.failWatches(failed.error, context);
+		else this.publish(this.#value!, ops.length === 0 ? NO_OPS : ops, retired, context);
 		if (this.#ending === "frame") {
 			this.#ending = "none";
 			this.endWatchesAfterDelivery();
@@ -168,9 +202,21 @@ export class FollowSource extends Source {
 	#advance(call: WatchCall<JsonValue>): void {
 		const { kind } = this.#state;
 		if (kind === "ended" || kind === "detached") return;
-		if (kind === "attaching" || !this.batch.running) {
+		// Never a member failed from the start (a derive over it would break the activation): the activation fails.
+		// Before the attachment resolved the last call decides, as it is folded (`attach`).
+		if (call.kind === "failed" && !this.#live && kind !== "attaching") {
+			this.#owner.ended({ kind: "failed", error: call.error });
+			return;
+		}
+		if (kind === "attaching") {
+			// Before the attachment resolved only the last call counts (`attach`): one kept, the rest let go of.
+			this.#queued.length = 0;
 			this.#queued.push(call);
-			if (kind === "attached") this.#schedule();
+			return;
+		}
+		if (!this.batch.running) {
+			this.#queued.push(call);
+			this.#schedule();
 			return;
 		}
 		this.#applyQueued();
@@ -227,22 +273,32 @@ export class FollowSource extends Source {
 		for (const call of queued) this.#apply(call);
 	}
 
-	/** Applies one value call inside the running batch: the new value, its ops for the frame, the source marked once. */
+	/**
+	 * Applies one call inside the running batch: the new value and its ops for the frame, or the failure of a failed
+	 * member (a runtime's own failures are final: it ends its observer; an attach over a changing source sends them),
+	 * the source marked once.
+	 */
 	#apply(call: WatchCall<JsonValue>): void {
-		// The runtime's failures are final: it ends its observer instead of sending one.
-		if (call.kind !== "value") return;
-		this.#value = call.value;
-		if (call.retired) this.#retired = true;
-		if (!this.watched) {
-			this.changed();
-			if (call.retired) this.retiredInBatch();
+		if (call.kind !== "value") {
+			this.#failed = { error: call.error };
+			this.#ops = [];
+			this.#mark();
 			return;
 		}
-		for (const op of call.ops) this.#ops.push(op);
-		if (!this.#listed) {
-			this.#listed = true;
-			this.changed();
-		}
+		// A failed member's next value replaces the value whole, whatever its ops (W1).
+		const ops: readonly Op[] = this.#failed === undefined ? call.ops : [["r", call.value]];
+		this.#value = call.value;
+		this.#failed = undefined;
+		if (call.retired) this.#retired = true;
+		if (this.watched) for (const op of ops) this.#ops.push(op);
+		this.#mark();
 		if (call.retired) this.retiredInBatch();
+	}
+
+	/** Marks a change in the running batch: listed once for its frame when watched, its dependents marked. */
+	#mark(): void {
+		if (this.watched && this.#listed) return;
+		this.#listed = this.watched;
+		this.changed();
 	}
 }

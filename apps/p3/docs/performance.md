@@ -88,6 +88,20 @@ tool: never compare the two.
   session, switching conversations, a streamed answer) and measures it with `chord.link.bytes`. The page bundle starts
   at about 140 KB gzipped for Chord's web client alone.
 
+## A kind's numbers
+
+What a kind measures and reports in its issue, as a table `| | target | measured |`. A number not measured says "not
+measured" and why; one above its target says so in bold.
+
+| Number | Target | How | Example |
+| --- | --- | --- | --- |
+| heap per held thing over Chord's own cost | at most 2 KiB | 200 holders, after GC, against the things plugin's bare test kind, the kinds alternated, the median of 5 rounds after a first round apart | `bench/machine-kinds.ts:1-7` (what it measures and how to run it) |
+| the worker facet with the part loaded, idle | under 0.1 MiB of heap; the worker within 55 MiB USS | the heap difference after GC; the memory test once it is ported (ERNDL-855) | – |
+| a change reaching the last of 100 holders | under 10 ms | the median, the cold run apart | – |
+| opening a thing: the first page | one index read | not measured by a test yet: the plans test shows the first page's index (`test/plans.test.ts:179`), and the counted test pins the runs per write, taken after the holds are open (`plugins/notes/test/server.test.ts:480-506`) | – |
+| what the view adds to the page bundle | measured, gzipped | – | – |
+| the kind's own (a key typed reaching the terminal, one `authorize`) | set in the issue | a bench of its own | `bench/files-page.ts` |
+
 ## How to measure
 
 - **Memory:** USS = `Private_Clean + Private_Dirty` from `/proc/<pid>/smaps_rollup`; PSS from the same file for
