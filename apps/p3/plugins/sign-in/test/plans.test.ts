@@ -1,6 +1,6 @@
 // The plans of the sign-ins table's reads, as SQLite runs them: `rows.ofPerson` (its first page and the page after a
-// bookmark), `rows.all`, and the read of `revokeOf` search the index their comments name, or the key, with no temporary
-// B-tree; the start's whole-table read (every sign-in into memory) is the one scan. The test opens the plugin on a SQLite
+// bookmark), `rows.all`, and the read and the delete of `revokeOf` search the index their comments name, or the key,
+// with no temporary B-tree; the start's whole-table read (every sign-in into memory) is the one scan. The test opens the plugin on a SQLite
 // database of its own and records the statements Chord prepares.
 
 import assert from "node:assert/strict";
@@ -29,9 +29,11 @@ describe("the plans of the sign-ins table's reads", () => {
 		const reads = new Set<string>();
 		database.prepare = (sql) => {
 			const statement = prepare(sql);
-			if (!sql.startsWith("SELECT ") || !sql.includes("sign-in.sign-ins")) return statement;
+			const read = sql.startsWith("SELECT ") || sql.startsWith("DELETE ");
+			if (!read || !sql.includes("sign-in.sign-ins")) return statement;
 			const all = statement.all.bind(statement);
 			const iterate = statement.iterate.bind(statement);
+			const run = statement.run.bind(statement);
 			// Chord passes positional parameters only.
 			const listed = (...parameters: SQLInputValue[]) => {
 				reads.add(sql);
@@ -41,7 +43,11 @@ describe("the plans of the sign-ins table's reads", () => {
 				reads.add(sql);
 				return iterate(...parameters);
 			};
-			return Object.assign(statement, { all: listed, iterate: iterated });
+			const ran = (...parameters: SQLInputValue[]) => {
+				reads.add(sql);
+				return run(...parameters);
+			};
+			return Object.assign(statement, { all: listed, iterate: iterated, run: ran });
 		};
 		const store = await openStore(sqliteBackend(new NodeSqliteDatabase(database)), context);
 		const host = createHost<P3Principal>({
@@ -74,11 +80,12 @@ describe("the plans of the sign-ins table's reads", () => {
 							.map(() => "x"),
 					)
 					.map((step) => String(step.detail));
-			const plansOf = async (read: Read): Promise<string[]> => {
+			/** The statements `read` ran, each with its plan's steps. */
+			const plansOf = async (read: Read): Promise<(readonly [string, string[]])[]> => {
 				reads.clear();
 				await read();
 				assert.ok(reads.size > 0);
-				return [...reads].flatMap(plan);
+				return [...reads].map((sql) => [sql, plan(sql)] as const);
 			};
 			/** A named query's first page and the page after it. */
 			const pages = <A>(
@@ -98,16 +105,23 @@ describe("the plans of the sign-ins table's reads", () => {
 				["revokeOf", [() => signIns.revokeOf({ persons: ["ann", "ben"] }, context)], `${T}:by_person`],
 			];
 			for (const [name, read, index] of cases) {
-				const plans = (await Promise.all(read.map((each) => plansOf(each)))).flat();
+				// One read after the other: each records its own statements.
+				const statements: (readonly [string, string[]])[] = [];
+				for (const each of read) statements.push(...(await plansOf(each)));
 				const searched =
 					index === undefined
 						? /^(SEARCH|SCAN) t( |$)/
 						: new RegExp(`USING (COVERING )?INDEX .*${index.replace(/\./g, "\\.")}`);
-				assert.ok(
-					plans.some((step) => searched.test(step)),
-					`${name}: ${plans.join(" | ")}`,
-				);
-				assert.ok(!plans.some((step) => step.includes("TEMP B-TREE")), `${name}: ${plans.join(" | ")}`);
+				for (const [sql, steps] of statements) {
+					const shown = `${name}: ${sql}: ${steps.join(" | ")}`;
+					assert.ok(
+						steps.some((step) => searched.test(step)),
+						shown,
+					);
+					assert.ok(!steps.some((step) => step.includes("TEMP B-TREE")), shown);
+				}
+				// `revokeOf`'s delete by person is one statement on the index too (Astra, quick look on round 1).
+				if (name === "revokeOf") assert.ok(statements.some(([sql]) => sql.startsWith("DELETE ")));
 			}
 		} finally {
 			await host.close(context);

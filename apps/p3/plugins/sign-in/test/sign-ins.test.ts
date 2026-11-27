@@ -367,6 +367,23 @@ describe("one person's sign-ins, and the sign-ins version 1 kept", () => {
 		}
 	});
 
+	// Astra, quick look on round 1: both of two revokes at once said they ended the sign-in.
+	it("of two revokes of one sign-in at once, only the one that ended it says so", async () => {
+		const t = await signInPlugin();
+		try {
+			const issued = await issue(t, MAX, "device");
+			const ended = await t.root(async (ctx) => {
+				const signIns = await ctx.get(SignIns, {});
+				const one = { person: personOf(MAX), id: issued.id };
+				return Promise.all([signIns.revoke(one, ctx), signIns.revoke(one, ctx)]);
+			}, context);
+			assert.deepEqual(ended.sort(), [false, true]);
+			assert.equal(await verify(t, issued.token), null);
+		} finally {
+			await t.close(context);
+		}
+	});
+
 	// Astra, round 1: `""` is the stored person of every sign-in that is no person's, so it would select them all.
 	it("refuses the empty person id: no read or revoke by person reaches a sign-in that is no person's", async () => {
 		const t = await signInPlugin();

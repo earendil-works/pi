@@ -223,11 +223,15 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 			},
 			verify: async (token) => authenticate(token)?.principal ?? null,
 			revoke: async ({ person, id }, ctx) => {
-				// Memory has every sign-in's principal (this object writes the table): no read.
-				const principal = known.get(id)?.principal;
-				if (principal?.kind !== "person" || principal.id !== person) return false;
-				await end(id, ctx);
-				return true;
+				// The check and the delete in one transaction: of two revokes at once, only the one that deleted the row
+				// says it ended one (Astra).
+				const ended = await self.tx(async (tx) => {
+					if ((await tx.get(table, { id }))?.person !== person) return false;
+					tx.delete(table, { id });
+					return true;
+				}, ctx);
+				if (ended) forget([id]);
+				return ended;
 			},
 			revokeOf: async ({ persons }, ctx) => {
 				const ids = await self.tx(async (tx) => {
