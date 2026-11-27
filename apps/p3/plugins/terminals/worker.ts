@@ -36,7 +36,7 @@ const terminalsPart = thingHarnessPart(TerminalsKind, (things, session) => {
 	// Never called with none; the nearest is last (stacking "nearest").
 	const nearest = things[things.length - 1];
 	// No type installed opens terminals (this device's does not yet): a tool that only fails costs every request.
-	if (nearest === undefined || !nearest.ref.granted.has("open") || !nearest.ref.opens.value) return {};
+	if (nearest === undefined || !nearest.ref.granted.has("open") || !nearest.ref.terminals?.value.opens) return {};
 	return { extension: defineExtension({ name: TerminalsKind.name, tools: [terminalTool(nearest, session)] }) };
 });
 
@@ -68,7 +68,7 @@ function terminalTool(held: Held, session: HarnessSession) {
 			const json = (value: unknown) => ({ output: [{ type: "text" as const, text: JSON.stringify(value) }] });
 			switch (action.kind) {
 				case "list":
-					return json(ref.terminals.value.map(({ id, folder, exitCode }) => ({ id, folder, exitCode })));
+					return json(ref.terminals.value.rows.map(({ id, folder, exitCode }) => ({ id, folder, exitCode })));
 				case "open": {
 					const location = await session.location(api.conversationId, context);
 					if (location === undefined) {

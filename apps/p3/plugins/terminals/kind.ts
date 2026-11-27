@@ -29,18 +29,19 @@ const Rows = int({ min: 1, max: 1000 });
  * nothing (decision 126): Watch and Use are the owner's (the owner flag) and whoever Who may gives them to.
  */
 export const TerminalsKind = defineThing("terminals.pane", {
-	version: 1,
+	// Version 2: `terminals` is `{ rows, opens }`.
+	version: 2,
 	makers: "plugin",
 	workspaces: "one",
 	stacking: "nearest",
 	state: {
-		/** The terminals open in this workspace on machines the caller may use here, oldest first. */
-		terminals: arr(TerminalRow),
 		/**
-		 * Whether a machine type installed opens terminals (this device's does not yet): the agent's tool is offered only
-		 * then. Per machine with the SSH type (ERNDL-1174, carry-over).
+		 * The terminals open in this workspace on machines the caller may use here, oldest first (`rows`), and whether a
+		 * machine type installed opens terminals (`opens`; this device's does not yet: the agent's tool is offered only
+		 * then; per machine with the SSH type, ERNDL-1174 carry-over). One member: a member of its own would cost every
+		 * holder a derive of its own (about 0.7 KiB), for a value that is the same for all.
 		 */
-		opens: bool(),
+		terminals: obj({ rows: arr(TerminalRow), opens: bool() }),
 	},
 	methods: {
 		/**

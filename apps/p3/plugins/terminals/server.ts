@@ -7,7 +7,7 @@
 // (decision 89). A Terminals thing that goes takes its terminals with it (its delete hook), and a workspace that goes
 // takes the terminals opened there (`workspaceGone`, ERNDL-1143).
 
-import { defineFacet, forbidden, invalid } from "@earendil-works/p3/v1";
+import { contribute, defineFacet, defineRegistry, forbidden, invalid } from "@earendil-works/p3/v1";
 import { checkMachine, MachineTypes, machineAvailable } from "../environments/contract.server.ts";
 import {
 	TERMINAL_BACKLOG,
@@ -26,11 +26,17 @@ import { messages } from "./messages.ts";
 /** How many terminals one workspace has open at most. */
 const MAX_TERMINALS = 20;
 
+/**
+ * Whether a machine type installed opens terminals (`terminals.opens` of every holder's Terminals): the same for every
+ * holder, so it is computed once, here, and read by the list each holder's object derives already.
+ */
+const Opens = defineRegistry<boolean, boolean>("terminals.opens", { version: 1 });
+
 export default defineFacet((host) => {
 	serveThing(host, TerminalsKind, {
 		implement: ({ workspace, thing }, { caller }, self) => {
 			const terminals = self.registry(TerminalHosts);
-			const types = self.registry(MachineTypes);
+			const opens = self.registry(Opens);
 			const answers = givesTo(self, workspace, caller);
 			const owner: TerminalOwner = { thing, workspace };
 			const list = self.get(TerminalList, owner).terminals;
@@ -56,10 +62,10 @@ export default defineFacet((host) => {
 			};
 			return {
 				terminals: () =>
-					self.derive([list, answers], ([rows, given]) =>
-						rows.filter((row) => machineAvailable(caller, given[row.machine])),
-					),
-				opens: self.derive([types], ([installed]) => [...installed.values()].some((type) => type.value.terminals)),
+					self.derive([list, answers, opens], ([rows, given, opening]) => ({
+						rows: rows.filter((row) => machineAvailable(caller, given[row.machine])),
+						opens: opening,
+					})),
 				attach: async ({ terminal }) => ({
 					url: `${ATTACH_PATH}?${new URLSearchParams({ workspace, thing, terminal: usable(terminal) })}`,
 				}),
@@ -103,6 +109,14 @@ export default defineFacet((host) => {
 			await (await ctx.get(TerminalKeeper, {})).closeWorkspace({ workspace }, ctx);
 		},
 		one: { name: "Terminals" },
+	});
+	host.serve(Opens, { compose: (table) => table.some((item) => item.value) });
+	contribute(host, "terminals.opens", (self) => {
+		const types = self.registry(MachineTypes);
+		self.contribute(
+			Opens,
+			self.derive([types], ([installed]) => [...installed.values()].some((type) => type.value.terminals)),
+		);
 	});
 	serveAttach(host);
 });

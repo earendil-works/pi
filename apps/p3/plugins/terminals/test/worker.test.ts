@@ -117,7 +117,7 @@ describe("the terminals' harness part", () => {
 			assert.equal(opened.folder, "/work");
 			const [program] = device.started;
 			assert.deepEqual([program?.options.cwd, program?.size], ["/work", [120, 40]]);
-			await until(held!.ref.terminals!, (list) => list.length === 1, within("the list", ctx));
+			await until(held!.ref.terminals!, ({ rows: list }) => list.length === 1, within("the list", ctx));
 			assert.deepEqual(JSON.parse(await terminal(extension, { kind: "list" }, ctx)), [
 				{ id: opened.terminal, folder: "/work", exitCode: null },
 			]);

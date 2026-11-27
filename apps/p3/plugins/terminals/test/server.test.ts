@@ -153,7 +153,7 @@ describe("Terminals and its ticks", () => {
 		const id = await holding(ann, (a, ctx) => a.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		started()[0]!.say("hi");
 		await holding(kim, async (k, ctx) => {
-			await until(k.terminals!, (list) => list.length === 1, within("Kim's list", ctx));
+			await until(k.terminals!, ({ rows: list }) => list.length === 1, within("Kim's list", ctx));
 			assert.equal(await (await attached(k, id, ctx))(), "hi");
 			assert.equal(k.open, undefined);
 			assert.equal(k.type, undefined);
@@ -213,7 +213,7 @@ describe("the owner, guests and the one thing (slice 1's rules)", () => {
 			within("the new Terminals", context),
 		);
 		terminals = next;
-		assert.deepEqual(await holding(worker, async (w) => w.terminals!.value), []);
+		assert.deepEqual(await holding(worker, async (w) => w.terminals!.value.rows), []);
 	});
 });
 
@@ -241,11 +241,11 @@ describe("one terminal, many viewers", () => {
 			await a.resize!({ terminal: id, columns: 100, rows: 30 }, ctx);
 			assert.deepEqual(started()[0]!.size, [100, 30]);
 			started()[0]!.exit(3);
-			await until(a.terminals!, (list) => list[0]?.exitCode === 3, within("the exit", ctx));
+			await until(a.terminals!, ({ rows: list }) => list[0]?.exitCode === 3, within("the exit", ctx));
 			await refused(a.type!({ terminal: id, bytes: "x" }, ctx), "invalid", "notRunning");
 			await a.close!({ terminal: id }, ctx);
 			assert.equal(started()[0]!.closed, true);
-			await until(a.terminals!, (list) => list.length === 0, within("closed", ctx));
+			await until(a.terminals!, ({ rows: list }) => list.length === 0, within("closed", ctx));
 			await refused(a.type!({ terminal: id, bytes: "x" }, ctx), "invalid", "noTerminal");
 		});
 	});
@@ -275,7 +275,11 @@ describe("one terminal, many viewers", () => {
 		const id = await holding(ann, (a, ctx) => a.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		started()[0]!.say("still here");
 		await holding(ann, async (a, ctx) => {
-			await until(a.terminals!, (list) => list.some((terminal) => terminal.id === id), within("the list", ctx));
+			await until(
+				a.terminals!,
+				({ rows: list }) => list.some((terminal) => terminal.id === id),
+				within("the list", ctx),
+			);
 			const { data } = await a.backlog!({ terminal: id }, ctx);
 			assert.equal(Buffer.from(data, "base64").toString(), "still here");
 		});
@@ -329,7 +333,7 @@ describe("where a call may reach", () => {
 			await grant(pi, machine, { kind: "person", person: kim.id }, ["@open"], false);
 			await holding(kim, async (k, kctx) => {
 				await until(k.terminals!, () => true, within("Kim's list", kctx));
-				assert.deepEqual(k.terminals!.value, []);
+				assert.deepEqual(k.terminals!.value.rows, []);
 				await refused(k.open!({ machine, folder: "/tmp", ...SIZE }, kctx), "forbidden", "notHere");
 				await refused(k.type!({ terminal: id, bytes: "x" }, kctx), "forbidden", "notHere");
 				await refused(k.attach!({ terminal: id }, kctx), "forbidden", "notHere");
@@ -455,7 +459,7 @@ describe("a stream holds what lets its viewer in (round 2)", () => {
 			started()[0]!.say("before ");
 			assert.equal(await next(), "before ");
 			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
-			await until(a.terminals!, (rows) => rows.length === 0, within("the list without it", ctx));
+			await until(a.terminals!, ({ rows }) => rows.length === 0, within("the list without it", ctx));
 			await refused(a.attach!({ terminal: id }, ctx), "forbidden", "notHere");
 			started()[0]!.say("secret");
 			assert.equal(await next(), "", "the stream ended");
@@ -470,7 +474,7 @@ describe("a stream holds what lets its viewer in (round 2)", () => {
 			const next = await attached(a, id, ctx);
 			const waiting = next();
 			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
-			await until(a.terminals!, (rows) => !rows.some((row) => row.id === id), within("the list", ctx));
+			await until(a.terminals!, ({ rows }) => !rows.some((row) => row.id === id), within("the list", ctx));
 			assert.equal(await waiting, "");
 		});
 	});
@@ -497,7 +501,7 @@ describe("a stream holds what lets its viewer in (round 2)", () => {
 		await holding(ann, async (a, ctx) => {
 			const { url } = await a.attach!({ terminal: id }, ctx);
 			await grant(pi, machine, { kind: "person", person: ann.id }, ["@open"], false);
-			await until(a.terminals!, (rows) => rows.length === 0, within("the list", ctx));
+			await until(a.terminals!, ({ rows }) => rows.length === 0, within("the list", ctx));
 			const entry = t
 				.contributions(Http)
 				.flatMap(({ value }) => Object.entries(value.routes ?? {}))
@@ -533,7 +537,7 @@ describe("caches and holds", () => {
 		const worker = await agent("s1");
 		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
 		const list = await holding(ann, async (a, ctx) => {
-			await until(a.terminals!, (rows) => rows.length === 1, within("the list", ctx));
+			await until(a.terminals!, ({ rows }) => rows.length === 1, within("the list", ctx));
 			return new WeakRef(a.terminals!.value);
 		});
 		assert.ok(await collected([list]));
