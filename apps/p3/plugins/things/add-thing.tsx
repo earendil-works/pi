@@ -27,11 +27,11 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { type ComponentType, useRef, useState } from "react";
 import { kindOfMakeTick, MAKE_ANY } from "./contract.ts";
-import { PluginTitles, ThingParts, useMessageText, useNames, useScreenId } from "./contract.web.tsx";
+import { PluginTitles, ThingParts, useErrorText, useMessageText, useNames, useScreenId } from "./contract.web.tsx";
 import type { KindView } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useErrorText, useKinds } from "./use-page.ts";
+import { useKinds } from "./use-page.ts";
 import { Linkable, Workspace } from "./workspace.ts";
 
 /** What the picker offers: a kind to make, or an existing thing to link. */

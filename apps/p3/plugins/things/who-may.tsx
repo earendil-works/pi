@@ -25,12 +25,12 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { kindOfMakeTick, MAKE_ANY, makeTick, OPEN, type Party, partyKey } from "./contract.ts";
-import { useMessageText, useNames } from "./contract.web.tsx";
+import { useErrorText, useMessageText, useNames } from "./contract.web.tsx";
 import type { KindView, TickFor } from "./kind.ts";
 import { page } from "./page-messages.ts";
 import { audienceOf, isFor, makeTickFor } from "./rules.ts";
 import styles from "./things.module.css";
-import { useErrorText, useKinds, usePartyName, useWide } from "./use-page.ts";
+import { useKinds, usePartyName, useWide } from "./use-page.ts";
 import { type Cell, WhoMay, Workspace } from "./workspace.ts";
 
 /** What one checkbox shows (item 112). */

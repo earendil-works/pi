@@ -2,10 +2,11 @@
 // target (`Views`: things of a kind, persons, groups; 0 to n each), what a kind has once (`ThingParts`: its title,
 // icon, create step and settings form), and the components the page places: `TargetView`, which draws a target in its
 // chosen view, the Settings view, the navigator, the add-thing picker and the invite dialog; the plugins' titles for
-// the picker's headings and the sections of `/me`; and three hooks every view plugin may use: `useScreenId` (the id
-// every list a page holds takes), `useMessageText` (a message of any plugin as text) and `useNames` (a kind and a thing
-// as the page names them). Tokens, data and hooks only: the base bundle carries this file, so no component lives here.
-// The three hooks, and the things plugin's page messages they read, are part of that bundle: a live apply of the things
+// the picker's headings and the sections of `/me`; and four hooks every view plugin may use: `useScreenId` (the id
+// every list a page holds takes), `useMessageText` (a message of any plugin as text), `useErrorText` (what a failed
+// call says to the person: guide 4.2) and `useNames` (a kind and a thing as the page names them). Tokens, data and
+// hooks only: the base bundle carries this file, so no component lives here.
+// The hooks, and the things plugin's page messages they read, are part of that bundle: a live apply of the things
 // plugin does not change them for third-party plugins (built-in ones import this file by path and get the new code).
 // `/v1/web` re-exports it.
 
@@ -189,6 +190,30 @@ export function useMessageText(): (message: MessageData) => string {
 		// A catalog's value is a text or a function of the message's params (`defineMessages`).
 		return typeof value === "string" ? value : (value as (...args: readonly unknown[]) => string)(...params);
 	};
+}
+
+/** What a failed call says to the person: the message the server sent with it, else the error's own text. */
+export function useErrorText(): (error: unknown) => string {
+	const text = useMessageText();
+	return (error) => {
+		const message = messageOf(error);
+		if (message !== undefined) return text(message);
+		return error instanceof Error ? error.message : String(error);
+	};
+}
+
+/**
+ * The message the server sent with an error (`details.message`, as data: a denial's, a refused call's), if it sent
+ * one (a trust boundary: an error from the server).
+ */
+export function messageOf(error: unknown): MessageData | undefined {
+	const details: unknown =
+		typeof error === "object" && error !== null && "details" in error ? error.details : undefined;
+	const message =
+		typeof details === "object" && details !== null && "message" in details ? details.message : undefined;
+	return typeof message === "object" && message !== null && "namespace" in message && "key" in message
+		? (message as MessageData)
+		: undefined;
 }
 
 /**

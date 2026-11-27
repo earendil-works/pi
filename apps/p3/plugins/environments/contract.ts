@@ -32,8 +32,8 @@ export const Environments = remote("environments.environments", {
 });
 
 /**
- * This device's machine id, for every signed-in caller and every session's worker: where the views open outside a
- * session (`useWorkLocation`).
+ * This device's machine id, for every signed-in caller: where a view opened outside a session works
+ * (`useWorkLocation`), and what a test's location names. `""` until the machine was made.
  */
 export const ThisDevice = remote("environments.this-device", {
 	version: 1,

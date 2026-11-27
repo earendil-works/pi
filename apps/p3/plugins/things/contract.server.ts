@@ -25,6 +25,7 @@ import {
 	opt,
 	type P3Principal,
 	queries,
+	type RefState,
 	type Self,
 	type Static,
 	str,
@@ -376,6 +377,20 @@ export function abortWhen<T>(
 ): void {
 	const end = () => controller.abort();
 	void until(source, lost, context).then(end, end);
+}
+
+/**
+ * `abortWhen` for the reference a stream's caller holds: aborts `controller` once `ref` fails, ends or no longer has
+ * its member `member` (the tick that gave it was withheld).
+ */
+export function abortWhenLost<R extends { readonly state: NativeWatchable<RefState> }>(
+	ref: R,
+	member: keyof R,
+	controller: AbortController,
+	context: Context,
+): void {
+	const lost = (state: RefState) => state.kind === "failed" || state.kind === "ended" || ref[member] === undefined;
+	abortWhen(ref.state, lost, controller, context);
 }
 
 /**

@@ -1,9 +1,8 @@
 // p3's API v1 for web facets (`@earendil-works/p3/v1/web`): Chord's React bindings, the page's one slot (`PageRoot`,
 // the chrome plugin's), the connection state, the components plugins offer each other as typed tokens
 // (`defineComponent`, `Components`, `useComponent`), the page's route (`Target`, `Route`, `useRoute`, `targetPath`,
-// `navigate`, `redirect`), the icons p3 offers, and `refusalText` (a refusal as the person reads it). The built-in
-// plugins' web contracts p3 promises are re-exported here (the layout plugin's pane layout and the things plugin's
-// views among them). Browser only.
+// `navigate`, `redirect`), and the icons p3 offers. The built-in plugins' web contracts p3 promises are re-exported
+// here (the layout plugin's pane layout and the things plugin's views among them). Browser only.
 
 /// <reference path="./css.d.ts" />
 
@@ -65,7 +64,6 @@ export type { AssistantMessage, ToolCall, ToolResultMessage, UserMessage } from 
 export type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
 export * from "../../../plugins/layout/contract.web.tsx";
 export * from "../../../plugins/things/contract.web.tsx";
-export { refusalText } from "./refusal.ts";
 
 /**
  * The page's root: the one component the base renders inside the page's host (the chrome plugin's: the top bar, the

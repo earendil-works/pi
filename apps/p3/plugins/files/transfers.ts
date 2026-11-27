@@ -42,7 +42,7 @@ import {
 	machineAvailable,
 	type StagedFile,
 } from "../environments/contract.server.ts";
-import { abortWhen, Gives } from "../things/contract.server.ts";
+import { abortWhen, abortWhenLost, Gives } from "../things/contract.server.ts";
 import { DOWNLOAD_PATH, Files, UPLOAD_PATH } from "./kind.ts";
 import { must, placed, placedNew } from "./places.ts";
 import { StagingStore, serveStaging } from "./staging.ts";
@@ -244,12 +244,7 @@ async function held(
 	const at = await hosts(machine, ctx);
 	if (at === undefined || !allowed()) return undefined;
 	const lost = new AbortController();
-	abortWhen(
-		files.state,
-		(state) => state.kind === "failed" || state.kind === "ended" || files[member] === undefined,
-		lost,
-		ctx,
-	);
+	abortWhenLost(files, member, lost, ctx);
 	abortWhen(answers, (given) => !machineAvailable(caller, given[machine]), lost, ctx);
 	return {
 		files,

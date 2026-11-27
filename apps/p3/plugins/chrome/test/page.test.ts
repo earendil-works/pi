@@ -261,6 +261,28 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.open(`${origin}/w/${pi}`);
 	});
 
+	it("says a machine's refusal in the Terminals view as its message, not as the log's text (Fable, round 5)", async () => {
+		await browser.wait(
+			`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Terminals")`,
+		);
+		const terminals = await browser.evaluate<string>(
+			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Terminals")?.dataset.navThing`,
+		);
+		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
+		await press("[data-terminals-open]");
+		// This device has no terminals yet: the environments plugin's message, rendered in the terminals plugin's view.
+		await browser.wait(
+			`document.querySelector("[data-terminals]")?.textContent.includes("Terminals on this machine are not there yet.")`,
+		);
+		assert.equal(
+			await browser.evaluate<boolean>(
+				`document.querySelector("[data-terminals]").textContent.includes("environments:")`,
+			),
+			false,
+		);
+		await browser.open(`${origin}/w/${pi}`);
+	});
+
 	it("shows things from above greyed in a workspace below, and folds a hidden one", async () => {
 		await press(`[data-nav-workspace="${pi}"]`);
 		await add("make:things.workspace", "Family");

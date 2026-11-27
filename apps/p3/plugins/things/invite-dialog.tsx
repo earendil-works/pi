@@ -17,9 +17,10 @@ import { BACKGROUND_CONTEXT, withGranted } from "@earendil-works/p3/v1";
 import { CloseIcon, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
 import { partyKey } from "./contract.ts";
+import { useErrorText } from "./contract.web.tsx";
 import { page } from "./page-messages.ts";
 import styles from "./things.module.css";
-import { useErrorText, usePartyName } from "./use-page.ts";
+import { usePartyName } from "./use-page.ts";
 import { type PartyInfo, Workspace } from "./workspace.ts";
 
 /** A day in milliseconds: how `expires` counts. */

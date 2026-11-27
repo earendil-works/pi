@@ -9,7 +9,7 @@
 import { defineFacet, forbidden, int, invalid, lit, obj, opt, sleep, str, union } from "@earendil-works/p3/v1";
 import { defineExtension, defineTool } from "@earendil-works/p3/v1/worker";
 import { type HarnessSession, type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
-import { type Terminals, TerminalsKind } from "./kind.ts";
+import { TerminalId, type Terminals, TerminalsKind } from "./kind.ts";
 import { plain } from "./plain.ts";
 
 export default defineFacet((_host, self) => {
@@ -38,9 +38,6 @@ export const terminalsPart = thingHarnessPart(TerminalsKind, (things, session) =
 	if (nearest === undefined || !nearest.ref.granted.has("open")) return {};
 	return { extension: defineExtension({ name: TerminalsKind.name, tools: [terminalTool(nearest, session)] }) };
 });
-
-/** A terminal's id, as `list` and `open` answer it. */
-const TerminalId = str({ min: 1, max: 100 });
 
 /** What the tool does: one action, with the arguments its kind needs. */
 const Action = union([

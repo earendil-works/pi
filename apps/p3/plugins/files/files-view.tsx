@@ -10,7 +10,6 @@ import {
 	DescriptionIcon,
 	EditIcon,
 	FolderIcon,
-	refusalText,
 	SearchIcon,
 	useHold,
 	useLive,
@@ -19,8 +18,7 @@ import {
 } from "@earendil-works/p3/v1/web";
 import { type ChangeEvent, useCallback, useEffect, useState } from "react";
 import { useWorkLocation } from "../environments/contract.web.tsx";
-import { messages as machineMessages } from "../environments/messages.ts";
-import type { ThingViewProps } from "../things/contract.web.tsx";
+import { type ThingViewProps, useErrorText } from "../things/contract.web.tsx";
 import styles from "./files-view.module.css";
 import { type Entry, FILES_BROWSES, FILES_EDITS, Files, type Hit } from "./kind.ts";
 import { messages } from "./messages.ts";
@@ -371,8 +369,7 @@ type Action = {
 
 /** The view's call state and its `run`. */
 function useAction(): Action {
-	const files = useMessages(messages).t;
-	const environments = useMessages(machineMessages).t;
+	const errorText = useErrorText();
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | undefined>(undefined);
 	const run = useCallback(
@@ -380,10 +377,10 @@ function useAction(): Action {
 			setPending(true);
 			setError(undefined);
 			call(BACKGROUND_CONTEXT)
-				.catch((failure: unknown) => setError(refusalText(failure, { files, environments })))
+				.catch((failure: unknown) => setError(errorText(failure)))
 				.finally(() => setPending(false));
 		},
-		[files, environments],
+		[errorText],
 	);
 	return { pending, error, run };
 }

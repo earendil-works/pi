@@ -14,8 +14,8 @@ import { messages } from "./messages.ts";
 /** A machine thing's id. */
 const MachineId = str({ min: 1, max: 200 });
 
-/** A terminal's id. */
-const TerminalId = str({ min: 1, max: 100 });
+/** A terminal's id, as `open` answers it and the list shows it. */
+export const TerminalId = str({ min: 1, max: 100 });
 
 /** A terminal's size in character cells. */
 const Columns = int({ min: 1, max: 1000 });
