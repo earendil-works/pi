@@ -1,12 +1,13 @@
 // The session kind's create step (`SessionCreate`, a kind's `Create` in `ThingParts`): where the new session works, a
-// machine of `Environments` and a folder there; none given, this device in a folder of the session's own. It hands the
-// session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`, and
-// starts from the input it last handed (`input`: a live apply keeps the machine and folder chosen; a machine without a
-// folder is no input, as it makes no difference to the session, so it is not kept). With no folder, it says when this
+// machine of `Environments` and a folder there, pre-filled from the nearest session defaults (`SessionDefaultsHere`)
+// until the person changes them; no folder, this device in a folder of the session's own. It hands the session kind's
+// make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`, and starts from the
+// input it last handed (`input`: a live apply keeps the machine and folder chosen; a machine without a folder is no
+// input, as it makes no difference to the session, so it is not kept). With no folder, it says when this
 // device is not available to the person where the session is made: the session then starts on no machine (R41).
 
 import { Dropdown, Field, Input } from "@earendil-works/elanor-react";
-import { Environments, type JsonValue, Me, MyAnswer, ThisDevice } from "@earendil-works/p3/v1";
+import { Environments, type JsonValue, Me, MyAnswer, SessionDefaultsHere, ThisDevice } from "@earendil-works/p3/v1";
 import { CodeIcon, useHold, useLive, useMessages, useWatch } from "@earendil-works/p3/v1/web";
 import { useEffect, useState } from "react";
 // Other plugins' web contracts by path, never through `/v1/web` (see `web.tsx`).
@@ -18,24 +19,28 @@ import styles from "./new-session.module.css";
 export const SessionIcon = CodeIcon;
 
 /**
- * The create step: a machine (this device first) and a folder; `onReady` gets `{}` while the folder is empty (the
- * session's own folder) and `{ location }` once one is given.
+ * The create step: a machine (the defaults', else this device first) and a folder (the defaults'); `onReady` gets
+ * `{ location: null }` while the folder is empty (the session's own folder) and `{ location }` once one is given.
  */
 export function SessionCreate(props: ThingCreateProps) {
 	const { t } = useMessages(messages);
 	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
 	const last = locationOf(props.input);
-	const [folder, setFolder] = useState(last?.folder ?? "");
+	// `undefined`: not changed by the person (nor in the input it last handed), so the defaults' show.
+	const [typed, setFolder] = useState<string | undefined>(last?.folder);
 	const [chosen, setChosen] = useState<string | null>(last?.machine ?? null);
+	const preset = useWatch(useLive(useHold(SessionDefaultsHere, { workspace: props.workspace }))?.defaults)?.location;
+	const folder = typed ?? preset?.folder ?? "";
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
 	const device = useWatch(useLive(useHold(ThisDevice, {}))?.machine);
 	const items = (environments ?? []).map((environment) => ({ value: environment.id, label: environment.name }));
 	// This device's machine is the list's first.
-	const machine = chosen ?? items[0]?.value ?? null;
+	const machine = chosen ?? preset?.machine ?? items[0]?.value ?? null;
 	const { onReady } = props;
 	useEffect(() => {
 		const trimmed = folder.trim();
-		onReady(trimmed === "" || machine === null ? {} : { location: { machine, folder: trimmed } });
+		// No folder: the session's own (`null`), not the defaults' the person cleared.
+		onReady(trimmed === "" || machine === null ? { location: null } : { location: { machine, folder: trimmed } });
 	}, [folder, machine, onReady]);
 	return (
 		<div className={styles.form} data-new-session="">

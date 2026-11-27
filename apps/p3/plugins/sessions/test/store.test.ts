@@ -388,7 +388,12 @@ describe("a store version 1 wrote (decision 125)", () => {
 			assert.deepEqual([session?.state, session?.model], ["settled", null]);
 			const settings = await now.host.get(DefaultsSettings, {}, context);
 			const [defaults] = (await settings.settings.of.page({ thing: "d1" }, 1, context)).items;
-			assert.deepEqual(defaults?.defaults, { model: null, shared: false, opensWith: "transcript.session" });
+			assert.deepEqual(defaults?.defaults, {
+				model: null,
+				shared: false,
+				opensWith: "transcript.session",
+				location: null,
+			});
 			// A choice of this version, written now, is there after the next start (Astra, round 1 of model settings).
 			await sessions.setModel({ session: "s1", model: choice }, context);
 		});

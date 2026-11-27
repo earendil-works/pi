@@ -20,6 +20,7 @@ import {
 	type P3Principal,
 	type Reference,
 	Session,
+	SessionDefaultsHere,
 	SessionFacts,
 	until,
 	withGranted,
@@ -138,7 +139,7 @@ async function defaultsIn(workspace: string, defaults: SessionDefaults): Promise
 	return thing;
 }
 
-const PRIVATE: SessionDefaults = { model: null, shared: false, opensWith: null };
+const PRIVATE: SessionDefaults = { model: null, shared: false, opensWith: null, location: null };
 
 describe("making a session (1)", () => {
 	it("needs Make sessions in the parent; the maker gets every tick, the agents Make only", async () => {
@@ -496,6 +497,54 @@ describe("a location per conversation (8)", () => {
 	});
 });
 
+/** Session `session`'s row's location, as its maker `who` sees it. */
+const locationOf = (who: P3Principal, session: string) =>
+	as(who, async (ctx) => {
+		const held = await ctx.get(SessionObject, { workspace: session, thing: session });
+		return (await until(held.row, () => true, within("the row", ctx))).location;
+	});
+
+describe("a default location (the session defaults' location)", () => {
+	it("starts a make with no location there, and one whose maker may not use the machine as with none (R41)", async () => {
+		const { leo, fam } = await family();
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		const at = { machine, folder: "/srv/fam" };
+		await defaultsIn(fam, { ...PRIVATE, shared: true, location: at });
+		assert.deepEqual(await locationOf(leo, await makeSession(leo, fam, "defaulted")), at);
+		// `null` asked (the new-session step's empty folder): the session's own folder, not the defaults'.
+		const own = await makeSession(leo, fam, "own", { location: null });
+		assert.deepEqual(await locationOf(leo, own), { machine, folder: join(dataDir, "work", pi, own) });
+		// The defaults' machine withheld from Leo: neither it nor this device (the same machine here): no machine.
+		await withhold(fam, machine, party(leo), OPEN);
+		assert.equal(await locationOf(leo, await makeSession(leo, fam, "refused")), null);
+		// Given, it is refused as before.
+		await assert.rejects(makeSession(leo, fam, "given", { location: at }), /not available to the caller/);
+	});
+
+	it("is what `SessionDefaultsHere` shows a person there, live; nobody else gets it", async () => {
+		const { leo, fam } = await family();
+		const kim = await person("Kim");
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		await as(leo, async (ctx) => {
+			const here = await ctx.get(SessionDefaultsHere, { workspace: fam });
+			assert.equal(here.defaults.value.location, null);
+			const at = { machine, folder: "/srv/fam" };
+			await defaultsIn(fam, { ...PRIVATE, location: at });
+			await until(here.defaults, (value) => value.location?.folder === "/srv/fam", within("the nearest", ctx));
+		});
+		await as(kim, (ctx) =>
+			assert.rejects(ctx.get(SessionDefaultsHere, { workspace: fam }, { readyTimeout: 1000 }), /not present/),
+		);
+	});
+
+	it("refuses a default folder that is no full path; an empty one is the session's own", async () => {
+		const { fam } = await family();
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		await assert.rejects(defaultsIn(fam, { ...PRIVATE, location: { machine, folder: "srv" } }), /no full path/);
+		await defaultsIn(fam, { ...PRIVATE, location: { machine, folder: "" } });
+	});
+});
+
 describe("the session defaults", () => {
 	it("shared (Pi's seeded defaults): everyone here gets Read and Send, people from above are shown", async () => {
 		const { leo, fam } = await family();
@@ -520,8 +569,8 @@ describe("the session defaults", () => {
 	it("the nearest of two applies (75), its model copied into the row and its view into the session's own", async () => {
 		const { leo, fam } = await family();
 		const model = { login: "a-login", model: "claude", thinking: "high" } as const;
-		await defaultsIn(pi, { model: null, shared: true, opensWith: null });
-		await defaultsIn(fam, { model, shared: true, opensWith: "transcript.session" });
+		await defaultsIn(pi, { model: null, shared: true, opensWith: null, location: null });
+		await defaultsIn(fam, { model, shared: true, opensWith: "transcript.session", location: null });
 		const near = await makeSession(leo, fam, "near");
 		const sessions = await w.host.get(SessionsStore, {}, context);
 		assert.deepEqual((await sessions.sessions.one.page({ id: near }, 1, context)).items[0]?.model, model);
@@ -597,8 +646,8 @@ describe("the session defaults", () => {
 		const seeded = (await store.links.here.page({ workspace: pi }, 50, context)).items.find(
 			(link) => link.of === SessionDefaultsKind.name,
 		)!.thing;
-		const far = { shared: true, model: null, opensWith: "far" };
-		const near = { shared: true, model: null, opensWith: "near" };
+		const far = { shared: true, model: null, opensWith: "far", location: null };
+		const near = { shared: true, model: null, opensWith: "near", location: null };
 		await store.configure({ thing: seeded, settings: { defaults: far } }, context);
 		const target = await defaultsIn(fam, near);
 		await w.host.root(async (ctx) => {

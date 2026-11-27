@@ -63,7 +63,7 @@ export function serveSessionKind(host: FacetHost<P3Principal>): void {
 		},
 		create: async ({ thing: session, input, workspace, by }, ctx) => {
 			const defaults = await nearestDefaults(workspace, ctx);
-			const location = await startsAt(input.location, workspace, makerOf(by), ctx);
+			const location = await startsAt(input.location, defaults.location, workspace, makerOf(by), ctx);
 			await (await ctx.get(SessionsStore, {})).insert({ id: session, location, model: defaults.model }, ctx);
 			return {
 				...(defaults.shared ? {} : { defaultGrants: PRIVATE, showsPeople: false }),
@@ -84,24 +84,30 @@ export function sessionRow(session: string, self: Self<P3Principal>): Watchable<
 
 /**
  * Where a session made in `parent` by `maker` starts (R41): the location given, refused unless the maker may use its
- * machine there (`checkMachine`, the machine kind's rule); none given, this device's machine in a folder of its own
- * (`undefined`, the store's default) if the maker may use it there, else nowhere (`null`: its agent has no environment
- * until a conversation is moved).
+ * machine there (`checkMachine`, the machine kind's rule); none given, the nearest defaults' location (`preset`, with a
+ * folder) if the maker may use its machine there; else (or `null` given: its own folder, as the new-session step asks
+ * with an empty folder) this device's machine in a folder of its own (`undefined`, the
+ * store's default) if the maker may use it there, else nowhere (`null`: its agent has no environment until a
+ * conversation is moved).
  */
 async function startsAt(
-	given: Location | undefined,
+	given: Location | null | undefined,
+	preset: Location | null,
 	parent: string,
 	maker: Caller,
 	ctx: Ctx<P3Principal>,
 ): Promise<Location | null | undefined> {
-	if (maker.kind === "server") return given;
+	// A default location with no folder names only what the new-session step offers first: the session's own folder.
+	const defaulted = given === undefined && preset !== null && preset.folder !== "" ? preset : undefined;
+	if (maker.kind === "server") return given === null ? undefined : (given ?? defaulted);
 	const things = await ctx.get(ThingsStore, {});
 	const answerOn = async (machine: string) =>
 		(await things.answerOf({ workspace: parent, thing: machine, caller: callerKeyOf(maker) }, ctx)) ?? undefined;
-	if (given !== undefined) {
+	if (given !== undefined && given !== null) {
 		checkMachine(given.machine, maker, await answerOn(given.machine));
 		return given;
 	}
+	if (defaulted !== undefined && machineAvailable(maker, await answerOn(defaulted.machine))) return defaulted;
 	const device = await until((await ctx.get(OneThing, { kind: MACHINE_KIND })).thing, (id) => id !== "", ctx);
 	return machineAvailable(maker, await answerOn(device)) ? undefined : null;
 }

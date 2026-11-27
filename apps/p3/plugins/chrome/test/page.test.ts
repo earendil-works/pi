@@ -29,8 +29,11 @@ import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, People,
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
+import { MACHINE_KIND } from "../../environments/contract.ts";
+import { DEFAULTS, DefaultsSettings } from "../../sessions/defaults.ts";
+import { SessionDefaultsKind } from "../../sessions/kind.ts";
 import { SignIns } from "../../sign-in/contract.ts";
-import { ThingsStore } from "../../things/contract.server.ts";
+import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { ThingKindsView } from "../../things/kind.ts";
 import { Workspace } from "../../things/workspace.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
@@ -940,6 +943,39 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press('[data-add-offer="make:canvas.board"]');
 		assert.equal(await browser.evaluate(`document.querySelector("[data-add-name]").value`), "");
 		await press('[data-add-thing-dialog] button[aria-label="Close"]');
+	});
+
+	// Mario's direction (ERNDL-704): a default location in the session defaults pre-fills the new-session step.
+	it("pre-fills the new-session step's machine and folder from the nearest session defaults", async () => {
+		const { thing, before, machine } = await t.host.root(async (ctx) => {
+			const store = await ctx.get(ThingsStore, {});
+			const found = (await store.links.here.page({ workspace: pi }, 50, ctx)).items.find(
+				(link) => link.of === SessionDefaultsKind.name,
+			)!.thing;
+			const set = (await (await ctx.get(DefaultsSettings, {})).settings.of.page({ thing: found }, 1, ctx)).items[0];
+			const device = await until((await ctx.get(OneThing, { kind: MACHINE_KIND })).thing, (id) => id !== "", ctx);
+			return { thing: found, before: set?.defaults ?? DEFAULTS, machine: device };
+		}, context);
+		const configure = (location: { machine: string; folder: string } | null) =>
+			t.host.root(
+				async (ctx) =>
+					(await ctx.get(ThingsStore, {})).configure(
+						{ thing, settings: { defaults: { ...before, location } } },
+						ctx,
+					),
+				context,
+			);
+		await configure({ machine, folder: "/srv/prefilled" });
+		try {
+			await browser.open(`${origin}/w/${pi}/settings`);
+			await press('[data-settings-tab="what"]');
+			await press("[data-add-thing]");
+			await press('[data-add-offer="make:sessions.session"]');
+			await browser.wait(`document.querySelector('[data-field="folder"]')?.value === "/srv/prefilled"`);
+			await press('[data-add-thing-dialog] button[aria-label="Close"]');
+		} finally {
+			await configure(before.location);
+		}
 	});
 
 	it("makes one thing for two activations of Add before the page renders again", async () => {
