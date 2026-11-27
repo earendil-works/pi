@@ -14,15 +14,20 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+	allow,
 	constant,
 	BACKGROUND_CONTEXT as context,
+	defineFacet,
 	isChordError,
+	type JsonValue,
 	type P3Principal,
 	SessionFacts,
 	until,
+	type Watchable,
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import {
+	fauxProvider,
 	LiveDoc,
 	NodeExecutionEnv,
 	type OpenHarness,
@@ -30,9 +35,14 @@ import {
 	SessionHarness,
 	WorkerBusy,
 } from "@earendil-works/p3/v1/worker";
+import { FAUX_MODEL, FAUX_PROVIDER, keyOf } from "../../../test/plugins/faux-login/contract.ts";
+import fauxWorker from "../../../test/plugins/faux-login/worker.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { MachineKind } from "../../environments/kind.ts";
 import environmentsWorker from "../../environments/worker.ts";
+import { type LoginDefinitions, SessionModels } from "../../providers/contract.ts";
+import { LoginKind } from "../../providers/kind.ts";
+import providersWorker from "../../providers/worker.ts";
 import type { HarnessSession } from "../../things/contract.worker.ts";
 import { held as heldThing } from "../../things/test/part.ts";
 import {
@@ -205,6 +215,122 @@ describe("the harness plugin on a worker", () => {
 		await ask("hi");
 		assert.equal((await live())?.runFailure?.reason, "no_model");
 		await reported(server, ["working", "failed"]);
+	});
+
+	it("asks the session's chosen model with its thinking level (Astra, slice 5 round 1)", async () => {
+		const a = login("a", "faux-a", [says("", "A")]);
+		const b = login("b", "faux-b", [says("", "B")]);
+		await start([a, b], { model: { login: "b", model: "faux-b-model", thinking: "high" } });
+		await ask("one");
+		assert.equal(requests()[0]?.provider, "faux-b");
+		const agent = await (await (await harness()).durable.root(context)).agent(context);
+		assert.equal(agent.thinkingLevel, "high");
+	});
+
+	it("picks the chosen model only once the logins' models are complete: a login given late is asked (Astra, round 1 of model settings)", async () => {
+		const fallback = login("a", "faux-a", [says("", "A")]);
+		const chosen = login("b", "faux-b", [says("", "B")]);
+		const server = await start([fallback], { model: { login: "b", model: "faux-b-model", thinking: "high" } });
+		let complete!: () => void;
+		server.loading(
+			new Promise((resolve) => {
+				complete = resolve;
+			}),
+		);
+		const asked = ask("one");
+		// The submit waits in `ready`; the chosen login's models arrive, then the list is complete.
+		await eventually(
+			() => server.readies,
+			(readies) => readies > 0,
+			5000,
+		);
+		server.hold([fallback, chosen]);
+		complete();
+		await asked;
+		assert.deepEqual(
+			requests().map(({ provider }) => provider),
+			["faux-b"],
+		);
+	});
+
+	// Astra, round 2: the real providers worker over a server whose models never get complete; the chosen login's
+	// model is hidden (the server lists it without), the other login still offers it.
+	it("asks no login past the bound while the models are not complete: the chosen model, hidden, fails no_model", async () => {
+		const definitions = fauxProvider({ provider: FAUX_PROVIDER, api: "faux", models: [{ id: FAUX_MODEL }] }).models;
+		const catalog: LoginDefinitions[] = [
+			{ login: "other", models: [...definitions] },
+			{ login: "chosen", models: [] },
+		];
+		const stalled = defineFacet((host) =>
+			host.serve(
+				SessionModels,
+				() => ({
+					complete: constant(false),
+					models: constant([]),
+					// pi-ai's definitions are JSON: the catalog as the member types it.
+					catalog: () => constant(catalog as unknown as JsonValue) as unknown as Watchable<LoginDefinitions[]>,
+				}),
+				{ admit: () => constant(allow({ granted: ["catalog" as const] })) },
+			),
+		);
+		const authorized: string[] = [];
+		// The providers part reads a held login's `login` and `authorize` only.
+		const heldLogin = (thing: string): Holding => ({
+			kind: LoginKind.name,
+			held: {
+				workspace: SESSION,
+				thing,
+				depth: 0,
+				ref: {
+					login: constant({ provider: FAUX_PROVIDER, providerName: thing }),
+					authorize: async () => {
+						authorized.push(thing);
+						return { auth: { apiKey: keyOf([says("", thing)]) } };
+					},
+				},
+			} as unknown as Holding["held"],
+		});
+		const row = {
+			...sessionRow(SESSION, folder),
+			model: { login: "chosen", model: FAUX_MODEL, thinking: "low" },
+		} as const;
+		const { stubs, server, control } = standIns(row, [heldLogin("other"), heldLogin("chosen")]);
+		harnessControl = control;
+		t = await testPlugin(
+			fileURLToPath(new URL("../", import.meta.url)),
+			{
+				kind: "worker",
+				session: SESSION,
+				stubs: [
+					...stubs,
+					{ name: "p3-providers", facet: providersWorker },
+					{ name: "p3-test-faux-login", facet: fauxWorker },
+				],
+				server: [...server, { name: "p3-test-stalled-models", facet: stalled }],
+			},
+			context,
+		);
+		await ask("one");
+		assert.deepEqual(authorized, []);
+		assert.equal((await live())?.runFailure?.reason, "no_model");
+	});
+
+	it("falls back past a login without models to the next one that has one (Astra, round 1 of model settings)", async () => {
+		const empty = login("a", "faux-empty", []);
+		const usable = login("b", "faux-b", [says("", "B")]);
+		await start([empty, usable]);
+		await ask("one");
+		assert.deepEqual(
+			requests().map(({ provider }) => provider),
+			["faux-b"],
+		);
+	});
+
+	it("falls back to the first login's model while the chosen one is not given (decision 118)", async () => {
+		const a = login("a", "faux-a", [says("", "A")]);
+		await start([a], { model: { login: "gone", model: "faux-gone-model", thinking: "off" } });
+		await ask("one");
+		assert.equal(requests()[0]?.provider, "faux-a");
 	});
 
 	it("gives a conversation without a model the first login's, and keeps a set model when another login comes", async () => {

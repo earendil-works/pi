@@ -1,13 +1,14 @@
-// The logins' store (`store.ts`): every statement it runs on its tables and on the types' catalogs (the named queries'
-// pages and the writes' lookups) searches the key, never scans or sorts; a credential is created once and replaced only
-// with one of its own provider; a refresh keeps the token its provider rotated whatever ends meanwhile (its caller, the
-// store's object in a reload) and is written over the credential it read only (a replacement, a removal and a new login
-// meanwhile win); one refresh at a time across a reload, a clock set forward too, a refresh still running never taken
-// over (its waiter fails), a lease of a process that is gone holding nothing; a rotation is stored when its account's
-// models cannot be told, and cut over a catalog stored while it ran, also when its caller went away, nothing of the
-// provider's error logged; a failed refresh refuses the login for a while (a request that waited for it too), then one
-// request tries again, and a success clears it; a failed derivation of an unexpired token refuses nothing (Astra's and
-// Opus's reproductions, rounds 1 to 4); the device id is made once and kept across a reload.
+// The logins' store (`store.ts`): every statement it runs on its tables, on the types' catalogs and on the model
+// settings' overrides (the named queries' pages and the writes' lookups) searches the key, never scans or sorts; a
+// credential is created once and replaced only with one of its own provider; a refresh keeps the token its provider
+// rotated whatever ends meanwhile (its caller, the store's object in a reload) and is written over the credential it
+// read only (a replacement, a removal and a new login meanwhile win); one refresh at a time across a reload, a clock
+// set forward too, a refresh still running never taken over (its waiter fails), a lease of a process that is gone
+// holding nothing; a rotation is stored when its account's models cannot be told, and cut over a catalog stored while
+// it ran, also when its caller went away, nothing of the provider's error logged; a failed refresh refuses the login
+// for a while (a request that waited for it too), then one request tries again, and a success clears it; a failed
+// derivation of an unexpired token refuses nothing (Astra's and Opus's reproductions, rounds 1 to 4); the device id is
+// made once and kept across a reload.
 
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -32,7 +33,7 @@ import { fauxProvider } from "@earendil-works/p3/v1/server";
 import { FAUX_PROVIDER, keyOf } from "../../../test/plugins/faux-login/contract.ts";
 import { eventually } from "../../../test/until.ts";
 import thingsServer from "../../things/server.ts";
-import { CatalogStore, LoginStore } from "../contract.server.ts";
+import { CatalogStore, LoginStore, ModelSettingsStore } from "../contract.server.ts";
 import { PROVIDERS, providerFacets, providersWorld } from "./hosts.ts";
 
 /** A faux credential. */
@@ -133,7 +134,8 @@ describe("the store's statements", () => {
 		const prepare = database.prepare.bind(database);
 		database.prepare = (sql) => {
 			const statement = prepare(sql);
-			if (!sql.includes("providers.store:")) return statement;
+			// This plugin's stores' tables (`providers.store`, `providers.catalog-store`, `providers.model-settings-store`).
+			if (!/"providers\.[a-z-]*store:/.test(sql)) return statement;
 			// Chord passes positional parameters only.
 			const seeing =
 				<R>(run: (...parameters: SQLInputValue[]) => R) =>
@@ -184,6 +186,13 @@ describe("the store's statements", () => {
 		// A new catalog's recut reads the provider's logins by its index.
 		await store.create({ thing: "t3", provider: "cutting", credential: valid("c") }, context);
 		await store.recut({ provider: "cutting" }, context);
+		// The model settings things' overrides: a write, a read and a removal by the thing's id.
+		const settings = await host.get(ModelSettingsStore, {}, context);
+		await settings.set({ thing: "m1", overrides: [{ model: "x", hidden: true }] }, context);
+		assert.equal((await settings.settings.one.page({ thing: "m1" }, 1, context)).items.length, 1);
+		await settings.clear({ thing: "m1" }, context);
+		assert.ok([...seen].some((sql) => sql.includes("providers.model-settings-store:")));
+		assert.ok([...seen].some((sql) => sql.includes("providers.catalog-store:")));
 		const lookups = [...seen].filter((sql) => /^(SELECT|UPDATE|DELETE)\b/.test(sql));
 		assert.ok(lookups.length > 0);
 		for (const sql of lookups) {

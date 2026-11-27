@@ -1,34 +1,14 @@
 // The login kind (`providers.login`): one sign-in at a model provider, OAuth or an API key. Made by people only, never
 // an agent, so a credential is always a person's decision; linked in any number of workspaces. Its one tick, Use
-// (agents only), gives `authorize`, the request auth for one model request, and `catalog`, the models of the login's
-// account; `login` (its provider, status and models) is for everyone let in. A new link gives the agents Use and
-// nobody else anything (decision 116). The credential appears in no state, argument or result but `authorize`'s,
-// which only the session's worker gets.
+// (agents only), gives `authorize`, the request auth for one model request; `login` (its provider, status and models)
+// is for everyone let in. Its models for a session's agent are `SessionModels`' (decision 118a). A new link gives the
+// agents Use and nobody else anything (decision 116). The credential appears in no state, argument or result but
+// `authorize`'s, which only the session's worker gets.
 
-import {
-	arr,
-	bool,
-	map,
-	method,
-	nul,
-	num,
-	obj,
-	oneOf,
-	opt,
-	type Static,
-	str,
-	union,
-	unknown,
-} from "@earendil-works/p3/v1";
+import { arr, map, method, nul, obj, oneOf, opt, type Static, str, union } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
-import { SignInMethod } from "./contract.ts";
+import { ModelInfo, SignInMethod } from "./contract.ts";
 import { messages } from "./messages.ts";
-
-/** One of a login's models, as pickers and the Settings view show it. */
-export const ModelInfo = obj({ id: str(), name: str(), reasoning: bool(), contextWindow: num() });
-
-/** One of a login's models (see `ModelInfo`). */
-export type ModelInfo = Static<typeof ModelInfo>;
 
 /**
  * A login as everyone admitted sees it: its provider (id and name), how it signs in, whether its credential works
@@ -62,20 +42,19 @@ export type RequestAuth = Static<typeof RequestAuth>;
 /**
  * A login (`providers.login`): its `login` for everyone admitted (`null` while its credential is not stored: made a
  * moment ago, or deleted); Use, for agents, gives `authorize` (the request auth of the login's provider, refreshed on
- * the server when it expired) and `catalog` (the models its account has, as pi-ai's `Model` definitions: plain data,
- * what a worker's requests need; the worker loads no catalog of its own; whatever the status says: after a failed
- * refresh a request tries again, which needs a model). Logins have no model or money limits (decision 89). A new link
- * gives the agents Use, nobody else anything; its maker gets every tick (item 90). Its create step hands over
- * `{ attempt }`: a sign-in its maker finished, never a secret.
+ * the server when it expired). Its models, as the session's worker asks them, are `SessionModels`' (version 2: the
+ * login gives no `catalog` of its own). Logins have no model or money limits (decision 89). A new link gives the
+ * agents Use, nobody else anything; its maker gets every tick (item 90). Its create step hands over `{ attempt }`: a
+ * sign-in its maker finished, never a secret.
  */
 export const LoginKind = defineThing("providers.login", {
-	version: 1,
+	version: 2,
 	makers: "people",
-	state: { login: union([LoginInfo, nul()]), catalog: arr(unknown()) },
+	state: { login: union([LoginInfo, nul()]) },
 	methods: { authorize: method(obj({}), RequestAuth) },
 	ticks: {
 		// `login`, which no tick gives, is for everyone let in: reading.
-		use: { label: messages.message("tickUse"), for: "agents", gives: ["authorize", "catalog"] },
+		use: { label: messages.message("tickUse"), for: "agents", gives: ["authorize"] },
 	},
 	// No `everyone` and no `guests` key: only its maker, the owner and the agents are let in (decision 116).
 	defaultGrants: { agents: ["use"] },

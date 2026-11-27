@@ -5,7 +5,7 @@
 import { method, nul, obj, opt, union } from "@earendil-works/p3/v1";
 import { MAKE_ANY } from "../things/contract.ts";
 import { defineThing, defineWorkspace } from "../things/kind.ts";
-import { Location, ModelChoice, SessionDefaults, SessionRow } from "./contract.ts";
+import { Location, ModelChoice, SESSION_KIND, SessionDefaults, SessionRow } from "./contract.ts";
 import { messages } from "./messages.ts";
 
 /**
@@ -17,8 +17,9 @@ import { messages } from "./messages.ts";
  * The agents get `MAKE_ANY` (R6: the makers ceiling leaves them the content kinds); a share's guests read (100). The
  * `everyone` default is the session defaults thing's (`shared`, decision 93): the create hook answers it.
  */
-export const SessionKind = defineWorkspace("sessions.session", {
-	version: 1,
+export const SessionKind = defineWorkspace(SESSION_KIND, {
+	// Version 2: its model choice names a login (decision 118).
+	version: 2,
 	leaf: true,
 	makers: "anyone",
 	state: { row: SessionRow },
@@ -51,7 +52,8 @@ export const SessionObject = SessionKind.contract;
  * ticks); the agents' Use is a flag. The plugin seeds one in Pi.
  */
 export const SessionDefaultsKind = defineThing("sessions.defaults", {
-	version: 1,
+	// Version 2: its model choice names a login (decision 118).
+	version: 2,
 	makers: "people",
 	stacking: "nearest",
 	state: { defaults: SessionDefaults },

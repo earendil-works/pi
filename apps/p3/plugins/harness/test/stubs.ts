@@ -67,7 +67,10 @@ export type Step = Static<typeof Step>;
 /** The stand-ins' tick labels. */
 const messages = defineMessages("test", { en: { use: "Use" } });
 
-/** A scripted login: its provider's id (its one model is `<provider>-model`), its script, and the tool `test_session`. */
+/**
+ * A scripted login: its provider's id (its one model is `<provider>-model`; none with an empty script: a login whose
+ * models are all hidden), its script, and the tool `test_session`.
+ */
 const LoginKind = defineThing("test.login", {
 	version: 1,
 	state: { provider: str(), script: arr(Step), tool: bool() },
@@ -106,6 +109,10 @@ export type Server = {
 	ticks(caller: string, ticks: readonly string[] | null, kind?: string): void;
 	/** Makes the next reports wait until `release` resolves (a slow server). */
 	slow(release: Promise<void>): void;
+	/** Makes the logins' `ready` wait until `complete` resolves (their models still loading). */
+	loading(complete: Promise<void>): void;
+	/** How often the logins' `ready` was asked. */
+	readonly readies: number;
 };
 
 /** This device's machine kind, as the stand-ins have it. */
@@ -169,6 +176,8 @@ export function standIns(
 	// Not ready: the holding contributes `undefined` until the test holds something.
 	let heldValue: Held | undefined = ready ? grouped : undefined;
 	let release: Promise<void> = Promise.resolve();
+	let complete: Promise<void> = Promise.resolve();
+	let readies = 0;
 	const rows = new Set<Writable<SessionRow>>();
 	const holdings = new Set<Writable<Held | undefined>>();
 	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
@@ -200,6 +209,12 @@ export function standIns(
 		},
 		slow: (next) => {
 			release = next;
+		},
+		loading: (next) => {
+			complete = next;
+		},
+		get readies() {
+			return readies;
 		},
 	};
 	const count = (kind: string) => control.given.set(kind, (control.given.get(kind) ?? 0) + 1);
@@ -245,8 +260,16 @@ export function standIns(
 			ThingHarnessParts,
 			thingHarnessPart(LoginKind, (all, session) => {
 				count(LoginKind.name);
-				const providers = all.map(({ ref }) => scripted(ref.provider.value, ref.script.value, control.requests));
-				if (!all.some(({ ref }) => ref.tool.value)) return { providers };
+				// Each provider with its login: a session's model choice names the login.
+				const providers = all.map(({ thing, ref }) => ({
+					thing,
+					provider: scripted(ref.provider.value, ref.script.value, control.requests),
+				}));
+				const ready = async () => {
+					readies += 1;
+					await complete;
+				};
+				if (!all.some(({ ref }) => ref.tool.value)) return { providers, ready };
 				const tool = defineTool({
 					name: "test_session",
 					description: "The session's folder",
@@ -259,7 +282,7 @@ export function standIns(
 						return { output: [{ type: "text", text: `folder: ${folder}` }] };
 					},
 				});
-				return { providers, extension: { tools: [tool] } };
+				return { providers, ready, extension: { tools: [tool] } };
 			}),
 		);
 	});
@@ -328,7 +351,8 @@ function scripted(provider: string, script: readonly Step[], requests: Request[]
 		});
 	};
 	faux.setResponses([answer]);
-	return faux.provider;
+	// An empty script: a login whose models are all hidden.
+	return script.length === 0 ? { ...faux.provider, getModels: () => [] } : faux.provider;
 }
 
 /** The text of the last message that is not a system message (a change of tools): the user's, or a tool result's. */
