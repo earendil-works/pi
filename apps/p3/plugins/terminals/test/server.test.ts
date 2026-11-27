@@ -20,7 +20,7 @@ import {
 import { Http, type HttpRequest } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import { collected, within } from "../../../test/until.ts";
-import { TERMINAL_BACKLOG, TerminalHosts } from "../../environments/contract.terminal-host.server.ts";
+import { TERMINAL_BACKLOG } from "../../environments/contract.terminal-host.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
