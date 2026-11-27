@@ -8,12 +8,12 @@ use crate::output::{Gate, Output};
 use crate::sys;
 use crate::window::{Pending, Window};
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -23,8 +23,46 @@ const EXIT_STDIO_GRACE: Duration = Duration::from_millis(100);
 /// How often a delivery waiting for the link to drain looks again.
 const UNSENT_POLL: Duration = Duration::from_millis(20);
 
-/// Commands this daemon started and has not reaped; killed when the connection ends.
-pub type Groups = Arc<Mutex<HashSet<u32>>>;
+/// Commands this daemon started and has not reaped, by pid, each with the token of its registration (a pid names
+/// another process once reaped, which another command may register): killed when the connection ends.
+pub type Groups = Arc<Mutex<HashMap<u32, u64>>>;
+
+/// The next registration's token.
+static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
+
+/// One command's registration in `Groups`: only it removes or signals that entry, never a later command's with the
+/// same pid.
+#[derive(Clone, Copy)]
+pub struct Registered {
+    pub pid: u32,
+    token: u64,
+}
+
+/// Registers the command `pid` just started in `groups`.
+pub fn register(groups: &Groups, pid: u32) -> Registered {
+    let token = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed);
+    groups.lock().unwrap().insert(pid, token);
+    Registered { pid, token }
+}
+
+impl Registered {
+    /// Removes this registration, if it still stands (a later command with the same pid keeps its own).
+    pub fn forget(&self, groups: &Groups) {
+        let mut groups = groups.lock().unwrap();
+        if groups.get(&self.pid) == Some(&self.token) {
+            groups.remove(&self.pid);
+        }
+    }
+
+    /// Kills the command's group while this registration stands: the waiter forgets it under the same lock before it
+    /// reaps the command, so the pid names no other process here.
+    pub fn kill(&self, groups: &Groups) {
+        let groups = groups.lock().unwrap();
+        if groups.get(&self.pid) == Some(&self.token) {
+            kill_group(self.pid);
+        }
+    }
+}
 
 pub enum Message {
     Data(usize, Vec<u8>),
@@ -215,11 +253,12 @@ pub fn spawn(
     Ok(child)
 }
 
-/// A `process` program's group, killed once the program exits, and the daemon's groups, which forget the program
-/// before it is reaped.
+/// A `process` or `pty` program's group, killed once the program exits, and its registration in the daemon's groups,
+/// forgotten before it is reaped.
 pub struct Ending {
     pub group: sys::Group,
     pub groups: Groups,
+    pub registered: Registered,
 }
 
 /// Reap `child` on a thread of its own, which sends its exit to `sender`. With `ending`, what the child started in its
@@ -243,7 +282,7 @@ pub fn start_waiter(
                 let exited = ending.group.wait_for_exit(&mut child);
                 ending.group.end();
                 // Forgotten before it is reaped: a kill that checks `groups` under its lock never reaches a reused pid.
-                ending.groups.lock().unwrap().remove(&child.id());
+                ending.registered.forget(&ending.groups);
                 exited.and(child.wait())
             }
         };
@@ -387,7 +426,7 @@ pub fn run(
         let _ = stdin.write_all(command.as_bytes());
     }
     let pid = child.id();
-    groups.lock().unwrap().insert(pid);
+    let registered = register(groups, pid);
     let deadline = request.timeout.map(|timeout| Instant::now() + timeout);
     let stop = Arc::new(AtomicBool::new(false));
     // Without a window, output is not coalesced; reading then waits for the link.
@@ -404,7 +443,7 @@ pub fn run(
         // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
         let _ = child.kill();
         let _ = child.wait();
-        groups.lock().unwrap().remove(&pid);
+        registered.forget(groups);
         Failure::new("spawn_error", error.to_string())
     };
     let stdout = child.stdout.take().unwrap();
@@ -540,7 +579,7 @@ pub fn run(
     // Like Node destroying its streams: readers stop within 100 ms, so the pipes close even if a descendant still holds
     // them.
     stop.store(true, Ordering::SeqCst);
-    groups.lock().unwrap().remove(&pid);
+    registered.forget(groups);
     emit(&mut pending, 0, decoders[0].decode(&[], true));
     emit(&mut pending, 1, decoders[1].decode(&[], true));
     if let Some(pending) = &mut pending
@@ -580,4 +619,24 @@ pub fn run(
         result["spillPath"] = json!(path);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_registration_never_touches_a_later_one_with_the_same_pid() {
+        // A pid no process has (above Linux's largest), so a wrong kill signals nothing.
+        let pid = 99_999_999;
+        let groups: Groups = Arc::new(Mutex::new(HashMap::new()));
+        let first = register(&groups, pid);
+        // The first command was reaped and its pid reused: a later command registers it.
+        let second = register(&groups, pid);
+        first.forget(&groups);
+        first.kill(&groups);
+        assert_eq!(groups.lock().unwrap().get(&pid), Some(&second.token));
+        second.forget(&groups);
+        assert!(groups.lock().unwrap().is_empty());
+    }
 }

@@ -5,7 +5,7 @@
 use crate::errors::Failure;
 use crate::exec::{Control, Groups, running};
 #[cfg(unix)]
-use crate::exec::{Ending, Message, kill_group, start_waiter};
+use crate::exec::{Ending, Message, kill_group, register, start_waiter};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
 #[cfg(unix)]
@@ -163,7 +163,7 @@ pub fn run(
         unix::spawn(&request).map_err(|error| Failure::new("spawn_error", error.to_string()))?;
     let master = Arc::new(master);
     let pid = child.id();
-    groups.lock().unwrap().insert(pid);
+    let registered = register(groups, pid);
     let (input, inputs) = mpsc::channel::<Vec<u8>>();
     terminals.lock().unwrap().insert(
         id,
@@ -186,7 +186,7 @@ pub fn run(
         kill_group(pid);
         let _ = child.wait();
         terminals.lock().unwrap().remove(&id);
-        groups.lock().unwrap().remove(&pid);
+        registered.forget(groups);
         Failure::new("spawn_error", error.to_string())
     };
     // Like a full pipe: a program that writes faster than the link waits.
@@ -232,6 +232,7 @@ pub fn run(
     let ending = Ending {
         group,
         groups: groups.clone(),
+        registered,
     };
     if let Err((child, error)) = start_waiter(child, Some(ending), sender.clone()) {
         return Err(abandon(child, error));
@@ -246,11 +247,8 @@ pub fn run(
     let kill = |killed: &mut bool| {
         if !*killed {
             *killed = true;
-            // Only while the shell is in `groups`: the waiter removes it under this lock before reaping it.
-            let groups = groups.lock().unwrap();
-            if groups.contains(&pid) {
-                kill_group(pid);
-            }
+            // Only while its registration stands: the waiter forgets it under the lock before reaping it.
+            registered.kill(groups);
         }
     };
     if control.killed.load(Ordering::SeqCst) {
@@ -307,7 +305,7 @@ pub fn run(
     stop.store(true, Ordering::SeqCst);
     // Ending the input channel ends the writer thread.
     terminals.lock().unwrap().remove(&id);
-    groups.lock().unwrap().remove(&pid);
+    registered.forget(groups);
     let _ = reader.join();
     if aborted {
         return Err(Failure::new("aborted", "aborted"));

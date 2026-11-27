@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- A terminal's background jobs no longer outlive it: when its shell exits, or the terminal is closed (`RemoteTerminal.close()`, a cancelled `pty`, a lost connection or the daemon's exit), every process of its session is killed on Linux, Android and macOS, not only the shell's process group (a shell with job control puts each background job, `sleep 60 &`, in a group of its own). Commands of `exec` and `process` are ended the same way. A program that left the session (`setsid`, a daemon) is not reached; a process id found for the session is checked again when it is signalled (on Linux through a pidfd), so a reused id is never hit
+- A terminal's background jobs no longer outlive it: when its shell exits, or the terminal is closed (`RemoteTerminal.close()`, a cancelled `pty`, a lost connection or the daemon's exit), every process of its session is killed on Linux, Android and macOS, not only the shell's process group (a shell with job control puts each background job, `sleep 60 &`, in a group of its own). Commands of `exec` and `process` are ended the same way. A program that left the session (`setsid`, a daemon) is not reached; a process id found for the session is checked again when it is signalled (on Linux through a pidfd), so a reused id is never hit (on Linux; elsewhere the check is made right before the signal). A program's registration is its own: a later program that gets the same process id is never forgotten or signalled by the earlier one's late close or cleanup
 
 ## [1.6.1] - 2026-11-25
 

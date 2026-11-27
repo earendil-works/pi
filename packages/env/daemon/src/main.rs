@@ -330,7 +330,7 @@ fn scan_lines(file: &File, path: &str, json: &Value, control: &Control) -> Resul
 }
 
 fn kill_all(groups: &exec::Groups) {
-    for pid in groups.lock().unwrap().iter() {
+    for pid in groups.lock().unwrap().keys() {
         exec::kill_group(*pid);
     }
 }

@@ -4,7 +4,7 @@
 
 use crate::errors::Failure;
 use crate::exec::{
-    Control, Ending, Groups, Launch, Message, kill_group, running, spawn, spawn_reader,
+    Control, Ending, Groups, Launch, Message, kill_group, register, running, spawn, spawn_reader,
     start_waiter,
 };
 use crate::frame::{EVENT, Frame};
@@ -106,7 +106,7 @@ pub fn run(
     let mut child = spawn(&program, &request.argv[1..], &launch, Stdio::piped())
         .map_err(|error| Failure::new("spawn_error", error.to_string()))?;
     let pid = child.id();
-    groups.lock().unwrap().insert(pid);
+    let registered = register(groups, pid);
     let stop = Arc::new(AtomicBool::new(false));
     // A thread that cannot start (a task limit) fails the request; the started program is killed and reaped. Threads
     // already running see `stop` within 100 ms.
@@ -116,7 +116,7 @@ pub fn run(
         // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
         let _ = child.kill();
         let _ = child.wait();
-        groups.lock().unwrap().remove(&pid);
+        registered.forget(groups);
         Failure::new("spawn_error", error.to_string())
     };
     // What the program starts in its group dies when it exits: a wrapper such as `npx` that exits does not leave the
@@ -161,6 +161,7 @@ pub fn run(
         Some(Ending {
             group,
             groups: groups.clone(),
+            registered,
         }),
         sender.clone(),
     ) {
@@ -187,11 +188,8 @@ pub fn run(
     let kill = |killed: &mut bool| {
         if !*killed {
             *killed = true;
-            // Only while the program is in `groups`: the waiter removes it under this lock before reaping it.
-            let groups = groups.lock().unwrap();
-            if groups.contains(&pid) {
-                kill_group(pid);
-            }
+            // Only while its registration stands: the waiter forgets it under the lock before reaping it.
+            registered.kill(groups);
         }
     };
     if control.killed.load(Ordering::SeqCst) {
@@ -256,7 +254,7 @@ pub fn run(
     // drops its input channel, which ends a writer waiting for input.
     stop.store(true, Ordering::SeqCst);
     processes.lock().unwrap().remove(&id);
-    groups.lock().unwrap().remove(&pid);
+    registered.forget(groups);
     if aborted {
         return Err(Failure::new("aborted", "aborted"));
     }
