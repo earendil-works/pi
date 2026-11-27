@@ -1994,3 +1994,257 @@ describe("over a changing source: its registry version served again", () => {
 		}
 	});
 });
+
+// Astra, round 5 of this change (M1, S3): the first attachment's failure is decided where the runtime's attachment
+// settles, in both forms; before it only the last call is kept.
+describe("over a changing source: the first runtime's settlement", () => {
+	it.each(["plain", "over"])(
+		"%s: a failure last at settlement is not healed by a value on the following microtask",
+		async (form) => {
+			const ready = Promise.withResolvers<void>();
+			const attached = Promise.withResolvers<{ value: Count; detach(): void }>();
+			let send: FollowObserver<unknown> | undefined;
+			const { host, errors } = await loaded((h) =>
+				h.serve(Follower, (_, self) => {
+					const attach: FollowAttach<Count> = (observer) => {
+						send = observer;
+						ready.resolve();
+						return attached.promise;
+					};
+					return {
+						a: form === "plain" ? self.follow(attach) : self.follow(self.writable(1), (_, o, c) => attach(o, c)),
+					};
+				}),
+			);
+			try {
+				const ref = host.hold(Follower, { id: "1" }, context);
+				await ready.promise;
+				send!.advance({ kind: "failed", error: new Error("failed before settlement") }, context);
+				attached.resolve({ value: { n: 7 }, detach() {} });
+				// In either form Chord's reaction to the plugin's promise was enqueued first.
+				queueMicrotask(() =>
+					send!.advance({ kind: "value", value: { n: 8 }, ops: [["r", { n: 8 }]], retired: false }, context),
+				);
+				await delivered();
+				expect([ref.state.value, errors]).toMatchObject([
+					{ kind: "failed", cause: { kind: "transient" } },
+					[{ kind: "activation_failed" }],
+				]);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+	it.each(["plain", "over"])(
+		"%s: a failed call after its successful settlement cannot be healed while the object is still activating",
+		async (form) => {
+			const ready = Promise.withResolvers<void>();
+			const attached = Promise.withResolvers<{ value: Count; detach(): void }>();
+			let send: FollowObserver<unknown> | undefined;
+			const { host, errors } = await loaded((h) =>
+				h.serve(Follower, (_, self) => {
+					const attach: FollowAttach<Count> = (observer) => {
+						send = observer;
+						ready.resolve();
+						return attached.promise;
+					};
+					return {
+						a: form === "plain" ? self.follow(attach) : self.follow(self.writable(1), (_, o, c) => attach(o, c)),
+					};
+				}),
+			);
+			try {
+				const ref = host.hold(Follower, { id: "1" }, context);
+				await ready.promise;
+				attached.resolve({ value: { n: 7 }, detach() {} });
+				queueMicrotask(() => {
+					send!.advance({ kind: "failed", error: new Error("failure after settlement") }, context);
+					send!.advance({ kind: "value", value: { n: 8 }, ops: [["r", { n: 8 }]], retired: false }, context);
+				});
+				await delivered();
+				expect([ref.state.value, errors]).toMatchObject([
+					{ kind: "failed", cause: { kind: "transient" } },
+					[{ kind: "activation_failed" }],
+				]);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+	it.each(["plain", "over"])(
+		"%s: a pending initial attach folds superseded failure and value payloads instead of retaining its whole history",
+		async (form) => {
+			const ready = Promise.withResolvers<void>(),
+				gate = Promise.withResolvers<void>();
+			let send: FollowObserver<unknown> | undefined;
+			const { host } = await loaded((h) =>
+				h.serve(Follower, (_, self) => {
+					const attach: FollowAttach<Count> = async (observer) => {
+						send = observer;
+						ready.resolve();
+						await gate.promise;
+						return { value: { n: 0 }, detach() {} };
+					};
+					return {
+						a: form === "plain" ? self.follow(attach) : self.follow(self.writable(1), (_, o, c) => attach(o, c)),
+					};
+				}),
+			);
+			try {
+				const ref = host.hold(Follower, { id: "1" }, context);
+				await ready.promise;
+				const stale: Array<WeakRef<object>> = [];
+				const emit = (n: number) => {
+					const error = new Error("superseded"),
+						value = { n };
+					stale.push(new WeakRef(error), new WeakRef(value));
+					send!.advance({ kind: "failed", error }, context);
+					send!.advance({ kind: "value", value, ops: [["r", value]], retired: false }, context);
+				};
+				for (let i = 0; i < 16; i++) emit(i);
+				send!.advance({ kind: "value", value: { n: 17 }, ops: [["r", { n: 17 }]], retired: false }, context);
+				await expectCollected(...stale);
+				gate.resolve();
+				await waitLive(ref);
+				expect(ref.a.value).toEqual({ n: 17 });
+			} finally {
+				gate.resolve();
+				await host.close(context);
+			}
+		},
+	);
+});
+
+// Astra, round 5 of this change (S4): a committed withdrawal with no last good value wakes an idle member.
+describe("over a changing source: an idle value and a registry with no last good value", () => {
+	it.each(["ended", "failed"])(
+		"a %s idle runtime is woken when a separate contributor restores the same value after an unusable commit",
+		async (end) => {
+			const runtime = new Runtime(1);
+			let remove = () => {},
+				restore = () => {};
+			const { host } = await loaded((h) => {
+				h.serve(Runtimes, {
+					compose: (table) => {
+						const runtime = table.find((each) => each.value !== undefined)?.value;
+						if (runtime === undefined) throw new Error("no usable contribution");
+						return runtime;
+					},
+				});
+				h.serve(Giver, (_, self) => {
+					self.contribute(Runtimes, runtime);
+					self.follow(async (observer) => {
+						remove = () => observer.end({ kind: "failed", error: new Error("giver left") });
+						return { value: 1, detach() {} };
+					});
+					return {};
+				});
+				h.serve(Giver2, (_, self) => {
+					const next = self.writable<Runtime | undefined>(undefined);
+					self.contribute(Runtimes, next);
+					restore = () => next.set(runtime);
+					return {};
+				});
+				h.serve(Follower, (_, self) => ({ a: self.follow(self.registry(Runtimes), (r, o, c) => r.attach(o, c)) }));
+			});
+			try {
+				const ref = await host.get(Follower, { id: "1" }, context),
+					registry = await host.registry(Runtimes, context);
+				runtime.end(end === "ended" ? { kind: "ended" } : { kind: "failed", error: new Error("retry later") });
+				await delivered();
+				remove();
+				expect(() => registry.value).toThrow("no usable contribution");
+				restore();
+				expect(registry.value).toBe(runtime);
+				await delivered();
+				runtime.set(2);
+				await delivered();
+				expect([runtime.attachments, runtime.observers.size]).toEqual([2, 1]);
+				expect(ref.a.value).toEqual({ n: 2 });
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+});
+
+// Astra, round 5 of this change (S4, controls): a failure that keeps the last good value is no withdrawal.
+describe("over a changing source: an idle value and a registry failing with its last good value", () => {
+	it.each(["ended", "failed"])(
+		"does not wake the idle %s observation on a failure that kept its input",
+		async (end) => {
+			const runtime = new Runtime(1);
+			let give = (_r: Runtime | undefined) => {};
+			const { host } = await loaded((h) => {
+				h.serve(Runtimes, {
+					compose: (table) => {
+						const r = table[0]?.value;
+						if (r === undefined) throw new Error("last good stays");
+						return r;
+					},
+				});
+				h.serve(Giver, (_, self) => {
+					const value = self.writable<Runtime | undefined>(runtime);
+					give = (r) => value.set(r);
+					self.contribute(Runtimes, value);
+					return {};
+				});
+				h.serve(Follower, (_, self) => ({ a: self.follow(self.registry(Runtimes), (r, o, c) => r.attach(o, c)) }));
+			});
+			try {
+				await host.get(Follower, { id: "1" }, context);
+				const registry = await host.registry(Runtimes, context);
+				runtime.end(end === "ended" ? { kind: "ended" } : { kind: "failed", error: new Error("not available") });
+				await delivered();
+				give(undefined);
+				expect(registry.value).toBe(runtime);
+				give(runtime);
+				await delivered();
+				expect([runtime.attachments, runtime.observers.size]).toEqual([1, 0]);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+});
+
+// Astra, round 5 of this change (S2): a discarded first attachment's cleanup changes no error.
+describe("over a changing source: a failed first attachment's cleanup", () => {
+	it.each(["plain", "over"])(
+		"%s: a cleanup end cannot replace the activation error selected at settlement",
+		async (form) => {
+			const original = new Error("failed while attaching"),
+				cleanup = new Error("ended while cleaning up");
+			let detached = 0;
+			const { host, errors } = await loaded((h) =>
+				h.serve(Follower, (_, self) => {
+					const attach: FollowAttach<Count> = async (o, c) => {
+						o.advance({ kind: "failed", error: original }, c);
+						return {
+							value: { n: 0 },
+							detach() {
+								detached++;
+								o.end({ kind: "failed", error: cleanup });
+							},
+						};
+					};
+					return {
+						a: form === "plain" ? self.follow(attach) : self.follow(self.writable(1), (_, o, c) => attach(o, c)),
+					};
+				}),
+			);
+			try {
+				const ref = host.hold(Follower, { id: "1" }, context);
+				await delivered();
+				expect(ref.state.value).toMatchObject({
+					kind: "failed",
+					cause: { kind: "transient", error: { cause: original } },
+				});
+				expect(errors).toHaveLength(1);
+				expect(detached).toBe(1);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+});

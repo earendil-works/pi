@@ -72,7 +72,7 @@ export class FollowSource extends Source {
 	#live = false;
 	/** Its failure while it is a failed member (a `failed` call), its last value kept. */
 	#failed: { readonly error: unknown } | undefined;
-	/** Calls not applied yet: before the attachment resolved, and outside a batch until the next microtask. */
+	/** Calls not applied yet: before the attachment resolved (only the last), and outside a batch until the next microtask. */
 	#queued: WatchCall<JsonValue>[] = [];
 	/** Whether a microtask is queued to apply `#queued` in a batch of its own. */
 	#scheduled = false;
@@ -132,18 +132,18 @@ export class FollowSource extends Source {
 			return;
 		}
 		this.#value = attached.value;
-		// Nothing watches it yet (members are checked after this): the queued calls only move the value on, the last
-		// one deciding. Failed: the activation's failure (R4: transient, retried), never a member failed from the start.
-		let failure: { readonly error: unknown } | undefined;
-		for (const call of this.#queued) {
-			if (call.kind === "value") this.#value = call.value;
-			failure = call.kind === "value" ? undefined : { error: call.error };
-		}
+		// Nothing watches it yet (members are checked after this): the last call before it resolved decides (`#advance`
+		// keeps only that one). Failed: the activation's failure (R4: transient, retried), never a member failed from
+		// the start.
+		const last = this.#queued[0];
 		this.#queued = [];
-		if (failure !== undefined) {
+		if (last?.kind === "failed") {
+			// Discarded before its cleanup runs: an end the cleanup makes changes nothing, the error stays this one.
+			this.#state = { kind: "detached" };
 			detach();
-			throw failure.error;
+			throw last.error;
 		}
+		if (last !== undefined) this.#value = last.value;
 		this.#state = state.end?.kind === "ended" ? { kind: "ended", detach } : { kind: "attached", detach };
 	}
 
@@ -208,9 +208,15 @@ export class FollowSource extends Source {
 			this.#owner.ended({ kind: "failed", error: call.error });
 			return;
 		}
-		if (kind === "attaching" || !this.batch.running) {
+		if (kind === "attaching") {
+			// Before the attachment resolved only the last call counts (`attach`): one kept, the rest let go of.
+			this.#queued.length = 0;
 			this.#queued.push(call);
-			if (kind === "attached") this.#schedule();
+			return;
+		}
+		if (!this.batch.running) {
+			this.#queued.push(call);
+			this.#schedule();
 			return;
 		}
 		this.#applyQueued();

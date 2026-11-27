@@ -213,3 +213,28 @@ describe("Context", () => {
 		}
 	});
 });
+
+// Astra, round 5 of ERNDL-1191: controls of the observed promise of an already cancelled waiter.
+describe("a waiter cancelled already", () => {
+	it.each(["resolve", "reject"])(
+		"preserves the cancellation reason and leaves a second active waiter free to %s with the producer",
+		async (outcome) => {
+			const ac = new AbortController(),
+				bc = new AbortController(),
+				reason = new Error("caller gone"),
+				err = new Error("producer failed");
+			ac.abort(reason);
+			const work = Promise.withResolvers<number>();
+			const abandoned = awaitWithContext(work.promise, withAbortSignal(ac.signal, BACKGROUND_CONTEXT));
+			const active = awaitWithContext(work.promise, withAbortSignal(bc.signal, BACKGROUND_CONTEXT));
+			await expect(abandoned).rejects.toBe(reason);
+			if (outcome === "resolve") {
+				work.resolve(42);
+				await expect(active).resolves.toBe(42);
+			} else {
+				work.reject(err);
+				await expect(active).rejects.toBe(err);
+			}
+		},
+	);
+});

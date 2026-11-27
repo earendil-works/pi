@@ -793,6 +793,7 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 						// Its later attachments run as the live object's work: no activation span, no opener mark.
 						context: withAbortSignal(this.#abort.signal, this.#context),
 						metrics: host.metrics,
+						batch: host.batch,
 						live: () => this.#isLive,
 						waiting: (what) => {
 							if (what !== undefined || this.#extras !== undefined) this.#more().followWaitingFor = what;

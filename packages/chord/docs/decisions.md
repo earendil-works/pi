@@ -3916,8 +3916,13 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   an idle value (ended, or failed and waiting for its retry) follows `over`'s committed values, so a withdrawal and the
   same value in the next batch wakes it (A, B, A inside one batch still does not); a registry provider coming, going
   or changing its version marks every reader of every version, read since or not (`registries/record.ts`); whether
-  the attempt is live is a flag the attempt sets on its follows (`FollowSource.live()`). The runtime's `detach` runs outside any batch. Attachments are counted
-  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 to 4: Opus, Astra, Fable.)
+  the attempt is live is a flag the attempt sets on its follows (`FollowSource.live()`). Round 5 (Astra): a follow
+  over a changing source decides its first attachment's failure where the runtime's attachment settles (a held failure
+  then, or a failed call after it while the object activates, fails the activation), not where the followed source
+  adopts it; before a plain attachment settles only its last call is kept; a failed first attachment is discarded
+  before its cleanup runs; an idle value reads `over`'s committed value at the end of each batch that changed it
+  (also none: a registry failing without a last good value), not its frames. The runtime's `detach` runs outside any batch. Attachments are counted
+  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 to 5: Opus, Astra, Fable.)
   **Built as an attach of its own** (`host/follow-over.ts`; main session, 2026-11-27, decision 140, reversible, from
   Fable's review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
   it; its one new rule: a `failed` call fails the member until the next value, which replaces it whole (Durable
