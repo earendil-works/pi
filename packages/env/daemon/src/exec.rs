@@ -57,10 +57,17 @@ impl Registered {
     /// Kills the command's group while this registration stands: the waiter forgets it under the same lock before it
     /// reaps the command, so the pid names no other process here.
     pub fn kill(&self, groups: &Groups) {
+        self.kill_with(groups, kill_group);
+    }
+
+    /// `kill` with the signal `signal` sends to the pid: whether this registration stood (and `signal` was called).
+    fn kill_with(&self, groups: &Groups, signal: impl FnOnce(u32)) -> bool {
         let groups = groups.lock().unwrap();
-        if groups.get(&self.pid) == Some(&self.token) {
-            kill_group(self.pid);
+        let stands = groups.get(&self.pid) == Some(&self.token);
+        if stands {
+            signal(self.pid);
         }
+        stands
     }
 }
 
@@ -442,8 +449,9 @@ pub fn run(
         kill_group(pid);
         // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
         let _ = child.kill();
-        let _ = child.wait();
+        // Forgotten before it is reaped: then its pid may name another program, which a shutdown must not reach.
         registered.forget(groups);
+        let _ = child.wait();
         Failure::new("spawn_error", error.to_string())
     };
     let stdout = child.stdout.take().unwrap();
@@ -634,8 +642,12 @@ mod tests {
         // The first command was reaped and its pid reused: a later command registers it.
         let second = register(&groups, pid);
         first.forget(&groups);
-        first.kill(&groups);
+        let mut signalled = Vec::new();
+        assert!(!first.kill_with(&groups, |pid| signalled.push(pid)));
+        assert!(signalled.is_empty(), "the first command signals nothing");
         assert_eq!(groups.lock().unwrap().get(&pid), Some(&second.token));
+        assert!(second.kill_with(&groups, |pid| signalled.push(pid)));
+        assert_eq!(signalled, [pid], "the later command signals its own");
         second.forget(&groups);
         assert!(groups.lock().unwrap().is_empty());
     }

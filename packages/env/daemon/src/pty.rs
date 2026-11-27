@@ -184,9 +184,10 @@ pub fn run(
     let abandon = |mut child: std::process::Child, error: std::io::Error| {
         stop.store(true, Ordering::SeqCst);
         kill_group(pid);
+        // Forgotten before it is reaped: then its pid may name another program, which a shutdown must not reach.
+        registered.forget(groups);
         let _ = child.wait();
         terminals.lock().unwrap().remove(&id);
-        registered.forget(groups);
         Failure::new("spawn_error", error.to_string())
     };
     // Like a full pipe: a program that writes faster than the link waits.

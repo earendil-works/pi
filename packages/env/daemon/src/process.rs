@@ -115,8 +115,9 @@ pub fn run(
         kill_group(pid);
         // On Windows the group kill spawns taskkill, which can fail under the same limit; kill the child directly.
         let _ = child.kill();
-        let _ = child.wait();
+        // Forgotten before it is reaped: then its pid may name another program, which a shutdown must not reach.
         registered.forget(groups);
+        let _ = child.wait();
         Failure::new("spawn_error", error.to_string())
     };
     // What the program starts in its group dies when it exits: a wrapper such as `npx` that exits does not leave the
