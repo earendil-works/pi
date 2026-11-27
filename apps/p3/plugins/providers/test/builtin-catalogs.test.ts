@@ -18,7 +18,7 @@ import type { Source } from "../../things/contract.ts";
 import type { World } from "../../things/test/world.ts";
 import { builtinCatalogs } from "../builtin-catalogs.ts";
 import { CHECK_EVERY_MS, RETRY_AFTER_MS } from "../catalog.ts";
-import { type CatalogEntry, type CatalogStatus, CatalogStore } from "../contract.server.ts";
+import { type CatalogEntry, type CatalogStatus, CatalogStore, LoginAccount } from "../contract.server.ts";
 import { Login } from "../kind.ts";
 import type { CatalogContext } from "../login-catalogs.ts";
 import { makeLogin } from "../logins.ts";
@@ -76,14 +76,15 @@ async function served(answer: Parameters<FakePiDev["answer"]>[1]) {
 		world.host.root(
 			async (ctx) => {
 				const login = await ctx.get(Login, { workspace, thing });
-				const catalog = await until(
-					login.catalog!,
-					(now) => done(now.map((found) => (found as { id: string }).id)),
-					within("the login's catalog", ctx, 10_000),
+				// The account's models, as `SessionModels` gets them: pi-ai's definitions, as the worker gets them.
+				const account = (await ctx.get(LoginAccount, { thing })).account;
+				const found = await until(
+					account,
+					(now) => now !== null && done(now.models.map((model) => (model as { id: string }).id)),
+					within("the login's account", ctx, 10_000),
 				);
 				const shown = await until(login.login, (now) => now !== null, within("the login", ctx));
-				// The catalog is pi-ai's definitions, as the worker gets them.
-				const full = catalog as unknown as Model<Api>[];
+				const full = found!.models as Model<Api>[];
 				return { catalog: full.map(({ id }) => id), shown: shown!.models.map(({ id }) => id), full };
 			},
 			context,

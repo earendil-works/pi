@@ -41,6 +41,9 @@ export const Location = obj({ machine: str({ max: 200 }), folder: str({ max: 409
 /** Where a conversation works (see `Location`). */
 export type Location = Static<typeof Location>;
 
+/** The session kind's name (`kind.ts`): a session is a workspace of this kind, its answer the one on itself. */
+export const SESSION_KIND = "sessions.session";
+
 /** Durable's conversation id as text (as `SessionHarness.submit` takes it): its one spelling, so a move is found by it. */
 export const ConversationKey = str({ max: 20, pattern: "^[1-9][0-9]*$" });
 
@@ -66,8 +69,11 @@ export type SessionDetail = Static<typeof SessionDetail>;
 /** How hard the model thinks (Durable's levels). */
 export const ThinkingLevel = oneOf("off", "minimal", "low", "medium", "high", "xhigh", "max");
 
-/** A model choice: the provider, the model's id there and the thinking level. */
-export const ModelChoice = obj({ provider: str({ max: 200 }), model: str({ max: 200 }), thinking: ThinkingLevel });
+/**
+ * A model choice: the login (its thing's id) and the model's id in its account, as `SessionModels` lists them, and
+ * the thinking level (decision 118; version 2 of the columns that store it).
+ */
+export const ModelChoice = obj({ login: str({ max: 200 }), model: str({ max: 200 }), thinking: ThinkingLevel });
 
 /** A model choice (see `ModelChoice`). */
 export type ModelChoice = Static<typeof ModelChoice>;
@@ -76,8 +82,8 @@ export type ModelChoice = Static<typeof ModelChoice>;
  * A session as its holders and its worker see it besides its thing (its name is the thing's, its parent the thing's
  * place): its id (its workspace's), where it works (its conversations unless moved, `SessionDetail`; `null`: nowhere,
  * its maker was let in on no machine where it was made, R41, until a conversation is moved), when it was made, its
- * state, when it was last touched, when it was archived (`null`: it is not) and its model (`null`: the
- * agent's default; metadata until the model picker asks the agent's model with it, decision 118).
+ * state, when it was last touched, when it was archived (`null`: it is not) and its model (`null`: the agent's
+ * default; else the model its agent is asked while a login it may Use gives it, decision 118).
  */
 export const SessionRow = obj({
 	id: str(),
@@ -112,7 +118,9 @@ export type SessionDefaults = Static<typeof SessionDefaults>;
  * its agent's move of one conversation (refused unless the agents have Work there on that machine).
  */
 export const SessionFacts = remote("sessions.facts", {
-	version: 2,
+	// Version 2: the row's model choice names a login (decision 118). Version 3: its moved conversations (`detail`,
+	// `moveLocation`) and a location that may be none (decision 24, R41).
+	version: 3,
 	params: {},
 	hostAddress: () => Server(),
 	state: { session: union([SessionRow, nul()]), detail: SessionDetail },
@@ -145,7 +153,8 @@ export const SessionStart = remote("sessions.start", {
 
 /** A session's worker as anyone let into the session sees it: the row it follows from the server (`null` before). */
 export const SessionWorker = remote("sessions.worker", {
-	version: 2,
+	// Version 2: the row's model choice names a login (decision 118). Version 3: a location that may be none (R41).
+	version: 3,
 	params: { session: str() },
 	hostAddress: ({ session }) => Session({ id: session }),
 	admission: obj({}),
