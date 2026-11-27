@@ -79,7 +79,7 @@ export type KnownApi =
 
 export type Api = KnownApi | (string & {});
 
-export type KnownImageApi = "openrouter-images";
+export type KnownImageApi = "openrouter-images" | "pi-image";
 
 export type ImageApi = KnownImageApi | (string & {});
 
@@ -491,6 +491,12 @@ export interface Usage {
 	 * providers that expose a reasoning breakdown; left undefined by providers that don't.
 	 */
 	reasoning?: number;
+	/**
+	 * Image output tokens, when the provider reports them. This is a subset of `output`,
+	 * like `reasoning`; the rest of `output` is text and reasoning. Left undefined by
+	 * providers that don't report the split.
+	 */
+	imageOutput?: number;
 	totalTokens: number;
 	cost: {
 		/** Catalog-derived input cost. */

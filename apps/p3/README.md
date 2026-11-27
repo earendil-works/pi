@@ -66,6 +66,8 @@ changed plugin.
   the tests' probe plugin (`test/plugins/probe/`); a plugin's own tests, unit and end to end, sit in its `test/` folder.
 
 From this directory, with Node 26.3.1 or newer: `npm run check`, `npm test`; `node --conditions=source
---disable-warning=ExperimentalWarning src/bin.ts server --dir <path>` runs the server from source. A local
+--disable-warning=ExperimentalWarning src/bin.ts server --dir <path>` runs the server from source. This device's
+terminals run in pi-env's daemon, built from the checkout with Rust (https://rustup.rs): `npm run build:daemon` (`npm
+test` runs it first; run it before a server from source, and after pulling a change of `packages/env/daemon`). A local
 release (p3 built, packed and installed outside the repository as it would ship, then tested): from the repository root,
 `npm run release:p3:local -- --out /tmp/p3-release --force [--bench]`; the command is then `/tmp/p3-release/p3`.

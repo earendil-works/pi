@@ -5,6 +5,7 @@ import type { ImageModel, ImagesContext } from "../src/types.ts";
 const mockState = vi.hoisted(() => ({
 	lastParams: undefined as unknown,
 	lastRequestOptions: undefined as unknown,
+	nextResponse: undefined as unknown,
 }));
 
 vi.mock("openai", () => {
@@ -23,7 +24,7 @@ vi.mock("openai", () => {
 							},
 						};
 					}
-					const response = {
+					const response = mockState.nextResponse ?? {
 						id: "img-1",
 						usage: {
 							prompt_tokens: 12,
@@ -32,6 +33,7 @@ vi.mock("openai", () => {
 						},
 						choices: [
 							{
+								finish_reason: "stop",
 								message: {
 									content: "Here is your image.",
 									images: [{ image_url: "data:image/png;base64,ZmFrZS1wbmc=" }],
@@ -62,6 +64,7 @@ describe("openrouter images", () => {
 	beforeEach(() => {
 		mockState.lastParams = undefined;
 		mockState.lastRequestOptions = undefined;
+		mockState.nextResponse = undefined;
 	});
 
 	it("returns text plus images in final output", async () => {
@@ -170,5 +173,200 @@ describe("openrouter images", () => {
 			aspect_ratio: "16:9",
 			image_size: "2K",
 		});
+	});
+
+	it("returns stopReason error and preserves reported zero cost on OpenRouter finish_reason error", async () => {
+		mockState.nextResponse = {
+			id: "gen-err-1",
+			usage: {
+				prompt_tokens: 12,
+				completion_tokens: 556,
+				cost: 0,
+				is_byok: false,
+				cost_details: {
+					upstream_inference_cost: 0.00568,
+					upstream_inference_prompt_cost: 0.00012,
+					upstream_inference_completions_cost: 0.00556,
+				},
+			},
+			choices: [
+				{
+					finish_reason: "error",
+					native_finish_reason: null,
+					message: { role: "assistant", content: null },
+				},
+			],
+		};
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
+			id: "openai/gpt-5-image",
+			name: "GPT-5 Image",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image", "text"],
+			cost: { input: 10, output: 10, cacheRead: 1.25, cacheWrite: 0 },
+		};
+
+		const output = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "A compass rose" }] },
+			{ apiKey: "test" },
+		);
+		expect(output.stopReason).toBe("error");
+		expect(output.errorMessage).toBe("Provider finish_reason: error");
+		expect(output.output).toEqual([]);
+		expect(output.responseId).toBe("gen-err-1");
+		expect(output.usage?.cost.total).toBe(0);
+		expect(output.usage?.cost.totalFromProvider).toBe(true);
+	});
+
+	it("returns stopReason error when OpenRouter returns no choices or a choice error", async () => {
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
+			id: "openai/gpt-5-image",
+			name: "GPT-5 Image",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image", "text"],
+			cost: { input: 10, output: 10, cacheRead: 1.25, cacheWrite: 0 },
+		};
+
+		mockState.nextResponse = {
+			id: "gen-empty",
+			error: { message: null, code: null },
+			choices: [],
+		};
+		const empty = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "A compass rose" }] },
+			{ apiKey: "test" },
+		);
+		expect(empty.stopReason).toBe("error");
+		expect(empty.errorMessage).toBe("Provider returned no choices");
+
+		mockState.nextResponse = {
+			id: "gen-choice-err",
+			error: { code: 503, message: "Top-level error" },
+			choices: [
+				{
+					finish_reason: "error",
+					error: { message: "   ", code: "" },
+					message: { role: "assistant", content: null },
+				},
+			],
+		};
+		const fallbackErr = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "A compass rose" }] },
+			{ apiKey: "test" },
+		);
+		expect(fallbackErr.stopReason).toBe("error");
+		expect(fallbackErr.errorMessage).toBe("Top-level error");
+
+		mockState.nextResponse = {
+			id: "gen-native-reason",
+			choices: [
+				{
+					finish_reason: "error",
+					native_finish_reason: "IMAGE_SAFETY",
+					message: { role: "assistant", content: null },
+				},
+			],
+		};
+		const nativeReason = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "A compass rose" }] },
+			{ apiKey: "test" },
+		);
+		expect(nativeReason.stopReason).toBe("error");
+		expect(nativeReason.errorMessage).toBe("Provider finish_reason: error (native_finish_reason: IMAGE_SAFETY)");
+	});
+
+	it("applies OpenRouter reported usage.cost on successful image generation", async () => {
+		mockState.nextResponse = {
+			id: "gen-ok-1",
+			usage: {
+				prompt_tokens: 15,
+				completion_tokens: 1290,
+				cost: 0.042,
+				is_byok: false,
+				cost_details: null,
+			},
+			choices: [
+				{
+					finish_reason: "stop",
+					message: {
+						content: null,
+						images: [{ image_url: "data:image/png;base64,ZmFrZS1wbmc=" }],
+					},
+				},
+			],
+		};
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
+			id: "google/gemini-2.5-flash-image",
+			name: "Gemini 2.5 Flash Image",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image", "text"],
+			cost: { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.083333 },
+		};
+
+		const output = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "A compass rose" }] },
+			{ apiKey: "test" },
+		);
+		expect(output.stopReason).toBe("stop");
+		expect(output.usage?.cost.total).toBe(0.042);
+		expect(output.usage?.cost.totalFromProvider).toBe(true);
+		expect(output.usage?.reasoning).toBe(0);
+		expect(output.usage?.imageOutput).toBeUndefined();
+	});
+
+	it("reports reasoning and image tokens as subsets of output tokens", async () => {
+		mockState.nextResponse = {
+			id: "gen-reasoning-1",
+			usage: {
+				prompt_tokens: 15,
+				completion_tokens: 2290,
+				completion_tokens_details: { reasoning_tokens: 1000, image_tokens: 1120 },
+			},
+			choices: [
+				{
+					finish_reason: "stop",
+					message: {
+						content: null,
+						images: [{ image_url: "data:image/png;base64,ZmFrZS1wbmc=" }],
+					},
+				},
+			],
+		};
+		const model: ImageModel<"openrouter-images"> = {
+			type: "image",
+			id: "google/gemini-3-pro-image",
+			name: "Gemini 3 Pro Image",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["image", "text"],
+			cost: { input: 2, output: 120, cacheRead: 0.2, cacheWrite: 0.375 },
+		};
+
+		const output = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "A compass rose" }] },
+			{ apiKey: "test" },
+		);
+		expect(output.usage?.output).toBe(2290);
+		expect(output.usage?.reasoning).toBe(1000);
+		expect(output.usage?.imageOutput).toBe(1120);
 	});
 });

@@ -26,7 +26,7 @@ export const Environments = remote("environments.environments", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	// The owner's only (`admitOwner`, the people plugin's; its value `OwnerAdmission`, none).
+	// The owners' only (`admitOwner`, the things plugin's; its value `OwnerAdmission`, none).
 	admission: obj({}),
 	state: { environments: arr(Environment) },
 });

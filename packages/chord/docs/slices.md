@@ -131,6 +131,11 @@ slice spec's section citations are for orientation, not a reading limit (owner, 
   difference (`store/read-index.ts`). What a host retains after work came and went: `test/host/retained.test.ts`
   (every cache evicts; no growth round after round). Benches `test/bench/hot-paths.ts`, `list-heap.ts`,
   `hold-heap.ts` (client heap, case 8), `commit-index.ts` (case 3).
+- **A follow over a changing source** (built 2026-11-27, no slice of its own; decision "A follow re-attaches over a
+  changing source", ERNDL-1191): `self.follow(over, attach)` in `host/follow-over.ts`, an attach for
+  `host/follow.ts` (each attachment its own observer; a failed member retried with backoff; `follow_failed`;
+  `chord.follow.attaches`), the `over` check (`followedOver`, also in staging); tests in `test/host/follow.test.ts`
+  (the describes "over a changing source: …"); example 79.
 - **Chord's shared code** (upstream pi): `src/watch.ts` (`Watch`, `NativeWatch`, `WatchHandle`, `WatchEnd`,
   `NativeWatchable`), Delta (`track`, `diffRevisions`, `applyImmutable`, encoders, `PendingOps`, `appendText`),
   context, JSON, output, SQLite drivers.
@@ -372,6 +377,15 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
   any test: the events GC tests clear what they keep of an attempt before collecting (`test/remote/provider.test.ts`,
   "retire a provider side's record only once its event tickets drained"). Whether an ended attempt should cut what it
   reaches (its object, its links' records) is undecided. (Events build reviews.)
+
+### Later: follows (when a case needs it)
+
+- **`self.follow(over, attach)` over a JSON watchable** (a reference's member, a document, a derive): only registry
+  values and writables are taken, compared by identity; a JSON source changes by ops, so a new value is no new
+  runtime to attach to without a comparison the case decides. (ERNDL-1191.)
+- **A held attachment's retirement folds into its replacement:** calls a new attachment made before it resolved are
+  given as one `[["r", newest]]` with `retired` false; a retirement among them is not carried on. Durable's views
+  over a changing source (the conversation) do not retire. (ERNDL-1191.)
 
 ### Workers: what the exit order left (decision "A worker's exit is published after its link's work ended")
 

@@ -411,6 +411,19 @@ export const CHORD_TELEMETRY_SCHEMA = defineTelemetrySchema({
 			description: "How long a link origin's state waited for a slot of its window.",
 			attributes: {},
 		},
+		"chord.follow.attaches": {
+			kind: "counter",
+			description:
+				"Attachments a follow over a changing source made (`self.follow(over, attach)`): for a new value of its source (`value`, the first one too), or a retry after a failure (`retry`).",
+			attributes: {
+				reason: {
+					type: "string",
+					required: true,
+					values: ["value", "retry"],
+					description: "Why it attached.",
+				},
+			},
+		},
 		"chord.events.emitted": {
 			kind: "counter",
 			description: "Event values this host's sources emitted.",

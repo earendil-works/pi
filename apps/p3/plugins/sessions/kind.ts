@@ -55,7 +55,8 @@ export const SessionKind = defineWorkspace(SESSION_KIND, {
 		},
 	},
 	defaultGrants: { agents: [MAKE_ANY], everyone: ["read", "send"], guests: ["read"] },
-	create: { input: obj({ location: opt(Location) }) },
+	// `location` left out: the nearest defaults' (R41), else this device's; `null`: the session's own folder, as asked.
+	create: { input: obj({ location: opt(union([Location, nul()])) }) },
 });
 
 /** One session held as itself (`{ workspace: id, thing: id }`): `SessionKind`'s contract. */
@@ -67,8 +68,8 @@ export const SessionObject = SessionKind.contract;
  * ticks); the agents' Use is a flag. The plugin seeds one in Pi.
  */
 export const SessionDefaultsKind = defineThing("sessions.defaults", {
-	// Version 2: its model choice names a login (decision 118).
-	version: 2,
+	// Version 2: its model choice names a login (decision 118). Version 3: a default location.
+	version: 3,
 	makers: "people",
 	stacking: "nearest",
 	state: { defaults: SessionDefaults },

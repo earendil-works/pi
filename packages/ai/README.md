@@ -888,6 +888,37 @@ console.log(model.input);  // ['text'] or ['text', 'image']
 console.log(model.output); // ['image'] or ['image', 'text']
 ```
 
+### Pi Image
+
+The `pi-image` API sends pi's image-generation types directly to a backend without provider translation, analogous to `pi-messages` and `pi-decision`. Each call sends a single `POST` to `<baseUrl>/image` with bearer auth (`Authorization: Bearer <apiKey>`) and body `{ model, context: { input }, options? }` (`PiImageRequest`), where `options` may carry `aspectRatio`, `size`, `sessionId`, and `metadata`.
+
+A `200 OK` response returns `{ output, usage?, responseId? }` (`PiImageResponse`), where `output` is an array of `TextContent` and base64 `ImageContent` blocks. When `usage.cost.total` is present (including cost-only responses without token counts), pi trusts it as authoritative; otherwise pi computes cost from the model catalog. Non-2xx responses use the `{ error: { message, code?, details? } }` envelope. Requests with input images are rejected client-side if `model.input` does not include `"image"`.
+
+```typescript
+import { createProvider, envApiKeyAuth } from '@earendil-works/pi-ai';
+import { piImageApi } from '@earendil-works/pi-ai/api/pi-image.lazy';
+
+const gateway = createProvider({
+  id: 'my-gateway',
+  name: 'My Gateway',
+  auth: { apiKey: envApiKeyAuth('My Gateway API key', ['MY_GATEWAY_API_KEY']) },
+  models: [
+    {
+      type: 'image',
+      id: 'gemini-2.5-flash-image',
+      name: 'Gemini 2.5 Flash Image',
+      api: 'pi-image',
+      provider: 'my-gateway',
+      baseUrl: 'https://gateway.example/v1',
+      input: ['text', 'image'],
+      output: ['image', 'text'],
+      cost: { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.083333 },
+    },
+  ],
+  images: { 'pi-image': piImageApi() },
+});
+```
+
 ### Notes and Limitations
 
 - Image models and chat models share `Models` and `Provider`; list them with `getModelsOfType('image')` and run them with `generateImages()`, never the chat/stream APIs.
@@ -897,7 +928,7 @@ console.log(model.output); // ['image'] or ['image', 'text']
 - Some models accept image input, others are text-to-image only. Check `model.input`.
 - Like the streaming APIs, image generation supports options such as `apiKey`, `signal`, `headers`, `onPayload`, and `onResponse`, and results may include `stopReason`, `responseId`, and `usage`.
 - If you want a model to analyze images in a conversation or call tools, use the regular chat APIs with a model that supports image input.
-- At the moment, image generation is available through only one provider, OpenRouter.
+- Built-in image generation is available through OpenRouter and dynamically through Radius (via `pi-image`); custom providers can also register `pi-image` or custom image APIs.
 
 ## Classification
 
@@ -913,7 +944,7 @@ Decision models (model type `"classifier"`) consume structured JSON state, and o
 | `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
 | `github-copilot` | `gpt-6-luna-decisions`, `microsoft-decision-1` | `COPILOT_GITHUB_TOKEN` or GitHub Copilot OAuth |
 
-GitHub Copilot OAuth credentials record the decision models in the account's Copilot model catalog, and `getAvailableOfType('classifier')` lists only those. Microsoft-Decision-1 is limited to Business and Enterprise plans. `gpt-6-luna-decisions` uses the `openai-decisions` API at the account's `/v1/decisions` endpoint.
+GitHub Copilot OAuth credentials record the decision models in the account's Copilot model catalog, and `getAvailableOfType('classifier')` lists only those. Microsoft-Decision-1 is limited to Business and Enterprise plans. `gpt-6-luna-decisions` uses the `openai-decisions` API at the account's `/v1/decisions` endpoint. The `radius` provider also loads decision models dynamically from `/v1/config` via the `pi-decision` API.
 
 ```typescript
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';

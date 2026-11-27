@@ -11,17 +11,50 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 // Left out as equivalent (no test can see it): a removed group's members not told (every entry and grant naming the
-// group goes in the same commit, so a person's stale membership in it names a party present nowhere); and
-// `ensureOwner`'s own check (the store's start reads the owners first and opens a transaction only without one); and
-// either of the two "adopted once" checks alone (`adoptOwner`'s read outside a transaction and the one inside it: both
-// removed, the bridge test fails, checked by hand). Not pinned: the start's reads outside a transaction (a store ended
-// during its start then cancels none; a gated read did not reproduce the 30 s drain on close, and the reads go back
-// into transactions with ERNDL-1190).
+// group goes in the same commit, so a person's stale membership in it names a party present nowhere).
 
 /** One bug: in `file` (of the plugin), the text to find (exactly once) and what to put there instead. */
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- the start's reads in its transaction (ERNDL-1190 landed) ----
+	{
+		name: "every start makes another owner",
+		file: "people.ts",
+		find: "		if (owners.items.length > 0) return null;\n",
+		put: "",
+	},
+	{
+		name: "every start makes another Pi",
+		file: "store.ts",
+		find: "	if ((await rootOf(tx, t)) !== undefined) return null;\n",
+		put: "",
+	},
+	// ---- push B: the owner, Me, the invite route ----
+	{
+		name: "the machine's owner is the first owner by key",
+		file: "store.ts",
+		find: "const [owner] = marked === undefined ? [] : (await q.persons.one.page({ person: marked }, 1, ctx)).items;",
+		put: "const [owner] = (await q.persons.owners.page({}, 1, ctx)).items;",
+	},
+	{
+		name: "Me reads no owner flag",
+		file: "me.ts",
+		find: "owner: rows[0]?.owner ?? false,",
+		put: "owner: false,",
+	},
+	{
+		name: "OwnerAccess answers anyone about anyone",
+		file: "me.ts",
+		find: 'if (principal.kind === "person" && callerKey(principal) !== caller) {',
+		put: "if (false) {",
+	},
+	{
+		name: "the owner's person is named Owner, never after the machine's user",
+		file: "people.ts",
+		find: 'const name = user === "" ? "Owner" :',
+		put: 'const name = true ? "Owner" :',
+	},
 	// ---- the picker's check where the party and the caller meet ----
 	{
 		name: "the picker's check misses a party put in below where the caller is",
@@ -129,12 +162,6 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "",
 	},
 	{
-		name: "the placeholder's id is not marked",
-		file: "people.ts",
-		find: 'tx.put(this.#t.adopted, { bridge: "placeholder", person });',
-		put: "",
-	},
-	{
 		name: "a person who made a thing goes with the source's cleanup",
 		file: "cleanup.ts",
 		find: "if (!retired.has(row.thing)) left.add(personOf.get(row.madeByKey)!);",
@@ -149,14 +176,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "expired links are not swept at the start",
 		file: "store.ts",
-		find: "if (await anyExpired(t.invites, now, ctx)) await self.tx((tx) => invites.sweep(tx, now), ctx);",
+		find: "				await invites.sweep(tx, Date.now());\n",
 		put: "",
-	},
-	{
-		name: "any plugin's owner seed counts",
-		file: "server.ts",
-		find: 'compose: (table) => table.find(({ plugin }) => plugin === "@earendil-works/p3-people")?.value ?? null,',
-		put: "compose: (table) => table[0]?.value ?? null,",
 	},
 	{
 		name: "an owner may not name any group on a link",
@@ -956,7 +977,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a link's secret is not checked",
 		file: "invites.ts",
-		find: "if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return null;",
+		find: "if (row === undefined || !matchesHash(link.slice(invite.length + 1), row.hash)) return null;",
 		put: "if (row === undefined) return null;",
 	},
 	{
@@ -978,12 +999,6 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "",
 	},
 	{
-		name: "the people plugin's owner is not adopted (the bridge)",
-		file: "owner-bridge.ts",
-		find: "if (seed !== null) await store.adoptOwner(seed, ctx);",
-		put: "",
-	},
-	{
 		name: "a thing's last unlink leaves what it wrote and made",
 		file: "store.ts",
 		find: 'await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));',
@@ -999,12 +1014,6 @@ const MUTATIONS: readonly Mutation[] = [
 		name: "a person who made someone goes with the source's cleanup",
 		file: "cleanup.ts",
 		find: "for await (const row of rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns))\n\t\t\tleft.add(personOf.get(row.madeByKey)!);",
-		put: "",
-	},
-	{
-		name: "the adoption takes a placeholder that got something",
-		file: "people.ts",
-		find: "if ((await somethingLeft([placeholder])).has(placeholder)) return null;",
 		put: "",
 	},
 	{

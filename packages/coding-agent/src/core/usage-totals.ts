@@ -40,6 +40,9 @@ export function combineUsage(first: Usage, second: Usage): Usage {
 		...(first.reasoning !== undefined || second.reasoning !== undefined
 			? { reasoning: (first.reasoning ?? 0) + (second.reasoning ?? 0) }
 			: {}),
+		...(first.imageOutput !== undefined || second.imageOutput !== undefined
+			? { imageOutput: (first.imageOutput ?? 0) + (second.imageOutput ?? 0) }
+			: {}),
 		totalTokens: first.totalTokens + second.totalTokens,
 		cost: {
 			input: first.cost.input + second.cost.input,

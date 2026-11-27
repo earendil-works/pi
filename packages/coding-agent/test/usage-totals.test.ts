@@ -27,4 +27,10 @@ describe("combineUsage", () => {
 		expect(combineUsage(usage(1), usage(2, true)).cost.totalFromProvider).toBe(false);
 		expect(combineUsage(usage(1), usage(2)).cost.totalFromProvider).toBe(false);
 	});
+
+	it("sums image output tokens when either side reports them", () => {
+		expect(combineUsage({ ...usage(1), imageOutput: 3 }, usage(2)).imageOutput).toBe(3);
+		expect(combineUsage({ ...usage(1), imageOutput: 3 }, { ...usage(2), imageOutput: 4 }).imageOutput).toBe(7);
+		expect(combineUsage(usage(1), usage(2)).imageOutput).toBeUndefined();
+	});
 });

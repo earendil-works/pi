@@ -6,7 +6,6 @@
 import {
 	and,
 	bool,
-	type Ctx,
 	defineColumns,
 	defineTable,
 	eq,
@@ -21,7 +20,6 @@ import {
 	type TableOf,
 	type Tx,
 } from "@earendil-works/p3/v1";
-import { SignIns } from "../sign-in/contract.ts";
 import type { Touched } from "./access.ts";
 import {
 	ManagedBy,
@@ -138,11 +136,11 @@ export const SignOuts = defineTable("things.sign-outs", {
 });
 
 /**
- * The owner bridge's marks (ERNDL-1144 push B removes it): `placeholder`, the person the first start made the owner
- * (only that one may go at the adoption); `owner`, the people plugin's owner adopted, once, durably, so a handover of
- * the owner flag here or a new name there never sets the flag back.
+ * The machine's owner, the person the owner link signs in as (row `owner`): the first start's person, or on a Pi from
+ * before the people plugin went the owner it handed over (the bridge of ERNDL-1144's push A; its `placeholder` row is
+ * read no more).
  */
-export const Adopted = defineTable("things.owner-adopted", {
+export const OwnerMarks = defineTable("things.owner-adopted", {
 	version: 1,
 	columns: { bridge: str(), person: str() },
 	key: ["bridge"],
@@ -156,7 +154,7 @@ export type PeopleTables = {
 	readonly groupManagers: TableOf<typeof GroupManagers>;
 	readonly invites: TableOf<typeof Invites>;
 	readonly signOuts: TableOf<typeof SignOuts>;
-	readonly adopted: TableOf<typeof Adopted>;
+	readonly marks: TableOf<typeof OwnerMarks>;
 };
 
 /** The people tables, opened on `self` (the store's factory). */
@@ -168,7 +166,7 @@ export function openPeopleTables(self: StoreSelf<P3Principal>): PeopleTables {
 		groupManagers: self.table(GroupManagers),
 		invites: self.table(Invites),
 		signOuts: self.table(SignOuts),
-		adopted: self.table(Adopted),
+		marks: self.table(OwnerMarks),
 	};
 }
 
@@ -180,51 +178,26 @@ export class PeopleWrites {
 		this.#t = t;
 	}
 
-	/** Makes a person (no owner flag), made by `madeBy`; answers their id. */
-	async createPerson(tx: Tx, { name, madeBy }: { name: string; madeBy: Source }): Promise<string> {
-		const person = crypto.randomUUID();
+	/** Makes a person (no owner flag), made by `madeBy`, with id `person` (a new one if not given); answers it. */
+	async createPerson(
+		tx: Tx,
+		{ name, madeBy, person = crypto.randomUUID() }: { name: string; madeBy: Source; person?: string },
+	): Promise<string> {
 		tx.put(this.#t.persons, { person, name, owner: 0, madeBy, madeByKey: sourceKey(madeBy) });
 		return person;
 	}
 
 	/**
-	 * The owner's person, made once, at the store's first start, named "Owner" (people rename it; the people plugin's
-	 * owner replaces it meanwhile: `adoptOwner`), its id marked as the placeholder.
+	 * The owner's person, made once, at the store's first start, named after the machine's user `user` (capitalised;
+	 * "Owner" for an empty one; people rename it), marked as the machine's owner (the owner link signs in as them).
 	 */
-	async ensureOwner(tx: Tx): Promise<null> {
+	async ensureOwner(tx: Tx, user: string): Promise<null> {
 		const owners = await this.#owners(tx, 1);
 		if (owners.items.length > 0) return null;
 		const person = crypto.randomUUID();
-		tx.put(this.#t.persons, { person, name: "Owner", owner: 1, madeBy: THINGS, madeByKey: sourceKey(THINGS) });
-		tx.put(this.#t.adopted, { bridge: "placeholder", person });
-		return null;
-	}
-
-	/**
-	 * The people plugin's owner made the owner here, with the same id, once (a bridge, ERNDL-1144 push B removes it):
-	 * their person is made or given the flag; the placeholder the first start made (its marked id, no other person)
-	 * goes only while nothing names it (`somethingLeft`: of the persons given, those of whom something is left). Never
-	 * again once done: a later handover of the flag stands.
-	 */
-	async adoptOwner(
-		tx: Tx,
-		touched: Touched,
-		{ person, name }: { person: string; name: string },
-		somethingLeft: (persons: readonly string[]) => Promise<ReadonlySet<string>>,
-	): Promise<null> {
-		if ((await tx.get(this.#t.adopted, { bridge: "owner" })) !== undefined) return null;
-		tx.put(this.#t.adopted, { bridge: "owner", person });
-		const row = await tx.get(this.#t.persons, { person });
-		const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-people" };
-		if (row === undefined) tx.put(this.#t.persons, { person, name, owner: 1, madeBy: by, madeByKey: sourceKey(by) });
-		else if (row.owner === 0) tx.update(this.#t.persons, { person }, { owner: 1 });
-		touched.persons.add(person);
-		const placeholder = (await tx.get(this.#t.adopted, { bridge: "placeholder" }))?.person;
-		if (placeholder === undefined || placeholder === person) return null;
-		if ((await tx.get(this.#t.persons, { person: placeholder })) === undefined) return null;
-		if ((await somethingLeft([placeholder])).has(placeholder)) return null;
-		tx.delete(this.#t.persons, { person: placeholder });
-		touched.persons.add(placeholder);
+		const name = user === "" ? "Owner" : `${user[0]!.toUpperCase()}${user.slice(1)}`;
+		tx.put(this.#t.persons, { person, name, owner: 1, madeBy: THINGS, madeByKey: sourceKey(THINGS) });
+		tx.put(this.#t.marks, { bridge: "owner", person });
 		return null;
 	}
 
@@ -332,14 +305,5 @@ export class PeopleWrites {
 	/** Throws (`invalid`) unless group `group` exists. */
 	async #mustBeGroup(tx: Tx, group: string): Promise<void> {
 		if ((await tx.get(this.#t.groups, { group })) === undefined) throw invalid("args", `things: no group ${group}`);
-	}
-}
-
-/** Ends every sign-in of the persons `persons` (they were removed): each one's open links close at once. */
-export async function endSignIns(persons: readonly string[], ctx: Ctx<P3Principal>): Promise<void> {
-	const gone = new Set(persons);
-	const signIns = await ctx.get(SignIns, {});
-	for (const signIn of signIns.list.value) {
-		if (signIn.principal.kind === "person" && gone.has(signIn.principal.id)) await signIns.revoke(signIn.id, ctx);
 	}
 }

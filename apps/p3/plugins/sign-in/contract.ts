@@ -1,24 +1,54 @@
 // The sign-in plugin's contract: the server's sign-ins. A sign-in is one browser or device signed in as a principal,
-// behind a token `<id>.<secret>` (random); only the secret's hash is kept.
+// behind a token `<id>.<secret>` (random); only the secret's hash is kept, one row per sign-in.
 
-import { arr, bool, local, method, nul, num, obj, oneOf, opt, P3Principal, str, union } from "@earendil-works/p3/v1";
+import {
+	arr,
+	bool,
+	local,
+	method,
+	nul,
+	num,
+	obj,
+	oneOf,
+	opt,
+	P3Principal,
+	queries,
+	str,
+	union,
+} from "@earendil-works/p3/v1";
 
-/** The server's sign-ins (one per server): issue, verify, revoke, and the live list of them. */
+/** The invite link's page and post (`invite.ts`); `Workspace.inviteLink` answers links to it, `#<token>` after it. */
+export const INVITE_PATH = "/_p3/invite";
+
+/**
+ * A person's id, as `SignIns` selects by it: never empty (the stored person of every sign-in that is no person's, which
+ * an empty id would select).
+ */
+const PersonId = str({ min: 1 });
+
+/** A sign-in as `SignIns` shows it: never its token or hash. */
+export const SignInRow = obj({
+	id: str(),
+	label: str(),
+	kind: oneOf("browser", "device"),
+	principal: P3Principal,
+	created: num(),
+	lastUsed: num(),
+});
+
+/**
+ * The server's sign-ins (one per server, server code only: it checks no caller): issue, verify, revoke, and the rows of
+ * one person's (or every) sign-in as named queries over its table.
+ */
 export const SignIns = local("p3.sign-ins", {
-	version: 1,
+	version: 2,
 	params: {},
 	members: {
-		/** The sign-ins: never a token or a hash. */
-		list: arr(
-			obj({
-				id: str(),
-				label: str(),
-				kind: oneOf("browser", "device"),
-				principal: P3Principal,
-				created: num(),
-				lastUsed: num(),
-			}),
-		),
+		/**
+		 * The sign-ins' rows: `ofPerson`, one person's, by the time they were made (index `by_person`); `all`, every one
+		 * (in the order of their ids).
+		 */
+		rows: queries(SignInRow, { ofPerson: obj({ person: PersonId }), all: obj({}) }),
 		/**
 		 * A new sign-in for `principal`: its id, its token (shown once, kept only hashed) and the sign-in cookie carrying
 		 * it for a browser (`Set-Cookie`; `secure` for a remote one).
@@ -29,7 +59,12 @@ export const SignIns = local("p3.sign-ins", {
 		),
 		/** The principal `token` authenticates as, or `null` (unknown, revoked, expired, malformed). */
 		verify: method(str(), union([P3Principal, nul()])),
-		/** Ends sign-in `id` at once: its token authenticates nothing more, and its open links are closed. */
-		revoke: method(str()),
+		/**
+		 * Ends sign-in `id` of person `person` at once: its token authenticates nothing more, and its open links are
+		 * closed. Whether it ended one: `false` when `person` has no sign-in `id` (another's is never ended).
+		 */
+		revoke: method(obj({ person: PersonId, id: str() }), bool()),
+		/** Ends every sign-in of the persons `persons` at once (`revoke` each), in one write. */
+		revokeOf: method(obj({ persons: arr(PersonId) })),
 	},
 });

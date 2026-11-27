@@ -16,13 +16,7 @@ import { fauxProvider } from "@earendil-works/p3/v1/server";
 import { FAUX_PROVIDER } from "../../../test/plugins/faux-login/contract.ts";
 import { within } from "../../../test/until.ts";
 import { SignIn } from "../contract.ts";
-import { providersWorld } from "./hosts.ts";
-
-/** The owner, who may sign in. */
-const ANN: P3Principal = { kind: "person", id: "ann", name: "Ann" };
-
-/** The owners' `callerKey`s. */
-const OWNERS = new Set(["person:ann"]);
+import { ownerOf, providersWorld } from "./hosts.ts";
 
 describe("starts at once", () => {
 	it("run one provider flow at a time, and the last one is shown", async () => {
@@ -60,7 +54,9 @@ describe("starts at once", () => {
 				]),
 			),
 		};
-		const w = await providersWorld(context, OWNERS, [gated]);
+		const w = await providersWorld(context, [gated]);
+		// The owner, who may sign in.
+		const ann = await ownerOf(w, context);
 		try {
 			await w.host.root(
 				async (ctx) => {
@@ -86,7 +82,7 @@ describe("starts at once", () => {
 					assert.equal(counts.most, 1);
 				},
 				context,
-				{ principal: ANN },
+				{ principal: ann },
 			);
 		} finally {
 			await w.close(context);
@@ -96,7 +92,8 @@ describe("starts at once", () => {
 
 describe("a server stopping", () => {
 	it("while a question is open stops cleanly", async () => {
-		const w = await providersWorld(context, OWNERS);
+		const w = await providersWorld(context);
+		const ann = await ownerOf(w, context);
 		const unhandled: unknown[] = [];
 		const record = (error: unknown) => unhandled.push(error);
 		process.on("uncaughtException", record);
@@ -113,7 +110,7 @@ describe("a server stopping", () => {
 					);
 				},
 				context,
-				{ principal: ANN },
+				{ principal: ann },
 			);
 			await w.close(context);
 			await new Promise((resolve) => setTimeout(resolve, 50));
@@ -128,7 +125,8 @@ describe("a server stopping", () => {
 
 describe("a sign-in taking too long", () => {
 	it("ends expired after ten minutes", async () => {
-		const w = await providersWorld(context, OWNERS);
+		const w = await providersWorld(context);
+		const ann = await ownerOf(w, context);
 		try {
 			await w.host.root(
 				async (ctx) => {
@@ -145,7 +143,7 @@ describe("a sign-in taking too long", () => {
 					assert.equal(ended.message.key, "expired");
 				},
 				context,
-				{ principal: ANN },
+				{ principal: ann },
 			);
 		} finally {
 			await w.close(context);

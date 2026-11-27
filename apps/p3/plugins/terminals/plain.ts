@@ -1,10 +1,11 @@
-// A terminal's output as plain text, for what shows it without a terminal emulator: the view's `PlainScreen` and the
-// agent's `terminal` tool (its `read`).
+// A terminal's output as plain text, for the agent's `terminal` tool (its `read`): the model reads text, not a screen.
+// The page draws terminals with a terminal emulator (ghostty-screen.tsx).
 
 /**
- * `text` without escape sequences (CSI `ESC [ … final`, OSC `ESC ] … BEL` or `ESC ] … ESC \`, two-byte `ESC x`)
- * and without the control characters a plain view cannot show (all but tab and newline). A sequence split across two
- * pieces leaves its tail behind: a plain view's shortcut.
+ * `text` without escape sequences (CSI `ESC [ … final`, OSC `ESC ] … BEL` or `ESC ] … ESC \`, a character set's
+ * `ESC ( x` and the like, two-byte `ESC x`)
+ * and without the control characters plain text cannot show (all but tab and newline). A sequence cut at the start
+ * of the kept output leaves its tail behind.
  */
 export function plain(text: string): string {
 	let out = "";
@@ -19,7 +20,8 @@ export function plain(text: string): string {
 				at += 2;
 				while (at < text.length && text.charCodeAt(at) !== 0x07 && text.charCodeAt(at) !== 0x1b) at++;
 				if (text.charCodeAt(at) === 0x1b) at++;
-			} else at++;
+			} else if (next !== undefined && "()*+-./".includes(next)) at += 2;
+			else at++;
 		} else if (code === 0x0d && text.charCodeAt(at + 1) === 0x0a) continue;
 		else if (code >= 0x20 && code !== 0x7f) out += text[at];
 		else if (code === 0x09 || code === 0x0a) out += text[at];

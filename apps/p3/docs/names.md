@@ -44,6 +44,34 @@ meaning from `packages/chord/docs/design.md` §2.
 | sign-in | one browser or device signed in as someone | session (for logins) |
 | admission | Chord's decision, before an object's factory, whether and at which level a principal gets it | access check |
 
+## Names inside a plugin
+
+One plugin, one name, carried by everything it owns. The worked example is notes (`apps/p3/plugins/notes/`).
+
+| What | Its name | Example |
+| --- | --- | --- |
+| the folder and the package | `plugins/<plugin>/`, `@earendil-works/p3-<plugin>` | `plugins/notes/package.json` |
+| the kind | `<plugin>.<kind>`, lower case; with one kind the two may be the same word | `plugins/notes/kind.ts:61` (`notes.notes`); `canvas.board`, `prompt.instructions` |
+| the kind's constant and its contract | `<Thing>Kind`, `<Thing>` | `plugins/notes/kind.ts:92` |
+| a tick | a verb, lower case, never a member's name; its label's key is `tick<Name>` | `plugins/notes/kind.ts:84` |
+| what a tick gives, as a constant | `<THING>_<TICK>S` | `plugins/notes/kind.ts:54` |
+| the store and its tables | `<plugin>.store`; `<plugin>.<rows>`, `<plugin>.settings` | `plugins/notes/store.ts:38`, `plugins/notes/store.ts:67`, `plugins/notes/store.ts:75` |
+| an index | `by_<what it orders by>` | `plugins/notes/store.ts:71` |
+| another served object | `<plugin>.<what>` | `plugins/prompt/set.ts:15` |
+| the messages namespace and keys | the plugin's name; keys are names (`noNote`), never English | `plugins/notes/messages.ts:8` |
+| a tool | `<plugin>_<verb>`; in a plugin with several kinds the kind's noun (`skills_read`) | `plugins/notes/worker.ts:52` |
+| files | `kind.ts`, `store.ts`, `server.ts`, `worker.ts`, `web.tsx`, `messages.ts`, `<thing>-view.tsx`; a second concept after what it is | `kind-pattern.md`, section 1 |
+| a view's id | the kind's name while it has one view | `plugins/notes/web.tsx:17` |
+| a test hook | `data-<plugin>…` on the view's root (its mode) and on each control | `plugins/notes/notes-view.tsx:48` |
+| a route | `/<plugin>/<what>` | `plugins/terminals/kind.ts:85` |
+| a contributing object | `<plugin>.<what>` | `plugins/terminals/attach.ts:23` |
+| a log or error text | starts with `<plugin>: ` | `plugins/notes/store.ts:178-180` |
+| a test | the `describe` names the mechanism, the `it` the rule; never a review round | `plugins/notes/test/server.test.ts:97` |
+
+Recorded exceptions (decision 120): the kinds `files.browser` and `terminals.pane` keep their names; the coding tools
+keep Durable's tool names `read`, `write`, `edit`, `bash`; a kind with many actions has one tool with a tagged action
+(`terminal`).
+
 Changed on the branch `skeleton` (2026-11-22, `base.md`): lock, layer and sheet are gone with locks; person, group,
 member, thing, options, view and chrome as above.
 On 2026-11-23 (`base.md`, "Things"): party, content, everywhere, follows and keep are new; thing and options changed

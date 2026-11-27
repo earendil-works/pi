@@ -3878,6 +3878,62 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   old value, and nothing reports it. Make a new object for every new value. No freezing, no development mode checks
   it (R9): the guides say it (`plugin-authoring.md` "Values you hand to Chord", p3's `chord-practices.md`).
 
+- **A follow re-attaches over a changing source (ERNDL-1191; the failure rule: main session, 2026-11-27, decision 131, reversible, for Mario to confirm):** the problem: an
+  object following a view of a runtime that a registry gives (p3's transcript over the session's harness) could only
+  fail and `retryOn` when a reload replaced the entry, which reported `object_failed` per open holder at every reload;
+  p3 rebuilt the follow in a plugin (`followAcross`), and its reviews found six races there (an attachment overtaken
+  while it attaches publishing, its rejection failing the follow, early calls lost or applied on the wrong view, a
+  withdrawn runtime kept, an observer left after its last reader). The rule: `self.follow(over, attach)`, `over` a
+  registry value or a writable (Chord's native sources, compared by identity; a JSON watchable is carry-over),
+  `attach(value, observer, ctx)` for each value that is not `undefined`. Each attachment has its own observer; only
+  the current one's calls and end count, and its end only while `over` still has its value. Activation waits for a
+  value under its deadline and attaches to the newest (one overtaken is dropped, its rejection too); a rejection of
+  the current one fails it `transient` as before. Live, a new value drops the current attachment at once and attaches
+  outside the batch; the new one's calls are held, then given as one `[["r", newest]]`; one overtaken never
+  publishes; `undefined` lets the attachment go and keeps the last value. **A failure of the source still given while
+  live (its attach rejecting or giving `undefined`, its runtime's `failed` end) fails the member, not the object**:
+  one failure call, `follow_failed` once per episode, retried after `nextDelay`'s backoff and at once on the next
+  value, the next attachment replacing the value whole. Its `ended` end lets the attachment go. While the attempt
+  still activates (also after this follow's first attachment, another one not yet), a failure is the activation's
+  (R4); a sealed attempt starts, reports and retries nothing more. Activation takes the first attachment current when
+  it resolves: each new value starts its own, one overtaken never holds up the newest. A call of the current
+  attachment in the batch that changed `over` counts only while `over` still gives its value: the follow is a
+  dependent of `over`, marked in the batch, and reconciles with `over`'s value after it (not with its frame: A, B, A
+  in one batch delivers none, and a registry failing without a last good value none either). A registry's last good
+  value counts while it is failed; with none it gives nothing to follow, as `undefined`. The same value again while
+  attached changes nothing, and while its retry waits it waits for the retry. A pending attachment keeps only its
+  newest state, folded: a value, or a failure with the last value before it (round 2, Astra). Round 3 (Astra, Opus):
+  an attachment settling in the turn its source changed is checked against `over`'s value as its calls are (a stale
+  success is detached, a stale rejection dropped); the old observation is detached before the next one attaches (a
+  runtime may hold one at a time); a value whose runtime ended its observation stays ended until another value; a
+  registry read while no provider serves it counts as read, so a provider served again marks its dependents
+  (`registries/record.ts`). A `failed` call while the object activates (also a plain follow's, also after this
+  follow's first attachment) fails the activation `transient`, never a member failed from the start, which a derive
+  over it would break. The first wait for a usable value fails at the deadline as any activation, its error naming
+  what it waited for ("waiting for a value of registry …"). Round 4 (Astra, Fable): before a plain follow's
+  attachment settles its calls are folded and the last decides, as in the over form (a failure followed by a value
+  activates; a failure last fails the activation); an attachment's detach that ends its attempt starts no successor;
+  an idle value (ended, or failed and waiting for its retry) follows `over`'s committed values, so a withdrawal and the
+  same value in the next batch wakes it (A, B, A inside one batch still does not); a registry provider coming, going
+  or changing its version marks every reader of every version, read since or not (`registries/record.ts`); whether
+  the attempt is live is a flag the attempt sets on its follows (`FollowSource.live()`). Round 5 (Astra): a follow
+  over a changing source decides its first attachment's failure where the runtime's attachment settles (a held failure
+  then, or a failed call after it while the object activates, fails the activation), not where the followed source
+  adopts it; before a plain attachment settles only its last call is kept; a failed first attachment is discarded
+  before its cleanup runs; an idle value reads `over`'s committed value at the end of each batch that changed it
+  (also none: a registry failing without a last good value), not its frames. Round 6 (Astra): a first attachment
+  failed at its settlement is over for good before its runtime's cleanup runs (no longer a dependent of `over`, so a
+  cleanup that changes it starts nothing), and that cleanup runs inside the activation; a runtime's detach that throws
+  is reported (`follow_failed`), never thrown out of a microtask; the idle read is listed on the batch of `over`'s own
+  host (`NativeSource.flushing`: a registry value of another host commits there). Round 7 (Astra): every detach
+  of the over form goes through that cleanup, also a superseded attachment's that settles late and the current one's
+  at the attempt's end. The runtime's `detach` runs outside any batch. Attachments are counted
+  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 to 7: Opus, Astra, Fable.)
+  **Built as an attach of its own** (`host/follow-over.ts`; main session, 2026-11-27, decision 140, reversible, from
+  Fable's review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
+  it; its one new rule: a `failed` call fails the member until the next value, which replaces it whole (Durable
+  never sends one: it ends its observer). `self.follow(attach)` keeps R4 otherwise.
+
 ## Still valid from `target-design.md`
 
 Documents and the store (async `tx.draft`, keys, tags, eviction, Durable's transaction rule), job sandwich, routines

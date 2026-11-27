@@ -5,10 +5,10 @@
 // in `things.invites`: the link is `<invite>.<secret>`, the secret never stored. Its maker's rights are checked again
 // when it is redeemed: a link stays good only while its maker may still write it.
 
-import { and, type Context, eq, invalid, lte, query, type TableOf, type Tx } from "@earendil-works/p3/v1";
+import { and, type Context, eq, invalid, lte, query, type Tx } from "@earendil-works/p3/v1";
 import { hashToken, matchesHash, newToken } from "@earendil-works/p3/v1/server";
 import type { Asks, Touched } from "./access.ts";
-import type { Invited, InviteInput } from "./contract.server.ts";
+import type { InviteInput, PersonName } from "./contract.server.ts";
 import { type Caller, managedByKey, type Party, type Source, sourceKey } from "./contract.ts";
 import { messages } from "./messages.ts";
 import { Groups, Invites, type PeopleTables, type PeopleWrites, THINGS } from "./people.ts";
@@ -27,6 +27,11 @@ export type Places = {
 	mayChange(tx: Tx, group: string, by: Source): Promise<boolean>;
 };
 
+/** Whom a link is redeemed for: a person signed in already, or a new one (with `person` as their id, if given). */
+export type Redeemer =
+	| { readonly kind: "person"; readonly person: string }
+	| { readonly kind: "new"; readonly person?: string };
+
 /** How many expired links one sweep takes (at the start, at each new link): bounded, so a sweep never runs long. */
 const SWEEP = 100;
 
@@ -35,11 +40,6 @@ function expiredBy(now: number) {
 	return query(Invites)
 		.where((r) => lte(r.expires, now))
 		.orderBy((r) => r.expires, "asc");
-}
-
-/** Whether any link has expired by `now` (one row read, outside a transaction: the start's question). */
-export async function anyExpired(invites: TableOf<typeof Invites>, now: number, context: Context): Promise<boolean> {
-	return (await invites.page(expiredBy(now), 1, context)).items.length > 0;
 }
 
 /** The writes of invite links inside a store transaction; none checks a caller. */
@@ -96,12 +96,11 @@ export class InviteWrites {
 	 * no longer put people into its group, or for a person who does not exist (the link stays good). Its maker's Manage
 	 * people is checked before, in the same operation (`makerMay`).
 	 */
-	async redeem(tx: Tx, touched: Touched, link: string, person: string | undefined): Promise<Invited | null> {
-		const dot = link.indexOf(".");
-		if (dot <= 0) return null;
-		const invite = link.slice(0, dot);
+	async redeem(tx: Tx, touched: Touched, link: string, redeemer: Redeemer): Promise<PersonName | null> {
+		const invite = inviteOf(link);
+		if (invite === undefined) return null;
 		const row = await tx.get(this.#t.invites, { invite });
-		if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return null;
+		if (row === undefined || !matchesHash(link.slice(invite.length + 1), row.hash)) return null;
 		const now = Date.now();
 		const { workspace, by: source } = row;
 		const gone = row.expires <= now || !(await this.#places.isWorkspace(tx, workspace));
@@ -109,11 +108,14 @@ export class InviteWrites {
 			tx.delete(this.#t.invites, { invite });
 			return null;
 		}
-		if (person !== undefined && (await tx.get(this.#t.persons, { person })) === undefined) return null;
+		// A person signed in must exist; a new one's given id must be free (a UUID the route made: always is).
+		const known =
+			redeemer.person === undefined ? undefined : await tx.get(this.#t.persons, { person: redeemer.person });
+		if ((redeemer.kind === "person") !== (known !== undefined)) return null;
 		// Its maker may still put people into its group: the group's own tick, or the owner flag (scenario 18).
 		if (row.group !== "" && !(await this.#places.mayChange(tx, row.group, row.by))) return null;
 		if (!row.several) tx.delete(this.#t.invites, { invite });
-		const who = await this.#redeemer(tx, person, row.name, row.by);
+		const who = await this.#redeemer(tx, redeemer, row.name, row.by);
 		const party: Party = { kind: "person", person: who.person };
 		if (row.as === "member") {
 			if (!(await this.#places.isPutIn(tx, workspace, party)))
@@ -129,14 +131,37 @@ export class InviteWrites {
 	}
 
 	/**
+	 * The name link `link` would make its new person with, read outside a transaction (a read only: the link stays as
+	 * it is); `null` for a link that is unknown, whose secret does not match, or that has expired.
+	 */
+	async invitation(link: string, context: Context): Promise<{ name: string } | null> {
+		const invite = inviteOf(link);
+		if (invite === undefined) return null;
+		const row = await this.#t.invites.get({ invite }, context);
+		if (row === undefined || !matchesHash(link.slice(invite.length + 1), row.hash) || row.expires <= Date.now())
+			return null;
+		return { name: row.name };
+	}
+
+	/** Spends link `link` unredeemed: a link for one use goes (one for several stays); a link that is no link, none. */
+	async spend(tx: Tx, link: string): Promise<null> {
+		const invite = inviteOf(link);
+		if (invite === undefined) return null;
+		const row = await tx.get(this.#t.invites, { invite });
+		if (row !== undefined && !row.several && matchesHash(link.slice(invite.length + 1), row.hash))
+			tx.delete(this.#t.invites, { invite });
+		return null;
+	}
+
+	/**
 	 * Whether the maker of link `link` still has Manage people in the workspace it points into, as the index answers
 	 * now (`asks`, in the redeeming write's operation); server code (a plugin, a thing, a provider) always. A link
 	 * that is unknown answers true: the redeeming write refuses it.
 	 */
 	async makerMay(link: string, asks: Asks, context: Context): Promise<boolean> {
-		const dot = link.indexOf(".");
-		if (dot <= 0) return true;
-		const row = await this.#t.invites.get({ invite: link.slice(0, dot) }, context);
+		const invite = inviteOf(link);
+		if (invite === undefined) return true;
+		const row = await this.#t.invites.get({ invite }, context);
 		if (row === undefined) return true;
 		const caller = callerOfSource(row.by);
 		if (caller === undefined) return true;
@@ -152,10 +177,14 @@ export class InviteWrites {
 		return null;
 	}
 
-	/** The person a link is redeemed for: `person` (who exists), else a new one named `name`, made by `by`. */
-	async #redeemer(tx: Tx, person: string | undefined, name: string, by: Source): Promise<Invited> {
-		if (person === undefined) return { person: await this.#people.createPerson(tx, { name, madeBy: by }), name };
-		return { person, name: (await tx.get(this.#t.persons, { person }))!.name };
+	/** The person a link is redeemed for: one signed in (who exists), else a new one named `name`, made by `by`. */
+	async #redeemer(tx: Tx, redeemer: Redeemer, name: string, by: Source): Promise<PersonName> {
+		if (redeemer.kind === "person") {
+			const { person } = redeemer;
+			return { person, name: (await tx.get(this.#t.persons, { person }))!.name };
+		}
+		const at = redeemer.person === undefined ? {} : { person: redeemer.person };
+		return { person: await this.#people.createPerson(tx, { name, madeBy: by, ...at }), name };
 	}
 
 	/** The workspace's own outside Guests group (R17), made and put into it at its first guest. */
@@ -185,4 +214,10 @@ function callerOfSource(source: Source): Caller | undefined {
 		default:
 			return undefined;
 	}
+}
+
+/** The invite id of link `link` (`<invite>.<secret>`); `undefined` for a text that is no link. */
+function inviteOf(link: string): string | undefined {
+	const dot = link.indexOf(".");
+	return dot <= 0 ? undefined : link.slice(0, dot);
 }

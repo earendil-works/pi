@@ -26,6 +26,8 @@ import {
 	type TableItem,
 	type Tx,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { SignIns } from "../sign-in/contract.ts";
 import { AccessIndex, type Asks, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
@@ -50,13 +52,12 @@ import {
 	type Source,
 	sourceKey,
 } from "./contract.ts";
-import { anyExpired, InviteWrites } from "./invites.ts";
+import { InviteWrites, type Redeemer } from "./invites.ts";
 import { type DefaultGrants, type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
 import { ticksNow } from "./migration.ts";
 import {
-	endSignIns,
 	GroupColumns,
 	GroupManagers,
 	GroupMembers,
@@ -131,6 +132,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const gone = self.table(Gone);
 		const kinds = self.registry(ThingKinds);
 		const hooks = self.registry(ThingHooks);
+		// The machine's user names the owner's person at the first start.
+		const runtime = self.registry(ServerRuntime);
 		const q = namedQueries(self, t);
 		const people = new PeopleWrites(t);
 		// The kinds as the store's index and writes see them: one snapshot, installed inside the index's queue when the
@@ -152,28 +155,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		// attempt's own context. Closed with the attempt: its watchers attach to the next attempt's index.
 		self.open(
 			async (ctx) => {
-				// Pi and the owner's person exist from the first start on: read first, outside a transaction, so a start
-				// after the first (a reload, maybe right after another) opens with no transaction a reload could cancel.
-				const pi = (
-					await t.workspaces.page(
-						query(Workspaces).where((w) => eq(w.parent, "")),
-						1,
-						ctx,
-					)
-				).items[0];
-				const owner = (
-					await t.persons.page(
-						query(Persons).where((p) => eq(p.owner, 1)),
-						1,
-						ctx,
-					)
-				).items[0];
-				if (pi === undefined || owner === undefined) {
-					await self.tx(async (tx) => {
-						await people.ensureOwner(tx);
-						return ensurePi(tx, t);
-					}, ctx);
-				}
+				// Pi and the owner's person exist from the first start on, each made once (a start after the first writes
+				// nothing).
+				await self.tx(async (tx) => {
+					await people.ensureOwner(tx, runtime.value.machine.user);
+					return ensurePi(tx, t);
+				}, ctx);
 				index = new AccessIndex(readerOf(q, kindsNow, reported), kindsNow, ctx);
 				return index;
 			},
@@ -250,15 +237,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
-			pending: async (ctx) => {
-				const rows = [];
-				// The whole table, outside a transaction: a store started lazily and reloaded at once (its start cut short)
-				// leaves no transaction cancelled (back into one when Chord stops reporting a transaction its own object's
-				// end cancels: the main session's Chord issue, core2). What waits for a delete hook is few rows, read at the start and when the
-				// hooks change.
-				for await (const row of pending.rows(query(Pending), ctx)) rows.push(row);
-				return rows;
-			},
+			// The whole table: what waits for a delete hook is few rows, read at the start and when the hooks change.
+			pending: (ctx) =>
+				self.tx(async (tx) => {
+					const rows = [];
+					for await (const row of tx.rows(pending, query(Pending))) rows.push(row);
+					return rows;
+				}, ctx),
 			hooks: () => hooks.value,
 		});
 		/**
@@ -365,7 +350,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		 */
 		const signOut = async (persons: readonly string[], ctx: Ctx<P3Principal>): Promise<void> => {
 			try {
-				await endSignIns(persons, ctx);
+				await (await ctx.get(SignIns, {})).revokeOf({ persons: [...persons] }, ctx);
 				await self.tx(async (tx) => {
 					for (const person of persons) tx.delete(t.signOuts, { person });
 					return null;
@@ -380,17 +365,18 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx), startPeople(ctx)]);
 		});
 		/**
-		 * What the store does about people at its start: the sign-outs still to end are ended, expired invite links
-		 * swept. Read outside a transaction, a transaction only if there is something to do: a store that ends meanwhile
-		 * leaves no transaction to drain (ERNDL-1190).
+		 * What the store does about people at its start, in one transaction: the sign-outs still to end are ended (after
+		 * it), expired invite links swept.
 		 */
 		const startPeople = async (ctx: Ctx<P3Principal>): Promise<void> => {
-			// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
-			const left: string[] = [];
-			for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);
+			const left = await self.tx(async (tx) => {
+				// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
+				const persons: string[] = [];
+				for await (const { person } of tx.rows(t.signOuts, query(SignOuts))) persons.push(person);
+				await invites.sweep(tx, Date.now());
+				return persons;
+			}, ctx);
 			if (left.length > 0) void signOut(left, ctx);
-			const now = Date.now();
-			if (await anyExpired(t.invites, now, ctx)) await self.tx((tx) => invites.sweep(tx, now), ctx);
 		};
 		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
 		// migrate anew, every loaded workspace is read again; a kind's hooks back, its waiting deletes run.
@@ -503,16 +489,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
-			adoptOwner: async (seed, ctx) => {
-				// Adopted already (every start but the first, every reload): no write, so nothing a reload could cancel.
-				if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return null;
-				return write(
-					(tx, touched) =>
-						people.adoptOwner(tx, touched, seed, (persons) =>
-							cleanup.somethingLeftOf(tx, persons, touched.retiring),
-						),
-					ctx,
-				);
+			machineOwner: async (_args, ctx) => {
+				const marked = (await t.marks.get({ bridge: "owner" }, ctx))?.person;
+				const [owner] = marked === undefined ? [] : (await q.persons.one.page({ person: marked }, 1, ctx)).items;
+				if (owner === undefined) throw invalid("args", "things: the machine's owner is gone");
+				return { person: owner.person, name: owner.name };
 			},
 			picker: async ({ workspace, caller, query: text }, ctx) => {
 				const at = workspace === undefined ? {} : { workspace };
@@ -524,13 +505,22 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return offers(q, (...args) => index!.offered(...args), { ...at, caller, party }, ctx);
 			},
 			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
-			redeemInvite: ({ secret, person }, ctx) =>
+			invitation: async ({ secret }, ctx) => invites.invitation(secret, ctx),
+			spendInvite: ({ secret }, ctx) => write((tx) => invites.spend(tx, secret), ctx),
+			redeemInvite: ({ secret, person, newPerson }, ctx) => {
+				if (person !== undefined && newPerson !== undefined)
+					throw invalid("args", "things: a link is redeemed for a person or a new one, not both");
+				const redeemer: Redeemer =
+					person !== undefined
+						? { kind: "person", person }
+						: { kind: "new", ...(newPerson === undefined ? {} : { person: newPerson }) };
 				// The link's maker still has Manage people where it points (checked with the write; the group's own tick
 				// is checked in it).
-				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx, {
+				return write((tx, touched) => invites.redeem(tx, touched, secret, redeemer), ctx, {
 					allowed: (asks) => invites.makerMay(secret, asks, ctx),
 					refused: () => null,
-				}),
+				});
+			},
 			deleteEverythingFrom: ({ source }, ctx) =>
 				write((tx, touched) => cleanup.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
 		};

@@ -75,6 +75,14 @@ export abstract class NativeSource<T = unknown> implements NativeWatchable<T> {
 		return this.#batch;
 	}
 
+	/**
+	 * Lists `flush` for the end of the commit of its host running now (one that changed it: its dependents are told
+	 * inside it), after its deliveries; nothing once the source ended.
+	 */
+	flushing(flush: (context: Context) => void): void {
+		this.#batch?.flushing(flush);
+	}
+
 	/** Records a change inside the current batch: every dependent marked. */
 	protected changed(): void {
 		this.dependents.invalidate();

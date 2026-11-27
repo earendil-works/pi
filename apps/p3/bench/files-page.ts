@@ -1,6 +1,6 @@
 // Files' first page of a big folder (ERNDL-1173): the time `entries` takes for the first page (200 entries) of a folder
 // of 10,000 files on this device, the best of 5 calls after a first one apart, as a person holding Files in Pi (the
-// plugin tier: `testPlugin` of the files plugin beside the things, environments and people plugins). The work a page
+// plugin tier: `testPlugin` of the files plugin beside the things and environments plugins). The work a page
 // costs (one listing, one read per entry shown) is asserted in plugins/files/test/search.test.ts. Run from apps/p3
 // with Node 26: node --conditions=source --disable-warning=ExperimentalWarning bench/files-page.ts
 
@@ -14,7 +14,6 @@ import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import { seeded } from "../plugins/environments/test/seeded.ts";
 import { Files, FilesKind } from "../plugins/files/kind.ts";
-import peopleServer from "../plugins/people/server.ts";
 import { OneThing, ThingsStore } from "../plugins/things/contract.server.ts";
 import thingsServer from "../plugins/things/server.ts";
 
@@ -27,7 +26,6 @@ const CALLS = 5;
 const stubs = [
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-	{ name: "@earendil-works/p3-people", facet: peopleServer },
 ];
 const t = await testPlugin(
 	fileURLToPath(new URL("../plugins/files/", import.meta.url)),

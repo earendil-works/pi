@@ -4,7 +4,7 @@
 // (its base bundle built in the install), and a third-party plugin written against nothing but the installed API:
 // type-checked, its own tests run on the installed `/v1/testing` (the plugin tier, and end to end: the installed
 // server with its workers forked from the release's bundle), loaded from the Pi's user root, and called by a client
-// that uses the compiled API modules.
+// that uses the compiled API modules. A terminal on this device runs in the pi-env daemon the install ships.
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -15,9 +15,13 @@ import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { until } from "@earendil-works/p3/v1";
 import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
+import { ThisDevice } from "../../plugins/environments/contract.ts";
 import { SessionWorker } from "../../plugins/sessions/contract.ts";
-import { childrenOf, launch, newSession, offline, TMP } from "../support.ts";
+import { Terminals, TerminalsKind } from "../../plugins/terminals/kind.ts";
+import { WorkspaceContents } from "../../plugins/things/workspace.ts";
+import { childrenOf, launch, newSession, offline, piOf, TMP } from "../support.ts";
 import { eventually } from "../until.ts";
 
 const run = promisify(execFile);
@@ -100,6 +104,36 @@ describe("the installed release", () => {
 			const base = await fetch(`http://127.0.0.1:${server.port}${script}`, { headers: { cookie } });
 			assert.equal(base.status, 200);
 			assert.ok((await base.text()).length > 0);
+		} finally {
+			await server.stop();
+		}
+	});
+
+	it("runs a terminal on this device in the pi-env daemon the install ships", async () => {
+		const shipped = join(MODULES, "@earendil-works", "pi-env", "bin", `pi-env-${process.platform}-${process.arch}`);
+		assert.deepEqual(await readdir(shipped), ["pi-env"]);
+		const server = await launch(P3, join(root, "terminal"));
+		try {
+			const client = await ownerClient(server.dataDir, server.port, context, 30_000);
+			const pi = await piOf(client, context);
+			const machine = await until((await client.get(ThisDevice, {}, context)).machine, (id) => id !== "", context);
+			const here = await client.get(WorkspaceContents, { workspace: pi, view: "release" }, context);
+			const { rows } = await until(
+				here.list,
+				(list) => list.rows.some((row) => row.kind === TerminalsKind.name),
+				context,
+			);
+			const thing = rows.find((row) => row.kind === TerminalsKind.name)!.thing;
+			const terminals = await client.get(Terminals, { workspace: pi, thing }, context);
+			const id = await terminals.open!({ machine, folder: root, columns: 80, rows: 24 }, context);
+			await terminals.type!({ terminal: id, bytes: "echo shipped-$((6*7))\r" }, context);
+			const read = await eventually(
+				() => terminals.backlog!({ terminal: id, wait: 1_000 }, context),
+				({ text }) => text.includes("shipped-42"),
+			);
+			assert.match(read.text, /shipped-42/);
+			await terminals.close!({ terminal: id }, context);
+			await client.close(context);
 		} finally {
 			await server.stop();
 		}
@@ -210,7 +244,7 @@ const HELLO = {
 		'import { testPlugin } from "@earendil-works/p3/v1/testing";',
 		'import { Hello } from "../contract.ts";',
 		"",
-		"/** Who the owner is, as the people plugin answers `admitOwner`: a stand-in, Olga. */",
+		"/** Who the owner is, as the things plugin answers `admitOwner`: a stand-in, Olga. */",
 		'const OWNER = { kind: "person", id: "o", name: "Olga" } as const;',
 		"const owner = defineFacet((host) =>",
 		'	host.serve(OwnerAccess, ({ caller }) => ({ owner: constant(caller === "person:o") })),',

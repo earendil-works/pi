@@ -1,4 +1,4 @@
-// The plans of the stores' named queries (sessions, people, notes, canvas, checklist, prompt, Files' staged uploads),
+// The plans of the stores' named queries (sessions, notes, canvas, checklist, prompt, Files' staged uploads),
 // as SQLite runs them: each read must search the index its comment names, with no sort (a temporary B-tree would read
 // and sort every row of a tie, or of the list, for one page), except the joins ordered by a partner's column, which say
 // in their comment that SQLite sorts their few rows: for those the plan asserted is the one they get. The test opens
@@ -12,7 +12,7 @@ import { createHost, openStore, sqliteBackend } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import { defineFacet, type P3Principal, Server } from "@earendil-works/p3/v1";
-import { OneThing, PeopleStore, type ServerRuntime, SessionsStore } from "@earendil-works/p3/v1/server";
+import { OneThing, type ServerRuntime, SessionsStore } from "@earendil-works/p3/v1/server";
 import canvasServer from "../plugins/canvas/server.ts";
 import { CanvasStore } from "../plugins/canvas/store.ts";
 import checklistServer from "../plugins/checklist/server.ts";
@@ -23,12 +23,14 @@ import { seeded } from "../plugins/environments/test/seeded.ts";
 import { StagingStore, serveStaging } from "../plugins/files/staging.ts";
 import notesServer from "../plugins/notes/server.ts";
 import { NotesStore } from "../plugins/notes/store.ts";
-import peopleServer from "../plugins/people/server.ts";
 import { PromptStore, serveStore as servePrompt } from "../plugins/prompt/store.ts";
 import { DefaultsSettings } from "../plugins/sessions/defaults.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
 import thingsServer from "../plugins/things/server.ts";
 import { serverCoreFacet } from "../src/server.ts";
+
+/** A canvas's shape. */
+const CANVAS_RECT = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
 
 /** A query's pages, read once each. */
 type Read = () => Promise<unknown>;
@@ -82,7 +84,6 @@ describe("the plans of the stores' queries", () => {
 					{ name: "@earendil-works/p3-checklist", facet: checklistServer },
 					{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 					{ name: "@earendil-works/p3-notes", facet: notesServer },
-					{ name: "@earendil-works/p3-people", facet: peopleServer },
 					{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 					{ name: "@earendil-works/p3-things", facet: thingsServer },
 					// The kinds' store alone: its kinds need the things plugin, whose store has a plan test of its own.
@@ -93,7 +94,6 @@ describe("the plans of the stores' queries", () => {
 				context,
 			);
 			const sessions = await host.get(SessionsStore, {}, context);
-			const people = await host.get(PeopleStore, {}, context);
 			const machine = await seeded(await host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 			const notes = await host.get(NotesStore, {}, context);
 			// Notebooks are things' ids: three notebooks of three notes each.
@@ -107,11 +107,6 @@ describe("the plans of the stores' queries", () => {
 			for (const checklist of ["c1", "c2"]) {
 				for (let i = 0; i < 3; i++) await checklists.add({ checklist, text: `i${i}` }, context);
 			}
-			const ann = await people.createPerson({ name: "Ann" }, context);
-			await people.createPerson({ name: "Ben" }, context);
-			const coaches = await people.group({ app: "coding", name: "coaches" }, context);
-			await people.group({ app: "coding", name: "players" }, context);
-			await people.addToGroup({ group: coaches, person: ann }, context);
 			// Sessions' rows as the session kind's create hook writes them (their workspaces are the things store's,
 			// which has a plan test of its own), half of them archived; and a defaults thing's settings.
 			let one = "";
@@ -121,11 +116,20 @@ describe("the plans of the stores' queries", () => {
 				if (i % 2 === 0) await sessions.archive({ session: one }, context);
 			}
 			const settings = await host.get(DefaultsSettings, {}, context);
-			await settings.set({ thing: "d1", defaults: { model: null, shared: false, opensWith: null } }, context);
+			await settings.set(
+				{ thing: "d1", defaults: { model: null, shared: false, opensWith: null, location: null } },
+				context,
+			);
 			const canvas = await host.get(CanvasStore, {}, context);
 			for (const board of ["b1", "b2"]) {
-				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
-				await canvas.add({ canvas: board, shapes: [rect, rect, rect], author: "person:owner" }, context);
+				await canvas.add(
+					{
+						canvas: board,
+						shapes: [CANVAS_RECT, CANVAS_RECT, CANVAS_RECT],
+						author: { kind: "person", person: "owner" },
+					},
+					context,
+				);
 			}
 			const prompt = await host.get(PromptStore, {}, context);
 			for (const thing of ["t1", "t2"]) {
@@ -165,7 +169,6 @@ describe("the plans of the stores' queries", () => {
 				},
 			];
 			const S = "sessions.store:sessions";
-			const P = "people.store:people";
 			const N = "notes.store:notes";
 			const C = "canvas.store:canvas";
 			const K = "checklist.store:checklist";
@@ -173,16 +176,6 @@ describe("the plans of the stores' queries", () => {
 				["sessions.one", pages(sessions.sessions.one, { id: one }), {}],
 				["settings.of", pages(settings.settings.of, { thing: "d1" }), {}],
 				["working", [() => sessions.working({}, context)], { index: `${S}.sessions:working` }],
-				["persons.owner", pages(people.persons.owner, {}), { index: `${P}.persons:by_owner` }],
-				["groups.ofApp", pages(people.groups.ofApp, { app: "coding" }), { index: `${P}.groups:of_app` }],
-				["groups.one", pages(people.groups.one, { id: coaches }), {}],
-				["groups.ofIds", pages(people.groups.ofIds, { ids: [coaches, "none"] }), {}],
-				[
-					"groups.ofPerson",
-					pages(people.groups.ofPerson, { person: ann }),
-					{ index: `${P}.group-members:of_person` },
-				],
-				["members.of (people)", pages(people.members.of, { group: coaches }), { sorts: true }],
 				["notes.of", pages(notes.notes.of, { notebook: "n1", order: "newest" }), { index: `${N}.rows:by_time` }],
 				[
 					"notes.of (oldest first)",
@@ -191,6 +184,12 @@ describe("the plans of the stores' queries", () => {
 				],
 				["settings.of", pages(notes.settings.of, { notebook: "n1" }), {}],
 				["shapes.of", pages(canvas.shapes.of, { canvas: "b1" }), { index: `${C}.shapes:by_order` }],
+				// A board's add: its newest shape on `by_order` (descending), no sort.
+				[
+					"canvas add",
+					[() => canvas.add({ canvas: "b1", shapes: [CANVAS_RECT], author: { kind: "server" } }, context)],
+					{ index: `${C}.shapes:by_order` },
+				],
 				["items.of", pages(checklists.items.of, { checklist: "c1" }), { index: `${K}.items:by_order` }],
 				["prompt.instructions.of", pages(prompt.instructions.of, { thing: "t1" }), {}],
 				["prompt.skills.of", pages(prompt.skills.of, { thing: "t1" }), {}],

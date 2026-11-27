@@ -25,12 +25,16 @@ import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, People, until } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, until } from "@earendil-works/p3/v1";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
+import { MACHINE_KIND } from "../../environments/contract.ts";
+import { SessionsStore } from "../../sessions/contract.server.ts";
+import { DEFAULTS, DefaultsSettings } from "../../sessions/defaults.ts";
+import { SessionDefaultsKind } from "../../sessions/kind.ts";
 import { SignIns } from "../../sign-in/contract.ts";
-import { ThingsStore } from "../../things/contract.server.ts";
+import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { ThingKindsView } from "../../things/kind.ts";
 import { Workspace } from "../../things/workspace.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
@@ -69,6 +73,16 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	let family: string;
 	/** Ada, invited and put into Pi (her person id). */
 	let ada: string;
+
+	/** A person the owner made, and a browser cookie signing them in (what an invite link they redeemed gives). */
+	const invite = (name: string) =>
+		t.host.root(async (ctx) => {
+			const things = await ctx.get(ThingsStore, {});
+			const person = await things.createPerson({ name, madeBy: { kind: "person", person: ownerId } }, ctx);
+			const principal = { kind: "person", id: person, name } as const;
+			const issued = await (await ctx.get(SignIns, {})).issue({ principal, kind: "browser", label: "test" }, ctx);
+			return { person, cookie: issued.cookie.split(";")[0]! };
+		}, context);
 
 	before(async () => {
 		await mkdir(SHOTS, { recursive: true });
@@ -195,6 +209,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await press(`[data-nav-thing="${plansEntry}"]`);
 		await browser.wait(`document.querySelector('[data-settings] [data-settings-title]')?.textContent === "Plans"`);
+		// A thing with no view of its own shows its Settings view, with no gear to the same view (Mario, on p3-base).
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 		await eventually(
 			() => look("everyone", "read"),
 			(found) => found === "given",
@@ -230,12 +246,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Sketch").dataset.navThing`,
 		);
 		await press(`[data-nav-thing="${sketch}"]`);
-		await browser.wait(`document.querySelector('section[aria-label="Canvas"]')`);
+		await browser.wait(`document.querySelector('[data-canvas="drawer"]')`);
 		await browser.wait(`document.querySelector("[data-gear]")`);
 		await shots("06-canvas-desktop");
 		await press("[data-gear]");
 		await browser.wait(`location.pathname.endsWith("/settings")`);
 		await browser.wait(`document.querySelector('[data-settings="${sketch}"]')`);
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 	});
 
 	it("opens Pi's Files, Terminals and machine in their views, on a desktop and a phone (ERNDL-1172-1174)", async () => {
@@ -334,7 +351,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		}
 	});
 
-	it("says a machine's refusal in the Terminals view as its message, not as the log's text (Fable, round 5)", async () => {
+	// Decision 133: this device's terminals run in pi-env's daemon, the page draws them with libghostty-vt.
+	it("runs a shell on this device in the Terminals view: drawn, typed into, sized, its queries answered only live", async () => {
 		await browser.wait(
 			`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Terminals")`,
 		);
@@ -343,16 +361,190 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
 		await press("[data-terminals-open]");
-		// This device has no terminals yet: the environments plugin's message, rendered in the terminals plugin's view.
+		const screen = `document.querySelector("[data-terminal-screen] [role=log]")`;
+		/** Types `line` into the terminal, Enter after it, as a keyboard does (text, then the Enter key), once it takes input. */
+		const line = async (text: string) => {
+			await browser.wait(`document.querySelector('[data-terminal-input="ready"]') !== null`);
+			await browser.click("[data-terminal-screen]");
+			await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`, 5_000);
+			await browser.call("Input.insertText", { text });
+			await browser.enter();
+		};
+		/** Waits until the screen shows `text`. */
+		const shows = (text: string) => browser.wait(`${screen}?.textContent.includes(${JSON.stringify(text)})`);
+		await line("echo page-$((6*7))");
+		await shows("page-42");
+		await line("printf '\\033[31mred-text\\033[0m\\n'");
+		// Drawn in its colour: a span of its own (the typed command's text is one run of the default colour).
 		await browser.wait(
-			`document.querySelector("[data-terminals]")?.textContent.includes("Terminals on this machine are not there yet.")`,
+			`[...${screen}.querySelectorAll("span")].some((e) => e.textContent.startsWith("red-text") && e.style.color !== "")`,
 		);
+		// The screen sized the terminal to itself: not the size it opened with.
+		await line("echo size-$(stty size | tr ' ' x)");
+		await browser.wait(
+			`/size-\\d+x\\d+/.test(${screen}?.textContent) && !${screen}.textContent.includes("size-24x80")`,
+		);
+		// A query in the output replayed at attaching is not answered (it would be typed into the shell); a live one is.
+		await line("printf '\\033[c'; read -rs -t 1 -d c a; echo before-$((3*3))");
+		await shows("before-9");
+		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
+		await shows("before-9");
+		await line("read -rs -t 1 -n 1 x && echo stray-$((1*1)) || echo clean-$((5*5))");
+		await shows("clean-25");
+		await line("printf '\\033[c'; read -rs -t 2 -d c a; [ -n \"$a\" ] && echo live-$((40+2))");
+		await shows("live-42");
+		// A second page with Use on the same terminal: one query, one answer (Opus, Astra, round 1, S2).
+		const second = await Browser.start();
+		try {
+			await second.signIn(origin, await t.cookie(context));
+			await second.size(DESKTOP);
+			await second.open(`${origin}/w/${pi}/t/${terminals}`);
+			await second.wait(`${screen}?.textContent.includes("live-42")`);
+			await line(
+				"printf '\\033[c'; read -rs -t 2 -d c a; read -rs -t 1 -d c b; [ -n \"$b\" ] && echo replies-$((1+1)) || echo replies-$((0+1))",
+			);
+			await browser.wait(`/replies-[12]/.test(${screen}?.textContent)`);
+			assert.equal(await browser.evaluate(`/replies-[12]/.exec(${screen}.textContent)[0]`), "replies-1");
+			// Astra, rounds 2 and 3: the second page draws late (its frames held, its socket still reading), then becomes
+			// the one that answers by typing: the query it draws afterwards was the first page's, answered once.
+			await second.evaluate(`(() => {
+				const frame = window.requestAnimationFrame;
+				const held = [];
+				window.requestAnimationFrame = (fn) => { held.push(fn); return 1; };
+				window.drawAgain = () => { window.requestAnimationFrame = frame; for (const fn of held) frame(fn); };
+			})()`);
+			await line(
+				// 320,000 bytes first, more than the window: the second page's socket still has the query to send when it
+				// becomes the one that answers (Astra, round 3, M1): one point of the output decides for both.
+				'head -c 320000 /dev/zero; printf \'\\033[c\'; read -rs -t 2 -d c a; [ -n "$a" ] && echo first-$((5*5)); read -rs -t 4 -n1 key; echo next-$((4*4)); read -rs -t 2 -d c b; [ -n "$b" ] && echo handover-$((1+1)) || echo handover-$((0+1))',
+			);
+			await shows("first-25");
+			await second.evaluate(`document.querySelector('[data-terminal-input]').focus()`);
+			await second.call("Input.insertText", { text: "v" });
+			await shows("next-16");
+			await second.evaluate("window.drawAgain()");
+			await browser.wait(`/handover-[12]/.test(${screen}?.textContent)`);
+			assert.equal(await browser.evaluate(`/handover-[12]/.exec(${screen}.textContent)[0]`), "handover-1");
+		} finally {
+			await second.close();
+		}
+		await browser.size(PHONE);
+		await browser.wait(`document.querySelector('[data-terminal-input="ready"]') !== null`);
+		// A phone's keyboard composes a word, then corrects it: the field's change is what the shell gets (Opus, round
+		// 1, S4): "ehco" typed, corrected to "echo", sends three Backspaces and "cho".
+		// A finger's tap on the output focuses the field the keyboard types into (Astra, round 3: wait for the focus).
+		const output = await browser.box(`[data-terminal-screen] [role=log]`);
+		const finger = { x: output.x + output.width / 2, y: output.y + output.height / 3 };
+		await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [finger] });
+		await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`);
+		await browser.call("Input.imeSetComposition", { text: "ehco", selectionStart: 4, selectionEnd: 4 });
+		await browser.call("Input.insertText", { text: "echo" });
+		await browser.call("Input.insertText", { text: " typed-$((2*21))" });
+		await browser.enter();
+		await shows("typed-42");
+		await line("echo phone-$(stty size | tr ' ' x)");
+		await browser.wait(`/phone-\\d+x\\d+/.test(${screen}?.textContent)`);
+		const columns = await browser.evaluate<number>(`Number(/phone-\\d+x(\\d+)/.exec(${screen}.textContent)[1])`);
+		assert.ok(columns < 60, `the phone's ${columns} columns`);
+		await shots("terminals-phone");
+		await browser.size(DESKTOP);
+		await shots("terminals");
+		// Astra, round 4: a program redraws the row under the mouse between press and release, the browser sends no
+		// click; the release still focuses the field.
+		await line("for i in $(seq 1 100); do printf '\\0337\\033[5;1Hframe-%s\\0338' \"$i\"; sleep .05; done");
+		const row = `[...${screen}.querySelectorAll("span")].find((e) => /^frame-[0-9]/.test(e.textContent))`;
+		await browser.wait(`Boolean(${row})`);
+		const point = await browser.evaluate<{ x: number; y: number }>(
+			`(() => { const r = ${row}.getBoundingClientRect(); return { x: r.x + 4, y: r.y + r.height / 2 }; })()`,
+		);
+		await browser.evaluate(
+			`document.activeElement.blur(); document.addEventListener("mousedown", (event) => { window.pressed = event.target; }, { capture: true, once: true })`,
+		);
+		await browser.call("Input.dispatchMouseEvent", {
+			type: "mousePressed",
+			...point,
+			button: "left",
+			buttons: 1,
+			clickCount: 1,
+		});
+		await browser.wait("window.pressed !== undefined && !window.pressed.isConnected");
+		await browser.call("Input.dispatchMouseEvent", {
+			type: "mouseReleased",
+			...point,
+			button: "left",
+			buttons: 0,
+			clickCount: 1,
+		});
+		await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`, 5_000);
+		await browser.call("Input.dispatchKeyEvent", {
+			type: "keyDown",
+			key: "c",
+			code: "KeyC",
+			windowsVirtualKeyCode: 67,
+			modifiers: 2,
+		});
+		await browser.call("Input.dispatchKeyEvent", {
+			type: "keyUp",
+			key: "c",
+			code: "KeyC",
+			windowsVirtualKeyCode: 67,
+			modifiers: 2,
+		});
+		// An ended terminal takes no input and says it ended, never "Connecting…" (Astra, round 3).
+		await line("exit 7");
+		await browser.wait(`document.querySelector("[data-terminals]")?.textContent.includes("Ended with code 7.")`);
+		await browser.wait(`document.querySelector('[data-terminal-input="closed"]') !== null`);
 		assert.equal(
 			await browser.evaluate<boolean>(
-				`document.querySelector("[data-terminals]").textContent.includes("environments:")`,
+				`document.querySelector("[data-terminals]").textContent.includes("Connecting…")`,
 			),
 			false,
 		);
+		await press("[data-terminal-close]");
+		await browser.wait(
+			`document.querySelector("[data-terminals]")?.textContent.includes("No terminals are open here.")`,
+		);
+		await browser.open(`${origin}/w/${pi}`);
+	});
+
+	// Astra, round 4: the screen alone (its socket's frames written by the test): a page whose connection skipped over the
+	// kept output's end answers the live queries it draws after it.
+	it("answers the live queries after a skip over the kept output's end, none before", async () => {
+		await browser.wait(
+			`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Terminals")`,
+		);
+		const terminals = await browser.evaluate<string>(
+			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Terminals")?.dataset.navThing`,
+		);
+		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
+		// Only this terminal's socket is the test's: everything else on the page is real.
+		await browser.evaluate(`(() => {
+			const Real = WebSocket;
+			window.writes = [];
+			window.WebSocket = new Proxy(Real, { construct(target, args) {
+				if (!String(args[0]).includes("/terminals/socket")) return Reflect.construct(target, args);
+				const socket = { readyState: 1, close() {}, send(data) { if (typeof data === "string") window.writes.push(JSON.parse(data)); } };
+				window.frame = (data) => socket.onmessage({ data: typeof data === "string" || data instanceof ArrayBuffer ? data : JSON.stringify(data) });
+				setTimeout(() => socket.onopen?.());
+				return socket;
+			} });
+		})()`);
+		await press("[data-terminals-open]");
+		await browser.wait("typeof window.frame === 'function'");
+		const drawn = "window.writes.filter((m) => m.kind === 'drawn').reduce((n, m) => n + m.bytes, 0)";
+		const replies = "window.writes.filter((m) => m.kind === 'reply').length";
+		await browser.evaluate(
+			"frame({ kind: 'kept', end: 262144 }); frame({ kind: 'size', columns: 80, rows: 24 }); frame({ kind: 'answer', yes: true, at: 262144 }); frame({ kind: 'from', offset: 0 }); for (let at = 0; at < 262016; at += 65536) frame(new Uint8Array(Math.min(65536, 262016 - at)).buffer)",
+		);
+		await browser.wait(`${drawn} === 262016`);
+		await browser.evaluate("frame({ kind: 'from', offset: 300000 }); frame(new Uint8Array([27, 91, 99]).buffer)");
+		await browser.wait(`${drawn} === 262019`);
+		assert.equal(await browser.evaluate<number>(replies), 1, "the first live query is answered");
+		await browser.evaluate("frame(new Uint8Array(200).buffer); frame(new Uint8Array([27, 91, 99]).buffer)");
+		await browser.wait(`${drawn} === 262222`);
+		assert.equal(await browser.evaluate<number>(replies), 2, "and the next");
+		await press("[data-terminal-close]");
 		await browser.open(`${origin}/w/${pi}`);
 	});
 
@@ -594,9 +786,9 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("shows a person with Read only the session's transcript, with no way to send", async () => {
 		// Ada is invited, put into Pi, and her Send on the session withheld: she keeps everyone's Read.
-		const invited = await (await owner.get(People, {}, context)).invite({ name: "Ada" }, context);
+		const invited = await invite("Ada");
 		ada = invited.person;
-		const { link } = invited;
+		const { cookie } = invited;
 		await t.host.root(async (ctx) => {
 			const store = await ctx.get(ThingsStore, {});
 			const party = { kind: "person", person: ada } as const;
@@ -608,7 +800,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			);
 		}, context);
 		await browser.signOut();
-		await browser.open(`${origin}${link}`);
+		await browser.signIn(origin, cookie);
+		await browser.open(`${origin}/`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Ada")`);
 		await browser.open(`${origin}/w/${session}`);
 		await browser.wait(`document.querySelector('[data-session-view="${session}"] [data-transcript="reader"]')`);
@@ -736,7 +929,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-add-offer="link:${sketch}"]')`);
 		await press('[data-add-thing-dialog] button[aria-label="Close"]');
 		// Bea has Link in Pi (so Pi's things are linkable for her) and Make in Family, where her Link is withheld.
-		const { person: bea, link } = await (await owner.get(People, {}, context)).invite({ name: "Bea" }, context);
+		const { person: bea, cookie } = await invite("Bea");
 		await t.host.root(async (ctx) => {
 			const store = await ctx.get(ThingsStore, {});
 			const party = { kind: "person", person: bea } as const;
@@ -755,7 +948,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			);
 		}, context);
 		await browser.signOut();
-		await browser.open(`${origin}${link}`);
+		await browser.signIn(origin, cookie);
+		await browser.open(`${origin}/`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Bea")`);
 		await browser.open(`${origin}/w/${family}/settings`);
 		await press('[data-settings-tab="what"]');
@@ -772,14 +966,15 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			{ kind: "things.workspace", name: "Stuff" },
 			context,
 		);
-		const { person: max, link } = await (await owner.get(People, {}, context)).invite({ name: "Max" }, context);
+		const { person: max, cookie } = await invite("Max");
 		await t.host.root(async (ctx) => {
 			const store = await ctx.get(ThingsStore, {});
 			const source = { kind: "person", person: ownerId } as const;
 			await store.putParty({ workspace: stuff, party: { kind: "person", person: max }, source }, ctx);
 		}, context);
 		await browser.signOut();
-		await browser.open(`${origin}${link}`);
+		await browser.signIn(origin, cookie);
+		await browser.open(`${origin}/`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Max")`);
 		await browser.open(`${origin}/`);
 		await browser.wait(`location.pathname === "/w/${stuff}"`);
@@ -820,8 +1015,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			await browser.signIn(origin, ownerCookie);
 		}
 		// Gus, signed in as the guest he is, opens a member link: he keeps his sign-in (no new person "Gus again") and is
-		// put into Family as himself. (A person of the people plugin's own, as Ada, is not in the things store until
-		// ERNDL-1144 push B: their link is refused.)
+		// put into Family as himself.
 		const url = await link("member", "Gus again");
 		await browser.signOut();
 		await browser.signIn(origin, gusCookie);
@@ -942,6 +1136,169 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press('[data-add-thing-dialog] button[aria-label="Close"]');
 	});
 
+	/** Pi's session defaults thing, its defaults before, this device's machine, and a write of their location. */
+	async function piDefaults() {
+		const { thing, before, machine } = await t.host.root(async (ctx) => {
+			const store = await ctx.get(ThingsStore, {});
+			const found = (await store.links.here.page({ workspace: pi }, 50, ctx)).items.find(
+				(link) => link.of === SessionDefaultsKind.name,
+			)!.thing;
+			const set = (await (await ctx.get(DefaultsSettings, {})).settings.of.page({ thing: found }, 1, ctx)).items[0];
+			const device = await until((await ctx.get(OneThing, { kind: MACHINE_KIND })).thing, (id) => id !== "", ctx);
+			return { thing: found, before: set?.defaults ?? DEFAULTS, machine: device };
+		}, context);
+		const configure = (location: { machine: string; folder: string } | null) =>
+			t.host.root(
+				async (ctx) =>
+					(await ctx.get(ThingsStore, {})).configure(
+						{ thing, settings: { defaults: { ...before, location } } },
+						ctx,
+					),
+				context,
+			);
+		return { before, machine, configure };
+	}
+
+	/** The new-session step's folder field's value. */
+	const folderShown = () => browser.evaluate<string>(`document.querySelector('[data-field="folder"]')?.value`);
+
+	/** Waits for the new-session step's folder field to show `folder`. */
+	const folderShows = (folder: string) =>
+		browser.wait(`document.querySelector('[data-field="folder"]')?.value === ${JSON.stringify(folder)}`);
+
+	/** Sets the new-session step's folder field to `folder` as a person does (its value setter, then its input event). */
+	const setFolder = (folder: string) =>
+		browser.evaluate(
+			`(() => { const field = document.querySelector('[data-field="folder"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(field, ${JSON.stringify(folder)}); field.dispatchEvent(new Event("input", { bubbles: true })); })()`,
+		);
+
+	/** The id of the workspace named `name` once the navigator lists it. */
+	async function madeId(name: string): Promise<string> {
+		const entry = `[...document.querySelectorAll("[data-nav-workspace]")].find((e) => e.textContent === ${JSON.stringify(name)})`;
+		await browser.wait(`${entry} !== undefined`);
+		return browser.evaluate<string>(`${entry}.dataset.navWorkspace`);
+	}
+
+	/** The sessions store's row of session `id`. */
+	function rowOf(id: string) {
+		return t.host.root(
+			async (ctx) => (await (await ctx.get(SessionsStore, {})).sessions.one.page({ id }, 1, ctx)).items[0],
+			context,
+		);
+	}
+
+	/** Applies an edit of the things plugin's add dialog (marked `marker`), which remounts the open dialog. */
+	async function applyAddDialog(marker: string): Promise<void> {
+		const file = join(builtIn, "things/add-thing.tsx");
+		await writeFile(
+			file,
+			(await readFile(file, "utf8")).replace(
+				'data-add-confirm-button=""',
+				`data-add-confirm-button="" ${marker}=""`,
+			),
+		);
+		await until(t.plugins, (state) => state.dirty.length > 0, within("the edit seen", context, 10_000));
+		await t.apply(context);
+		await browser.wait(`document.querySelector("[${marker}]") && document.querySelector("[data-new-session]")`);
+	}
+
+	// Mario's direction (ERNDL-704): a default location in the session defaults pre-fills the new-session step.
+	// Astra, push 5, (a): untouched, the step followed a change of the defaults only until a live apply.
+	it("pre-fills the new-session step's folder from the nearest session defaults and follows them while untouched, also through an apply", async () => {
+		const { before, machine, configure } = await piDefaults();
+		await configure({ machine, folder: "/srv/prefilled" });
+		try {
+			await browser.open(`${origin}/w/${pi}/settings`);
+			await press('[data-settings-tab="what"]');
+			await press("[data-add-thing]");
+			await press('[data-add-offer="make:sessions.session"]');
+			await folderShows("/srv/prefilled");
+			await configure({ machine, folder: "/srv/changed" });
+			await folderShows("/srv/changed");
+			await applyAddDialog("data-follows-apply");
+			await configure({ machine, folder: "/srv/after-apply" });
+			await folderShows("/srv/after-apply");
+			await press('[data-add-thing-dialog] button[aria-label="Close"]');
+		} finally {
+			await configure(before.location);
+		}
+	});
+
+	// Astra, push 5, (b): an emptied folder came back as the defaults' after a live apply, and Add made the session there.
+	it("keeps an emptied folder (the session's own) through a change of the defaults and an apply, and makes the session there", async () => {
+		const { before, machine, configure } = await piDefaults();
+		await configure({ machine, folder: "/srv/prefilled" });
+		try {
+			await browser.open(`${origin}/w/${pi}/settings`);
+			await press('[data-settings-tab="what"]');
+			await press("[data-add-thing]");
+			await press('[data-add-offer="make:sessions.session"]');
+			await browser.type("[data-add-name]", "Own folder");
+			await folderShows("/srv/prefilled");
+			await setFolder("");
+			await folderShows("");
+			await configure({ machine, folder: "/srv/changed" });
+			await idles();
+			assert.equal(await folderShown(), "", "emptied, before an apply");
+			await applyAddDialog("data-own-apply");
+			await configure({ machine, folder: "/srv/after-apply" });
+			await idles();
+			assert.equal(await folderShown(), "", "emptied, after an apply");
+			await press("[data-add-confirm-button]");
+			await browser.wait(`document.querySelector("[data-add-thing-dialog]") === null`);
+			const made = await madeId("Own folder");
+			const row = await rowOf(made);
+			// The session's own folder (`<work root>/…/<id>`) on this device, not a defaults' folder.
+			assert.equal(row?.location?.machine, machine);
+			assert.ok(row?.location?.folder.endsWith(`/${made}`), row?.location?.folder);
+		} finally {
+			await configure(before.location);
+		}
+	});
+
+	// Astra, push 5, round 2: the folder edited alone left the machine following the defaults: Add made B:/my/project.
+	it("pins the machine shown once the folder is edited, through a change of the defaults' machine", async () => {
+		const { before, machine, configure } = await piDefaults();
+		const box = await t.host.root(
+			async (ctx) =>
+				(await ctx.get(ThingsStore, {})).create(
+					{
+						kind: MACHINE_KIND,
+						name: "Other box",
+						workspace: pi,
+						by: { kind: "plugin", plugin: "test" },
+						input: { type: "local", settings: {} },
+					},
+					ctx,
+				),
+			context,
+		);
+		await configure({ machine, folder: "/first" });
+		try {
+			await browser.open(`${origin}/w/${pi}/settings`);
+			await press('[data-settings-tab="what"]');
+			await press("[data-add-thing]");
+			await press('[data-add-offer="make:sessions.session"]');
+			await browser.type("[data-add-name]", "Chosen project");
+			await folderShows("/first");
+			await setFolder("/my/project");
+			await folderShows("/my/project");
+			await configure({ machine: box, folder: "/second" });
+			await idles();
+			assert.equal(await folderShown(), "/my/project");
+			await press("[data-add-confirm-button]");
+			await browser.wait(`document.querySelector("[data-add-thing-dialog]") === null`);
+			const row = await rowOf(await madeId("Chosen project"));
+			assert.deepEqual(row?.location, { machine, folder: "/my/project" });
+		} finally {
+			await configure(before.location);
+			await t.host.root(
+				async (ctx) => (await ctx.get(ThingsStore, {})).unlink({ workspace: pi, thing: box }, ctx),
+				context,
+			);
+		}
+	});
+
 	it("makes one thing for two activations of Add before the page renders again", async () => {
 		await browser.open(`${origin}/w/${pi}/settings`);
 		await press('[data-settings-tab="what"]');
@@ -961,7 +1318,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("disables Add, saying why, when Make of the chosen kind is withdrawn while the dialog is open", async () => {
 		const workspace = await owner.get(Workspace, { workspace: pi }, context);
-		const { person, link } = await (await owner.get(People, {}, context)).invite({ name: "Maker" }, context);
+		const { person, cookie } = await invite("Maker");
 		const party = { kind: "person", person } as const;
 		// The Workspace's putParty takes only whom its picker offers: an invited person is put in by the store.
 		await t.host.root(async (ctx) => {
@@ -972,7 +1329,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			await workspace.setTick!({ thing: pi, party, tick: `@make:${kind}`, gives: true }, context);
 		}
 		await browser.signOut();
-		await browser.open(`${origin}${link}`);
+		await browser.signIn(origin, cookie);
+		await browser.open(`${origin}/`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Maker")`);
 		await browser.open(`${origin}/w/${pi}/settings`);
 		await press('[data-settings-tab="what"]');
@@ -1009,6 +1367,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press(`[data-nav-workspace="${pi}"]`);
 		await browser.wait(`document.querySelector('[data-settings="${pi}"]')?.offsetParent !== null`);
 		assert.equal(await browser.evaluate("history.length"), length, "a duplicate address was pushed");
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 		await shots("19-pi-settings-phone");
 		await press("[data-back]");
 		await browser.wait(`document.querySelector("[data-navigator]")?.offsetParent !== null`);

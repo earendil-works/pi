@@ -48,6 +48,7 @@ export function addUsage(total: Draft<Usage> | Usage, usage: Usage): void {
 	total.totalTokens += usage.totalTokens;
 	if (usage.cacheWrite1h !== undefined) total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
 	if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
+	if (usage.imageOutput !== undefined) total.imageOutput = (total.imageOutput ?? 0) + usage.imageOutput;
 	total.cost.input += usage.cost.input;
 	total.cost.output += usage.cost.output;
 	total.cost.cacheRead += usage.cost.cacheRead;

@@ -14,25 +14,29 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
+	admitOwner,
 	type Ctx,
+	constant,
 	BACKGROUND_CONTEXT as context,
-	contribute,
 	createHost,
 	defineFacet,
+	num,
+	OwnerAdmission,
 	openStore,
 	type P3Principal,
 	type Reference,
+	remote,
 	Server,
 	sqliteBackend,
 	until,
 } from "@earendil-works/p3/v1";
 import { eventually, within } from "../../../test/until.ts";
 import { SignIns } from "../../sign-in/contract.ts";
-import { Gives, GroupPresence, OwnerSeeds, ThingsStore } from "../contract.server.ts";
-import { Group, type Party, partyKey, type Source } from "../contract.ts";
+import { Gives, GroupPresence, ThingsStore } from "../contract.server.ts";
+import { Group, Me, OwnerAccess, type Party, partyKey, type Source } from "../contract.ts";
 import { Workspace } from "../workspace.ts";
-import { BOARD_PLUGIN, Board } from "./kinds.ts";
-import { signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
+import { Board } from "./kinds.ts";
+import { RUNTIME, signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
 
 const ADMIN: Source = { kind: "plugin", plugin: "admin" };
 
@@ -101,18 +105,35 @@ async function ticks(workspace: string, thing: string, id: string): Promise<stri
 	}
 }
 
+/**
+ * Makes an owner whose id sorts before every other person's (`0`; a UUID starts with a hex digit, after it), made
+ * through an invite link (the only way to choose a new person's id): the index's first owner from then on.
+ */
+async function ownerSortingFirst(): Promise<void> {
+	const secret = await store.createInvite({ workspace: f.family, name: "First", as: "member", by: ADMIN }, context);
+	await store.redeemInvite({ secret, newPerson: "0" }, context);
+	await store.setOwner({ person: "0", owner: true }, context);
+	assert.equal((await store.persons.owners.page({}, 1, context)).items[0]?.person, "0");
+}
+
+/** Every sign-in the stand-in signer has now. */
+async function signedIn() {
+	return (await (await w.host.get(SignIns, {}, context)).rows.all.page({}, 100, context)).items;
+}
+
 /** Runs `fn` as person `id`. */
 function as<T>(id: string, fn: (ctx: Ctx<P3Principal>) => Promise<T>): Promise<T> {
 	return w.host.root(fn, context, { principal: principal(id) });
 }
 
 describe("persons and the owner", () => {
-	it("the owner's person is made at the first start, named Owner, once", async () => {
+	it("the owner's person is made at the first start, named after the machine's user, once; the owner link's", async () => {
 		const owners = (await store.persons.owners.page({}, 10, context)).items;
 		assert.deepEqual(
 			owners.map(({ name, owner }) => [name, owner]),
-			[["Owner", true]],
+			[["Ann", true]],
 		);
+		assert.deepEqual(await store.machineOwner({}, context), { person: owners[0]!.person, name: "Ann" });
 		// A start on the same disk (a copy of the committed file, opened by a host of its own) makes no second one.
 		const copy = `${w.path}.copy`;
 		const database = new DatabaseSync(w.path);
@@ -126,7 +147,7 @@ describe("persons and the owner", () => {
 			onError: (error) => assert.fail(`host error ${error.kind}`),
 		});
 		try {
-			await host.load([THINGS], context);
+			await host.load([THINGS, RUNTIME], context);
 			const again = await host.get(ThingsStore, {}, context);
 			assert.deepEqual(
 				(await again.persons.owners.page({}, 10, context)).items.map(({ person: id }) => id),
@@ -138,44 +159,73 @@ describe("persons and the owner", () => {
 		}
 	});
 
-	it("the people plugin's owner becomes the owner here, with the same id; the first start's own goes (the bridge)", async () => {
-		const seeded = await world(context, [
-			{
-				name: "@earendil-works/p3-people",
-				facet: defineFacet((host) =>
-					contribute(host, "test.owner-seed", (self) =>
-						self.contribute(OwnerSeeds, { person: "people-owner", name: "Mario" }),
-					),
-				),
-			},
-		]);
+	it("the machine's owner is the marked person, never the first owner by key, also after a handover (Opus S1, S2)", async () => {
+		const [marked] = (await store.persons.owners.page({}, 1, context)).items;
+		await ownerSortingFirst();
+		assert.equal((await store.machineOwner({}, context)).person, marked!.person);
+		// The flag handed over: the machine's user is still themself.
+		await store.setOwner({ person: marked!.person, owner: false }, context);
+		assert.equal((await store.machineOwner({}, context)).person, marked!.person);
+	});
+
+	it("a Pi from before push B: the owner the people plugin handed over stays the machine's owner (decision 125)", async () => {
+		// Push A's state: the adopted owner (made by the people plugin, the same id as there) has the flag and the mark,
+		// the first start's person is gone, and an owner sorts before the adopted one.
+		const people: Source = { kind: "plugin", plugin: "@earendil-works/p3-people" };
+		const adopted = await store.createPerson({ name: "Badlogic", madeBy: people }, context);
+		await store.setOwner({ person: adopted, owner: true }, context);
+		const [first] = (await store.persons.owners.page({}, 10, context)).items.filter(({ name }) => name === "Ann");
+		await store.setOwner({ person: first!.person, owner: false }, context);
+		await store.removePerson({ person: first!.person }, context);
+		await ownerSortingFirst();
+		const owners = (await store.persons.owners.page({}, 100, context)).items.map(({ person: id }) => id);
+		const copy = `${w.path}.copy`;
+		const database = new DatabaseSync(w.path);
+		database.prepare(`UPDATE "things.store:things.owner-adopted" SET person = ? WHERE bridge = 'owner'`).run(adopted);
+		database.prepare("VACUUM INTO ?").run(copy);
+		database.close();
+		const reopened = await openStore(sqliteBackend(new NodeSqliteDatabase(new DatabaseSync(copy))), context);
+		const host = createHost<P3Principal>({
+			address: Server(),
+			principal: { kind: "server" },
+			store: reopened,
+			onError: (error) => assert.fail(`host error ${error.kind}`),
+		});
 		try {
-			const things = await seeded.host.get(ThingsStore, {}, context);
-			// Adopted once the store is live: what no watchable shows, polled.
-			const owners = await eventually(
-				async () => (await things.persons.owners.page({}, 10, context)).items,
-				(items) => items.length === 1 && items[0]!.person === "people-owner",
-			);
+			await host.load([THINGS, RUNTIME], context);
+			const again = await host.get(ThingsStore, {}, context);
+			assert.deepEqual(await again.machineOwner({}, context), { person: adopted, name: "Badlogic" });
+			// No second first start: the owners are as they were.
 			assert.deepEqual(
-				owners.map(({ person: id, name }) => [id, name]),
-				[["people-owner", "Mario"]],
+				(await again.persons.owners.page({}, 100, context)).items.map(({ person: id }) => id),
+				owners,
 			);
-			// Reloads in the order that once held the store's drain 30 s (the seed's plugin, another, then things):
-			// nothing is reported, and each is quick.
-			for (const plugin of ["@earendil-works/p3-people", BOARD_PLUGIN, "@earendil-works/p3-things"]) {
-				const started = performance.now();
-				await seeded.reload(plugin, context);
-				assert.ok(performance.now() - started < 5000, `the reload of ${plugin} took too long`);
-			}
-			const again = await seeded.host.get(ThingsStore, {}, context);
-			assert.deepEqual(
-				(await again.persons.owners.page({}, 10, context)).items.map(({ person: id }) => id),
-				["people-owner"],
-			);
-			assert.deepEqual(seeded.errors, []);
 		} finally {
-			await seeded.close(context);
+			await host.close(context);
+			await reopened.close(context);
 		}
+	});
+
+	it("Me says who the caller is, live; an agent is itself; OwnerAccess follows the owner flag", async () => {
+		await as(f.kim, async (ctx) => {
+			const me = await ctx.get(Me, {});
+			assert.deepEqual(me.me.value, { kind: "person", id: f.kim, name: "Kim", owner: false });
+			const access = await ctx.get(OwnerAccess, { caller: `person:${f.kim}` });
+			await store.renamePerson({ person: f.kim, name: "Kimberly" }, context);
+			await store.setOwner({ person: f.kim, owner: true }, context);
+			await until(
+				me.me,
+				(value) => value.kind === "person" && value.name === "Kimberly" && value.owner,
+				within("renamed and an owner", ctx),
+			);
+			await until(access.owner, (owner) => owner, within("an owner", ctx));
+			// Kim asks only about herself.
+			await assert.rejects(ctx.get(OwnerAccess, { caller: `person:${f.anna}` }, { readyTimeout: 1000 }));
+		});
+		const agent = await w.host.root(async (ctx) => (await ctx.get(Me, {})).me.value, context, {
+			principal: { kind: "worker", session: f.session },
+		});
+		assert.deepEqual(agent, { kind: "agent", session: f.session });
 	});
 
 	it("a person with the owner flag is not removed; without it, they go with everything naming them", async () => {
@@ -191,13 +241,60 @@ describe("persons and the owner", () => {
 		assert.equal(await ticks(f.session, f.sketch, f.kim), undefined);
 		assert.ok(!w.rows("workspace-members").some((row) => String(row.partyKey) === `person/${f.kim}`));
 		assert.ok(!storedRows(w.path, "persons").some((row) => row.person === f.kim));
-		await until(
-			(await w.host.get(SignIns, {}, context)).list,
-			(list) => list.length === 0,
-			within("her sign-ins ended", context),
-		);
+		// Her sign-ins ended.
+		await eventually(signedIn, (rows) => rows.length === 0);
 		assert.deepEqual(signIns.revoked, [id]);
-		assert.deepEqual(w.rows("sign-outs"), []);
+		// Its row goes once they ended.
+		await eventually(
+			() => w.rows("sign-outs").length,
+			(n) => n === 0,
+		);
+	});
+});
+
+describe("the owners' admission (admitOwner)", () => {
+	/** An object for the owners only, as backup's, providers' and environments' are. */
+	const OwnersOnly = remote("test.owners-only", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		admission: OwnerAdmission,
+		state: { n: num() },
+	});
+	const ownersOnly = {
+		name: "test.owners-only",
+		facet: defineFacet((host) => host.serve(OwnersOnly, () => ({ n: constant(1) }), { admit: admitOwner })),
+	};
+
+	it("admits the new owner after a handover and lets the old one go, live (Opus S3)", async () => {
+		const at = await world(context, [ownersOnly]);
+		try {
+			const things = await at.host.get(ThingsStore, {}, context);
+			const [first] = (await things.persons.owners.page({}, 1, context)).items;
+			const kim = await things.createPerson({ name: "Kim", madeBy: ADMIN }, context);
+			await at.host.root(
+				async (ctx) => {
+					const held = await ctx.get(OwnersOnly, {});
+					assert.equal(held.n.value, 1);
+					await things.setOwner({ person: kim, owner: true }, context);
+					await things.setOwner({ person: first!.person, owner: false }, context);
+					await until(held.state, (state) => state.kind !== "live", within("the old owner let go", ctx));
+				},
+				context,
+				{ principal: principal(first!.person) },
+			);
+			const n = await at.host.root(async (ctx) => (await ctx.get(OwnersOnly, {})).n.value, context, {
+				principal: principal(kim),
+			});
+			assert.equal(n, 1);
+			await assert.rejects(
+				at.host.root((ctx) => ctx.get(OwnersOnly, {}, { readyTimeout: 1000 }), context, {
+					principal: principal(first!.person),
+				}),
+			);
+		} finally {
+			await at.close(context);
+		}
 	});
 });
 
@@ -522,16 +619,6 @@ describe("the cleanup when a source goes (test 8)", () => {
 });
 
 describe("round 1's reproductions (Opus, Astra, Fable)", () => {
-	/** A stand-in for the people plugin handing over its owner (`null`: none yet). */
-	const seedPlugin = (seed: { person: string; name: string } | null) => ({
-		name: "@earendil-works/p3-people",
-		facet: defineFacet((host) => contribute(host, "test.owner-seed", (self) => self.contribute(OwnerSeeds, seed))),
-	});
-	const ownersOf = async (at: World) =>
-		(await (await at.host.get(ThingsStore, {}, context)).persons.owners.page({}, 10, context)).items
-			.map(({ person: id }) => id)
-			.sort();
-
 	it("a thing's last unlink runs its cleanup: the persons it made go with their sign-ins and its links (Astra must 1, Opus S2)", async () => {
 		const board = await store.create({ kind: Board.name, name: "share", workspace: f.session, by: ADMIN }, context);
 		await store.link({ workspace: f.family, thing: board }, context);
@@ -549,72 +636,8 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 		await store.unlink({ workspace: f.session, thing: board }, context);
 		assert.ok(!storedRows(w.path, "persons").some(({ person: id }) => id === made));
 		assert.equal(await store.redeemInvite({ secret: link }, context), null);
-		await until(
-			(await w.host.get(SignIns, {}, context)).list,
-			(list) => list.length === 0,
-			within("the guest's sign-in ended", context),
-		);
-	});
-
-	it("the bridge adopts once: a used placeholder and other owners stay, a handover stands (Astra must 2)", async () => {
-		const at = await world(context, [seedPlugin(null)]);
-		try {
-			const things = await at.host.get(ThingsStore, {}, context);
-			const [placeholder] = await ownersOf(at);
-			// The placeholder got something (a manager row), and another person has the flag too.
-			const g = await things.makeGroup(
-				{ name: "g", managedBy: { kind: "people" }, outside: false, managers: [person(placeholder!)] },
-				context,
-			);
-			const other = await things.createPerson({ name: "Other", madeBy: ADMIN }, context);
-			await things.setOwner({ person: other, owner: true }, context);
-			await at.reload("@earendil-works/p3-people", context, seedPlugin({ person: "seed", name: "Mario" }).facet);
-			await eventually(
-				() => ownersOf(at),
-				(ids) => ids.includes("seed"),
-			);
-			assert.deepEqual(await ownersOf(at), [other, placeholder!, "seed"].sort());
-			assert.ok(g !== "");
-			// The flag handed over from the seed's person; the seed comes again with another name: it stands.
-			const again = await at.host.get(ThingsStore, {}, context);
-			await again.setOwner({ person: "seed", owner: false }, context);
-			await at.reload("@earendil-works/p3-people", context, seedPlugin({ person: "seed", name: "Mario Z" }).facet);
-			await at.reload("@earendil-works/p3-things", context);
-			assert.deepEqual(await ownersOf(at), [other, placeholder!].sort());
-			// Asked again, as the bridge asks at every start: adopted once, the handover stands.
-			await (await at.host.get(ThingsStore, {}, context)).adoptOwner({ person: "seed", name: "Mario Z" }, context);
-			assert.deepEqual(await ownersOf(at), [other, placeholder!].sort());
-			assert.deepEqual(at.errors, []);
-		} finally {
-			await at.close(context);
-		}
-	});
-
-	it("an unused placeholder goes at the adoption; only the people plugin's contribution counts", async () => {
-		// The other plugin comes first, by load and by name: its contribution is ignored.
-		const at = await world(context, [
-			{
-				name: "@earendil-works/a-other",
-				facet: defineFacet((host) =>
-					contribute(host, "test.other-seed", (self) =>
-						self.contribute(OwnerSeeds, { person: "impostor", name: "Eve" }),
-					),
-				),
-			},
-			seedPlugin(null),
-		]);
-		try {
-			const [placeholder] = await ownersOf(at);
-			await at.reload("@earendil-works/p3-people", context, seedPlugin({ person: "seed", name: "Mario" }).facet);
-			await eventually(
-				() => ownersOf(at),
-				(ids) => ids.includes("seed"),
-			);
-			assert.deepEqual(await ownersOf(at), ["seed"]);
-			assert.ok(placeholder !== "seed");
-		} finally {
-			await at.close(context);
-		}
+		// The guest's sign-in ended.
+		await eventually(signedIn, (rows) => rows.length === 0);
 	});
 
 	it("the picker offers what is present where the caller is present, inherited below too (Opus S1, Astra must 3)", async () => {
@@ -997,11 +1020,8 @@ describe("round 2's reproductions (Opus, Astra)", () => {
 		await store.unlink({ workspace: f.session, thing: f.sketch }, context);
 		assert.equal(w.rows("grants").filter((row) => row.thing === f.sketch).length, 0);
 		assert.equal((await store.persons.one.page({ person: made }, 1, context)).items.length, 0);
-		await until(
-			(await w.host.get(SignIns, {}, context)).list,
-			(list) => list.length === 0,
-			within("the guest's sign-in ended", context),
-		);
+		// The guest's sign-in ended.
+		await eventually(signedIn, (rows) => rows.length === 0);
 		assert.deepEqual(signIns.revoked, [id]);
 	});
 
@@ -1066,21 +1086,6 @@ describe("round 2's reproductions (Opus, Astra)", () => {
 		};
 		assert.equal(await retire(false), 0);
 		assert.equal(await retire(true), 1);
-	});
-
-	it("the adoption takes only the placeholder the first start made, never another owner named alike (Astra 5)", async () => {
-		const [placeholder] = (await store.persons.owners.page({}, 10, context)).items.map(({ person: id }) => id);
-		const other = await store.createPerson(
-			{ name: "Owner", madeBy: { kind: "plugin", plugin: "@earendil-works/p3-things" } },
-			context,
-		);
-		await store.setOwner({ person: other, owner: true }, context);
-		await store.adoptOwner({ person: "adopted", name: "Mario" }, context);
-		const ids = new Set(storedRows(w.path, "persons").map(({ person: id }) => String(id)));
-		assert.deepEqual(
-			[other, "adopted", placeholder!].map((id) => ids.has(id)),
-			[true, true, false],
-		);
 	});
 
 	it("a person who made a thing stays with their maker's cleanup (Astra must 4, things.madeByKey)", async () => {

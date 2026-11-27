@@ -16,18 +16,11 @@ import {
 	type P3Principal,
 	queries,
 	query,
-	type Static,
 	str,
 } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { folderPath, skillsRoot } from "./folder.ts";
-import { InstructionsText, Language } from "./instructions-kind.ts";
-
-/** An instructions thing's settings: its text and its language. */
-export const InstructionsSettings = obj({ text: InstructionsText, language: Language });
-
-/** An instructions thing's settings (see `InstructionsSettings`). */
-export type InstructionsSettings = Static<typeof InstructionsSettings>;
+import { InstructionsSettings, InstructionsText, Language } from "./instructions-kind.ts";
 
 /** What instructions read while never configured: no text (no prompt section), in English. */
 export const UNSET_INSTRUCTIONS: InstructionsSettings = { language: "en", text: "" };

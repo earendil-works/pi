@@ -1,5 +1,5 @@
 // The tools plugin's texts people see: the coding tools' title and tick labels (decision 65), as the things plugin's
-// Settings view shows them. Imported by the contract.
+// Settings view shows them. Imported by the kind (`kind.ts`).
 
 import { defineMessages } from "@earendil-works/p3/v1";
 

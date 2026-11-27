@@ -1,97 +1,31 @@
-// A board's motion on the page: the caller's own pointer sent to the others (the newest only, at most one call in
-// flight and about 25 a second, so a slow link never queues stale positions), and the others' pointers and drafts
-// as their events arrive, each gone once it leaves or stays still for a while.
+// A board's motion on the server (`BoardMotion`): the relay of what everyone holding a board in one workspace does on
+// it, pointers and the shapes being drawn, as events. Each holder's object (`server.ts`) sends its caller's motion
+// here and hands out `motion`; nothing is stored, and a lost event is replaced by the next.
 
-import { BACKGROUND_CONTEXT, type Context, type EventMember } from "@earendil-works/p3/v1";
-import { useEvents } from "@earendil-works/p3/v1/web";
-import { useEffect, useRef, useState } from "react";
-import type { Motion, Pointer, Shape } from "./contract.ts";
+import { event, type FacetHost, local, method, type P3Principal, str } from "@earendil-works/p3/v1";
+import { Motion } from "./kind.ts";
 
-/** What sends the caller's motion: a board's `point` and `leave`. */
-export type MotionTarget = {
-	point(pointer: Pointer, context: Context): Promise<null>;
-	leave(context: Context): Promise<null>;
-};
+/**
+ * One board's motion in one workspace: what everyone holding it there does on it (`motion`, events), and `send`,
+ * which each holder's object calls with its caller's motion. Per workspace: a board linked in two shows each
+ * workspace's people only to that workspace's.
+ */
+export const BoardMotion = local("canvas.motion", {
+	version: 2,
+	params: { workspace: str(), thing: str() },
+	members: { motion: event(Motion), send: method(Motion) },
+});
 
-/** Another caller on the board: their name, where their pointer is and what they are drawing. */
-export type Other = {
-	readonly who: string;
-	readonly name: string;
-	readonly x: number;
-	readonly y: number;
-	readonly draft: Shape | null;
-	readonly at: number;
-};
-
-/** The least time between two sends of the caller's pointer. */
-const SEND_GAP_MS = 40;
-
-/** Sends the caller's pointer to `target` (the newest only) and takes it off the board on `leave`. */
-export function useMotionSender(target: MotionTarget | undefined): {
-	readonly point: (pointer: Pointer) => void;
-	readonly leave: () => void;
-} {
-	const latest = useRef<{ readonly kind: "point"; readonly pointer: Pointer } | { readonly kind: "leave" }>(undefined);
-	const busy = useRef(false);
-	const targetRef = useRef(target);
-	targetRef.current = target;
-	const flush = async () => {
-		if (busy.current) return;
-		busy.current = true;
-		try {
-			for (let next = latest.current; next !== undefined; next = latest.current) {
-				latest.current = undefined;
-				const to = targetRef.current;
-				if (to === undefined) break;
-				// A lost pointer is no failure: the next one replaces it.
-				await (next.kind === "point"
-					? to.point(next.pointer, BACKGROUND_CONTEXT)
-					: to.leave(BACKGROUND_CONTEXT)
-				).catch(() => null);
-				await new Promise((resolve) => setTimeout(resolve, SEND_GAP_MS));
-			}
-		} finally {
-			busy.current = false;
-		}
-	};
-	useEffect(() => () => void targetRef.current?.leave(BACKGROUND_CONTEXT).catch(() => null), []);
-	return {
-		point: (pointer) => {
-			latest.current = { kind: "point", pointer };
-			void flush();
-		},
-		leave: () => {
-			latest.current = { kind: "leave" };
-			void flush();
-		},
-	};
-}
-
-/** How long a pointer that does not move stays on the board. */
-const STILL_MS = 15_000;
-
-/** The others on the board, following `motion` (the caller `me`'s own events left out; none while `me` is unknown). */
-export function useOthers(motion: EventMember<Motion> | undefined, me: string | undefined): readonly Other[] {
-	const [others, setOthers] = useState<ReadonlyMap<string, Other>>(new Map());
-	useEvents(motion, ({ value }) => {
-		if (me === undefined || value.who === me) return;
-		setOthers((current) => {
-			const next = new Map(current);
-			if (value.kind === "leave") next.delete(value.who);
-			else next.set(value.who, { ...value, at: Date.now() });
-			return next;
-		});
+/** Serves `BoardMotion` on `host`. */
+export function serveMotion(host: FacetHost<P3Principal>): void {
+	host.serve(BoardMotion, (_params, self) => {
+		const motion = self.events<Motion>();
+		return {
+			motion,
+			send: async (value) => {
+				motion.emit(value);
+				return null;
+			},
+		};
 	});
-	useEffect(() => {
-		// A closed tab sends no leave: its pointer goes once it stood still long enough.
-		const timer = setInterval(() => {
-			setOthers((current) => {
-				const now = Date.now();
-				const kept = [...current].filter(([, other]) => now - other.at < STILL_MS);
-				return kept.length === current.size ? current : new Map(kept);
-			});
-		}, STILL_MS / 3);
-		return () => clearInterval(timer);
-	}, []);
-	return [...others.values()];
 }

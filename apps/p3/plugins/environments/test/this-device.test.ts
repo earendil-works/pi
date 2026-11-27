@@ -1,7 +1,9 @@
 // This device's host (this-device.ts), as the machine kind's one thing in Pi connects to it: a bounded listing stops
 // when its caller goes; a staged file is 0600 under a name of its own, and its landing and its removal have one owner
 // (a landing once called has won; a discard after it removes nothing); a crash's staged file is removed only while the
-// file at its path is still that one (astra round 3).
+// file at its path is still that one (astra round 3). Its terminals run the user's shell in pi-env's daemon (decision
+// 133): output, typing, a size the shell sees, the exit code; a close kills the program; a folder that does not exist
+// is refused; the connection's close stops the daemon, and its programs with it.
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -11,11 +13,10 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT as context, type P3Principal, withCancel } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import peopleServer from "../../people/server.ts";
 import { OneThing } from "../../things/contract.server.ts";
 import thingsServer from "../../things/server.ts";
-import { type MachineHost, MachineHosts, type StagedFile } from "../contract.server.ts";
-import { MACHINE_KIND } from "../contract.ts";
+import { type MachineHost, MachineHosts, MachineTypes, type Pty, type StagedFile } from "../contract.server.ts";
+import { MACHINE_KIND, THIS_DEVICE_TYPE } from "../contract.ts";
 import { seeded } from "./seeded.ts";
 
 describe("this device's host", () => {
@@ -24,10 +25,7 @@ describe("this device's host", () => {
 	let root: string;
 
 	before(async () => {
-		const stubs = [
-			{ name: "@earendil-works/p3-people", facet: peopleServer },
-			{ name: "@earendil-works/p3-things", facet: thingsServer },
-		];
+		const stubs = [{ name: "@earendil-works/p3-things", facet: thingsServer }];
 		t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs }, context);
 		const machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 		at = (await (await t.host.registry(MachineHosts, context)).value(machine, context))!;
@@ -128,5 +126,111 @@ describe("this device's host", () => {
 		}
 		assert.equal(await opened(), before, "no descriptor left open");
 		await rm(join(root, "probe"));
+	});
+
+	describe("its terminals", () => {
+		/** A shell in `folder` on `host`, its output so far, and `printed`, which waits for `pattern` in it. */
+		async function shell(host: MachineHost, folder: string) {
+			let output = "";
+			let seen: () => void = () => {};
+			const opened = await host.openPty(
+				{
+					cwd: folder,
+					columns: 80,
+					rows: 24,
+					onData: (bytes) => {
+						output += Buffer.from(bytes).toString();
+						seen();
+					},
+				},
+				context,
+			);
+			assert.ok(opened.ok, opened.ok ? "" : opened.error.message);
+			const printed = async (pattern: RegExp) => {
+				const deadline = Date.now() + 10_000;
+				while (!pattern.test(output)) {
+					assert.ok(Date.now() < deadline, `no ${pattern} in ${JSON.stringify(output)}`);
+					// The next output, or a look at the deadline.
+					await new Promise<void>((resolve) => {
+						seen = resolve;
+						setTimeout(resolve, 1_000);
+					});
+				}
+			};
+			return { pty: opened.value as Pty, printed };
+		}
+
+		it("runs the shell: typed into, sized, its exit code", async () => {
+			const { pty, printed } = await shell(at, root);
+			pty.write("echo here-$((6*7)) && pwd\r");
+			await printed(/here-42/);
+			await printed(new RegExp(root));
+			pty.resize(100, 30);
+			pty.write(new TextEncoder().encode("stty size; exit 3\r"));
+			await printed(/30 100/);
+			assert.equal(await pty.exited, 3);
+		});
+
+		it("kills the program on close; refuses a folder that does not exist", async () => {
+			const { pty, printed } = await shell(at, root);
+			pty.write("echo up\r");
+			await printed(/up/);
+			pty.close();
+			assert.equal(await pty.exited, -1);
+			const missing = await at.openPty(
+				{ cwd: join(root, "missing"), columns: 80, rows: 24, onData: () => {} },
+				context,
+			);
+			assert.match(missing.ok ? "opened" : missing.error.message, /does not exist/);
+		});
+
+		// Astra, round 1, M2: a shell's background job (a group of its own) outlived the terminal's close.
+		for (const end of ["the terminal's close", "the connection's close"]) {
+			it(`ends a shell's background jobs with ${end}`, async () => {
+				const host = await (await t.host.registry(MachineTypes, context)).value
+					.get(THIS_DEVICE_TYPE)!
+					.value.connect({}, context);
+				const marker = join(root, end === "the terminal's close" ? "job-terminal" : "job-connection");
+				try {
+					const { pty, printed } = await shell(host, root);
+					// A finite job: no nohup, disown, session change or trap; its file says whether it ran on.
+					pty.write(`(sleep 0.6; echo finished > ${marker}) & echo started-$((6*7))\r`);
+					await printed(/started-42/);
+					if (end === "the terminal's close") pty.close();
+					else await host.close(context);
+					await pty.exited;
+					// Longer than the job would have taken.
+					await new Promise((resolve) => setTimeout(resolve, 1_000));
+					assert.equal(
+						await readFile(marker, "utf8").catch(() => "absent"),
+						"absent",
+						"the job ended with its terminal",
+					);
+				} finally {
+					await host.close(context);
+				}
+			});
+		}
+
+		// Astra, round 2, M1: a job outlived a shell that exited on its own (the daemon reaped it, then forgot the session).
+		it("ends a shell's background jobs when the shell exits on its own, keeping its exit code", async () => {
+			const marker = join(root, "job-exit");
+			const { pty } = await shell(at, root);
+			pty.write(`(sleep 0.6; echo finished > ${marker}) & exit 7\r`);
+			assert.equal(await pty.exited, 7);
+			// Longer than the job would have taken.
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+			assert.equal(await readFile(marker, "utf8").catch(() => "absent"), "absent", "the job ended with its shell");
+		});
+
+		it("ends its programs with the connection's close", async () => {
+			const types = await t.host.registry(MachineTypes, context);
+			const host = await types.value.get(THIS_DEVICE_TYPE)!.value.connect({}, context);
+			const { pty, printed } = await shell(host, root);
+			pty.write("echo up\r");
+			await printed(/up/);
+			await host.close(context);
+			assert.equal(await pty.exited, -1);
+		});
 	});
 });

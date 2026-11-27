@@ -1,21 +1,30 @@
-// The sign-ins: `SignIns` (persisted in the server's store, expiring after 400 days unused), the authenticator (a
-// bearer token first, else the signed sign-in cookie, which lives 400 days from its issue: the stopgap renews none),
-// and the hook that closes the open links of a sign-in that ends (and every link `SignIns` tracked, once it ends);
-// tokens are random, kept only as their SHA-256 hashes, compared in constant time (the owner link's too).
+// The sign-ins: `SignIns` (one row each in the server's store, by id and by person, expiring after 400 days unused;
+// before version 2 they lived in one document, moved into the table once at the start), the authenticator (a bearer
+// token first, else the signed sign-in cookie, which lives 400 days from its issue: the stopgap renews none), and the
+// hook that closes the open links of a sign-in that ends (and every link `SignIns` tracked, once it ends); tokens are
+// random, kept only as their SHA-256 hashes, compared in constant time (the owner link's too).
 
 import {
-	BACKGROUND_CONTEXT,
 	type Context,
 	defineState,
+	defineTable,
+	eq,
 	type FacetHost,
 	type HandleOf,
+	inArray,
+	int,
+	json,
 	map,
 	num,
 	obj,
 	oneOf,
 	P3Principal,
+	query,
 	reportError,
+	type Static,
+	type StoreSelf,
 	str,
+	type TableOf,
 	untilAborted,
 } from "@earendil-works/p3/v1";
 import {
@@ -38,25 +47,50 @@ const SIGN_IN_IDLE_MS = 400 * 24 * 60 * 60_000;
 const TOUCH_MS = 60_000;
 
 /**
- * The stored sign-ins: by id, each with its secret's hash and its principal; and the cookie's key, made once per Pi:
- * its id names the cookie (a browser shares cookies between the ports of one host, so two Pis on a machine need two
- * names), its secret signs it. The key starts empty and the first issue writes it: no cookie exists before, and a value
- * only `initial` made is never stored (a random initial key would be a new one at every start: every browser signed
- * out).
+ * One row per sign-in: its secret's hash, label, kind and principal, when it was made and last used, and the person it
+ * signs in (a person's principal's id; `""` for another principal), by which `rows.ofPerson` finds it.
  */
-const SignInsDocument = defineState("p3.sign-ins", {
+const SignInsTable = defineTable("sign-in.sign-ins", {
+	version: 1,
+	columns: {
+		id: str(),
+		hash: str(),
+		label: str(),
+		kind: json(oneOf("browser", "device"), { version: 1 }),
+		principal: json(P3Principal, { version: 1 }),
+		person: str(),
+		created: int(),
+		lastUsed: int(),
+	},
+	key: ["id"],
+	indexes: { by_person: ["person", "created"] },
+});
+
+/** A sign-in as version 1 kept it in the document, and as a row has it but its id and person. */
+const StoredSignIn = obj({
+	hash: str(),
+	label: str(),
+	kind: oneOf("browser", "device"),
+	principal: P3Principal,
+	created: num(),
+	lastUsed: num(),
+});
+
+/** A sign-in as version 1 kept it (see `StoredSignIn`). */
+type StoredSignIn = Static<typeof StoredSignIn>;
+
+/**
+ * The cookie's key, made once per Pi: its id names the cookie (a browser shares cookies between the ports of one host,
+ * so two Pis on a machine need two names), its secret signs it. The key starts empty and the first issue writes it: no
+ * cookie exists before, and a value only `initial` made is never stored (a random initial key would be a new one at
+ * every start: every browser signed out). `signIns`: where version 1 of `SignIns` kept the sign-ins, moved into
+ * `SignInsTable` once at the start and emptied (the schema stays as stored, decision 125). Exported for that move's
+ * test.
+ */
+export const SignInsDocument = defineState("p3.sign-ins", {
 	schema: obj({
 		cookie: obj({ id: str(), secret: str() }),
-		signIns: map(
-			obj({
-				hash: str(),
-				label: str(),
-				kind: oneOf("browser", "device"),
-				principal: P3Principal,
-				created: num(),
-				lastUsed: num(),
-			}),
-		),
+		signIns: map(StoredSignIn),
 	}),
 	version: 1,
 	initial: () => ({ cookie: { id: "", secret: "" }, signIns: {} }),
@@ -67,34 +101,73 @@ const SignInsDocument = defineState("p3.sign-ins", {
 /** The sign-in cookie's name and secret. */
 type Key = { readonly name: string; readonly secret: string };
 
+/** What the authenticator needs of a sign-in, kept in memory: its hash, principal and last use. */
+type Known = { readonly hash: string; readonly principal: P3Principal; lastUsed: number };
+
 /** Serves `SignIns` on `host` (a host-lifetime object: its contributions live from the load on). */
 export function serveSignIns(host: FacetHost<P3Principal>): void {
 	host.serve(SignIns, (_params, self) => {
 		const document = self.state(SignInsDocument);
+		const table = self.table(SignInsTable);
 		/** The cookie's key, `undefined` until the first issue wrote it: no cookie is read before. */
 		const key = (): Key | undefined => {
 			const { id, secret } = document.value.cookie;
 			return id === "" ? undefined : { name: `p3-${id}`, secret };
 		};
 		const links = new SignInLinks();
+		// Every sign-in by id, as the table has it (this object is its one writer): the authenticator and the link hook
+		// answer without a read (the hook cannot wait). Loaded before anyone is authenticated, after the sign-ins version 1
+		// kept in the document moved into the table.
+		const known = new Map<string, Known>();
+		self.open(
+			async (ctx) => {
+				await moveDocumentSignIns(self, document, table, ctx);
+				await self.tx(async (tx) => {
+					for await (const { id, hash, principal, lastUsed } of tx.rows(table, query(SignInsTable)))
+						known.set(id, { hash, principal, lastUsed });
+					return null;
+				}, ctx);
+				return null;
+			},
+			() => {},
+		);
+		// The object's own context, set in the turn it goes live, before any call or contribution reaches it: a touch and
+		// an idle sign-in's end run under it, not under the request's (a client that leaves would cancel the write).
+		let live: Context | undefined;
 		// The next object (a reload's) tracks none of these links, so it could never close them: they end with this one,
 		// and their clients sign in again.
 		self.onLive(async (ctx) => {
+			live = ctx;
 			await untilAborted(ctx);
 			links.closeAll();
 		});
-		/** Ends sign-in `id`: removed from the store, then its open links closed. */
-		const end = async (id: string, context: Context): Promise<null> => {
-			await document.change((draft) => {
-				delete draft.signIns[id];
-			}, context);
-			links.close(id);
+		/** Sign-ins `ids`, whose rows a commit deleted: out of memory, their open links closed. */
+		const forget = (ids: readonly string[]): null => {
+			for (const id of ids) {
+				known.delete(id);
+				links.close(id);
+			}
 			return null;
 		};
-		const authenticate = (token: string, context: Context) => authenticated(document, token, end, context);
-		self.contribute(Authenticators, (request, context) => {
+		/** Ends sign-in `id`: its row deleted, then its open links closed. */
+		const end = async (id: string, context: Context): Promise<null> => {
+			await self.tx(async (tx) => {
+				tx.delete(table, { id });
+				return null;
+			}, context);
+			return forget([id]);
+		};
+		/** Writes sign-in `id`'s last use `now`, not awaited by the use (a row ended meanwhile: nothing changes). */
+		const touch = (id: string, now: number, context: Context): Promise<null> =>
+			self.tx(async (tx) => {
+				tx.update(table, { id }, { lastUsed: now });
+				return null;
+			}, context);
+		// `live` is set: nothing authenticates before the object is live.
+		const authenticate = (token: string) => authenticated(known, token, end, touch, live!);
+		self.contribute(Authenticators, (request) => {
 			const token = requestToken(request, key());
-			return token === undefined ? undefined : authenticate(token, context)?.principal;
+			return token === undefined ? undefined : authenticate(token)?.principal;
 		});
 		// The link's request is checked again here, not remembered from its authentication: a reload of this plugin
 		// between the two would leave the link to an object that never saw the request, and a revoke would miss it. A
@@ -102,22 +175,40 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 		self.contribute(LinkOpened, (request, close) => {
 			const token = requestToken(request, key());
 			if (token === undefined) return undefined;
-			const signIn = authenticate(token, BACKGROUND_CONTEXT);
+			const signIn = authenticate(token);
 			if (signIn === undefined) close();
 			return links.opened(signIn?.id, close);
 		});
 		return {
-			list: self.derive([document], ([value]) =>
-				Object.entries(value.signIns).map(([id, { hash: _, ...shown }]) => ({ id, ...shown })),
+			rows: self.queries(
+				table,
+				// Never the hash; `person` is the principal's.
+				{ map: ({ hash: _hash, person: _person, ...shown }) => shown },
+				{
+					// Index `by_person`: one person's, by the time they were made.
+					ofPerson: ({ person }: { person: string }) =>
+						query(SignInsTable)
+							.where((r) => eq(r.person, person))
+							.orderBy((r) => r.created, "asc"),
+					// The key: every sign-in.
+					all: (_args: Record<never, never>) => query(SignInsTable),
+				},
 			),
 			issue: async ({ principal, label, kind, secure }, ctx) => {
 				const id = newToken(12);
 				const secret = newToken(32);
 				const now = Date.now();
-				await document.change((draft) => {
-					if (draft.cookie.id === "") draft.cookie = { id: newToken(8), secret: newToken(32) };
-					draft.signIns[id] = { hash: hashToken(secret), label, kind, principal, created: now, lastUsed: now };
+				if (document.value.cookie.id === "") {
+					await document.change((draft) => {
+						if (draft.cookie.id === "") draft.cookie = { id: newToken(8), secret: newToken(32) };
+					}, ctx);
+				}
+				const hash = hashToken(secret);
+				await self.tx(async (tx) => {
+					tx.put(table, rowOf(id, { hash, label, kind, principal, created: now, lastUsed: now }));
+					return null;
 				}, ctx);
+				known.set(id, { hash, principal, lastUsed: now });
 				const token = `${id}.${secret}`;
 				// Written by the change above, or before.
 				const { name, secret: signing } = key()!;
@@ -130,10 +221,61 @@ export function serveSignIns(host: FacetHost<P3Principal>): void {
 				});
 				return { id, token, cookie: signed };
 			},
-			verify: async (token, ctx) => authenticate(token, ctx)?.principal ?? null,
-			revoke: end,
+			verify: async (token) => authenticate(token)?.principal ?? null,
+			revoke: async ({ person, id }, ctx) => {
+				// The check and the delete in one transaction: of two revokes at once, only the one that deleted the row
+				// says it ended one (Astra).
+				const ended = await self.tx(async (tx) => {
+					if ((await tx.get(table, { id }))?.person !== person) return false;
+					tx.delete(table, { id });
+					return true;
+				}, ctx);
+				if (ended) forget([id]);
+				return ended;
+			},
+			revokeOf: async ({ persons }, ctx) => {
+				const ids = await self.tx(async (tx) => {
+					const gone: string[] = [];
+					// Index `by_person`, in its order (no sort).
+					const theirs = query(SignInsTable)
+						.where((r) => inArray(r.person, persons))
+						.orderBy((r) => r.person, "asc")
+						.orderBy((r) => r.created, "asc");
+					for await (const { id } of tx.rows(table, theirs)) gone.push(id);
+					tx.deleteWhere(table, (r) => inArray(r.person, persons));
+					return gone;
+				}, ctx);
+				return forget(ids);
+			},
 		};
 	});
+}
+
+/** The row of sign-in `id` (its person: a person's principal's id, else `""`). */
+function rowOf(id: string, signIn: StoredSignIn) {
+	return { ...signIn, id, person: signIn.principal.kind === "person" ? signIn.principal.id : "" };
+}
+
+/**
+ * Moves the sign-ins version 1 kept in the document into the table (one transaction), then empties the document's:
+ * once per Pi; a crash between the two moves them again (a put by id writes the same row).
+ */
+async function moveDocumentSignIns(
+	self: StoreSelf<P3Principal>,
+	document: HandleOf<typeof SignInsDocument>,
+	table: TableOf<typeof SignInsTable>,
+	context: Context,
+): Promise<null> {
+	const kept = Object.entries(document.value.signIns);
+	if (kept.length === 0) return null;
+	await self.tx(async (tx) => {
+		for (const [id, signIn] of kept) tx.put(table, rowOf(id, signIn));
+		return null;
+	}, context);
+	await document.change((draft) => {
+		draft.signIns = {};
+	}, context);
+	return null;
 }
 
 /** The open links of each sign-in, by its id. */
@@ -164,30 +306,30 @@ class SignInLinks {
 
 /**
  * The sign-in `token` authenticates with (its id and principal), or `undefined`. It touches that sign-in (at most once
- * a minute), or ends it when it was unused too long; neither is awaited.
+ * a minute), or ends it when it was unused too long; neither is awaited, both run under `context` (the object's).
  */
 function authenticated(
-	document: HandleOf<typeof SignInsDocument>,
+	known: Map<string, Known>,
 	token: string,
 	end: (id: string, context: Context) => Promise<null>,
+	touch: (id: string, now: number, context: Context) => Promise<null>,
 	context: Context,
 ): { readonly id: string; readonly principal: P3Principal } | undefined {
 	const id = signInOf(token);
-	// A trust boundary: `id` is the client's (`Object.hasOwn`: no inherited member is a sign-in).
-	const signIns = document.value.signIns;
-	if (id === undefined || !Object.hasOwn(signIns, id)) return undefined;
-	const signIn = signIns[id]!;
-	if (!matchesHash(token.slice(id.length + 1), signIn.hash)) return undefined;
+	// A trust boundary: `id` is the client's; the map finds only a sign-in of that id.
+	const signIn = id === undefined ? undefined : known.get(id);
+	if (id === undefined || signIn === undefined || !matchesHash(token.slice(id.length + 1), signIn.hash))
+		return undefined;
 	const now = Date.now();
 	if (now - signIn.lastUsed > SIGN_IN_IDLE_MS) {
 		void end(id, context).catch((error: unknown) => reportError(`p3 sign-in: ${id}: ending it`, error, context));
 		return undefined;
 	}
 	if (now - signIn.lastUsed > TOUCH_MS) {
-		const touch = document.change((draft) => {
-			if (Object.hasOwn(draft.signIns, id)) draft.signIns[id]!.lastUsed = now;
-		}, context);
-		void touch.catch((error: unknown) => reportError(`p3 sign-in: ${id}: its last use`, error, context));
+		signIn.lastUsed = now;
+		void touch(id, now, context).catch((error: unknown) =>
+			reportError(`p3 sign-in: ${id}: its last use`, error, context),
+		);
 	}
 	return { id, principal: signIn.principal };
 }

@@ -2,6 +2,9 @@
 // own choice, else the default), the store's outbox is turned on, so it records every commit for the upload (a later
 // step).
 //
+// Until the uploader runs (ERNDL-1156), an outbox turned on here grows with nothing to drain it: no page may offer the
+// switch before then.
+//
 // It never turns the outbox off. When backup is turned off the session is only paused: the outbox keeps the commits it
 // recorded, so turning backup on again uploads only those. Turning the outbox off would drop them, and the next upload
 // would have to be a full copy. Turning it off for good is a separate action, later.
