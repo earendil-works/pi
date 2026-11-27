@@ -5,9 +5,8 @@
 // machine's), and until a kind gives environments, the environments plugin's. It resumes the work left only for a session that is not archived. It
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
-// It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always; once the agent no
-// longer has the subagents' tool, it withdraws the messages to subagents still queued, and after a restart it finishes
-// the stops of subagents it cut.
+// It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always; once the agent
+// no longer has the subagents' tool, it withdraws the messages to subagents still queued.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -44,7 +43,6 @@ import { activityOf, serialized } from "./activity.ts";
 import { AgentParts, type Parts } from "./agent-parts.ts";
 import { SubagentsKind } from "./kind.ts";
 import { recordUse, SUBAGENT_TASKS } from "./reporter.ts";
-import { finishStops } from "./roster.ts";
 import { subagentsPart } from "./subagents.ts";
 
 /** The harness of the session, once per worker: no members, it only contributes. */
@@ -132,10 +130,7 @@ export default defineFacet((host, facet) => {
 		self.on(archived, async ({ value }, ctx) => {
 			if (value) return;
 			await ready(ctx);
-			const { durable } = opened.value;
-			durable.resume();
-			// A stop of a subagent a restart cut aborts the older generation's work now.
-			await finishStops(durable, ctx);
+			opened.value.durable.resume();
 		});
 		const harness: OpenHarness = {
 			get durable() {

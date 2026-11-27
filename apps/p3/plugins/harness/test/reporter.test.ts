@@ -58,6 +58,8 @@ function runtimeOf(
 	} = {},
 ) {
 	const seen: Seen = { checkpoints: [], submitted: [], admitted: [] };
+	// The tasks each wait parked the reporter on.
+	const parked: number[][] = [];
 	const roster = { agents, ...(withheld ? { withheld: true } : {}) };
 	const tx = {
 		doc: async (token: unknown) => (token === Subagents ? roster : {}),
@@ -79,11 +81,14 @@ function runtimeOf(
 			waitForIdle: () => (idle ? Promise.resolve() : new Promise(() => {})),
 		}),
 		commit: async (fn: (tx: unknown) => unknown) => {
-			const next = (await fn(tx)) as { checkpoint: { phase: string; report?: string } } | undefined;
-			if (next !== undefined) seen.checkpoints.push(next.checkpoint);
+			const next = (await fn(tx)) as
+				| { status: string; on?: number[]; checkpoint: { phase: string; report?: string } }
+				| undefined;
+			if (next?.status === "waiting") parked.push(next.on ?? []);
+			else if (next !== undefined) seen.checkpoints.push(next.checkpoint);
 		},
 	};
-	return { runtime, seen, roster };
+	return { runtime, seen, roster, parked };
 }
 
 /** Resolves once `done` holds, tried at every turn of the event loop. */
@@ -129,7 +134,7 @@ describe("a subagent's reporter", () => {
 		assert.deepEqual([seen.admitted, seen.submitted, seen.checkpoints], [[], [], [{ phase: "report" }]]);
 	});
 
-	it("delivers nothing once Use is recorded withheld, and reports the withdrawal (Opus, round 2 of the port)", async () => {
+	it("delivers nothing once Use is recorded withheld; reports the withdrawal (Opus, port round 2)", async () => {
 		// The phase's agent still has the subagent tool: the commit's own read of the document decides.
 		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
 			withheld: true,
@@ -168,22 +173,17 @@ describe("a subagent's reporter", () => {
 		assert.deepEqual([reports, agent.reported], [[true, true, false], [42]]);
 	});
 
-	it("admits a follow-up only after the follow-ups sent before it went (Astra, round 2 of the port)", async () => {
+	it("parks a follow-up on the one sent before it, admits it once that one went (Astra, port round 2)", async () => {
 		const agent = { ...readerOf(), followUps: [8, 9] };
-		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
+		const { runtime, seen, parked } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
 			agents: { reader: agent },
 		});
-		const waited: number[] = [];
-		const waiting = {
-			...runtime,
-			// The earlier follow-up ends: it took itself off the list when it was admitted.
-			waitForTask: async (id: number) => {
-				waited.push(id);
-				agent.followUps = agent.followUps.filter((each) => each !== id);
-			},
-		};
-		await phase("deliver")(reporterOf(9, "second", true), waiting, context);
-		assert.deepEqual([waited, seen.admitted.length, agent.followUps], [[8], 1, []]);
+		await phase("deliver")(reporterOf(9, "second", true), runtime, context);
+		assert.deepEqual([parked, seen.admitted.length], [[[8]], 0]);
+		// The earlier follow-up was admitted and took itself off; the wait ended, the phase runs again.
+		agent.followUps = [9];
+		await phase("deliver")(reporterOf(9, "second", true), runtime, context);
+		assert.deepEqual([seen.admitted.length, agent.followUps], [1, []]);
 	});
 
 	it("is not held back by an earlier follow-up that ended without taking itself off", async () => {
@@ -191,13 +191,26 @@ describe("a subagent's reporter", () => {
 		const { runtime, seen } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
 			agents: { reader: agent },
 			ended: [8],
+			idle: true,
 		});
-		const waiting = { ...runtime, waitForTask: async () => {} };
-		await phase("deliver")(reporterOf(9, "second", true), waiting, context);
+		await phase("deliver")(reporterOf(9, "second", true), runtime, context);
 		assert.deepEqual([seen.admitted.length, agent.followUps], [1, []]);
 	});
 
-	it("decides a stranded message's withdrawal before withdrawing it, and reports it after a restart (Astra, round 2)", async () => {
+	it("parks a message sent during a stop on the stopper, admits it after (Astra, port round 3)", async () => {
+		const agent = { ...readerOf(), stopping: 40 as number | undefined };
+		const { runtime, seen, parked } = runtimeOf(submissionOf({ status: "done", type: "input", answer: 42 }), {
+			agents: { reader: agent },
+		});
+		await phase("deliver")(reporterOf(9, "while stopping"), runtime, context);
+		assert.deepEqual([parked, seen.admitted.length], [[[40]], 0]);
+		// The stopper ended and cleared its mark.
+		agent.stopping = undefined;
+		await phase("deliver")(reporterOf(9, "while stopping"), runtime, context);
+		assert.equal(seen.admitted.length, 1);
+	});
+
+	it("decides a stranded message's withdrawal first, reports it after a restart (Astra, round 2)", async () => {
 		let aborted = false;
 		const submission = {
 			wait: () => (aborted ? Promise.resolve({ status: "unanswered", reason: "aborted" }) : new Promise(() => {})),
@@ -228,7 +241,7 @@ describe("a subagent's reporter", () => {
 		assert.match(seen.checkpoints.at(-1)?.report ?? "", /reader failed: its run failed/);
 	});
 
-	it("reports a formerly stranded message placed and failed before the withdrawal as it failed (Astra, round 1 of the port)", async () => {
+	it("reports a stranded message that was placed and failed as it failed (Astra, port round 1)", async () => {
 		const submission = {
 			abort: async () => "settled",
 			wait: async () => ({ status: "unanswered", reason: "model_error" }),
@@ -238,7 +251,7 @@ describe("a subagent's reporter", () => {
 		assert.equal(seen.checkpoints.at(-1)?.report, "[subagent reader failed: model_error]");
 	});
 
-	it("steers a busy subagent, or waits for its current answer with followUp; the same request ids after a restart", async () => {
+	it("steers, or follows up after the current answer; the same request ids after a restart", async () => {
 		const { runtime, seen } = runtimeOf(submissionOf({ status: "unanswered", reason: "aborted" }));
 		await phase("deliver")(reporterOf(7, "now"), runtime, context);
 		await phase("deliver")(reporterOf(8, "later", true), runtime, context);

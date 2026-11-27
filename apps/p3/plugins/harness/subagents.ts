@@ -27,11 +27,11 @@ import { closeModels, listModels } from "./model-list.ts";
 import { Reporter, textOf } from "./reporter.ts";
 import {
 	Anchor,
-	finishStop,
 	givable,
 	levelOf,
 	modelRef,
 	modelText,
+	Stopper,
 	SUBAGENT_TOOL,
 	type Subagent,
 	Subagents,
@@ -46,7 +46,7 @@ export const subagentsPart = thingHarnessPart(SubagentsKind, (things) => {
 	return { extension: SUBAGENT_TOOLS };
 });
 
-/** The thinking levels a subagent may be given, clamped to its model (pi-ai's list, which its index does not export). */
+/** The thinking levels a subagent may be given, clamped to its model (pi-ai's list; its index does not export it). */
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies ModelThinkingLevel[];
 
 /** The tool's arguments: the action, and the fields the actions take. */
@@ -237,10 +237,10 @@ async function archive(call: Call, api: ToolExecutionApi, context: Context): Pro
 }
 
 /**
- * Stops the call's subagent: one commit bumps its generation (and makes `also`'s change) and marks the stop, then the
- * older generation's work is aborted (`finishStop`; a restart in between finishes it). A send whose commit comes later
- * restores it and is delivered, and its work is not aborted; one before is dropped (Astra, rounds 1 and 2 of the
- * port).
+ * Stops the call's subagent: one commit bumps its generation (and makes `also`'s change) and starts the stopper that
+ * aborts the older generation's work (`Stopper`, a background task: it finishes also when this call is cancelled);
+ * the call answers once it ended. A send whose commit comes later restores it, waits for the stopper, and is delivered;
+ * one before is dropped (Astra, rounds 1 to 3 of the port).
  */
 async function halt(
 	call: Call,
@@ -249,13 +249,16 @@ async function halt(
 	also?: (agent: Subagent) => void,
 ): Promise<string> {
 	const name = nameOf(call);
-	await api.commit(async (tx) => {
+	const stopper = await api.commit(async (tx) => {
 		const agent = subagentNamed((await tx.doc(Subagents)).agents, name);
 		agent.generation += 1;
-		agent.stopping = true;
 		also?.(agent);
+		const input = { name, conversationId: agent.conversationId, generation: agent.generation };
+		const id = await tx.createTask(Stopper, input, BACKGROUND);
+		agent.stopping = id;
+		return id;
 	}, context);
-	await finishStop(api, name, context);
+	await api.waitForTask(stopper, context);
 	return name;
 }
 

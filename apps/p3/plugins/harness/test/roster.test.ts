@@ -1,77 +1,84 @@
-// The session's subagents (`roster.ts`) on their own, over a stand-in of the commits and conversations a stop reads
-// (Astra, round 2 of the port): finishing a stop aborts the subagent's current work only when a message of an older
-// generation started it, never work sent after the stop's commit, and clears the mark; after a restart, every marked
-// stop is finished. A message's request id carries its generation.
+// The session's subagents (`roster.ts`) on their own: the stopper's phases, called as the scheduler calls them over a
+// stand-in of Durable's runtime (Astra, rounds 2 and 3 of the port). It aborts the subagent's current run only when a
+// message of an older generation started it, never work of the stop's own generation; it clears the subagent's mark
+// in the commit that ends it, only while the mark is its own; aborted itself, it clears the mark too. A message's
+// request id carries its generation.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/p3/v1";
-import { LiveDoc } from "@earendil-works/p3/v1/worker";
-import { finishStop, finishStops, requestOf, Subagents } from "../roster.ts";
+import { requestOf, Stopper, Subagents } from "../roster.ts";
 
-/** A subagent conversation `conversationId` in `generation`, its stop marked unless `stopping` is false. */
-function agentOf(conversationId: number, generation: number, stopping = true) {
-	return {
-		conversationId,
-		generation,
-		reported: [],
-		reportedTo: [],
-		followUps: [],
-		...(stopping ? { stopping: true as const } : {}),
+/** The stopper's phase `name`, or its abort handler, as the scheduler calls them. */
+function phase(name: "decide" | "abort" | "clear" | "aborted") {
+	const definition = Stopper.definition as unknown as {
+		phases: Record<string, (...args: unknown[]) => Promise<void>>;
+		abort: (...args: unknown[]) => Promise<void>;
 	};
+	return name === "aborted" ? definition.abort : definition.phases[name]!;
+}
+
+/** A subagent conversation 2 in generation 1, its stop marked by stopper `stopping`. */
+function agentOf(stopping: number) {
+	return { conversationId: 2, generation: 1, reported: [], reportedTo: [], followUps: [], stopping };
 }
 
 /**
- * A stand-in owner over `agents`, whose conversations each run the inputs `runs` lists (submission ids, whose request
- * ids `requests` gives); records the conversations aborted.
+ * A runtime over the subagent `agent`, whose conversation runs `inputs` (submission ids, whose request ids `requests`
+ * gives); records the next states and the conversations aborted.
  */
-function ownerOf(
-	agents: Record<string, ReturnType<typeof agentOf>>,
-	runs: Record<number, number[]>,
-	requests: Record<number, string>,
-) {
+function runtimeOf(agent: object, inputs: number[] = [], requests: Record<number, string> = {}) {
+	const states: { status: string; checkpoint?: { phase: string } }[] = [];
 	const aborted: number[] = [];
-	const roster = { agents };
 	const tx = {
-		doc: async (token: unknown, id?: number) => {
-			if (token === Subagents) return roster;
-			assert.equal(token, LiveDoc);
-			const inputs = runs[id ?? -1];
-			return inputs === undefined ? {} : { run: { inputs } };
-		},
+		doc: async (token: unknown) => (token === Subagents ? { agents: { reader: agent } } : { run: { inputs } }),
 		submission: async (id: number) => ({ requestId: requests[id] }),
 	};
-	const owner = {
-		commit: async <T>(change: (tx: never) => T | Promise<T>) => change(tx as never),
+	const runtime = {
+		commit: async (fn: (tx: unknown) => unknown) => {
+			states.push((await fn(tx)) as (typeof states)[number]);
+		},
 		conversation: async (id: number) => ({ abort: async () => void aborted.push(id) }),
 	};
-	return { owner: owner as never, aborted, roster };
+	return { runtime, states, aborted };
 }
 
-describe("a subagent's stop", () => {
-	it("aborts work an older generation's message started, then clears the mark", async () => {
-		const reader = agentOf(2, 1);
-		const { owner, aborted } = ownerOf({ reader }, { 2: [7] }, { 7: requestOf(30, 0) });
-		await finishStop(owner, "reader", context);
-		assert.deepEqual([aborted, reader.stopping], [[2], undefined]);
+/** Stopper `id` of the subagent `reader`, conversation 2, generation 1. */
+function stopperOf(id: number) {
+	return { id, input: { name: "reader", conversationId: 2, generation: 1 } };
+}
+
+describe("a subagent's stopper", () => {
+	it("goes on to the abort when a message of an older generation started the current run", async () => {
+		const { runtime, states } = runtimeOf(agentOf(5), [7], { 7: requestOf(30, 0) });
+		await phase("decide")(stopperOf(5), runtime, context);
+		assert.deepEqual(states, [{ status: "running", checkpoint: { phase: "abort" } }]);
 	});
 
-	it("leaves work a message of its own generation started, sent after the stop's commit", async () => {
-		const reader = agentOf(2, 1);
-		const { owner, aborted } = ownerOf({ reader }, { 2: [8] }, { 8: requestOf(31, 1) });
-		await finishStop(owner, "reader", context);
-		assert.deepEqual([aborted, reader.stopping], [[], undefined]);
+	it("aborts nothing of the stop's own generation: work sent after the stop's commit", async () => {
+		const { runtime, states, aborted } = runtimeOf(agentOf(5), [8], { 8: requestOf(31, 1) });
+		await phase("decide")(stopperOf(5), runtime, context);
+		assert.deepEqual([states, aborted], [[{ status: "running", checkpoint: { phase: "clear" } }], []]);
 	});
 
-	it("finishes every stop a restart cut, and leaves the others", async () => {
-		const reader = agentOf(2, 1);
-		const writer = agentOf(3, 4, false);
-		const { owner, aborted } = ownerOf(
-			{ reader, writer },
-			{ 2: [7], 3: [9] },
-			{ 7: requestOf(30, 0), 9: requestOf(32, 1) },
-		);
-		await finishStops(owner, context);
-		assert.deepEqual([aborted, reader.stopping, writer.stopping], [[2], undefined, undefined]);
+	it("aborts the subagent's conversation, then goes on to clear", async () => {
+		const { runtime, states, aborted } = runtimeOf(agentOf(5));
+		await phase("abort")(stopperOf(5), runtime, context);
+		assert.deepEqual([aborted, states], [[2], [{ status: "running", checkpoint: { phase: "clear" } }]]);
+	});
+
+	it("clears its own mark as it ends, and leaves a later stop's", async () => {
+		const own = agentOf(5);
+		const { runtime, states } = runtimeOf(own);
+		await phase("clear")(stopperOf(5), runtime, context);
+		const later = agentOf(6);
+		await phase("clear")(stopperOf(5), runtimeOf(later).runtime, context);
+		assert.deepEqual([own.stopping, later.stopping, states[0]?.status], [undefined, 6, "terminal"]);
+	});
+
+	it("clears its mark when it is aborted itself, so the messages held back for it go on", async () => {
+		const agent = agentOf(5);
+		await phase("aborted")(stopperOf(5), runtimeOf(agent).runtime, context);
+		assert.equal(agent.stopping, undefined);
 	});
 });

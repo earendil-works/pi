@@ -2,9 +2,9 @@
 // messages): the document listing them by name (`Subagents`, the session's, so every top-level conversation sees the
 // same names), the task owning each one's conversation (`Anchor`), what a subagent gets from the agent when it is
 // configured (the agent's tools it may be given now, its thinking level clamped to its model), the request ids of its
-// messages (which carry the generation they were sent in), and the stop of an older generation's work.
+// messages (which carry the generation they were sent in), and the task that ends an older generation's work
+// (`Stopper`).
 
-import type { Context } from "@earendil-works/p3/v1";
 import {
 	type Agent,
 	type ConversationId,
@@ -16,7 +16,6 @@ import {
 	type Models,
 	type ModelThinkingLevel,
 	type TaskId,
-	type Tx,
 } from "@earendil-works/p3/v1/worker";
 import type { HarnessTool } from "../things/contract.worker.ts";
 import type { ModelRef } from "./agent-parts.ts";
@@ -28,8 +27,8 @@ export const SUBAGENT_TOOL = "subagent";
  * A subagent: its conversation; its answers that were reported (several messages may end in one answer), and to whom
  * (each sender once); the model (`provider/modelId`) and thinking level it was given (the level as asked: it is clamped
  * to the model when applied); the tools it was given by name (none: every tool the agent may give it); its generation,
- * which every stop and archive bumps (a message sent before is not delivered after), and whether that stop still has
- * to abort the older generation's work (`stopping`: a restart finishes it); the follow-ups waiting for its current
+ * which every stop and archive bumps (a message sent before is not delivered after), and the stopper still ending the
+ * older generation's work (`stopping`: messages sent meanwhile wait for it); the follow-ups waiting for its current
  * answer, by reporter, in the order sent; and whether it is archived (hidden from `status`, still usable).
  */
 export type Subagent = {
@@ -40,7 +39,7 @@ export type Subagent = {
 	thinkingLevel: ModelThinkingLevel;
 	tools?: string[];
 	generation: number;
-	stopping?: true;
+	stopping?: TaskId;
 	followUps: TaskId[];
 	archived?: true;
 };
@@ -55,7 +54,7 @@ export const Subagents = defineDoc<{ agents: Record<string, Subagent>; withheld?
 	kind: "harness.subagents",
 	// 2: the session's (1 was each conversation's).
 	version: 2,
-	// The session's: a top-level branch sees the same subagents; each message's answer goes to the conversation that sent it.
+	// The session's: a top-level branch sees the same subagents; each answer goes to the conversation that asked.
 	scope: "session",
 	initial: () => ({ agents: {} }),
 });
@@ -136,49 +135,56 @@ function generationOf(requestId: string | undefined): number | undefined {
 	return Number.isSafeInteger(generation) ? generation : undefined;
 }
 
-/** What finishing a stop needs: commits, and a subagent's conversation to abort (a tool's api, or the harness). */
-export type Stopping = {
-	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
-	conversation(id: ConversationId, context: Context): Promise<{ abort(context: Context): Promise<void> } | undefined>;
-};
+/** What a stopper ends: the subagent `name`, its conversation, and the generation the stop began. */
+type StopperInput = { name: string; conversationId: ConversationId; generation: number };
+
+/** A stopper's phases: decide whether older work runs, abort it, then clear the subagent's mark. */
+type StopperState = { phase: "decide" } | { phase: "abort" } | { phase: "clear" };
 
 /**
- * Finishes the stop of subagent `name` its document marks (`stopping`): aborts its current work only if a message of
- * an older generation started it, never work sent after the stop's commit (Astra, round 2 of the port), then clears
- * the mark. Run by the stop itself, and again after a restart that cut it.
+ * Ends the work of a subagent's older generations, after a stop's or an archive's commit (which bumped the generation
+ * and marked the subagent `stopping` with this task): aborts its current run only if a message of an older generation
+ * started it, never work of the stop's own generation, then clears the mark in the commit that ends the task, so the
+ * messages held back for the stop wait for this task's end (Astra, rounds 2 and 3 of the port). A background task
+ * with its own context: a stop whose caller is cancelled (the agent stopped meanwhile) still finishes, and a restart
+ * resumes it at its phase.
  */
-export async function finishStop(owner: Stopping, name: string, context: Context): Promise<void> {
-	const marked = await owner.commit(async (tx) => {
-		const agent = subagentOf((await tx.doc(Subagents)).agents, name);
-		return agent?.stopping === undefined ? undefined : agent.conversationId;
-	}, context);
-	if (marked === undefined) return;
-	const child = await owner.conversation(marked, context);
-	const older = await owner.commit(async (tx) => {
-		const agent = subagentOf((await tx.doc(Subagents)).agents, name);
-		if (agent === undefined) return false;
-		for (const input of (await tx.doc(LiveDoc, marked)).run?.inputs ?? []) {
-			const sent = generationOf((await tx.submission(input))?.requestId);
-			if (sent === undefined || sent < agent.generation) return true;
-		}
-		return false;
-	}, context);
-	try {
-		if (older) await child?.abort(context);
-	} finally {
-		// Also after a failed abort: the messages held back for the stop go on (only a restart leaves a mark).
-		await owner.commit(async (tx) => {
-			const agent = subagentOf((await tx.doc(Subagents)).agents, name);
-			if (agent !== undefined) delete agent.stopping;
-		}, context);
-	}
-}
+export const Stopper = defineTask<StopperInput, StopperState, null>({
+	name: "harness.subagent-stopper",
+	version: 1,
+	initial: () => ({ phase: "decide" }),
+	phases: {
+		decide: async (stopper, runtime, context) => {
+			const { conversationId, generation } = stopper.input;
+			await runtime.commit(async (tx) => {
+				for (const input of (await tx.doc(LiveDoc, conversationId)).run?.inputs ?? []) {
+					const sent = generationOf((await tx.submission(input))?.requestId);
+					if (sent === undefined || sent < generation)
+						return { status: "running", checkpoint: { phase: "abort" } };
+				}
+				return { status: "running", checkpoint: { phase: "clear" } };
+			}, context);
+		},
+		abort: async (stopper, runtime, context) => {
+			await (await runtime.conversation(stopper.input.conversationId, context))?.abort(context);
+			await runtime.commit(() => ({ status: "running", checkpoint: { phase: "clear" } }), context);
+		},
+		clear: (stopper, runtime, context) =>
+			runtime.commit(async (tx) => {
+				clearMark(stopper.input.name, stopper.id, (await tx.doc(Subagents)).agents);
+				return { status: "terminal", outcome: { status: "completed", result: null } };
+			}, context),
+	},
+	// Aborted itself: the messages held back for it go on.
+	abort: (stopper, runtime, context) =>
+		runtime.commit(async (tx) => {
+			clearMark(stopper.input.name, stopper.id, (await tx.doc(Subagents)).agents);
+			return { status: "terminal", outcome: { status: "aborted" } };
+		}, context),
+});
 
-/** Finishes every stop a restart cut (see `finishStop`). */
-export async function finishStops(owner: Stopping, context: Context): Promise<void> {
-	const marked = await owner.commit(async (tx) => {
-		const { agents } = await tx.doc(Subagents);
-		return Object.entries(agents).flatMap(([name, agent]) => (agent.stopping === undefined ? [] : [name]));
-	}, context);
-	for (const name of marked) await finishStop(owner, name, context);
+/** Clears subagent `name`'s stop mark if it is still `stopper`'s (a later stop has its own). */
+function clearMark(name: string, stopper: TaskId, agents: Record<string, Subagent>): void {
+	const agent = subagentOf(agents, name);
+	if (agent?.stopping === stopper) delete agent.stopping;
 }

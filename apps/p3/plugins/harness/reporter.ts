@@ -1,7 +1,8 @@
 // The messages to subagents (`subagents.ts` sends them): a reporter task per message, which delivers it to the
 // subagent and hands its answer back to the conversation that sent it, and, when Use is withheld, the record of it and
-// the withdrawal of the queued messages. The tasks are an extension of their own the harness installs always (`SUBAGENT_TASKS`), so a reporter
-// under way when Use is withheld still reports: a subagent that runs finishes its step, and gets no new message.
+// the withdrawal of the queued messages. The tasks (with the roster's anchor and stopper) are an extension of their own
+// the harness installs always (`SUBAGENT_TASKS`), so a reporter under way when Use is withheld still reports: a
+// subagent that runs finishes its step, and gets no new message.
 
 import type { Context } from "@earendil-works/p3/v1";
 import {
@@ -20,7 +21,7 @@ import {
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/p3/v1/worker";
-import { Anchor, REQUEST, requestOf, Subagents, subagentOf, toolsOf } from "./roster.ts";
+import { Anchor, REQUEST, requestOf, Stopper, Subagents, subagentOf, toolsOf } from "./roster.ts";
 
 /**
  * What a reporter delivers: to which subagent (its name and conversation, and its generation when the message was
@@ -113,19 +114,20 @@ function draftOf({ id, input }: Reporting) {
 }
 
 /**
- * What one admission commit decided: admitted (now, or before a restart), refused (the report decided), to wait, or
- * held back for a stop (the reporter sleeps).
+ * What one admission commit decided: admitted (now, or before a restart), refused (the report decided), parked (the
+ * reporter waits, without an invocation, for a pending stop's stopper or an earlier follow-up to end, then delivers
+ * again), or to wait for an idle subagent.
  */
 type Admission =
 	| { readonly kind: "admitted" }
 	| { readonly kind: "refused" }
-	| { readonly kind: "busy" }
-	| { readonly kind: "behind"; readonly earlier: TaskId }
-	| { readonly kind: "stopping" };
+	| { readonly kind: "parked" }
+	| { readonly kind: "busy" };
 
 /**
- * Admits the message, waiting first for a follow-up's turn: true once admitted (now, or before a restart); false when
- * refused (the report decided) or held back for a stop (the reporter sleeps, then delivers again).
+ * Admits the message, waiting first for an idle subagent when it is a follow-up: true once admitted (now, or before a
+ * restart); false when refused (the report decided) or parked (the phase ends; it runs again once the task it waits
+ * for ended).
  */
 async function admit(
 	reporter: Reporting,
@@ -139,16 +141,11 @@ async function admit(
 			case "admitted":
 				return true;
 			case "refused":
+			case "parked":
 				return false;
 			case "busy":
 				await subagent.waitForIdle(context);
 				break;
-			case "behind":
-				// The earlier follow-up ends after its answer is reported: then this one's turn may come.
-				await runtime.waitForTask(admission.earlier, context);
-				break;
-			case "stopping":
-				return false;
 		}
 	}
 }
@@ -179,19 +176,24 @@ async function admitOnce(
 			if (sent !== undefined) sent.followUps = sent.followUps.filter((id) => id !== reporter.id);
 			return reportOf(current === undefined ? undefined : failed(reporter.input, WITHDRAWN));
 		}
-		// A stop is aborting the older generation's work: nothing new joins it meanwhile, so the abort cannot take it
-		// (Astra, round 3 of the port). The reporter sleeps and looks again.
+		// A stop is ending the older generation's work: nothing new joins it meanwhile, so its abort cannot take it; the
+		// stopper's end, which clears the mark, wakes the reporter (Astra, round 3 of the port).
 		if (current.stopping !== undefined) {
-			admission = { kind: "stopping" };
-			return { status: "sleeping", until: runtime.now() + STOP_POLL_MS, checkpoint: { phase: "deliver" } } as const;
+			admission = { kind: "parked" };
+			return parkedOn(current.stopping);
 		}
 		if (reporter.input.followUp) {
 			const earlier = current.followUps[0];
 			if (earlier !== undefined && earlier !== reporter.id) {
-				// One that ended without taking itself off (aborted) is taken off here; its wait then returns at once.
-				if ((await tx.task(earlier))?.state.status === "terminal") current.followUps.shift();
-				admission = { kind: "behind", earlier };
-				return undefined;
+				// The earlier follow-up ends after its answer is reported: then this one's turn may come. One that ended
+				// without taking itself off (aborted) is taken off here.
+				if ((await tx.task(earlier))?.state.status === "terminal") {
+					current.followUps.shift();
+					admission = { kind: "busy" };
+					return undefined;
+				}
+				admission = { kind: "parked" };
+				return parkedOn(earlier);
 			}
 			if ((await tx.doc(LiveDoc, subagent.id)).run !== undefined) {
 				admission = { kind: "busy" };
@@ -206,8 +208,10 @@ async function admitOnce(
 	return admission;
 }
 
-/** How long a message held back for a stop sleeps before it looks again whether the stop finished. */
-const STOP_POLL_MS = 50;
+/** The next state: waiting, without an invocation, until task `task` ended, then delivering again. */
+function parkedOn(task: TaskId) {
+	return { status: "waiting", on: [task], policy: "allSettled", checkpoint: { phase: "deliver" } } as const;
+}
 
 /** The next state: the report phase, with `report` or nothing to report. */
 function reportOf(report?: string) {
@@ -302,4 +306,7 @@ export async function recordUse(durable: Harness, offered: boolean, context: Con
 }
 
 /** The subagents' tasks: installed always, so reporters under way finish whatever the agent's grants are now. */
-export const SUBAGENT_TASKS: Extension = defineExtension({ name: "harness.subagent-tasks", tasks: [Anchor, Reporter] });
+export const SUBAGENT_TASKS: Extension = defineExtension({
+	name: "harness.subagent-tasks",
+	tasks: [Anchor, Reporter, Stopper],
+});

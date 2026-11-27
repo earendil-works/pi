@@ -13,12 +13,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT as context, obj } from "@earendil-works/p3/v1";
-import { configure, defineTool } from "@earendil-works/p3/v1/worker";
+import { configure, defineTool, type OpenHarness } from "@earendil-works/p3/v1/worker";
 import { eventually } from "../../../test/until.ts";
 import type { HarnessTool } from "../../things/contract.worker.ts";
-import { SESSION } from "../../things/test/part.ts";
 import { Subagents } from "../roster.ts";
-import { subagentsPart } from "../subagents.ts";
 import {
 	calls,
 	coding,
@@ -54,6 +52,36 @@ function testTool(name: string, scope?: "main"): HarnessTool {
 		execute: async () => ({ output: [{ type: "text", text: `ran ${name}` }] }),
 	});
 	return scope === undefined ? tool : { ...tool, scope };
+}
+
+/**
+ * A tool `block` that ignores its abort until `release` resolves: `reached` once it runs, `aborted` once its call is
+ * aborted.
+ */
+function blocking() {
+	const reached = Promise.withResolvers<void>();
+	const aborted = Promise.withResolvers<void>();
+	const release = Promise.withResolvers<void>();
+	const tool: HarnessTool = defineTool({
+		name: "block",
+		description: "Blocks until released",
+		parameters: obj({}),
+		execute: async (_args, _api, context) => {
+			context.abortSignal?.addEventListener("abort", () => aborted.resolve());
+			reached.resolve();
+			await release.promise;
+			return { output: [{ type: "text", text: "released" }] };
+		},
+	});
+	return { tool, reached, aborted, release };
+}
+
+/** A top-level branch of the root conversation, forked at its first entry. */
+async function fork(open: OpenHarness) {
+	const root = await open.durable.root(context);
+	const entry = (await root.entries({}, 1, undefined, context)).items[0];
+	assert.ok(entry !== undefined);
+	return root.fork(entry.id, { ownership: { kind: "ownerless" } }, context);
 }
 
 describe("the subagents' part", () => {
@@ -132,7 +160,7 @@ describe("the subagents' part", () => {
 	}
 
 	/**
-	 * Waits until a message of generation 1 is held back by a pending stop (its reporter sleeps) or admitted to the
+	 * Waits until a message of generation 1 is held back by a pending stop (its reporter waits) or admitted to the
 	 * subagent (queued or placed).
 	 */
 	async function heldOrQueued(durable: Awaited<ReturnType<Harnessed["harness"]>>["durable"]): Promise<void> {
@@ -140,7 +168,7 @@ describe("the subagents' part", () => {
 			() => durable.inspect(context),
 			({ tasks, submissions }) =>
 				tasks.some(
-					({ record, state }) => record.kind === "harness.subagent-reporter" && state.kind === "sleeping",
+					({ record, state }) => record.kind === "harness.subagent-reporter" && state.kind === "waiting",
 				) || submissions.some((each) => each.requestId?.endsWith(":1") === true),
 		);
 	}
@@ -175,7 +203,7 @@ describe("the subagents' part", () => {
 		assert.deepEqual(requests().at(-1)?.tools, ["bash", "edit", "read", "write"]);
 	});
 
-	it("delivers a follow-up sent while the run fails after it, instead of leaving it queued (Astra, rounds 1 and 2)", async () => {
+	it("delivers a follow-up sent while the run fails after it, not left queued (Astra, rounds 1, 2)", async () => {
 		const script = [
 			spawn("@spawn", "child-start"),
 			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo not-scripted"),
@@ -204,7 +232,7 @@ describe("the subagents' part", () => {
 		);
 	});
 
-	it("reports each answer once; archived, it leaves status but for its name; send and restore bring it back", async () => {
+	it("reports each answer once; archived: out of status but by name; send and restore bring it back", async () => {
 		const script = [
 			spawn("@spawn", "first task"),
 			says("first task", "first answer"),
@@ -455,7 +483,7 @@ describe("the subagents' part", () => {
 		assert.deepEqual(requests().find(({ last }) => last === "use later")?.tools, ["bash", "edit", "read", "write"]);
 	});
 
-	it("gives a subagent the agent's tools again with each message: a new one, and none it let go of (Opus S1)", async () => {
+	it("gives a subagent the agent's tools again with each message: new ones, none let go of (Opus S1)", async () => {
 		const script = [
 			spawn("@spawn", "child-hello"),
 			says("child-hello", "hi"),
@@ -474,7 +502,7 @@ describe("the subagents' part", () => {
 		assert.deepEqual(requests().find(({ last }) => last === "second message")?.tools, ["test_plain"]);
 	});
 
-	it("gives a default subagent only the tools its agent has, also when the agent's are a selection (Astra, must 1)", async () => {
+	it("gives a default subagent only the agent's tools, also from a selection (Astra, must 1)", async () => {
 		const script = [spawn("@spawn", "child"), says("child", "done"), says("", "ok")];
 		const { ask, harness } = await start(
 			[login("a", "faux", script), subagents(), other("test.labels", "labels")],
@@ -490,7 +518,7 @@ describe("the subagents' part", () => {
 		assert.deepEqual(requests().find((r) => r.last === "child")?.tools, ["red_label"]);
 	});
 
-	it("withdraws a follow-up waiting when Use is withheld and reports it; the subagent never gets it (Opus S2)", async () => {
+	it("withdraws a waiting follow-up when Use is withheld, reports it, never delivers it (Opus S2)", async () => {
 		const script = [
 			spawn("@spawn", "child-start"),
 			runs("child-start", "touch started; until [ -e gate ]; do sleep 0.02; done; echo first done"),
@@ -727,57 +755,6 @@ describe("the subagents' part", () => {
 		assert.deepEqual(counts, [1, 1]);
 	});
 
-	it("leaves work sent after an archive's commit running when the archive's abort comes (Astra, round 2 of the port)", async () => {
-		const script = [
-			spawn("@spawn", "initial"),
-			says("initial", "idle"),
-			on("@new", "send", { message: "restored task" }),
-			runs("restored task", "touch started; until [ -e gate ]; do sleep 0.02; done; echo continued"),
-			says("continued", "new result"),
-			says("", "ok"),
-		];
-		const { ask, harness } = await start([login("a", "faux", script), coding(), subagents()]);
-		await ask("@spawn");
-		await reported("[subagent reader answered] idle");
-		const { durable } = await harness();
-		const root = await durable.root(context);
-		// Pause exactly between archive's durable transition and child abort; use real Durable for both.
-		const paused = Promise.withResolvers<void>();
-		const resume = Promise.withResolvers<void>();
-		const archiveTool = subagentsPart.part([subagents().held], SESSION).extension!.tools![0]!;
-		const api = {
-			conversationId: root.id,
-			commit: durable.commit.bind(durable),
-			conversation: async (id: typeof root.id) => {
-				paused.resolve();
-				await resume.promise;
-				return durable.conversation(id, context);
-			},
-		};
-		const archiving = archiveTool.execute({ action: "archive", name: "reader" } as never, api as never, context);
-		try {
-			await paused.promise;
-			await ask("@new");
-			// Held back while the archive's stop is pending (Astra, round 3 of the port), or admitted without the hold.
-			await heldOrQueued(durable);
-		} finally {
-			resume.resolve();
-			await archiving;
-		}
-		await started();
-		await writeFile(join(folder, "gate"), "");
-		await eventually(
-			() => durable.inspect(context),
-			(info) => info.tasks.length === 0 && info.submissions.length === 0,
-		);
-		assert.deepEqual(
-			requests()
-				.filter((r) => r.last.startsWith("[subagent reader "))
-				.map((r) => r.last),
-			["[subagent reader answered] idle", "[subagent reader answered] new result"],
-		);
-	});
-
 	it("gives each follow-up its own sender's tools, in the order sent (Astra, round 2 of the port)", async () => {
 		const script = [
 			spawn("@spawn", "busy work"),
@@ -823,55 +800,74 @@ describe("the subagents' part", () => {
 		);
 	});
 
-	it("holds a steer sent during an archive's stop back from the stop's abort (Astra, round 3 of the port)", async () => {
+	it("holds a message sent during an archive's stop back from its abort, then delivers it (Astra, port 3)", async () => {
+		const block = blocking();
 		const script = [
 			spawn("@spawn", "old run"),
-			runs("old run", "touch started; until [ -e gate ]; do sleep 0.02; done; echo released"),
+			calls("old run", "block", {}),
+			on("@archive", "archive"),
 			on("@new", "send", { message: "new steer" }),
 			says("new steer", "restored answer"),
 			says("", "ok"),
 		];
-		const { ask, harness } = await start([login("a", "faux", script), coding(), subagents()]);
-		await ask("@spawn");
-		await started();
-		const { durable } = await harness();
-		const root = await durable.root(context);
-		const paused = Promise.withResolvers<void>();
-		const release = Promise.withResolvers<void>();
-		const tool = subagentsPart.part([subagents().held], SESSION).extension!.tools![0]!;
-		const api = {
-			conversationId: root.id,
-			commit: durable.commit.bind(durable),
-			conversation: async (id: typeof root.id) => {
-				paused.resolve();
-				await release.promise;
-				return durable.conversation(id, context);
-			},
-		};
-		const archiving = tool.execute({ action: "archive", name: "reader" } as never, api as never, context);
-		try {
-			await paused.promise;
-			await ask("@new");
-			// Held back while the archive's stop is pending (the fix), or admitted to the subagent (without it).
-			await heldOrQueued(durable);
-		} finally {
-			release.resolve();
-			await archiving;
-			await writeFile(join(folder, "gate"), "");
-		}
-		await eventually(
-			() => durable.inspect(context),
-			(i) => i.tasks.length === 0 && i.submissions.length === 0,
+		const { ask, harness } = await start(
+			[login("a", "faux", script), subagents(), other("test.block", "b")],
+			[{ kind: "test.block", tools: [block.tool] }],
 		);
+		const open = await harness();
+		await ask("@spawn");
+		await block.reached.promise;
+		const root = await open.durable.root(context);
+		await open.submit(undefined, { text: "@archive", requestId: "archive" }, context);
+		// The stopper aborts the old run, whose tool takes its time to end.
+		await block.aborted.promise;
+		const branch = await fork(open);
+		await open.submit(String(branch.id), { text: "@new", requestId: "new" }, context);
+		await branch.waitForIdle(context);
+		await heldOrQueued(open.durable);
+		block.release.resolve();
+		await reported("[subagent reader answered] restored answer");
+		await root.waitForIdle(context);
 		assert.deepEqual(
 			requests()
-				.filter((r) => r.last.startsWith("[subagent reader"))
+				.filter((r) => r.last.startsWith("[subagent reader "))
 				.map((r) => r.last),
 			["[subagent reader answered] restored answer"],
 		);
 	});
 
-	it("never delivers a follow-up withdrawn by a withhold, also after a regrant (Astra, round 3 of the port)", async () => {
+	it("finishes an archive's stop when the agent is stopped during it (Astra, port round 4)", async () => {
+		const block = blocking();
+		const script = [
+			spawn("@spawn", "old run"),
+			calls("old run", "block", {}),
+			on("@archive", "archive"),
+			on("@again", "send", { message: "after the stop" }),
+			says("after the stop", "after answer"),
+			says("", "ok"),
+		];
+		const { ask, harness } = await start(
+			[login("a", "faux", script), subagents(), other("test.block", "b")],
+			[{ kind: "test.block", tools: [block.tool] }],
+		);
+		const open = await harness();
+		await ask("@spawn");
+		await block.reached.promise;
+		const root = await open.durable.root(context);
+		await open.submit(undefined, { text: "@archive", requestId: "archive" }, context);
+		await block.aborted.promise;
+		// The agent is stopped while the archive waits for its stopper: the stop still finishes.
+		await root.abort(context);
+		block.release.resolve();
+		await eventually(
+			async () => (await open.durable.snapshot(Subagents, context))?.agents.reader?.stopping,
+			(stopping) => stopping === undefined,
+		);
+		await ask("@again");
+		await reported("[subagent reader answered] after answer");
+	});
+
+	it("never delivers a follow-up withdrawn by a withhold, also after a regrant (Astra, port round 3)", async () => {
 		const script = [
 			spawn("@spawn", "busy"),
 			runs("busy", "touch started; until [ -e gate ]; do sleep 0.02; done; echo released"),
