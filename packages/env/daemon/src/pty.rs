@@ -5,7 +5,7 @@
 use crate::errors::Failure;
 use crate::exec::{Control, Groups, running};
 #[cfg(unix)]
-use crate::exec::{Message, kill_group, start_waiter};
+use crate::exec::{Ending, Message, kill_group, start_waiter};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
 #[cfg(unix)]
@@ -223,7 +223,17 @@ pub fn run(
     if let Err(error) = started {
         return Err(abandon(child, error));
     }
-    if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
+    // When the shell exits, its session's jobs are killed before it is reaped (its pid, the session's id, names no
+    // other process until then), as the jobs of a terminal that closes are: a background job does not outlive it.
+    let group = match crate::sys::group(&child) {
+        Ok(group) => group,
+        Err(error) => return Err(abandon(child, error)),
+    };
+    let ending = Ending {
+        group,
+        groups: groups.clone(),
+    };
+    if let Err((child, error)) = start_waiter(child, Some(ending), sender.clone()) {
         return Err(abandon(child, error));
     }
     drop(sender);
@@ -236,7 +246,11 @@ pub fn run(
     let kill = |killed: &mut bool| {
         if !*killed {
             *killed = true;
-            kill_group(pid);
+            // Only while the shell is in `groups`: the waiter removes it under this lock before reaping it.
+            let groups = groups.lock().unwrap();
+            if groups.contains(&pid) {
+                kill_group(pid);
+            }
         }
     };
     if control.killed.load(Ordering::SeqCst) {
