@@ -1,9 +1,10 @@
 import { piDecisionApi } from "../api/pi-decision.lazy.ts";
+import { piImageApi } from "../api/pi-image.lazy.ts";
 import { piMessagesApi } from "../api/pi-messages.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
 import { loadRadiusOAuth } from "../auth/oauth/load.ts";
 import type { Provider } from "../models.ts";
-import type { ClassifierModel, Model } from "../types.ts";
+import type { ClassifierModel, ImageModel, Model } from "../types.ts";
 import { isModelType } from "../utils/model-operations.ts";
 import { RADIUS_MODELS } from "./radius.models.ts";
 import {
@@ -20,7 +21,7 @@ export interface RadiusProviderOptions {
 	gateway?: string;
 }
 
-type RadiusModel = Model<"pi-messages"> | ClassifierModel<"pi-decision">;
+type RadiusModel = Model<"pi-messages"> | ClassifierModel<"pi-decision"> | ImageModel<"pi-image">;
 
 /** Radius gateway provider with a persisted, dynamically refreshed catalog. */
 export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"pi-messages"> {
@@ -36,6 +37,7 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 	let dynamicModels: RadiusModel[] | undefined;
 	const streams = piMessagesApi();
 	const classifiers = piDecisionApi();
+	const images = piImageApi();
 
 	return {
 		id,
@@ -52,7 +54,8 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 			if (stored) {
 				const restored = stored.models.filter(
 					(model): model is RadiusModel =>
-						model.provider === id && (isModelType(model, "chat") || isModelType(model, "classifier")),
+						model.provider === id &&
+						(isModelType(model, "chat") || isModelType(model, "classifier") || isModelType(model, "image")),
 				);
 				if (
 					!(await context.publish({
@@ -97,5 +100,6 @@ export function radiusProvider(options: RadiusProviderOptions = {}): Provider<"p
 		stream: (model, context, streamOptions) => streams.stream(model, context, streamOptions),
 		streamSimple: (model, context, streamOptions) => streams.streamSimple(model, context, streamOptions),
 		classify: (model, context, classifyOptions) => classifiers.classify(model, context, classifyOptions),
+		generateImages: (model, context, imageOptions) => images.generateImages(model, context, imageOptions),
 	};
 }

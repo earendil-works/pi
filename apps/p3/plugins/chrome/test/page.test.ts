@@ -199,6 +199,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await press(`[data-nav-thing="${plansEntry}"]`);
 		await browser.wait(`document.querySelector('[data-settings] [data-settings-title]')?.textContent === "Plans"`);
+		// A thing with no view of its own shows its Settings view, with no gear to the same view (Mario, on p3-base).
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 		await eventually(
 			() => look("everyone", "read"),
 			(found) => found === "given",
@@ -240,6 +242,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press("[data-gear]");
 		await browser.wait(`location.pathname.endsWith("/settings")`);
 		await browser.wait(`document.querySelector('[data-settings="${sketch}"]')`);
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 	});
 
 	it("opens Pi's Files, Terminals and machine in their views, on a desktop and a phone (ERNDL-1172-1174)", async () => {
@@ -1176,6 +1179,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press(`[data-nav-workspace="${pi}"]`);
 		await browser.wait(`document.querySelector('[data-settings="${pi}"]')?.offsetParent !== null`);
 		assert.equal(await browser.evaluate("history.length"), length, "a duplicate address was pushed");
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 		await shots("19-pi-settings-phone");
 		await press("[data-back]");
 		await browser.wait(`document.querySelector("[data-navigator]")?.offsetParent !== null`);
