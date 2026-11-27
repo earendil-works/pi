@@ -720,7 +720,22 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 	});
 
 	it("a redeemed link keeps an entry there already, spends nothing for a person who does not exist (Opus S3)", async () => {
-		const link = await store.createInvite({ workspace: f.family, name: "x", as: "member", by: ADMIN }, context);
+		// Anna, with Manage people in Family, makes the link: a replaced entry would name her as its source.
+		await store.setTick(
+			{
+				workspace: f.family,
+				thing: f.family,
+				party: person(f.anna),
+				tick: "managePeople",
+				gives: true,
+				source: ADMIN,
+			},
+			context,
+		);
+		const link = await store.createInvite(
+			{ workspace: f.family, name: "x", as: "member", by: { kind: "person", person: f.anna } },
+			context,
+		);
 		assert.equal(await store.redeemInvite({ secret: link, person: "nobody" }, context), null);
 		assert.notEqual(await store.redeemInvite({ secret: link, person: f.kim }, context), null);
 		const entry = (await store.workspaceMembers.here.page({ workspace: f.family }, 100, context)).items.find(
