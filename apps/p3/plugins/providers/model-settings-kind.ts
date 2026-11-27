@@ -4,7 +4,8 @@
 // Its ticks: Use (agents only, a flag: the session's agent gets its overrides), and Edit (for all), which gives `set`,
 // a change of its overrides: an agent may change model settings, never a login's endpoint (decision 118d through a
 // tick of its own, not the workspace's Configure, which reaches every thing linked there; decision 124, main session,
-// reversible). A new link gives the agents Use and Edit and everyone Edit; its overrides are for everyone let in.
+// reversible). A new link gives the agents Use and everyone Edit; agents edit only where Edit is granted to them (Mario,
+// 2026-11-27). Its overrides are for everyone let in.
 
 import { arr, method, obj } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
@@ -28,7 +29,9 @@ export const ModelSettingsKind = defineThing("providers.models", {
 		use: { label: messages.message("tickUseModelSettings"), for: "agents" },
 		edit: { label: messages.message("tickEditModelSettings"), gives: ["set"] },
 	},
-	defaultGrants: { agents: ["use", "edit"], everyone: ["edit"] },
+	// Agents edit only where granted (Mario, 2026-11-27): by default a session's agent changes no prices, limits or
+	// hidden models that reach every session.
+	defaultGrants: { agents: ["use"], everyone: ["edit"] },
 	settings: ["overrides"],
 });
 
