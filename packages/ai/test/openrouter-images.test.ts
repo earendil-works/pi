@@ -327,15 +327,16 @@ describe("openrouter images", () => {
 		expect(output.usage?.cost.total).toBe(0.042);
 		expect(output.usage?.cost.totalFromProvider).toBe(true);
 		expect(output.usage?.reasoning).toBe(0);
+		expect(output.usage?.imageOutput).toBeUndefined();
 	});
 
-	it("reports reasoning tokens as a subset of output tokens", async () => {
+	it("reports reasoning and image tokens as subsets of output tokens", async () => {
 		mockState.nextResponse = {
 			id: "gen-reasoning-1",
 			usage: {
 				prompt_tokens: 15,
 				completion_tokens: 2290,
-				completion_tokens_details: { reasoning_tokens: 1000 },
+				completion_tokens_details: { reasoning_tokens: 1000, image_tokens: 1120 },
 			},
 			choices: [
 				{
@@ -366,5 +367,6 @@ describe("openrouter images", () => {
 		);
 		expect(output.usage?.output).toBe(2290);
 		expect(output.usage?.reasoning).toBe(1000);
+		expect(output.usage?.imageOutput).toBe(1120);
 	});
 });

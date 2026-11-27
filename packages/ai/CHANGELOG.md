@@ -12,6 +12,7 @@
 - Added `aspectRatio` and `size` to `ImagesOptions`, forwarded by `openrouter-images` to OpenRouter's `image_config`
 - Added the `pi-image` API (`POST <baseUrl>/image`), a common protocol for image models analogous to `pi-messages` and `pi-decision`
 - Added image model support to the `radius` provider: parses `images[]` from `/v1/config` into `ImageModel<"pi-image">`, persists/restores them offline, and wires `generateImages()`
+- Added `Usage.imageOutput`, the image output tokens as a subset of `output`. `openrouter-images` sets it from `completion_tokens_details.image_tokens`, and `pi-image` and `pi-decision` pass it through. It stays undefined when the provider does not report the split
 
 ### Changed
 
