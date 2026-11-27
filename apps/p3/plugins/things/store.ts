@@ -29,7 +29,14 @@ import {
 import { AccessIndex, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
-import { AccessHandles, type CreateAnswer, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
+import {
+	AccessHandles,
+	type CreateAnswer,
+	type GrantInput,
+	type ThingHook,
+	ThingHooks,
+	ThingsStore,
+} from "./contract.server.ts";
 import {
 	type Caller,
 	type Item,
@@ -289,25 +296,30 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const seeding = new Map<string, Promise<string>>();
 		/**
 		 * Kind `kind`'s seeded thing (`serveThing`'s `one`): the one its plugin made, else one made in Pi through the
-		 * create path; `invalid` for a kind that asks for none.
+		 * create path, with the input of the generation whose hook runs; `invalid` for a kind that asks for none.
 		 */
 		const seedKind = (kind: string, ctx: Ctx<P3Principal>): Promise<string> => {
 			const running = seeding.get(kind);
 			if (running !== undefined) return running;
 			const seeded = (async () => {
-				const entry = hooks.value.get(kind);
-				if (entry?.value.one === undefined) throw invalid("args", `things: ${kind} has no seeded thing`);
-				const by: Source = { kind: "plugin", plugin: entry.plugin };
-				const found = await self.tx((tx) => writes.one(tx, kind, by), ctx);
-				if (found !== undefined) return found;
-				const workspace = (await self.tx((tx) => rootOf(tx, t), ctx))!;
-				const { name, input } = entry.value.one;
-				const made = { kind, name, workspace, by };
-				return make(
-					{ ...made, input },
-					(tx, changes, thing) => writes.makeOne(tx, changes, { ...made, thing }),
-					ctx,
-				);
+				for (;;) {
+					const entry = hooks.value.get(kind);
+					if (entry?.value.one === undefined) throw invalid("args", `things: ${kind} has no seeded thing`);
+					const by: Source = { kind: "plugin", plugin: entry.plugin };
+					const found = await self.tx((tx) => writes.one(tx, kind, by), ctx);
+					if (found !== undefined) return found;
+					const workspace = (await self.tx((tx) => rootOf(tx, t), ctx))!;
+					// Its plugin reloaded during the reads: asked again of the new generation, so the maker, the input, the
+					// schema and the hook `make` reads (at once, before its first wait) are one generation's.
+					if (hooks.value.get(kind)?.value !== entry.value) continue;
+					const { name, input } = entry.value.one;
+					const made = { kind, name, workspace, by };
+					return make(
+						{ ...made, input },
+						(tx, changes, thing) => writes.makeOne(tx, changes, { ...made, thing }),
+						ctx,
+					);
+				}
 			})();
 			seeding.set(kind, seeded);
 			void seeded.then(
@@ -316,9 +328,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			);
 			return seeded;
 		};
+		/** The kinds' hooks (one per generation) whose seeding failed and was reported: each is reported once. */
+		const failedSeeds = new WeakSet<ThingHook>();
 		/**
 		 * Every kind that asks for a seeded thing has it, once its kind is registered: at the start, and when the
-		 * registries change. A failure is reported; the next start, or the registries changing, tries again.
+		 * registries change. A failure is reported once per generation of the kind's hooks; the next start, or the
+		 * registries changing, tries again.
 		 */
 		const seed = async (ctx: Ctx<P3Principal>): Promise<void> => {
 			for (const [kind, { value }] of hooks.value) {
@@ -326,6 +341,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				try {
 					await seedKind(kind, ctx);
 				} catch (error) {
+					if (failedSeeds.has(value)) continue;
+					failedSeeds.add(value);
 					reportError(`things: the seeded thing of ${kind}`, error, ctx);
 				}
 			}
