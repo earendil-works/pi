@@ -1,9 +1,11 @@
 // The sessions store (`store.ts`) as server code calls it: a row written by the session kind's create hook (this
-// device's machine in a folder of its own under the work root, or a location on a machine there is), its writes refused for a session there is
-// not, an archived session's report of working refused, and the waker's `working` without archived sessions.
+// device's machine in a folder of its own under the work root, or a location on a machine there is), its writes
+// refused for a session there is not, an archived session's report of working refused, the waker's `working` without archived sessions, and rows older
+// code wrote rewritten on the update (decision 125: this device's machine, a session's own folder moved to the work
+// root; a two-version restart is not possible in-tree, so a stand-in of the older store writes them).
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -157,7 +159,7 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 		}),
 	);
 
-	it("names this device's machine once the store starts, and a session works there (Files opens it)", async () => {
+	it("names this device's machine once the store starts, moves a session's own folder to the work root, and a session works there (Files opens it)", async () => {
 		await w.close(context);
 		const runtime = {
 			dataDir,
@@ -172,10 +174,25 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 			{ name: "@earendil-works/p3-sessions", facet: older },
 		]);
-		await (await w.host.get(OldStore, {}, context)).put(
-			{ id: "old", environment: "this-device", folder: dataDir },
-			context,
-		);
+		const work = join(dataDir, "work");
+		const own = (id: string) => join(dataDir, "folders", id);
+		// A session in its own folder, as the older code made it, with a file in it.
+		await mkdir(own("own"), { recursive: true });
+		await writeFile(join(own("own"), "marker"), "prior-content");
+		// A move a crash cut short after the rename: the folder is at its new place only.
+		await mkdir(join(work, "cut"), { recursive: true });
+		await writeFile(join(work, "cut", "marker"), "moved");
+		// The new place taken: nothing is overwritten, the files stay where they are.
+		await mkdir(own("taken"), { recursive: true });
+		await writeFile(join(own("taken"), "marker"), "here");
+		await mkdir(join(work, "taken"), { recursive: true });
+		await writeFile(join(work, "taken", "other"), "there");
+		const before = await w.host.get(OldStore, {}, context);
+		// A location the person chose (not the session's own folder).
+		await before.put({ id: "old", environment: "this-device", folder: dataDir }, context);
+		for (const id of ["own", "cut", "taken"]) {
+			await before.put({ id, environment: "this-device", folder: own(id) }, context);
+		}
 		// The update: the sessions plugin's code as it is now, on the same store.
 		await w.reload("@earendil-works/p3-sessions", context, sessionsServer);
 		store = await w.host.get(SessionsStore, {}, context);
@@ -185,6 +202,16 @@ describe("a Pi's rows from before the machine was a thing (decision 125)", () =>
 			(environment) => environment === machine,
 		);
 		assert.equal((await row("old"))?.location.folder, dataDir);
+		await eventually(
+			async () => (await row("own"))?.location,
+			(location) => location?.environment === machine && location.folder === join(work, "own"),
+		);
+		assert.equal(await readFile(join(work, "own", "marker"), "utf8"), "prior-content");
+		await assert.rejects(stat(own("own")), { code: "ENOENT" });
+		assert.equal((await row("cut"))?.location.folder, join(work, "cut"));
+		assert.equal((await row("taken"))?.location.folder, own("taken"));
+		assert.equal(await readFile(join(own("taken"), "marker"), "utf8"), "here");
+		assert.equal(await readFile(join(work, "taken", "other"), "utf8"), "there");
 		// The machine's host is reached for it, as Files and the harness reach it.
 		const hosts = (await w.host.registry(MachineHosts, context)).value;
 		assert.ok((await hosts(machine, context)) !== undefined);

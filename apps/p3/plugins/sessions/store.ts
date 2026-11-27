@@ -2,10 +2,10 @@
 // it was archived), its named query, and every write. A session's row is keyed by its address, so a session's export,
 // import and delete carry it. Who may do what is the things plugin's (the session's workspace); this store checks no
 // caller and holds no members. Rows older code wrote naming this device as `this-device` are rewritten once per Pi
-// to its machine's id (decision 125).
+// to its machine's id, a session's own folder moved from the data directory to the work root (decision 125).
 
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, mkdir, rename, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
 	and,
 	bool,
@@ -84,16 +84,35 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		// This device's machine: where a session works unless it says otherwise.
 		const device = self.get(OneThing, { kind: MACHINE_KIND });
 		const runtime = self.registry(ServerRuntime);
-		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now (one
-		// read of every row, no index on `environment`: it runs once, the marker says so after).
+		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now, and
+		// a session's own folder moves to where new sessions get theirs (one read of every row, no index on `environment`:
+		// it runs once, the marker says so after). The folders move outside a transaction: a copy may take long.
 		self.onLive(async (ctx) => {
 			if (rewrites.value.thisDevice) return;
 			const machine = await until(device.thing, (id) => id !== "", ctx);
+			const old = query(Rows).where((s) => eq(s.environment, OLD_DEVICE));
+			const found = await self.tx(async (tx) => {
+				const all: { id: RowOf<typeof ROW>["id"]; folder: string }[] = [];
+				for await (const row of tx.rows(rows, old)) all.push({ id: row.id, folder: row.folder });
+				return all;
+			}, ctx);
+			const moved: typeof found = [];
+			for (const { id, folder } of found) {
+				const session = id.params.id;
+				const own = join(runtime.value.dataDir, "folders", session);
+				// A location the person chose stays where it is.
+				moved.push({
+					id,
+					folder: folder === own ? await movedFolder(own, join(runtime.value.workRoot, session)) : folder,
+				});
+			}
 			await self.tx(async (tx) => {
-				const old = query(Rows).where((s) => eq(s.environment, OLD_DEVICE));
-				const ids: RowOf<typeof ROW>["id"][] = [];
-				for await (const row of tx.rows(rows, old)) ids.push(row.id);
-				for (const id of ids) tx.update(rows, { id }, { environment: machine });
+				for (const { id, folder } of moved) {
+					// A session deleted while its folder moved stays deleted.
+					if ((await tx.get(rows, { id })) !== undefined) {
+						tx.update(rows, { id }, { environment: machine, folder });
+					}
+				}
 				return null;
 			}, ctx);
 			await rewrites.change((draft) => {
@@ -187,6 +206,42 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 	});
 }
+
+/**
+ * Moves a session's own folder `from` to `to` and answers where its files are now: `to` once moved; `from` when `to`
+ * is taken or the move failed (nothing is lost, nothing overwritten); `to` when only `to` is there (a move a crash cut
+ * short after the rename).
+ */
+async function movedFolder(from: string, to: string): Promise<string> {
+	const [source, target] = await Promise.all([present(from), present(to)]);
+	if (target) return source ? from : to;
+	if (!source) return from;
+	try {
+		await mkdir(dirname(to), { recursive: true, mode: 0o700 });
+		await rename(from, to);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EXDEV") return from;
+		// Another file system: a copy beside the target, renamed into place once whole, so `to` is never a part.
+		const part = `${to}.moving`;
+		try {
+			await rm(part, { recursive: true, force: true });
+			await cp(from, part, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+			await rename(part, to);
+		} catch {
+			await rm(part, { recursive: true, force: true });
+			return from;
+		}
+		await rm(from, { recursive: true, force: true });
+	}
+	return to;
+}
+
+/** Whether `path` is there. */
+const present = (path: string) =>
+	stat(path).then(
+		() => true,
+		() => false,
+	);
 
 /** A table row as the store's queries answer it. */
 function shown({ id, environment, folder, state, archivedAt, model, ...row }: RowOf<typeof ROW>) {
