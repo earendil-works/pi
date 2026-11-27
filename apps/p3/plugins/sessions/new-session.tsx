@@ -1,10 +1,10 @@
 // The session kind's create step (`SessionCreate`, a kind's `Create` in `ThingParts`): where the new session works, a
 // machine of `Environments` and a folder there, pre-filled from the nearest session defaults (`SessionDefaultsHere`)
-// until the person changes them; no folder, this device in a folder of the session's own. It hands the session kind's
-// make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`, and starts from the
-// input it last handed (`input`: a live apply keeps the machine and folder chosen; a machine without a folder is no
-// input, as it makes no difference to the session, so it is not kept). With no folder, it says when this
-// device is not available to the person where the session is made: the session then starts on no machine (R41).
+// and following them until the person changes them; no folder, this device in a folder of the session's own. It hands
+// the session kind's make input to the page's add dialog (`onReady`), which makes the session with `Workspace.make`,
+// and starts from the input it last handed (`input`: a live apply keeps the choice: following the defaults, the own
+// folder, or a machine and folder). With no folder, it says when this device is not available to the person where the
+// session is made: the session then starts on no machine (R41).
 
 import { Dropdown, Field, Input } from "@earendil-works/elanor-react";
 import { Environments, type JsonValue, Me, MyAnswer, SessionDefaultsHere, ThisDevice } from "@earendil-works/p3/v1";
@@ -19,16 +19,20 @@ import styles from "./new-session.module.css";
 export const SessionIcon = CodeIcon;
 
 /**
- * The create step: a machine (the defaults', else this device first) and a folder (the defaults'); `onReady` gets
- * `{ location: null }` while the folder is empty (the session's own folder) and `{ location }` once one is given.
+ * The create step: a machine (the defaults', else this device first) and a folder (the defaults'). Its input keeps
+ * three choices apart (Astra, push 5), also through a remount: `{}` while the person changed nothing (the make follows
+ * the defaults then, as they are then); `{ location: null }` once they emptied the folder (the session's own folder);
+ * `{ location }` once they chose a machine or a folder.
  */
 export function SessionCreate(props: ThingCreateProps) {
 	const { t } = useMessages(messages);
 	const environments = useWatch(useLive(useHold(Environments, {}))?.environments);
-	const last = locationOf(props.input);
+	const last = choiceOf(props.input);
 	// `undefined`: not changed by the person (nor in the input it last handed), so the defaults' show.
-	const [typed, setFolder] = useState<string | undefined>(last?.folder);
-	const [chosen, setChosen] = useState<string | null>(last?.machine ?? null);
+	const [typed, setFolder] = useState<string | undefined>(
+		last.kind === "own" ? "" : last.kind === "at" ? last.folder : undefined,
+	);
+	const [chosen, setChosen] = useState<string | null>(last.kind === "at" ? last.machine : null);
 	const preset = useWatch(useLive(useHold(SessionDefaultsHere, { workspace: props.workspace }))?.defaults)?.location;
 	const folder = typed ?? preset?.folder ?? "";
 	const me = useWatch(useLive(useHold(Me, {}))?.me);
@@ -37,11 +41,14 @@ export function SessionCreate(props: ThingCreateProps) {
 	// This device's machine is the list's first.
 	const machine = chosen ?? preset?.machine ?? items[0]?.value ?? null;
 	const { onReady } = props;
+	const edited = typed !== undefined || chosen !== null;
 	useEffect(() => {
 		const trimmed = folder.trim();
-		// No folder: the session's own (`null`), not the defaults' the person cleared.
-		onReady(trimmed === "" || machine === null ? { location: null } : { location: { machine, folder: trimmed } });
-	}, [folder, machine, onReady]);
+		if (!edited) onReady({});
+		// Emptied: the session's own folder (`null`), not the defaults' the person cleared.
+		else
+			onReady(trimmed === "" || machine === null ? { location: null } : { location: { machine, folder: trimmed } });
+	}, [edited, folder, machine, onReady]);
 	return (
 		<div className={styles.form} data-new-session="">
 			<Dropdown.Root items={items} onValueChange={(value: string | null) => setChosen(value)} value={machine}>
@@ -88,14 +95,20 @@ function DeviceNote(props: { readonly workspace: string; readonly caller: string
 	return answer === null ? <Field.Description data-no-machine="">{t("noMachineHere")}</Field.Description> : null;
 }
 
-/**
- * The location in an input this step handed before (`{ location }`), if any. The dialog keeps it as `JsonValue`, so
- * its shape is read again here.
- */
-function locationOf(input: JsonValue | undefined): { readonly machine: string; readonly folder: string } | undefined {
-	if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
+/** What an input this step handed before says: nothing chosen, the own folder, or a machine and folder chosen. */
+type Choice =
+	| { readonly kind: "follows" }
+	| { readonly kind: "own" }
+	| { readonly kind: "at"; readonly machine: string; readonly folder: string };
+
+const FOLLOWS: Choice = { kind: "follows" };
+
+/** The choice in an input this step handed before. The dialog keeps it as `JsonValue`, so its shape is read again. */
+function choiceOf(input: JsonValue | undefined): Choice {
+	if (typeof input !== "object" || input === null || Array.isArray(input) || !("location" in input)) return FOLLOWS;
 	const location = input.location;
-	if (typeof location !== "object" || location === null || Array.isArray(location)) return undefined;
+	if (location === null) return { kind: "own" };
+	if (typeof location !== "object" || Array.isArray(location)) return FOLLOWS;
 	const { machine, folder } = location;
-	return typeof machine === "string" && typeof folder === "string" ? { machine, folder } : undefined;
+	return typeof machine === "string" && typeof folder === "string" ? { kind: "at", machine, folder } : FOLLOWS;
 }

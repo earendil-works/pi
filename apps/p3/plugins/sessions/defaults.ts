@@ -27,9 +27,10 @@ import {
 	str,
 	union,
 } from "@earendil-works/p3/v1";
-import { Gives } from "../things/contract.server.ts";
+import { MACHINE_KIND } from "../environments/contract.ts";
+import { Gives, ThingsStore } from "../things/contract.server.ts";
 import { serveThing } from "../things/serve.ts";
-import { SessionDefaults, SessionDefaultsHere } from "./contract.ts";
+import { ModelChoice, SessionDefaults, SessionDefaultsHere } from "./contract.ts";
 import { SessionDefaultsKind } from "./kind.ts";
 import { messages } from "./messages.ts";
 import { ModelChoiceV1 } from "./store.ts";
@@ -47,10 +48,21 @@ export function serveDefaultsKind(host: FacetHost<P3Principal>): void {
 			// `Workspace.configure` checked the value against the `defaults` member's schema.
 			if (settings.defaults === undefined) return;
 			const defaults = settings.defaults as SessionDefaults;
-			// A folder a make would refuse (the store's full-path rule) is refused here already; `""` is the own folder.
-			const folder = defaults.location?.folder ?? "";
-			if (folder !== "" && !isAbsolute(folder)) {
-				throw invalid("args", `sessions: ${folder} is no full path`, { message: messages.message("notFullPath") });
+			// What a make would refuse is refused here already (Astra, push 5): a folder that is no full path (`""` is the
+			// own folder), a machine that is no machine thing.
+			if (defaults.location !== null) {
+				const { machine, folder } = defaults.location;
+				if (folder !== "" && !isAbsolute(folder)) {
+					throw invalid("args", `sessions: ${folder} is no full path`, {
+						message: messages.message("notFullPath"),
+					});
+				}
+				const found = (await (await ctx.get(ThingsStore, {})).things.one.page({ thing: machine }, 1, ctx)).items[0];
+				if (found?.kind !== MACHINE_KIND) {
+					throw invalid("args", `sessions: no machine ${machine}`, {
+						message: messages.message("noMachine", machine),
+					});
+				}
 			}
 			await (await ctx.get(DefaultsSettings, {})).set({ thing, defaults }, ctx);
 		},
@@ -160,7 +172,8 @@ const SettingsV1 = defineTable("sessions.settings", {
 const Settings = evolveTable(SettingsV1, (t) =>
 	t.json(
 		"defaults",
-		json(SessionDefaults, {
+		// Its schema as Pis deployed it (a history is never edited in place, Astra): no location yet.
+		json(obj({ model: union([ModelChoice, nul()]), shared: bool(), opensWith: union([str({ max: 200 }), nul()]) }), {
 			version: 2,
 			// Version 1 cells are this plugin's own writes of the same object; the column checks the result once.
 			migrate: (old) => ({ ...(old as SessionDefaults), model: null }),

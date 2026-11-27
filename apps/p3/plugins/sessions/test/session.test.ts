@@ -43,7 +43,7 @@ import { Workspace } from "../../things/workspace.ts";
 import { WorkspaceKind } from "../../things/workspaces.ts";
 import { SessionsStore } from "../contract.server.ts";
 import type { SessionDefaults } from "../contract.ts";
-import { nearestDefaults } from "../defaults.ts";
+import { DefaultsSettings, nearestDefaults } from "../defaults.ts";
 import { SessionDefaultsKind, SessionKind, SessionObject } from "../kind.ts";
 import sessionsServer from "../server.ts";
 
@@ -542,6 +542,26 @@ describe("a default location (the session defaults' location)", () => {
 		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 		await assert.rejects(defaultsIn(fam, { ...PRIVATE, location: { machine, folder: "srv" } }), /no full path/);
 		await defaultsIn(fam, { ...PRIVATE, location: { machine, folder: "" } });
+	});
+
+	// Astra, push 5: a board's id as the preset machine made every make with no location fail.
+	it("refuses a default machine that is no machine, and passes over one that is no machine any more at a make", async () => {
+		const { leo, fam } = await family();
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		const board = await store.create({ kind: "test.board", name: "b", workspace: fam, by: BY }, context);
+		await assert.rejects(defaultsIn(fam, { ...PRIVATE, location: { machine: board, folder: "/srv" } }), /no machine/);
+		// Settings a check of the time let through (the thing then a machine, since remade as something else), as data.
+		const thing = await defaultsIn(fam, { ...PRIVATE, shared: true });
+		const settings = await w.host.get(DefaultsSettings, {}, context);
+		const stale = { ...PRIVATE, shared: true, location: { machine: board, folder: "/srv" } };
+		await settings.set({ thing, defaults: stale }, context);
+		const session = await makeSession(leo, fam, "fallen back");
+		assert.deepEqual(await locationOf(leo, session), { machine, folder: join(dataDir, "work", pi, session) });
+		// Given explicitly, it still fails.
+		await assert.rejects(
+			makeSession(leo, fam, "given", { location: { machine: board, folder: "/srv" } }),
+			/no machine/,
+		);
 	});
 });
 
