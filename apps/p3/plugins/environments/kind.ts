@@ -40,7 +40,8 @@ export const MachineKind = defineThing(MACHINE_KIND, {
 	create: { input: MachineInput },
 	state: { info: MachineInfo },
 	ticks: { work: { label: messages.message("tickWork"), for: "agents" } },
-	// A Read share's guests are let in with no tick (decision 100), so Files and Terminals let them browse and watch.
+	// A Read share's guests are let in with no tick (decision 100): what they may do there is Files' and Terminals'
+	// ticks, which nobody gets by default.
 	defaultGrants: { everyone: [], agents: ["work"], guests: [] },
 });
 

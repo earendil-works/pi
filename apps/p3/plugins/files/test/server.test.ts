@@ -70,6 +70,8 @@ beforeEach(async () => {
 	pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 	files = await seeded(await t.host.get(OneThing, { kind: FilesKind.name }, context), context);
 	machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+	// Who may lets everyone in Pi browse, as the owner would: the kind gives nobody anything ("the defaults").
+	await grant(pi, files, { kind: "everyone" }, ["browse"]);
 	root = await mkdtemp(join(tmpdir(), "p3-files-test-"));
 	await mkdir(join(root, "src"));
 	await writeFile(join(root, "src", "main.ts"), "console.log(1);\n");
@@ -152,7 +154,7 @@ function deadline<T>(promise: Promise<T>, ms = 5000): Promise<T> {
 }
 
 describe("Files and its ticks", () => {
-	it("is made in Pi once, and gives everyone there Browse only; people only", async () => {
+	it("is made in Pi once; Browse, as Who may gives it, gives what it names; people only", async () => {
 		const ann = await person("Ann");
 		assert.deepEqual(await holding(ann, pi, async (f) => [...f.granted].sort()), ["entries", "open", "search"]);
 		assert.equal(
@@ -249,8 +251,30 @@ describe("the owner, guests and the one thing (slice 1's rules)", () => {
 		]);
 	});
 
-	it("gives a Read share's guests Browse (decision 100)", () => {
-		assert.deepEqual(FilesKind.info.defaultGrants.guests, ["browse"]);
+	// Round 5 (Opus M2): a machine's files are all of it, its secrets too, until folder limits exist (ERNDL-1151).
+	it("gives nobody anything by default: not a person in Pi, not a guest, not an agent", async () => {
+		assert.deepEqual(FilesKind.info.defaultGrants, {});
+		// What Who may gave in this file's setup, reset: the kind's defaults alone.
+		await things.setTick(
+			{ workspace: pi, thing: files, party: { kind: "everyone" }, tick: "browse", source: BY },
+			context,
+		);
+		await refused(
+			holding(await person("Ann"), pi, async () => null),
+			"forbidden",
+		);
+		const link = await things.createInvite({ workspace: pi, name: "Grandma", as: "guest", by: BY }, context);
+		const grandma = (await things.redeemInvite({ secret: link }, context))!;
+		const guest: Person = { kind: "person", id: grandma.person, name: grandma.name };
+		await refused(
+			holding(guest, pi, async () => null),
+			"forbidden",
+		);
+		await things.putParty({ workspace: pi, party: { kind: "agent", session: "s1" }, source: BY }, context);
+		await refused(
+			holding({ kind: "worker", session: "s1" }, pi, async () => null),
+			"forbidden",
+		);
 	});
 
 	it("is made again with a new id when its last link goes, and the new one is the one in Pi", async () => {
@@ -258,6 +282,7 @@ describe("the owner, guests and the one thing (slice 1's rules)", () => {
 		const again = await t.host.get(OneThing, { kind: FilesKind.name }, context);
 		const next = await until(again.thing, (id) => id !== "" && id !== files, within("the new Files", context));
 		const ann = await person("Ann");
+		await grant(pi, next, { kind: "person", person: ann.id }, ["browse"]);
 		const granted = await t.root(
 			async (ctx) =>
 				[...(await ctx.get(Files, { workspace: pi, thing: next }, { readyTimeout: 500 })).granted].sort(),

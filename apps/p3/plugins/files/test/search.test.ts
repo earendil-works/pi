@@ -78,6 +78,14 @@ describe("Files' search", () => {
 		const by = { kind: "plugin", plugin: "test" } as const;
 		const id = await things.createPerson({ name: "Ann", madeBy: by }, context);
 		await things.putParty({ workspace: pi, party: { kind: "person", person: id }, source: by }, context);
+		const browse = {
+			workspace: pi,
+			thing,
+			party: { kind: "person", person: id },
+			tick: "browse",
+			gives: true,
+		} as const;
+		await things.setGrants({ source: by, grants: [browse] }, context);
 		search = (path, query, call = context) =>
 			t.root(
 				async (ctx) =>

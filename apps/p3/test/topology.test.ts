@@ -137,16 +137,7 @@ describe("reloads while in use", () => {
 	it("the files and terminals plugins: a person's Files and Terminals go on", async () => {
 		const t = await topology(context);
 		running = t;
-		// A person put into Pi, whom its defaults give Files and Terminals.
-		const [pi, files, terminals, machine, ann] = await t.server.root(async (ctx) => {
-			const things = await ctx.get(ThingsStore, {});
-			const one = async (kind: string) => await seeded(await ctx.get(OneThing, { kind }), ctx);
-			const root = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
-			const by = { kind: "plugin", plugin: "test" } as const;
-			const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
-			await things.putParty({ workspace: root, party: { kind: "person", person }, source: by }, ctx);
-			return [root, await one(FilesKind.name), await one(TerminalsKind.name), await one(MACHINE_KIND), person];
-		}, context);
+		const [pi, files, terminals, machine, ann] = await annInPi(t);
 		const person = await t.client({ kind: "person", id: ann, name: "Ann" });
 		const browser = await person.get(Files, { workspace: pi, thing: files }, context);
 		const panes = await person.get(Terminals, { workspace: pi, thing: terminals }, context);
@@ -164,15 +155,7 @@ describe("reloads while in use", () => {
 	it("the environments, files and terminals plugins: the old objects are collected after a reload (guide 8.6)", async () => {
 		const t = await topology(context);
 		running = t;
-		const [pi, files, terminals, machine, ann] = await t.server.root(async (ctx) => {
-			const things = await ctx.get(ThingsStore, {});
-			const one = async (kind: string) => await seeded(await ctx.get(OneThing, { kind }), ctx);
-			const root = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
-			const by = { kind: "plugin", plugin: "test" } as const;
-			const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
-			await things.putParty({ workspace: root, party: { kind: "person", person }, source: by }, ctx);
-			return [root, await one(FilesKind.name), await one(TerminalsKind.name), await one(MACHINE_KIND), person];
-		}, context);
+		const [pi, files, terminals, machine, ann] = await annInPi(t);
 		const person = await t.client({ kind: "person", id: ann, name: "Ann" });
 		const browser = await person.get(Files, { workspace: pi, thing: files }, context);
 		const panes = await person.get(Terminals, { workspace: pi, thing: terminals }, context);
@@ -419,3 +402,26 @@ describe("counted work", () => {
 		);
 	});
 });
+
+/**
+ * Pi, its Files, Terminals and machine, and person Ann put into Pi, whom Who may gives Browse and Watch (the kinds give
+ * people nothing by default).
+ */
+function annInPi(t: Topology) {
+	return t.server.root(async (ctx) => {
+		const things = await ctx.get(ThingsStore, {});
+		const one = async (kind: string) => await seeded(await ctx.get(OneThing, { kind }), ctx);
+		const root = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
+		const by = { kind: "plugin", plugin: "test" } as const;
+		const person = await things.createPerson({ name: "Ann", madeBy: by }, ctx);
+		const party = { kind: "person", person } as const;
+		await things.putParty({ workspace: root, party, source: by }, ctx);
+		const [files, terminals] = [await one(FilesKind.name), await one(TerminalsKind.name)];
+		const grants = [
+			{ workspace: root, thing: files, party, tick: "browse", gives: true },
+			{ workspace: root, thing: terminals, party, tick: "watch", gives: true },
+		];
+		await things.setGrants({ source: by, grants }, ctx);
+		return [root, files, terminals, await one(MACHINE_KIND), person] as const;
+	}, context);
+}

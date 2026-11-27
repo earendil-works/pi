@@ -51,6 +51,15 @@ describe("Files' routes and the machine's host", () => {
 		const files = await seeded(await t.host.get(OneThing, { kind: FilesKind.name }, context), context);
 		const machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 		const by = { kind: "plugin", plugin: "test" } as const;
+		// Who may lets everyone in Pi browse, as the owner would: the kind gives nobody anything.
+		const everyone = {
+			workspace: pi,
+			thing: files,
+			party: { kind: "everyone" },
+			tick: "browse",
+			gives: true,
+		} as const;
+		await things.setGrants({ source: by, grants: [everyone] }, context);
 		address = `${DOWNLOAD_PATH}?${new URLSearchParams({ workspace: pi, thing: files, machine, path: join(root, "file") })}`;
 		person = async (name, withheld) => {
 			const id = await things.createPerson({ name, madeBy: by }, context);

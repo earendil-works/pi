@@ -4,7 +4,7 @@
 // listed there only. One terminal, many viewers: each viewer reads its bytes from the address `attach` answers (its
 // kept output, then what follows, raw), the agent its kept output with `backlog`. Watch (for people) lists terminals
 // and attaches to them; Use (people and agents) does that too, and opens terminals, types in them, reads their kept
-// output, resizes and closes them.
+// output, resizes and closes them. By default only the agents get Use; people get a tick through Who may.
 
 import { arr, int, method, obj, opt, str } from "@earendil-works/p3/v1";
 import { TerminalRow } from "../environments/contract.ts";
@@ -67,8 +67,9 @@ export const TerminalsKind = defineThing("terminals.pane", {
 			gives: ["terminals", "attach", "backlog", "open", "type", "resize", "close"],
 		},
 	},
-	// A Read share's guests watch (decision 100): Watch changes nothing.
-	defaultGrants: { everyone: ["watch"], agents: ["use"], guests: ["watch"] },
+	// The agents use them (the terminal tool); people, guests too, only once Who may lets them: a terminal shows what
+	// runs on the machine (round 5, decision 100's guests line withdrawn here, until folder limits, ERNDL-1151).
+	defaultGrants: { agents: ["use"] },
 });
 
 /** Terminals held in a workspace: `TerminalsKind`'s contract. */

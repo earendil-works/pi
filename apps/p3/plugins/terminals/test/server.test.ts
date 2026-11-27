@@ -72,6 +72,8 @@ beforeEach(async () => {
 	pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 	terminals = await seeded(await t.host.get(OneThing, { kind: TerminalsKind.name }, context), context);
 	machine = await seeded(await t.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+	// Who may lets everyone in Pi watch, as the owner would: the kind gives people nothing ("the defaults").
+	await grant(pi, terminals, { kind: "everyone" }, ["watch"]);
 });
 
 afterEach(async () => {
@@ -178,8 +180,25 @@ describe("the owner, guests and the one thing (slice 1's rules)", () => {
 		]);
 	});
 
-	it("gives a Read share's guests Watch (decision 100)", () => {
-		assert.deepEqual(TerminalsKind.info.defaultGrants.guests, ["watch"]);
+	// Round 5 (Opus M2): a terminal shows what runs on the machine; people get it only once Who may lets them.
+	it("gives the agents Use by default, and no person, guest or not", async () => {
+		assert.deepEqual(TerminalsKind.info.defaultGrants, { agents: ["use"] });
+		// What Who may gave in this file's setup, reset: the kind's defaults alone.
+		await things.setTick(
+			{ workspace: pi, thing: terminals, party: { kind: "everyone" }, tick: "watch", source: BY },
+			context,
+		);
+		await refused(
+			holding(await person("Ann"), async () => null),
+			"forbidden",
+		);
+		const link = await things.createInvite({ workspace: pi, name: "Grandma", as: "guest", by: BY }, context);
+		const grandma = (await things.redeemInvite({ secret: link }, context))!;
+		await refused(
+			holding({ kind: "person", id: grandma.person, name: grandma.name }, async () => null),
+			"forbidden",
+		);
+		assert.ok((await holding(await agent("s1"), async (w) => [...w.granted])).includes("open"));
 	});
 
 	it("is made again with a new id when its last link goes, its terminals ended", async () => {
