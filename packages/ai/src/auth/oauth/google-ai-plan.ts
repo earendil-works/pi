@@ -4,8 +4,6 @@
  * token endpoint carries a proof signed with that key. Model calls use the access token as a plain Bearer
  * token, without DPoP.
  *
- * Prototype: the private key is stored in the credential (auth.json) instead of the OS credential store.
- *
  * NOTE: This module uses node:http through the callback server. It is only reachable through the lazily
  * loaded OAuth flow modules, never from browser-facing entry points.
  */
