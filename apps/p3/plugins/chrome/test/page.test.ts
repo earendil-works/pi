@@ -25,7 +25,7 @@ import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, People, until } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, until } from "@earendil-works/p3/v1";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
@@ -70,6 +70,16 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 	let family: string;
 	/** Ada, invited and put into Pi (her person id). */
 	let ada: string;
+
+	/** A person the owner made, and a browser cookie signing them in (what an invite link they redeemed gives). */
+	const invite = (name: string) =>
+		t.host.root(async (ctx) => {
+			const things = await ctx.get(ThingsStore, {});
+			const person = await things.createPerson({ name, madeBy: { kind: "person", person: ownerId } }, ctx);
+			const principal = { kind: "person", id: person, name } as const;
+			const issued = await (await ctx.get(SignIns, {})).issue({ principal, kind: "browser", label: "test" }, ctx);
+			return { person, cookie: issued.cookie.split(";")[0]! };
+		}, context);
 
 	before(async () => {
 		await mkdir(SHOTS, { recursive: true });
@@ -196,6 +206,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await press(`[data-nav-thing="${plansEntry}"]`);
 		await browser.wait(`document.querySelector('[data-settings] [data-settings-title]')?.textContent === "Plans"`);
+		// A thing with no view of its own shows its Settings view, with no gear to the same view (Mario, on p3-base).
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 		await eventually(
 			() => look("everyone", "read"),
 			(found) => found === "given",
@@ -243,6 +255,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press("[data-gear]");
 		await browser.wait(`location.pathname.endsWith("/settings")`);
 		await browser.wait(`document.querySelector('[data-settings="${sketch}"]')`);
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 	});
 
 	it("shows a canvas to a person without Draw as a viewer: the drawer's shapes and named pointer live, desktop and phone", async () => {
@@ -662,9 +675,9 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("shows a person with Read only the session's transcript, with no way to send", async () => {
 		// Ada is invited, put into Pi, and her Send on the session withheld: she keeps everyone's Read.
-		const invited = await (await owner.get(People, {}, context)).invite({ name: "Ada" }, context);
+		const invited = await invite("Ada");
 		ada = invited.person;
-		const { link } = invited;
+		const { cookie } = invited;
 		await t.host.root(async (ctx) => {
 			const store = await ctx.get(ThingsStore, {});
 			const party = { kind: "person", person: ada } as const;
@@ -676,7 +689,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			);
 		}, context);
 		await browser.signOut();
-		await browser.open(`${origin}${link}`);
+		await browser.signIn(origin, cookie);
+		await browser.open(`${origin}/`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Ada")`);
 		await browser.open(`${origin}/w/${session}`);
 		await browser.wait(`document.querySelector('[data-session-view="${session}"] [data-transcript="reader"]')`);
@@ -804,7 +818,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-add-offer="link:${sketch}"]')`);
 		await press('[data-add-thing-dialog] button[aria-label="Close"]');
 		// Bea has Link in Pi (so Pi's things are linkable for her) and Make in Family, where her Link is withheld.
-		const { person: bea, link } = await (await owner.get(People, {}, context)).invite({ name: "Bea" }, context);
+		const { person: bea, cookie } = await invite("Bea");
 		await t.host.root(async (ctx) => {
 			const store = await ctx.get(ThingsStore, {});
 			const party = { kind: "person", person: bea } as const;
@@ -823,7 +837,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			);
 		}, context);
 		await browser.signOut();
-		await browser.open(`${origin}${link}`);
+		await browser.signIn(origin, cookie);
+		await browser.open(`${origin}/`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Bea")`);
 		await browser.open(`${origin}/w/${family}/settings`);
 		await press('[data-settings-tab="what"]');
@@ -840,14 +855,15 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			{ kind: "things.workspace", name: "Stuff" },
 			context,
 		);
-		const { person: max, link } = await (await owner.get(People, {}, context)).invite({ name: "Max" }, context);
+		const { person: max, cookie } = await invite("Max");
 		await t.host.root(async (ctx) => {
 			const store = await ctx.get(ThingsStore, {});
 			const source = { kind: "person", person: ownerId } as const;
 			await store.putParty({ workspace: stuff, party: { kind: "person", person: max }, source }, ctx);
 		}, context);
 		await browser.signOut();
-		await browser.open(`${origin}${link}`);
+		await browser.signIn(origin, cookie);
+		await browser.open(`${origin}/`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Max")`);
 		await browser.open(`${origin}/`);
 		await browser.wait(`location.pathname === "/w/${stuff}"`);
@@ -888,8 +904,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			await browser.signIn(origin, ownerCookie);
 		}
 		// Gus, signed in as the guest he is, opens a member link: he keeps his sign-in (no new person "Gus again") and is
-		// put into Family as himself. (A person of the people plugin's own, as Ada, is not in the things store until
-		// ERNDL-1144 push B: their link is refused.)
+		// put into Family as himself.
 		const url = await link("member", "Gus again");
 		await browser.signOut();
 		await browser.signIn(origin, gusCookie);
@@ -1029,7 +1044,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 
 	it("disables Add, saying why, when Make of the chosen kind is withdrawn while the dialog is open", async () => {
 		const workspace = await owner.get(Workspace, { workspace: pi }, context);
-		const { person, link } = await (await owner.get(People, {}, context)).invite({ name: "Maker" }, context);
+		const { person, cookie } = await invite("Maker");
 		const party = { kind: "person", person } as const;
 		// The Workspace's putParty takes only whom its picker offers: an invited person is put in by the store.
 		await t.host.root(async (ctx) => {
@@ -1040,7 +1055,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			await workspace.setTick!({ thing: pi, party, tick: `@make:${kind}`, gives: true }, context);
 		}
 		await browser.signOut();
-		await browser.open(`${origin}${link}`);
+		await browser.signIn(origin, cookie);
+		await browser.open(`${origin}/`);
 		await browser.wait(`document.querySelector("[data-person-menu]")?.textContent.includes("Maker")`);
 		await browser.open(`${origin}/w/${pi}/settings`);
 		await press('[data-settings-tab="what"]');
@@ -1077,6 +1093,7 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await press(`[data-nav-workspace="${pi}"]`);
 		await browser.wait(`document.querySelector('[data-settings="${pi}"]')?.offsetParent !== null`);
 		assert.equal(await browser.evaluate("history.length"), length, "a duplicate address was pushed");
+		await browser.wait(`document.querySelector("[data-gear]") === null`);
 		await shots("19-pi-settings-phone");
 		await press("[data-back]");
 		await browser.wait(`document.querySelector("[data-navigator]")?.offsetParent !== null`);

@@ -44,7 +44,7 @@ const t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), {
 	stubs: [],                                 // small facets serving the contracts t.unserved() lists
 }, context);
 try {
-	// The owner is a person: the one the people plugin's `persons.owner` reads (made at the first start).
+	// The owner is a person: the one the things store's `persons.owners` reads (made at the first start).
 	const person = { kind: "person", id: "p1", name: "Ann" } as const;
 	await t.root(async (ctx) => { /* ctx.get(...), calls, asserts */ }, context, { principal: person });
 	assert.deepEqual(t.unserved(), []);

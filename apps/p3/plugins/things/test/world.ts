@@ -16,12 +16,14 @@ import {
 	type Facet,
 	type Host,
 	type HostError,
+	invalid,
 	openStore,
 	type P3Principal,
 	type PluginFacet,
 	Server,
 	sqliteBackend,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { SignIns } from "../../sign-in/contract.ts";
 import thingsServer from "../server.ts";
@@ -29,6 +31,21 @@ import { BOARD } from "./kinds.ts";
 
 /** The things plugin as a host loads it. */
 export const THINGS: PluginFacet<P3Principal> = { name: "@earendil-works/p3-things", facet: thingsServer };
+
+/**
+ * The base's `ServerRuntime` as far as the things plugin reads it (the machine's user, "ann": it names the owner's
+ * person at the first start), which a test host serves in the base's place (as `p3.server`, the base's name: `world`
+ * loads it unless `more` brings a `p3.server` of its own); loaded beside `THINGS`.
+ */
+export const RUNTIME: PluginFacet<P3Principal> = {
+	name: "p3.server",
+	facet: defineFacet((host) =>
+		host.serve(ServerRuntime, {
+			// The things plugin reads its machine only.
+			compose: () => ({ machine: { user: "ann", hostname: "test" } }) as unknown as ServerRuntime,
+		}),
+	),
+};
 
 /** A running test host. */
 export type World = {
@@ -47,8 +64,9 @@ export type World = {
 };
 
 /**
- * A host at `Server()` with the things plugin, the test kind and `more` loaded, on a store in a file of its own, or in
- * the file at `at` (a store an older version wrote: the caller removes it).
+ * A host at `Server()` with the things plugin, the base's runtime (`RUNTIME`, unless `more` brings one), the test kind
+ * and `more` loaded, on a store in a file of its own, or in the file at `at` (a store an older version wrote: the
+ * caller removes it).
  */
 export async function world(
 	context: Context,
@@ -68,7 +86,8 @@ export async function world(
 		readyTimeout: 5000,
 		onError: (error) => errors.push(error),
 	});
-	let facets: readonly PluginFacet<P3Principal>[] = [THINGS, BOARD, ...more];
+	const base = more.some(({ name }) => name === RUNTIME.name) ? [] : [RUNTIME];
+	let facets: readonly PluginFacet<P3Principal>[] = [THINGS, ...base, BOARD, ...more];
 	const loaded = await host.load(facets, context);
 	if (loaded.failed.length > 0) throw new Error("world: plugins failed", { cause: loaded.failed[0]!.error });
 	return {
@@ -125,9 +144,19 @@ export function signInsStub(): {
 	readonly revoked: string[];
 	/** While true, `revoke` throws (a sign-in plugin that fails). */
 	failing: boolean;
+	/**
+	 * How `issue` fails: `before` with a typed refusal before it issues anything (a definite failure), `after` once it
+	 * issued (its answer lost: an ambiguous one); `undefined`, never.
+	 */
+	issueFails: "before" | "after" | undefined;
 } {
 	const revoked: string[] = [];
-	const stub = { plugin: undefined as unknown as PluginFacet<P3Principal>, revoked, failing: false };
+	const stub = {
+		plugin: undefined as unknown as PluginFacet<P3Principal>,
+		revoked,
+		failing: false,
+		issueFails: undefined as "before" | "after" | undefined,
+	};
 	const plugin: PluginFacet<P3Principal> = {
 		name: "test.sign-in",
 		facet: defineFacet((host) =>
@@ -136,9 +165,11 @@ export function signInsStub(): {
 				return {
 					list: self.derive([list], ([value]) => value),
 					issue: async ({ principal, label }) => {
+						if (stub.issueFails === "before") throw invalid("args", "the signer refused");
 						const id = crypto.randomUUID();
 						const signIn: SignIn = { id, label, kind: "browser", principal, created: 0, lastUsed: 0 };
 						list.set([...list.value, signIn]);
+						if (stub.issueFails === "after") throw new Error("the signer's answer was lost");
 						return { id, token: id, cookie: "" };
 					},
 					verify: async () => null,

@@ -20,6 +20,7 @@ import {
 	type Reference,
 	type Watchable,
 } from "@earendil-works/p3/v1";
+import { INVITE_PATH } from "../sign-in/contract.ts";
 import { callerOf } from "./admission.ts";
 import { Gives, ThingsStore, type WorkspaceRow } from "./contract.server.ts";
 import type { Source } from "./contract.ts";
@@ -112,8 +113,7 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 				picker: async ({ query }, ctx) => store.picker({ workspace, caller: callerOf(principal), query }, ctx),
 				inviteLink: async (args, ctx) => {
 					const secret = await store.createInvite({ ...args, workspace, by }, ctx);
-					// Its page is the base's invite route (the people plugin's until ERNDL-1144 push B moves it here).
-					return { url: `/_p3/invite#${secret}` };
+					return { url: `${INVITE_PATH}#${secret}` };
 				},
 				makeGroup: async ({ name }, ctx) => {
 					const managers = principal.kind === "person" ? [{ kind: "person", person: principal.id } as const] : [];

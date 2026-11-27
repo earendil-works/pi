@@ -77,7 +77,7 @@ export const Backups = remote("backup.backups", {
 	version: 1,
 	params: {},
 	hostAddress: () => Server(),
-	// The owner's only: admitted by the people plugin's `admitOwner`.
+	// The owners' only: admitted by the things plugin's `admitOwner`.
 	admission: obj({}),
 	state: {
 		defaultEnabled: bool(),

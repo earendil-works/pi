@@ -15,7 +15,6 @@ import { MACHINE_KIND } from "../../environments/contract.ts";
 import environmentsServer from "../../environments/server.ts";
 import { fakeMachine, fakeType } from "../../environments/test/fake-machine.ts";
 import { seeded } from "../../environments/test/seeded.ts";
-import peopleServer from "../../people/server.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
@@ -43,7 +42,6 @@ describe("Files' routes and the machine's host", () => {
 			{ name: "@earendil-works/p3-a-counting-machine", facet: counting },
 			{ name: "@earendil-works/p3-things", facet: thingsServer },
 			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
-			{ name: "@earendil-works/p3-people", facet: peopleServer },
 		];
 		t = await testPlugin(fileURLToPath(new URL("../", import.meta.url)), { kind: "server", stubs }, context);
 		const things = await t.host.get(ThingsStore, {}, context);

@@ -21,7 +21,7 @@ import type { World } from "../../things/test/world.ts";
 import { SignIn } from "../contract.ts";
 import { Login } from "../kind.ts";
 import { makeLogin } from "../logins.ts";
-import { PROVIDERS, providersWorld } from "./hosts.ts";
+import { ownerOf, PROVIDERS, providersWorld } from "./hosts.ts";
 
 /** Who sets things up. */
 const BY: Source = { kind: "plugin", plugin: "test" };
@@ -58,7 +58,7 @@ let workspace: string;
 
 beforeEach(async () => {
 	waiting.ended = 0;
-	w = await providersWorld(context, new Set(["person:ann"]), [{ name: "waiting", facet: waitingStub }]);
+	w = await providersWorld(context, [{ name: "waiting", facet: waitingStub }]);
 	things = await w.host.get(ThingsStore, {}, context);
 	const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
 	workspace = await things.createWorkspace({ kind: "things.workspace", name: "s1", parent: pi, by: BY }, context);
@@ -70,7 +70,7 @@ afterEach(() => w.close(context));
 describe("a reload of the providers plugin while it is used", () => {
 	it("keeps an agent's held login answering; ends a running sign-in; a new one runs; nothing reported", async () => {
 		const agent: P3Principal = { kind: "worker", session: "s1" };
-		const ann: P3Principal = { kind: "person", id: "ann", name: "Ann" };
+		const ann = await ownerOf(w, context);
 		const credential = { type: "api_key", key: keyOf(SCRIPT) };
 		const thing = await w.host.root(
 			(ctx) => makeLogin({ name: "Faux", workspace, by: BY, provider: FAUX_PROVIDER, credential }, ctx),

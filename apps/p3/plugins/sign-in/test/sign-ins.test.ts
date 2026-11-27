@@ -28,7 +28,7 @@ import {
 	LinkOpened,
 	matchesHash,
 	newToken,
-	PeopleStore,
+	ThingsStore,
 } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { newSession, TMP } from "../../../test/support.ts";
@@ -42,9 +42,9 @@ const OWNER: P3Principal = { kind: "person", id: "owner", name: "Owner" };
 /** The owner's person of the server `host` (made at its first start): who the owner's objects admit. */
 async function ownerOf(host: TestServer["host"]): Promise<P3Principal> {
 	const [found] = (
-		await host.root(async (ctx) => (await ctx.get(PeopleStore, {})).persons.owner.page({}, 1, ctx), context)
+		await host.root(async (ctx) => (await ctx.get(ThingsStore, {})).persons.owners.page({}, 1, ctx), context)
 	).items;
-	return { kind: "person", id: found!.id, name: found!.name };
+	return { kind: "person", id: found!.person, name: found!.name };
 }
 const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
 

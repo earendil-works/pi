@@ -26,6 +26,7 @@ import {
 	type TableItem,
 	type Tx,
 } from "@earendil-works/p3/v1";
+import { ServerRuntime } from "@earendil-works/p3/v1/server";
 import { AccessIndex, type Asks, type Touched } from "./access.ts";
 import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
@@ -50,7 +51,7 @@ import {
 	type Source,
 	sourceKey,
 } from "./contract.ts";
-import { anyExpired, InviteWrites } from "./invites.ts";
+import { anyExpired, InviteWrites, type Redeemer } from "./invites.ts";
 import { type DefaultGrants, type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
@@ -131,6 +132,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const gone = self.table(Gone);
 		const kinds = self.registry(ThingKinds);
 		const hooks = self.registry(ThingHooks);
+		// The machine's user names the owner's person at the first start.
+		const runtime = self.registry(ServerRuntime);
 		const q = namedQueries(self, t);
 		const people = new PeopleWrites(t);
 		// The kinds as the store's index and writes see them: one snapshot, installed inside the index's queue when the
@@ -170,7 +173,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				).items[0];
 				if (pi === undefined || owner === undefined) {
 					await self.tx(async (tx) => {
-						await people.ensureOwner(tx);
+						await people.ensureOwner(tx, runtime.value.machine.user);
 						return ensurePi(tx, t);
 					}, ctx);
 				}
@@ -503,16 +506,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
-			adoptOwner: async (seed, ctx) => {
-				// Adopted already (every start but the first, every reload): no write, so nothing a reload could cancel.
-				if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return null;
-				return write(
-					(tx, touched) =>
-						people.adoptOwner(tx, touched, seed, (persons) =>
-							cleanup.somethingLeftOf(tx, persons, touched.retiring),
-						),
-					ctx,
-				);
+			machineOwner: async (_args, ctx) => {
+				const marked = (await t.marks.get({ bridge: "owner" }, ctx))?.person;
+				const [owner] = marked === undefined ? [] : (await q.persons.one.page({ person: marked }, 1, ctx)).items;
+				if (owner === undefined) throw invalid("args", "things: the machine's owner is gone");
+				return { person: owner.person, name: owner.name };
 			},
 			picker: async ({ workspace, caller, query: text }, ctx) => {
 				const at = workspace === undefined ? {} : { workspace };
@@ -524,13 +522,22 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return offers(q, (...args) => index!.offered(...args), { ...at, caller, party }, ctx);
 			},
 			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
-			redeemInvite: ({ secret, person }, ctx) =>
+			invitation: async ({ secret }, ctx) => invites.invitation(secret, ctx),
+			spendInvite: ({ secret }, ctx) => write((tx) => invites.spend(tx, secret), ctx),
+			redeemInvite: ({ secret, person, newPerson }, ctx) => {
+				if (person !== undefined && newPerson !== undefined)
+					throw invalid("args", "things: a link is redeemed for a person or a new one, not both");
+				const redeemer: Redeemer =
+					person !== undefined
+						? { kind: "person", person }
+						: { kind: "new", ...(newPerson === undefined ? {} : { person: newPerson }) };
 				// The link's maker still has Manage people where it points (checked with the write; the group's own tick
 				// is checked in it).
-				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx, {
+				return write((tx, touched) => invites.redeem(tx, touched, secret, redeemer), ctx, {
 					allowed: (asks) => invites.makerMay(secret, asks, ctx),
 					refused: () => null,
-				}),
+				});
+			},
 			deleteEverythingFrom: ({ source }, ctx) =>
 				write((tx, touched) => cleanup.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
 		};
