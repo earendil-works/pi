@@ -188,4 +188,127 @@ describe("Radius provider catalogs", () => {
 			getRadiusAllModelsFromConfig("radius", config).find((m) => m.id === "jev-latest"),
 		);
 	});
+
+	it("exposes image models from /v1/config without listing them in getModels()", async () => {
+		const config: RadiusGatewayConfig = {
+			...radiusConfig(),
+			images: [
+				{
+					id: "nano-banana",
+					name: "Nano Banana",
+					input: ["text", "image"],
+					output: ["image", "text"],
+					cost: { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0.083333 },
+				},
+			],
+		};
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+			const url = String(input);
+			if (url.endsWith("/v1/config")) {
+				return new Response(JSON.stringify(config), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			if (url === "https://radius.example/v1/image") {
+				return new Response(
+					JSON.stringify({
+						output: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }],
+						usage: {
+							input: 12,
+							output: 1290,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 1302,
+							cost: {
+								input: 0.000004,
+								output: 0.003225,
+								cacheRead: 0,
+								cacheWrite: 0,
+								total: 0.003229,
+								totalFromProvider: true,
+							},
+						},
+						responseId: "gen-img-radius-1",
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				);
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+
+		const store = new InMemoryModelsStore();
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("radius", async () => ({ type: "api_key", key: "radius-key" }));
+		const models = createModels({ credentials, modelsStore: store });
+		models.setProvider(radiusProvider());
+
+		await models.refresh({ providers: ["radius"] });
+
+		expect(models.getModels("radius").map((model) => model.id)).toEqual(["balanced", "organization-only"]);
+		const imageModel = models.getModelOfType("image", "radius", "nano-banana");
+		expect(imageModel).toMatchObject({
+			type: "image",
+			api: "pi-image",
+			provider: "radius",
+			baseUrl: "https://radius.example/v1",
+			input: ["text", "image"],
+			output: ["image", "text"],
+		});
+
+		const generated = await models.generateImages(imageModel!, {
+			input: [{ type: "text", text: "A fox" }],
+		});
+		expect(generated.stopReason).toBe("stop");
+		expect(generated.output).toEqual([{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]);
+		expect(generated.responseId).toBe("gen-img-radius-1");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+
+		// Restores image models from cache without network access.
+		const cachedModels = createModels({ credentials, modelsStore: store });
+		cachedModels.setProvider(radiusProvider());
+		await cachedModels.refresh({ providers: ["radius"], allowNetwork: false });
+		expect(cachedModels.getModelOfType("image", "radius", "nano-banana")).toEqual(
+			getRadiusAllModelsFromConfig("radius", config).find((m) => m.id === "nano-banana"),
+		);
+	});
+
+	it("skips image models whose output omits image and filters unknown modalities", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					...radiusConfig(),
+					images: [
+						{
+							id: "text-only-bad",
+							name: "Not An Image Model",
+							input: ["text"],
+							output: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						},
+						{
+							id: "valid-with-extra",
+							name: "Valid Image Model",
+							input: ["text", "audio", "image"],
+							output: ["image", "video", "text"],
+							cost: { input: 0.3, output: 2.5, cacheRead: 0, cacheWrite: 0 },
+						},
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			),
+		);
+		const credentials = new InMemoryCredentialStore();
+		await credentials.modify("radius", async () => ({ type: "api_key", key: "radius-key" }));
+		const models = createModels({ credentials });
+		models.setProvider(radiusProvider());
+
+		await models.refresh({ providers: ["radius"] });
+
+		expect(models.getModelOfType("image", "radius", "text-only-bad")).toBeUndefined();
+		expect(models.getModelOfType("image", "radius", "valid-with-extra")).toMatchObject({
+			input: ["text", "image"],
+			output: ["image", "text"],
+		});
+	});
 });

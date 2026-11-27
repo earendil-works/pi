@@ -40,13 +40,15 @@ import { TopBar } from "./top-bar.tsx";
 import { ViewBoundary } from "./view-boundary.tsx";
 
 /**
- * What the bar shows: the route's target, the view it chose (`?view=`, kept through the gear and Back), the
- * connection and the person's name (`Me`; none until known).
+ * What the bar shows: the route's target, the view it chose (`?view=`, kept through the gear and Back), whether the
+ * route is its Settings view and whether the target has no view of its own (its view is the Settings view: no gear
+ * either way), the connection and the person's name (`Me`; none until known).
  */
 export type ChromeProps = {
 	readonly target: Target | undefined;
 	readonly view: string | undefined;
 	readonly settings: boolean;
+	readonly viewless: boolean;
 	readonly connection: ConnectionState;
 	readonly person: string | undefined;
 	readonly phone: Phone;
@@ -76,7 +78,7 @@ export function Frame() {
 	const target = route.kind === "target" ? route.target : undefined;
 	const settings = route.kind === "target" && route.settings;
 	const view = route.kind === "target" ? route.view : undefined;
-	const chrome: ChromeProps = { target, view, settings, connection, person, phone };
+	const chrome: ChromeProps = { target, view, settings, viewless: false, connection, person, phone };
 	switch (route.kind) {
 		case "landing":
 			return <Shell chrome={chrome} main={<Landing />} screen="main" />;
@@ -128,7 +130,13 @@ function TargetFrame(props: {
 	if (!route.settings && shown === "page") return <Shell chrome={props.chrome} main={framed} screen="page" />;
 	// On a phone, a workspace with no view of its own opens as its navigator; its Settings view is one step on.
 	const navigatorFirst = route.target.kind === "workspace" && !route.settings && shown === "settings";
-	return <Shell chrome={props.chrome} main={framed} screen={navigatorFirst ? "navigator" : "main"} />;
+	return (
+		<Shell
+			chrome={{ ...props.chrome, viewless: shown === "settings" }}
+			main={framed}
+			screen={navigatorFirst ? "navigator" : "main"}
+		/>
+	);
 }
 
 /**
@@ -141,7 +149,7 @@ function Shell(props: {
 	readonly screen: "navigator" | "main" | "page";
 }) {
 	const NavigatorView = useComponent(Navigator);
-	const { target, view, settings, phone } = props.chrome;
+	const { target, view, settings, viewless, phone } = props.chrome;
 	const page = props.screen === "page";
 	// What the person chose for this address wins over the default (a phone shows one of the two; a desktop both).
 	const screen = page || phone.chosen?.at !== phone.at ? props.screen : phone.chosen.screen;
@@ -166,7 +174,15 @@ function Shell(props: {
 					</aside>
 				)}
 				<main className={styles.main}>
-					{page ? null : <MainHead phone={phone} settings={settings} target={target} view={view} />}
+					{page ? null : (
+						<MainHead
+							gear={!settings && !viewless}
+							phone={phone}
+							settings={settings}
+							target={target}
+							view={view}
+						/>
+					)}
 					{props.main}
 				</main>
 			</div>
@@ -178,12 +194,13 @@ function Shell(props: {
 /**
  * Above the main area: on a phone the way back (from a Settings view to the target, from a thing, person or group to
  * its workspace, from a workspace's own view to the navigator, from anywhere else to `/`); the gear to the target's
- * Settings view.
+ * Settings view, where it shows another view (`gear`).
  */
 function MainHead(props: {
 	readonly target: Target | undefined;
 	readonly view: string | undefined;
 	readonly settings: boolean;
+	readonly gear: boolean;
 	readonly phone: Phone;
 }) {
 	const { t } = useMessages(messages);
@@ -201,7 +218,7 @@ function MainHead(props: {
 				<ArrowBackIcon />
 			</IconButton>
 			<span className={styles.grow} />
-			{settings || target === undefined ? null : (
+			{!props.gear || target === undefined ? null : (
 				<IconButton
 					aria-label={t("settings")}
 					data-gear=""

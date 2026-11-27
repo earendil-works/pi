@@ -3,6 +3,7 @@
 // abort signal of a call's context, linked to long-lived sources until it settles.
 
 import type { SpanAttributes, TelemetrySpan } from "@earendil-works/pi-telemetry";
+import { abortFrom } from "../context/abort-origin.ts";
 import { type Context, type ContextKey, withAbortSignal, withoutAbortSignal, withTelemetry } from "../context/index.ts";
 import type { Contract, ParamsOf } from "../contracts/index.ts";
 import { ChordError, type Principal } from "../data/index.ts";
@@ -228,8 +229,9 @@ function settled(Type: Contract): ChordError {
 
 /**
  * A child of `context` aborted by `signal` and by the caller's signal (the caller's reason first) until `release()`,
- * which the call runs when it settles. Not `AbortSignal.any`: before Node 24.16.0 it keeps cleanup entries per call for
- * as long as its sources live (nodejs/node#62367), and a call's sources (its attempt, its reference) live long.
+ * which the call runs when it settles; it remembers which aborted it (`abortOrigin`). Not `AbortSignal.any`: before
+ * Node 24.16.0 it keeps cleanup entries per call for as long as its sources live (nodejs/node#62367), and a call's
+ * sources (its attempt, its reference) live long.
  * Without a caller's signal the child is aborted by `signal` itself and `release` does nothing.
  */
 export function withLinkedAbortSignal(
@@ -242,7 +244,7 @@ export function withLinkedAbortSignal(
 	const listeners = [caller, signal].map((source) => {
 		const forward = (): void => {
 			release();
-			linked.abort(source.reason);
+			abortFrom(linked, source);
 		};
 		return [source, forward] as const;
 	});
@@ -250,7 +252,7 @@ export function withLinkedAbortSignal(
 		for (const [source, forward] of listeners) source.removeEventListener("abort", forward);
 	};
 	const aborted = listeners.find(([source]) => source.aborted);
-	if (aborted !== undefined) linked.abort(aborted[0].reason);
+	if (aborted !== undefined) abortFrom(linked, aborted[0]);
 	else for (const [source, forward] of listeners) source.addEventListener("abort", forward, { once: true });
 	return { context: withAbortSignal(linked.signal, withoutAbortSignal(context)), release };
 }

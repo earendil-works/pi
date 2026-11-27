@@ -3,8 +3,8 @@
 // withheld decides there, and a login hidden in the session's workspace gives nothing; a grant changed changes the list
 // live, and the entries of a login that did not change keep their identity; `catalog` is the session's worker's, never
 // a person's; the overrides of two model settings things merge per field, nearest first, and a hidden model leaves both
-// lists; a reload keeps a held one, a released one is collected; an agent changes model settings (`set`, the Edit tick,
-// live: withheld, it has no `set`) and is given no Configure where a login is linked.
+// lists; a reload keeps a held one, a released one is collected; an agent changes model settings only where Edit is
+// granted to it (`set`, live: withheld, it has no `set`) and is given no Configure where a login is linked.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -92,6 +92,14 @@ async function settingsIn(workspace: string, overrides: ModelOverride[]): Promis
 	const thing = await things.create({ kind: ModelSettingsKind.name, name: "m", workspace, by: BY }, context);
 	await things.configure({ thing, settings: { overrides } }, context);
 	return thing;
+}
+
+/** Gives (or withholds) the agents Edit of model settings thing `thing` in the session. */
+async function agentsEdit(thing: string, gives: boolean): Promise<void> {
+	await things.setGrants(
+		{ source: BY, grants: [{ workspace: session, thing, party: { kind: "agents" }, tick: "edit", gives }] },
+		context,
+	);
 }
 
 /** `principal`'s `SessionModels` of the session, held while `fn` runs. */
@@ -478,6 +486,7 @@ describe("the model settings", () => {
 
 	it("refuse a negative price (Astra, round 1)", async () => {
 		const settings = await settingsIn(session, []);
+		await agentsEdit(settings, true);
 		await as(agent, async (ctx) => {
 			const held = await ctx.get(ModelSettings, { workspace: session, thing: settings });
 			const cost = { input: -1, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -485,22 +494,20 @@ describe("the model settings", () => {
 		});
 	});
 
-	it("are changed by the agent through Edit; it has no Configure where a login is linked (118d)", async () => {
+	it("are changed by the agent only where Edit is granted to it, live; it has no Configure where a login is linked (118d)", async () => {
 		await loginIn(session);
 		const settings = await settingsIn(session, []);
 		await as(agent, async (ctx) => {
 			const held = await ctx.get(ModelSettings, { workspace: session, thing: settings });
+			// Not by default (Mario, 2026-11-27): the agents get Use only.
+			assert.deepEqual([held.set, [...held.granted].sort()], [undefined, ["use"]]);
+			await agentsEdit(settings, true);
+			await until(held.state, (state) => state.kind === "live" && held.set !== undefined, within("Edit", ctx));
 			await held.set!({ overrides: [{ model: FAUX_MODEL, name: "By the agent" }] }, ctx);
 			const workspace = await ctx.get(Workspace, { workspace: session });
 			assert.equal(workspace.configure, undefined);
-			// Edit withheld from the agents: the same hold loses `set`.
-			await things.setGrants(
-				{
-					source: BY,
-					grants: [{ workspace: session, thing: settings, party: { kind: "agents" }, tick: "edit", gives: false }],
-				},
-				context,
-			);
+			// Edit withheld again: the same hold loses `set`.
+			await agentsEdit(settings, false);
 			await until(
 				held.state,
 				(state) => state.kind === "live" && held.set === undefined,

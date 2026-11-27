@@ -998,11 +998,15 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		this.#parkedAt = undefined;
 	}
 
-	/** Abandons the activation with `outcome` (once): its waits stop and the openers' contexts are aborted. */
+	/**
+	 * Abandons the activation with `outcome` (once): its waits stop and the openers' and calls' contexts are aborted,
+	 * their signal remembered by its token first: a transaction its own end cancels is not reported.
+	 */
 	abandon(outcome: NotLive): void {
 		if (this.#abandoned !== undefined) return;
 		this.#abandoned = outcome;
 		const reason = outcome.kind === "ended" ? outcome.error : outcome.cause.error;
+		this.#token.endsWith(this.#abort.signal);
 		this.#abort.abort(reason);
 		this.#stopRoutines(reason);
 	}
@@ -1056,9 +1060,15 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		});
 	}
 
-	/** Its routines stop with `reason` (or may not start any more: `#startRoutines` asks the abandonment too). */
+	/**
+	 * Its routines stop with `reason` (or may not start any more: `#startRoutines` asks the abandonment too), their
+	 * signal remembered by its token first: a transaction this stop cancels is not reported.
+	 */
 	#stopRoutines(reason: unknown): void {
-		this.#extras?.routineRun?.abort.abort(reason);
+		const run = this.#extras?.routineRun;
+		if (run === undefined || run.abort.signal.aborted) return;
+		this.#token.endsWith(run.abort.signal);
+		run.abort.abort(reason);
 	}
 
 	/** Its routines stop (their ctx aborted); their running calls are waited for by the drain. */

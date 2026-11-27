@@ -15,6 +15,7 @@ export type { OpenAICodexResponsesOptions, OpenAICodexWebSocketDebugStats } from
 export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 export type { PiDecisionOptions, PiDecisionRequest, PiDecisionResponse } from "./api/pi-decision.ts";
+export type { PiImageOptions, PiImageRequest, PiImageResponse } from "./api/pi-image.ts";
 export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/pi-messages.ts";
 export * from "./auth/context.ts";
 export * from "./auth/credential-store.ts";

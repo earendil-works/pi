@@ -140,6 +140,8 @@ export class Transaction implements Tx {
 	/** When its commit reaches the store (a run state's deferred change, D8). */
 	readonly #persistence: CommitPersistence;
 	#state: "open" | "committing" | "stepping" | "committed" | "discarded" | "cut" = "open";
+	/** The error its cut throws, once cut (one instance: `cutWith` tells it from other failures). */
+	#cut: ChordError | undefined;
 	/** Rejected by `cut` while the commit waits in the store's queue: its caller is told at once (rule 3). */
 	#queued: PromiseWithResolvers<never> | undefined;
 	/** What its commit adopts, once it started (telemetry's `chord.commit` counts it when asked). */
@@ -513,12 +515,19 @@ export class Transaction implements Tx {
 		throw new Error(`${this.#documents.label}: the transaction has settled`);
 	}
 
+	/** The one error every use after its cut throws, made by the first. */
 	#cutError(): ChordError {
-		return new ChordError({
+		this.#cut ??= new ChordError({
 			code: "released",
 			reason: "discarded",
 			message: `${this.#documents.label}: the transaction was discarded at the seal`,
 		});
+		return this.#cut;
+	}
+
+	/** Whether `error` is its cut's: the seal discarded it, nothing else failed it. */
+	cutWith(error: unknown): boolean {
+		return this.#cut !== undefined && error === this.#cut;
 	}
 
 	/** The handle behind `table`, one of this object's tables (another object's is refused). */

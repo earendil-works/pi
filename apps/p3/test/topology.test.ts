@@ -227,18 +227,16 @@ describe("reloads while in use", () => {
 		assert.deepEqual(t.errors, []);
 	});
 
-	const orders: readonly { readonly order: readonly string[]; readonly todo?: string }[] = [
-		// Back to back: a things store started anew (lazily, by whichever plugin uses it first) is reloaded again.
-		{
-			order: ["environments", "things", "environments", "things", "sessions"],
-			todo: "transaction_cancelled on a things reload during seedKind: ERNDL-1190",
-		},
-		{ order: ["sign-in", "things", "environments", "things", "sessions"] },
-		{ order: ["sign-in", "things", "sign-in", "things"] },
+	const orders: readonly (readonly string[])[] = [
+		// Back to back: a things store started anew (lazily, by whichever plugin uses it first) is reloaded again; a
+		// reload during its seeding cancels the seed's transaction, which reports nothing since ERNDL-1190.
+		["environments", "things", "environments", "things", "sessions"],
+		["sign-in", "things", "environments", "things", "sessions"],
+		["sign-in", "things", "sign-in", "things"],
 	];
-	for (const { order, todo } of orders) {
+	for (const order of orders) {
 		const name = `the ${order.join(", ")} plugins reloaded in that order (ERNDL-1144): nothing reported`;
-		it(name, { todo }, async () => {
+		it(name, async () => {
 			const { t, owner } = await withSession();
 			const me = await owner.get(Me, {}, context);
 			for (const plugin of order) await t.reload(`@earendil-works/p3-${plugin}`);
