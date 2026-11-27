@@ -41,6 +41,8 @@ type Given = {
 	readonly providers: readonly ThingProvider[];
 	readonly env: HarnessContribution["env"];
 	readonly ready: HarnessContribution["ready"];
+	/** Stops following what the part asked to follow (`HarnessContribution.again`); set once given. */
+	stop: (() => void) | undefined;
 };
 
 /** The agent's registry, models and environment over the things it holds. */
@@ -53,6 +55,8 @@ export class AgentParts {
 	#given: ReadonlyMap<string, Given> = new Map();
 	/** What the last apply was given; the same maps again change nothing. */
 	#applied: { readonly held: Held; readonly parts: Parts } | undefined;
+	/** The kinds whose part asked to be given again (`HarnessContribution.again`) since the last apply. */
+	readonly #stale = new Set<string>();
 	/** What was reported already (`<kind>:<why>`), so a kind that stays broken is reported once. */
 	readonly #reported = new Set<string>();
 
@@ -82,7 +86,7 @@ export class AgentParts {
 	 */
 	apply(held: Held, parts: Parts): void {
 		// Every submit applies: with nothing new since the last apply, nothing is walked (Astra, round 1).
-		if (held === this.#applied?.held && parts === this.#applied.parts) return;
+		if (held === this.#applied?.held && parts === this.#applied.parts && this.#stale.size === 0) return;
 		this.#applied = { held, parts };
 		const before = this.#given;
 		const next = new Map<string, Given>();
@@ -93,9 +97,13 @@ export class AgentParts {
 			const old = before.get(kind);
 			next.set(
 				kind,
-				old !== undefined && old.things === things && old.part === part ? old : this.#give(kind, things, part),
+				old !== undefined && old.things === things && old.part === part && !this.#stale.has(kind)
+					? old
+					: this.#give(kind, things, part),
 			);
 		}
+		this.#stale.clear();
+		for (const [kind, given] of before) if (next.get(kind) !== given) given.stop?.();
 		// Durable replaces an installed extension of the same name in place: a kind given again keeps its place among
 		// the others (and with it the order of the tools and sections the model was shown).
 		for (const [kind, given] of before) {
@@ -144,20 +152,39 @@ export class AgentParts {
 	/** What `kind`'s held `things` give through `part`; a part that throws gives nothing. */
 	#give(kind: string, things: readonly HeldThing[], part: ThingHarnessPart): Given {
 		try {
-			const given = part.part(things, this.#session);
-			return {
+			const contribution = part.part(things, this.#session);
+			const given: Given = {
 				things,
 				part,
-				extension: given.extension === undefined ? undefined : named(kind, given.extension),
-				providers: given.providers ?? [],
-				env: given.env,
-				ready: given.ready,
+				extension: contribution.extension === undefined ? undefined : named(kind, contribution.extension),
+				providers: contribution.providers ?? [],
+				env: contribution.env,
+				ready: contribution.ready,
+				stop: undefined,
 			};
+			given.stop = contribution.again?.(() => this.#refresh(kind, given));
+			return given;
 		} catch (error) {
 			// A kind's part is another plugin's code: its failure gives that kind nothing, the others keep theirs.
 			this.#report(kind, "part", error);
-			return { things, part, extension: undefined, providers: [], env: undefined, ready: undefined };
+			return {
+				things,
+				part,
+				extension: undefined,
+				providers: [],
+				env: undefined,
+				ready: undefined,
+				stop: undefined,
+			};
 		}
+	}
+
+	/** Gives kind `kind` again at once, if `given` is still what it gives (its part asked: `again`). */
+	#refresh(kind: string, given: Given): void {
+		const applied = this.#applied;
+		if (applied === undefined || this.#given.get(kind) !== given) return;
+		this.#stale.add(kind);
+		this.apply(applied.held, applied.parts);
 	}
 
 	/**

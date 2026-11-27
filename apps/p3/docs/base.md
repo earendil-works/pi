@@ -127,7 +127,10 @@ with them:
   `ThingHarnessParts`, called again whenever that kind's list changes (a thing added, let go of, granted anew, linked
   nearer), never with none. Each entry is `{ thing, workspace, depth, ref }`. Its tools take a thing's id; a list tool
   names the things (`canvas_list`), so descriptions stay fixed text. A tool is offered only while its tick is granted
-  on some thing (`ref.add`, `ref.granted.has("bash")`).
+  on some thing (`ref.add`, `ref.granted.has("bash")`). A part whose offer depends on a state member's value too
+  answers `again(refresh)`: it follows that value and calls `refresh` when it changes, and the harness gives that kind
+  again at once (Terminals: its `terminal` tool only while `terminals.opens`, a machine type installed that opens
+  terminals).
 - **A tool acts as the agent** through the held reference (decision 120.1); `session.call(fn, context)` runs `fn` as
   the session's worker with references of its own, released when `fn` settles, for a tool that needs one.
 - **A `main` tool** (`HarnessTool`'s `scope: "main"`) works only in the session's top-level conversations (the

@@ -92,6 +92,12 @@ export type HarnessContribution = {
 	 * harness picks a model only then; cancelled first by `context`, it fails saying what is still loading.
 	 */
 	readonly ready?: (context: Context) => Promise<void>;
+	/**
+	 * Follows what the part read besides the held list (a state member's value that decides which tools it offers):
+	 * calls `refresh` when that changed, and the harness gives this kind again (only this one); answers the stop, called
+	 * when the kind is given again or let go of. Unset: given again only when its held list changes.
+	 */
+	readonly again?: (refresh: () => void) => () => void;
 };
 
 /**
