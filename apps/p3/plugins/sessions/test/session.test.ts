@@ -594,12 +594,11 @@ describe("the session defaults", () => {
 	// Astra, round 1 (must 1): the defaults thing chosen is read while it is still the one.
 	it("reads the defaults that apply when the nearest one is taken away during the read", async () => {
 		const { fam } = await family();
-		const seeded = (await store.links.here.page({ workspace: pi }, 50, context)).items.find(
-			(link) => link.of === SessionDefaultsKind.name,
-		)!.thing;
+		// Pi's seeded defaults, once seeding made them.
+		const defaults = await seeded(await w.host.get(OneThing, { kind: SessionDefaultsKind.name }, context), context);
 		const far = { shared: true, model: null, opensWith: "far" };
 		const near = { shared: true, model: null, opensWith: "near" };
-		await store.configure({ thing: seeded, settings: { defaults: far } }, context);
+		await store.configure({ thing: defaults, settings: { defaults: far } }, context);
 		const target = await defaultsIn(fam, near);
 		await w.host.root(async (ctx) => {
 			assert.deepEqual(await nearestDefaults(fam, ctx), near);
