@@ -67,7 +67,10 @@ export default defineFacet((host, facet) => {
 		const facts = self.get(SessionFacts, {});
 		const opened = self.open(
 			(opening) => openAgent({ runtime: runtime.value, facts, parts, held }, opening),
-			({ durable }, _reason, context) => durable.close(context),
+			({ durable, things }, _reason, context) => {
+				things.close();
+				return durable.close(context);
+			},
 		);
 		const graph = self.follow((observer, context) => opened.value.durable.observeTaskGraph(observer, context));
 		const live = self.follow((observer, context) =>
@@ -233,22 +236,28 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 	things.registry.install(SUBAGENT_TASKS);
 	// Not ready yet: nothing to give before the first submit or resume waits for it.
 	if (held.value !== undefined) things.apply(held.value, parts.value);
-	durable = await openHarness(
-		store,
-		{
-			models: () => things.models,
-			registry: things.registry,
-			// The environment at the conversation's location, read at each use; it never changes while a tool call runs.
-			// Only kinds give environments (a machine's): a location on no machine the agent holds with what that machine
-			// asks (Work here) has none, and nothing falls back.
-			env: async ({ conversationId }, context) => {
-				const at = await location(conversationId, context);
-				return at === undefined ? undefined : things.env(at, context);
+	try {
+		durable = await openHarness(
+			store,
+			{
+				models: () => things.models,
+				registry: things.registry,
+				// The environment at the conversation's location, read at each use; it never changes while a tool call
+				// runs. Only kinds give environments (a machine's): a location on no machine the agent holds with what that
+				// machine asks (Work here) has none, and nothing falls back.
+				env: async ({ conversationId }, context) => {
+					const at = await location(conversationId, context);
+					return at === undefined ? undefined : things.env(at, context);
+				},
+				onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
 			},
-			onReport: (report) => reportError(`p3 harness: session ${session}`, report, BACKGROUND_CONTEXT),
-		},
-		opening,
-	);
+			opening,
+		);
+	} catch (error) {
+		// A harness that does not open leaves nothing following what the parts asked to follow.
+		things.close();
+		throw error;
+	}
 	return { durable, things };
 }
 

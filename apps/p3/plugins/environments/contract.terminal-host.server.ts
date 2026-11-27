@@ -1,7 +1,7 @@
 // The environments plugin's contract of its terminal host, for server facets: `TerminalHost` runs the terminals of
 // every machine (a program in a `Pty` its machine's host started), keyed by terminal id, for the plugin's lifetime, so
 // a reload of the plugin that shows them (terminals) loses none. Each terminal belongs to an owner: a Terminals thing
-// in a workspace (`TerminalOwner`). `TerminalKeeper` keeps the host and closes terminals for the things' delete hooks;
+// in a workspace (`TerminalOwner`). `TerminalKeeper` keeps the host and closes terminals for the things' hooks;
 // `TerminalList` is one owner's list, live.
 
 import { arr, type Context, defineRegistry, local, method, obj, str } from "@earendil-works/p3/v1";
@@ -86,8 +86,8 @@ export const TerminalHosts = defineRegistry<TerminalHost, TerminalHost | undefin
 
 /**
  * The object that keeps the terminal host for the plugin's lifetime (it contributes it to `TerminalHosts`), and its
- * closing for the things' delete hooks, which get a `ctx`, not a registry: the terminals of a machine that went, and
- * of a Terminals thing that went.
+ * closing for the things' hooks, which get a `ctx`, not a registry: the terminals of a machine that went, of a
+ * Terminals thing that went, and of a workspace that went.
  */
 export const TerminalKeeper = local("environments.terminal-keeper", {
 	version: 1,
@@ -95,5 +95,6 @@ export const TerminalKeeper = local("environments.terminal-keeper", {
 	members: {
 		closeMachine: method(obj({ machine: str() })),
 		closeThing: method(obj({ thing: str() })),
+		closeWorkspace: method(obj({ workspace: str() })),
 	},
 });

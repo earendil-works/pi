@@ -41,7 +41,7 @@ function Tabs(props: TabsProps) {
 	const ref = useHold(Terminals, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const state = useRefState(ref);
-	const list = useWatch(live?.terminals);
+	const list = useWatch(live?.terminals)?.rows;
 	const [chosen, setChosen] = useState<string | undefined>(undefined);
 	const [error, setError] = useState<string | undefined>(undefined);
 	if (state?.kind === "failed" && state.cause.kind === "denied") return <p className={styles.note}>{t("denied")}</p>;

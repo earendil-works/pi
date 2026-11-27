@@ -99,6 +99,8 @@ export type MachineType = {
 	readonly type: string;
 	readonly label: MessageData;
 	readonly settings: Schema;
+	/** Whether its machines open terminals (a PTY): Terminals offers the agent its tool only while one type does. */
+	readonly terminals: boolean;
 	connect(settings: unknown, context: Context): Promise<MachineHost>;
 };
 

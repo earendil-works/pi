@@ -173,7 +173,7 @@ describe("reloads while in use", () => {
 		await t.reload("@earendil-works/p3-terminals");
 		await until(panes.state, (state) => state.kind === "live", within("Terminals again", context));
 		// This device's terminals are pending (its `openPty` refuses): the list is what goes on, empty.
-		await until(panes.terminals!, (list) => list.length === 0, within("the list", context));
+		await until(panes.terminals!, ({ rows: list }) => list.length === 0, within("the list", context));
 		assert.deepEqual(t.errors, []);
 	});
 

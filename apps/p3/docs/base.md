@@ -51,20 +51,20 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   presence. Listing starts no worker.
 - **Where it works** (decision 24): each conversation has a location. The session's (its row's `location`) is where a
   top-level conversation works: the make's, refused unless its maker may use that machine in the parent (R41); left out,
-  this device in a folder of its own (`<work root>/<id>`) if its maker may use this device there, else none (its agent
-  has no environment until a conversation is moved; the new-session step says so). A subagent's conversation works where
-  its caller works, and follows its moves. A conversation moved (`SessionObject.moveLocation` with Manage, by a client:
-  the Settings view has no form for it yet; `SessionFacts.moveLocation` is there for the agent's `location_move`, which
-  the machine part does not offer yet) works at its own location from its next tool call on; a call under way keeps its
-  environment. A move with `location: null` is undone (the conversation follows its owner again); a subagent keeps its
-  own while archived (a restore finds it). A move is refused unless the folder is a full path and the agents have Work
-  on the machine in the session, and a person's unless the machine is available to them there (the environments plugin's
-  `checkMachine`, as Files and Terminals). The harness (`HarnessSession.moveLocation`, the path the agent's tool takes)
-  refuses to move a conversation the session does not have; an undo always goes through. A direct
-  `SessionFacts.moveLocation` call by the session's worker is not checked: the worker is trusted plugin code (decision
-  111). Manage's path takes any well-formed id for now (carry-over 3 of ERNDL-704: the server asking the session's
-  worker). Manage shows the moved conversations (`detail`, one document per session, by conversation id); the worker
-  reads the same in `SessionFacts.detail`.
+  this device in a folder of its own (`<work root>/<Pi's id>/<id>`) if its maker may use this device there, else none
+  (its agent has no environment until a conversation is moved; the new-session step says so). A subagent's
+  conversation works where its caller works, and follows its moves. A conversation moved (`SessionObject.moveLocation`
+  with Manage, by a client: the Settings view has no form for it yet; or by the agent with the machine part's
+  `location_move`, through `HarnessSession.moveLocation`) works at its own location from its next tool call on; a call
+  under way keeps its environment. A move with `location: null` is undone (the conversation follows its owner again); a
+  subagent keeps its own while archived (a restore finds it). A move is refused unless the folder is a full path and the
+  agents have Work on the machine in the session, and a person's unless the machine is available to them there (the
+  environments plugin's `checkMachine`, as Files and Terminals). The harness (`HarnessSession.moveLocation`, the path
+  the agent's tool takes) refuses to move a conversation the session does not have; an undo always goes through. A
+  direct `SessionFacts.moveLocation` call by the session's worker is not checked: the worker is trusted plugin code
+  (decision 111). Manage's path takes any well-formed id for now (carry-over 3 of ERNDL-704: the server asking the
+  session's worker). Manage shows the moved conversations (`detail`, one document per session, by conversation id);
+  the worker reads the same in `SessionFacts.detail`.
 - **What its workers keep** (their directory, `<data>/workers/<id>`) goes with the session: removing the session stops
   its worker and deletes it (the runner's `remove`, refusing an id that names no session). A directory of a session
   with no row is swept whenever a runner appears (at every start), each one reported as it goes, one that fails
@@ -130,7 +130,10 @@ with them:
   `ThingHarnessParts`, called again whenever that kind's list changes (a thing added, let go of, granted anew, linked
   nearer), never with none. Each entry is `{ thing, workspace, depth, ref }`. Its tools take a thing's id; a list tool
   names the things (`canvas_list`), so descriptions stay fixed text. A tool is offered only while its tick is granted
-  on some thing (`ref.add`, `ref.granted.has("bash")`).
+  on some thing (`ref.add`, `ref.granted.has("bash")`). A part whose offer depends on a state member's value too
+  answers `again(refresh)`: it follows that value and calls `refresh` when it changes, and the harness gives that kind
+  again at once (Terminals: its `terminal` tool only while `terminals.opens`, a machine type installed that opens
+  terminals).
 - **A tool acts as the agent** through the held reference (decision 120.1); `session.call(fn, context)` runs `fn` as
   the session's worker with references of its own, released when `fn` settles, for a tool that needs one.
 - **A `main` tool** (`HarnessTool`'s `scope: "main"`) works only in the session's top-level conversations (the

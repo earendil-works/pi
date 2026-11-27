@@ -48,7 +48,7 @@ async function attach(request: HttpRequest, terminals: TerminalHost | undefined,
 	const lost = new AbortController();
 	const list = ref.terminals;
 	abortWhenLost(ref, "attach", lost, ctx);
-	abortWhen(list, (rows) => !rows.some((row) => row.id === terminal), lost, ctx);
+	abortWhen(list, ({ rows }) => !rows.some((row) => row.id === terminal), lost, ctx);
 	let from = 0;
 	// One context for every read: the request's scope (the reads run in it) cut by the loss too.
 	const reading = withAbortSignal(lost.signal, ctx);

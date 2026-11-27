@@ -26,7 +26,7 @@ export const MachinesStore = local("environments.machines", {
 	version: 1,
 	params: {},
 	members: {
-		/** Machine `machine`'s row; `null` when it has none (this device's seeded machine: it has none). */
+		/** Machine `machine`'s row; `null` when it has none (a machine whose create hook has not written it yet). */
 		row: method(obj({ machine: str() }), union([MachineRow, nul()])),
 		/** Writes machine `machine`'s type and settings, a new revision. */
 		put: method(obj({ machine: str(), type: str(), settings: unknown() })),

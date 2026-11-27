@@ -1,6 +1,6 @@
 // A session's own facts for its worker (`SessionFacts`): its row, its moved conversations, its report of what the
-// agent does, and the move of one of its conversations (`HarnessSession.moveLocation`, for an agent's tool; no tool
-// calls it yet).
+// agent does, and the move of one of its conversations (`HarnessSession.moveLocation`, which the machine part's
+// `location_move` tool calls).
 
 import { type FacetHost, forbidden, type P3Principal, Session } from "@earendil-works/p3/v1";
 import { SessionsStore } from "./contract.server.ts";
