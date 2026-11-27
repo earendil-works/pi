@@ -213,7 +213,9 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 /**
  * Where each conversation works (decision 24), read at each use: its own location once moved (`SessionFacts`'
  * `locations`), else its owner conversation's (a subagent works where its caller works, and follows its moves),
- * else the session's (its row); `undefined` for an unknown session. A conversation's owner never changes: read once.
+ * else the session's (its row); `undefined` for an unknown session. A conversation's owner never changes: read once,
+ * with a commit, which is why it is never asked on Durable's Session line (the environment is built off it, and a
+ * request's prompt sections render off it right after, the owner already read).
  */
 function locations(
 	facts: Reference<typeof SessionFacts>,

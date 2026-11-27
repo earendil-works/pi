@@ -42,8 +42,9 @@ export type HarnessLocation = { readonly machine: string; readonly folder: strin
  * worker (a tool reaches its plugin's objects with it, on the worker or the server), its references released when
  * `fn` settles (`context` is the tool's, Durable's, so cancelling the tool cancels the call), `location`, where
  * conversation `conversation` (Durable's id, a tool's `api.conversationId`) works now (its own location once moved,
- * else its owner conversation's, a subagent's caller's, else the session's; `undefined`: nowhere, an unknown session),
- * and `moveLocation`, which moves the conversation to `location`: the next tool call works there, a call under way
+ * else its owner conversation's, a subagent's caller's, else the session's; `undefined`: nowhere, an unknown session;
+ * it may read Durable once per conversation, so never from Durable's Session line, an observer: a tool, the
+ * environment, a prompt section and a hook all run off it), and `moveLocation`, which moves the conversation to `location`: the next tool call works there, a call under way
  * keeps its environment; refused (`invalid`, with a message) unless the agents have Work here on its machine and the
  * folder is a full path.
  */
