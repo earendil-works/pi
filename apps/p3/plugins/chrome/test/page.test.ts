@@ -6,17 +6,18 @@
 // plugin and previews a kind's default grants, which the person may untick; a thing with a view opens in it, one
 // without in its Settings view; a thing from above is greyed and a hidden one folded; a view that takes the whole page
 // keeps only the corner button; the invite dialog makes links that sign a new member or guest in and put a signed-in
-// person in; `/me` is the person's own page; a session made through the picker opens from the navigator in its
-// transcript view, streams a scripted answer, and shows a person with Read only the transcript with no way to send; who
-// may's access choice and Make column, a write from another page shown live, its cards on a phone; the switches for
-// things and people from above; no link offered without Link; a person present only below sees nothing of the
-// workspaces above; `?view=` kept through the gear and Back and through pane focus, and a session's pane back when its
-// thing is shown again; the add dialog's draft kept through an apply and dropped on close, one make for two activations
-// of Add, Add disabled when Make of the chosen kind goes, a default unticked and ticked again written; the phone's
-// screens; a reload of the chrome, things and transcript plugins keeps the open page and unsent work; an apply whose
-// web contracts are newer than the page's base leaves it working, and a component the base lacks is reported once.
-// Screenshots at the phone's and the desktop's size, light and dark, go to `/tmp/p3-base/shots/` (`P3_SHOTS` names
-// another directory).
+// person in; `/me` is the person's own page; every kind and tick label shows in words; a session is removed from its
+// Settings view, also when addressed as a thing of its parent; a session made through the picker opens from the
+// navigator in its transcript view, streams a scripted answer, and shows a person with Read only the transcript with no
+// way to send; who may's access choice and Make column, a write from another page shown live, its cards on a phone; the
+// switches for things and people from above; no link offered without Link; a person present only below sees nothing of
+// the workspaces above; `?view=` kept through the gear and Back and through pane focus, and a session's pane back when
+// its thing is shown again; the add dialog's draft kept through an apply and dropped on close, one make for two
+// activations of Add, Add disabled when Make of the chosen kind goes, a default unticked and ticked again written; the
+// phone's screens; a reload of the chrome, things and transcript plugins keeps the open page and unsent work; an apply
+// whose web contracts are newer than the page's base leaves it working, and a component the base lacks is reported
+// once. Screenshots at the phone's and the desktop's size, light and dark, go to `/tmp/p3-base/shots/` (`P3_SHOTS`
+// names another directory).
 
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -29,6 +30,7 @@ import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
+import { ThingKindsView } from "../../things/kind.ts";
 import { Workspace } from "../../things/workspace.ts";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "./browser.ts";
 
@@ -409,6 +411,61 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		await browser.wait(`document.querySelector('[data-transcript="writer"]')?.offsetParent !== null`);
 		await shots("17-answer-phone");
 		await browser.size(DESKTOP);
+	});
+
+	it("names every kind and its tick labels in words, never by their message keys", async () => {
+		// Kinds whose plugin had no web facet brought no texts to the page: Who may showed `tickRead` (video2).
+		const kinds = await until(
+			(await owner.get(ThingKindsView, {}, context)).kinds,
+			(found) => Object.keys(found).length > 0,
+			context,
+		);
+		const keys = new Set(Object.values(kinds).flatMap((kind) => kind.ticks.map((tick) => tick.label.key)));
+		const shown = () =>
+			browser.evaluate<string[]>(
+				`[...document.querySelectorAll("[data-who-may] th, [data-make-popup]"), document.querySelector("main")].map((e) => e.textContent.trim())`,
+			);
+		const inWords = (texts: readonly string[], at: string) => {
+			for (const text of texts) {
+				assert.ok(!keys.has(text), `${at} shows the message key ${text}`);
+				assert.ok(!text.includes("A thing"), `${at} names a kind without its title: ${text}`);
+			}
+		};
+		await browser.size(DESKTOP);
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await press('[data-settings-tab="what"]');
+		await browser.wait(`document.querySelectorAll("[data-here-thing]").length > 0`);
+		const things = await browser.evaluate<string[]>(
+			`[...document.querySelectorAll("[data-here-thing]")].map((e) => e.dataset.hereThing)`,
+		);
+		for (const thing of [...things, session]) {
+			const at = thing === session ? `/w/${session}/settings` : `/w/${pi}/t/${thing}/settings`;
+			await browser.open(`${origin}${at}`);
+			if (thing === session) await press('[data-settings-tab="may"]');
+			await browser.wait(`document.querySelector("[data-who-may] th")`);
+			inWords(await shown(), at);
+		}
+		// Every registered kind by its title: the Make column's popup lists them all.
+		await browser.open(`${origin}/w/${pi}/settings`);
+		await press('[data-settings-tab="may"]');
+		await press('[data-make="everyone"]');
+		await browser.settled("[data-make-popup]");
+		inWords(await shown(), "the Make popup");
+		await browser.evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
+	});
+
+	it("removes a session from Pi in its Settings view, also when it was addressed as a thing of Pi", async () => {
+		const made = await (await owner.get(Workspace, { workspace: pi }, context)).make!(
+			{ kind: "sessions.session", name: "To remove", input: {} },
+			context,
+		);
+		// A session is a workspace placed in Pi, not a thing linked there: its thing address goes to its own (video2).
+		await browser.open(`${origin}/w/${pi}/t/${made}/settings`);
+		await browser.wait(`location.pathname === "/w/${made}/settings"`);
+		await press("[data-unlink]");
+		await press("[data-unlink-confirm]");
+		await browser.wait(`location.pathname === "/w/${pi}"`);
+		await browser.wait(`document.querySelector('[data-nav-workspace="${made}"]') === null`);
 	});
 
 	it("shows a person with Read only the session's transcript, with no way to send", async () => {
