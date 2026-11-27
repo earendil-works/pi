@@ -63,6 +63,13 @@ try {
 		files: (ctx) => ctx.get(Files, { workspace: pi, thing: files }),
 		terminals: (ctx) => ctx.get(Terminals, { workspace: pi, thing: terminals }),
 	};
+	// Who may gives everyone in Pi Browse and Watch, as the owner would: the kinds give people nothing (decision 126).
+	const everyone = { kind: "everyone" } as const;
+	const grants = [
+		{ workspace: pi, thing: files, party: everyone, tick: "browse", gives: true },
+		{ workspace: pi, thing: terminals, party: everyone, tick: "watch", gives: true },
+	];
+	await things.setGrants({ source: by, grants }, context);
 	const persons: P3Principal[] = [];
 	for (let i = 0; i < HOLDERS; i++) {
 		const id = await things.createPerson({ name: `p${i}`, madeBy: by }, context);
