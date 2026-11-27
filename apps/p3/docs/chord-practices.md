@@ -267,9 +267,9 @@ reference or a native.
   MCP server's tool list) use `again`, which gives only that kind again (decision 137). Decided (142), being changed
   on main (today the harness gives only kinds that hold something): the harness calls every part on every change of
   what the agent holds, possibly nothing, and the part checks for none itself, first: `if (things.length === 0)
-  return { extension: {} };`. An empty extension, never `{}`: it keeps the kind's place in Durable's registry (a kind
-  appended again changes the prompt's order and loses the provider's prompt cache). A part that gives tasks gives
-  them always (`{ extension: { tasks: TASKS } }` with nothing held).
+  return {};`. The harness keeps the kind's place in Durable's registry (an empty extension under the kind's name: a
+  kind appended again changes the prompt's order and loses the provider's prompt cache); only a kind whose part went
+  is uninstalled. A part that gives tasks gives them always (`{ extension: { tasks: TASKS } }` with nothing held).
 - A kind's method never checks the caller's access to its own thing again. Only a method that names another thing
   (Files and Terminals name a machine) checks the caller's answer on that thing.
 - Nothing a person reads is written outside `messages.ts`: no English in a state value, a view or a key.
