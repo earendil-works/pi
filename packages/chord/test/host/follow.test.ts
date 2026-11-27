@@ -2248,3 +2248,114 @@ describe("over a changing source: a failed first attachment's cleanup", () => {
 		},
 	);
 });
+
+// Astra, round 6 of this change: the cleanup of a failed first attachment runs inside the activation, after the
+// follow is over for good.
+describe("over a changing source: the cleanup of a failed first attachment", () => {
+	it("rejecting the first attachment cannot start a successor from its own cleanup", async () => {
+		const starts: number[] = [];
+		const ends: number[] = [];
+		const { host, errors } = await loaded((h) =>
+			h.serve(Follower, (_, self) => {
+				const s = self.writable(1);
+				return {
+					a: self.follow(s, async (n, o, c) => {
+						starts.push(n);
+						if (n === 1) o.advance({ kind: "failed", error: new Error("A failed") }, c);
+						return {
+							value: { n },
+							detach() {
+								ends.push(n);
+								if (n === 1) s.set(2);
+							},
+						};
+					}),
+				};
+			}),
+		);
+		try {
+			const ref = host.hold(Follower, { id: "1" }, context);
+			await delivered();
+			expect([ref.state.value, errors]).toMatchObject([
+				{ kind: "failed", cause: { kind: "transient" } },
+				[{ kind: "activation_failed" }],
+			]);
+			expect([starts, ends]).toEqual([[1], [1]]);
+		} finally {
+			await host.close(context);
+		}
+	});
+	it.each(["plain", "over"])(
+		"%s: a rejected first attachment cannot turn an exception from its cleanup into an uncaught host error",
+		(form) => {
+			const entry = fileURLToPath(new URL("./fixtures/follow-throwing-cleanup.ts", import.meta.url));
+			const proc = spawnSync(process.execPath, ["--conditions=source", entry, form], { encoding: "utf8" });
+			expect(proc.status, proc.stderr).toBe(0);
+			expect(proc.stdout).toContain("state=failed");
+		},
+	);
+});
+
+// Astra, round 6 of this change: an idle value reads the committed value on the batch of its source's host.
+describe("over a changing source: an idle value and its source's batch", () => {
+	it.each(["ended", "failed"])(
+		"a registry from another in-process host wakes an idle %s observation on a committed withdrawal and reoffer",
+		async (end) => {
+			const runtime = new Runtime(1);
+			const source = await overRuntimes(runtime);
+			const registry = await source.host.registry(Runtimes, context);
+			const { host } = await loaded((h) =>
+				h.serve(Follower, (_, self) => ({ a: self.follow(registry, (r, o, c) => r.attach(o, c)) })),
+			);
+			try {
+				const ref = await host.get(Follower, { id: "1" }, context);
+				runtime.end(
+					end === "ended" ? { kind: "ended" } : { kind: "failed", error: new Error("ended before withdrawal") },
+				);
+				await delivered();
+				source.give(undefined);
+				source.give(runtime);
+				await delivered();
+				runtime.set(2);
+				await delivered();
+				expect([runtime.attachments, runtime.observers.size]).toEqual([2, 1]);
+				expect(ref.a.value).toEqual({ n: 2 });
+			} finally {
+				await host.close(context);
+				await source.host.close(context);
+			}
+		},
+	);
+	it.each(["ended", "failed"])(
+		"re-offering %s in a second deferred commit wakes it, but one commit ending at A does not",
+		async (end) => {
+			const runtime = new Runtime(1);
+			const { host, hold, give } = await overRuntimes(runtime);
+			try {
+				const ref = hold();
+				await waitLive(ref);
+				const batch = (host as unknown as ChordHost).batch;
+				runtime.end(
+					end === "ended" ? { kind: "ended" } : { kind: "failed", error: new Error("ended before withdrawal") },
+				);
+				await delivered();
+				batch.commit(() => {
+					give(undefined);
+					give(runtime);
+				}, context);
+				await delivered();
+				expect([runtime.attachments, runtime.observers.size]).toEqual([1, 0]);
+				batch.commit(() => {
+					give(undefined);
+					batch.flushing(() => give(runtime));
+				}, context);
+				await delivered();
+				runtime.set(2);
+				await delivered();
+				expect([runtime.attachments, runtime.observers.size, ref.a.value]).toEqual([2, 1, { n: 2 }]);
+			} finally {
+				await host.close(context);
+			}
+		},
+	);
+});

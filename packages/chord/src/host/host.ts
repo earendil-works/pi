@@ -222,7 +222,8 @@ export type HostError =
 	/**
 	 * A source followed over a changing source (`self.follow(over, attach)`) failed while live: the attach to the
 	 * value given rejected, or its runtime failed its observer. Once per failure episode (its next attachment ends
-	 * it): the member is failed until then, the object stays live.
+	 * it): the member is failed until then, the object stays live. Also a runtime's detach of an observation that
+	 * threw (each time).
 	 */
 	| { readonly kind: "follow_failed"; readonly object: string; readonly error: unknown }
 	/** A routine's call threw, or its source failed for good; `routine` is its kind and position. */

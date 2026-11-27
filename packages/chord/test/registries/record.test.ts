@@ -1042,3 +1042,35 @@ describe("a provider of another version", () => {
 		}
 	});
 });
+
+// Astra, round 6 of ERNDL-1191 (control): a provider of the same version keeps the last good composition.
+describe("a provider of the same version", () => {
+	it("retains the previous value when the same version is served by new code and its first compose fails", async () => {
+		const R = defineRegistry<number, string>("app.keep", { version: 1 }),
+			name = "@test/keep";
+		const host = createHost({ onError() {} });
+		try {
+			await host.load([{ name, facet: defineFacet((h) => h.serve(R, { compose: () => "first" })) }], context);
+			const current = await host.registry(R, context);
+			expect(current.value).toBe("first");
+			await host.reload(
+				[
+					{
+						name,
+						facet: defineFacet((h) =>
+							h.serve(R, {
+								compose: () => {
+									throw new Error("failed on same version");
+								},
+							}),
+						),
+					},
+				],
+				context,
+			);
+			expect([(await host.registry(R, context)).value, current.value]).toEqual(["first", "first"]);
+		} finally {
+			await host.close(context);
+		}
+	});
+});

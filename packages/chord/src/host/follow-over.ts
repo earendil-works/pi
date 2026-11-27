@@ -9,7 +9,7 @@ import { awaitWithContext, type Context } from "../context/index.ts";
 import { ChordError } from "../data/index.ts";
 import type { JsonValue } from "../json.ts";
 import { RegistryValueSource } from "../registries/internal.ts";
-import { type Batch, type Dependent, FollowedSource, handedOut } from "../state/internal.ts";
+import { type Dependent, FollowedSource, handedOut } from "../state/internal.ts";
 import type { ChordMetrics } from "../telemetry.ts";
 import type { WatchCall, WatchEnd } from "../watch.ts";
 import { nextDelay } from "./backoff.ts";
@@ -32,11 +32,9 @@ export type FollowOverOwner = {
 	readonly context: Context;
 	/** Its host's instruments: its attachments are counted there (`chord.follow.attaches`). */
 	readonly metrics: ChordMetrics;
-	/** Its host's batch: an idle follow reads `over`'s value at the end of each batch that changed it. */
-	readonly batch: Batch;
 	/** Whether its attempt is live: before, a failure of the value given is its activation's (R4). */
 	live(): boolean;
-	/** A failure while live (`follow_failed`), once per failure episode. */
+	/** A failure while live (`follow_failed`), once per failure episode, or a runtime's detach that threw. */
 	report(error: unknown): void;
 	/** What the activation waits for (a value of `over`), named in its deadline's error; `undefined`: nothing. */
 	waiting(what: string | undefined): void;
@@ -163,7 +161,8 @@ class FollowOver implements Dependent {
 		this.#moving = true;
 		if (this.#idle !== undefined && !this.#checking) {
 			this.#checking = true;
-			this.#owner.batch.flushing(() => this.#checkIdle());
+			// On the batch of `over`'s host (a registry value of another host commits there).
+			this.#over.flushing(() => this.#checkIdle());
 		}
 		if (this.#reconciling) return;
 		this.#reconciling = true;
@@ -280,7 +279,13 @@ class FollowOver implements Dependent {
 		// Failed as it settled, while the activation waits for it: the activation's failure (R4), decided at this
 		// settlement, not by what the followed source still queues until its own attachment resolves.
 		if (first !== undefined && held.kind === "failed") {
-			this.#fail(held.error);
+			// Over for good before the runtime's cleanup runs (a cleanup that changes `over` starts nothing), which runs
+			// here, inside the activation, its error staying the one selected now.
+			this.#first = undefined;
+			this.#current = undefined;
+			this.#detach();
+			this.#cleanUp(attached);
+			first.reject(held.error);
 			return;
 		}
 		this.#idle = undefined;
@@ -395,7 +400,16 @@ class FollowOver implements Dependent {
 		const leaving = this.#leaving;
 		if (leaving.length === 0) return;
 		this.#leaving = [];
-		for (const observation of leaving) observation.detach();
+		for (const observation of leaving) this.#cleanUp(observation);
+	}
+
+	/** Detaches `observation`; a detach that throws is reported (`follow_failed`), never thrown out of a microtask. */
+	#cleanUp(observation: FollowAttachment<JsonValue>): void {
+		try {
+			observation.detach();
+		} catch (error) {
+			this.#owner.report(handedOut(error));
+		}
 	}
 
 	/** What `over` is, for the activation deadline's error. */

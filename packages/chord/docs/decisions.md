@@ -3921,8 +3921,12 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   then, or a failed call after it while the object activates, fails the activation), not where the followed source
   adopts it; before a plain attachment settles only its last call is kept; a failed first attachment is discarded
   before its cleanup runs; an idle value reads `over`'s committed value at the end of each batch that changed it
-  (also none: a registry failing without a last good value), not its frames. The runtime's `detach` runs outside any batch. Attachments are counted
-  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 to 5: Opus, Astra, Fable.)
+  (also none: a registry failing without a last good value), not its frames. Round 6 (Astra): a first attachment
+  failed at its settlement is over for good before its runtime's cleanup runs (no longer a dependent of `over`, so a
+  cleanup that changes it starts nothing), and that cleanup runs inside the activation; a runtime's detach that throws
+  is reported (`follow_failed`), never thrown out of a microtask; the idle read is listed on the batch of `over`'s own
+  host (`NativeSource.flushing`: a registry value of another host commits there). The runtime's `detach` runs outside any batch. Attachments are counted
+  (`chord.follow.attaches`, by reason `value` or `retry`). (Review rounds 1 to 6: Opus, Astra, Fable.)
   **Built as an attach of its own** (`host/follow-over.ts`; main session, 2026-11-27, decision 140, reversible, from
   Fable's review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
   it; its one new rule: a `failed` call fails the member until the next value, which replaces it whole (Durable
