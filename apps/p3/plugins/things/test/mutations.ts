@@ -22,6 +22,19 @@ import { join, resolve } from "node:path";
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- a seeded thing's input ----
+	{
+		name: "a seed made after a reload takes the old generation's input",
+		file: "store.ts",
+		find: "if (hooks.value.get(kind)?.value !== entry.value) continue;",
+		put: "",
+	},
+	{
+		name: "a seed's failure is reported by every attempt",
+		file: "store.ts",
+		find: "if (!failedSeeds.has(entry.value)) {",
+		put: "if (true) {",
+	},
 	// ---- people, round 2 ----
 	{
 		name: "the cleanup counts a thing going in the same write as made",
