@@ -975,6 +975,37 @@ The `openai-decisions` API calls OpenAI's [Decisions API](https://developers.ope
 
 The endpoint needs an OpenAI API key; Sign in with ChatGPT credentials are rejected, so the `openai` provider hides `gpt-6-luna` from `getAvailableOfType('classifier')` while it uses OAuth. The API rejects inputs above 922K tokens, but requests that run longer than about five seconds, currently above roughly 600K input tokens, fail with a gateway timeout (504).
 
+### Pi Decision
+
+The `pi-decision` API sends pi's decision types directly to a backend without provider translation, analogous to `pi-messages`. Each call sends a single `POST` to `<baseUrl>/decision` with bearer auth (`Authorization: Bearer <apiKey>`) and body `{ model, context: { state, images?, questions }, options? }` (`PiDecisionRequest`), where `options` may carry `sessionId`.
+
+A `200 OK` response returns `{ answers, usage?, responseId? }` (`PiDecisionResponse`), where `answers` maps each question ID to a typed `ClassifierAnswer` (`choice`, `score`, or `bool`) validated against the requested criteria and probability bounds. When `usage.cost.total` is present, pi trusts it as authoritative; otherwise pi computes cost from the model catalog. Non-2xx responses use the `{ error: { message, code?, details? } }` envelope. Requests with `context.images` are rejected client-side if `model.input` does not include `"image"`.
+
+```typescript
+import { createProvider, envApiKeyAuth } from '@earendil-works/pi-ai';
+import { piDecisionApi } from '@earendil-works/pi-ai/api/pi-decision.lazy';
+
+const gateway = createProvider({
+  id: 'my-gateway',
+  name: 'My Gateway',
+  auth: { apiKey: envApiKeyAuth('My Gateway API key', ['MY_GATEWAY_API_KEY']) },
+  models: [
+    {
+      type: 'classifier',
+      id: 'jev',
+      name: 'TypeSafe: Jev',
+      api: 'pi-decision',
+      provider: 'my-gateway',
+      baseUrl: 'https://gateway.example/v1',
+      input: ['text', 'image'],
+      cost: { input: 0.042, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 262144,
+    },
+  ],
+  classifiers: { 'pi-decision': piDecisionApi() },
+});
+```
+
 ### Chat models on llama.cpp
 
 llama.cpp also serves decision models such as Julia-1 or Kev natively through `/v1/systemone`. Since llama.cpp 0.6.0, `GET /models` lists `decisions` in a model's `architecture.output_modalities` for these models. They use the `typesafe-system-one` API with the server's `/v1` URL as `baseUrl` (for example `http://127.0.0.1:9931/v1`); it needs an `apiKey`, which llama.cpp ignores unless it was started with `--api-key`. The `llama-cpp-classify` API is the fallback for chat models.
