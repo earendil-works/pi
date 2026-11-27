@@ -3,7 +3,8 @@
 // tool running in the session's folder; its state reaches its row (working, then settled); the worker stays alive while working with no
 // holder; a server restart mid-call resumes the run; an archived session's cut-off run schedules nothing; a row left
 // `working` with nothing to do (a crash before Durable took the input, or before the settled report) is settled by
-// the waker's start; a reload of the harness plugin mid-call finishes the run; Bash withheld from the agents in one
+// the waker's start; a reload of the harness plugin mid-call finishes the run, the held transcript following the next
+// harness with nothing failing on the worker; Bash withheld from the agents in one
 // session is gone from the agent's next request there, and only there (ERNDL-704 test 5).
 
 import assert from "node:assert/strict";
@@ -14,11 +15,17 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+	arr,
 	BACKGROUND_CONTEXT as context,
 	type Host,
+	method,
+	obj,
 	type P3Principal,
+	remote,
+	Session,
 	SessionObject,
 	type SessionState,
+	str,
 	THIS_DEVICE,
 	Transcript,
 	until,
@@ -48,6 +55,41 @@ afterEach(async () => {
 });
 
 /** A temporary directory, removed after the case. */
+/** The name of the worker plugin a case writes (`reporting`) to read what a session's worker reported. */
+const REPORTS = "worker-reports";
+
+/** What `reporting`'s plugin serves on a session's worker: every line the worker reported so far. */
+const Reports = remote(`${REPORTS}.${REPORTS}`, {
+	version: 1,
+	params: { session: str() },
+	hostAddress: ({ session }) => Session({ id: session }),
+	methods: { lines: method(obj({}), arr(str())) },
+});
+
+/**
+ * The source of single-file worker plugin `REPORTS`: it keeps every line the worker reports (`reportError` writes to
+ * stderr through `console.error`) and serves them (`Reports`), so a case reads what its worker reported.
+ */
+function reporting(): string {
+	return `import { arr, defineFacet, method, obj, remote, Session, str } from "@earendil-works/p3/v1";
+const Reports = remote(${JSON.stringify(`${REPORTS}.${REPORTS}`)}, {
+	version: 1,
+	params: { session: str() },
+	hostAddress: ({ session }) => Session({ id: session }),
+	methods: { lines: method(obj({}), arr(str())) },
+});
+export default defineFacet((host) => {
+	const lines = [];
+	const report = console.error;
+	console.error = (...args) => {
+		lines.push(args.map(String).join(" "));
+		report(...args);
+	};
+	host.serve(Reports, () => ({ lines: async () => [...lines] }));
+});
+`;
+}
+
 async function directory(prefix: string): Promise<string> {
 	const dir = await realpath(await mkdtemp(join(tmpdir(), prefix)));
 	cleanups.push(() => rm(dir, { recursive: true, force: true }));
@@ -276,11 +318,21 @@ describe("the harness end to end", () => {
 		await reaches(client, after, "settled", 20_000);
 	});
 
-	it("finishes a run when the harness plugin is reloaded mid-call", async () => {
+	it("finishes a run when the harness plugin is reloaded mid-call, and nothing fails on the worker", async () => {
 		const folder = await directory("p3-harness-e2e-");
 		const built = join(await directory("p3-harness-reload-"), "built-in");
 		await cp(fileURLToPath(new URL("../../", import.meta.url)), built, { recursive: true });
 		const t = await start({ builtIn: built });
+		// The worker's reports, which go to its stderr, served for the case to read (Astra, slice 5 round 1, should 8);
+		// applied before the session's worker starts, so it reports from its start on.
+		await writeFile(join(t.userRoot, `${REPORTS}.worker.ts`), reporting());
+		// A plugin no discovery knew yet marks the set.
+		await until(
+			t.plugins,
+			({ set, dirty }) => set || dirty.includes(REPORTS),
+			within("the reporting plugin", context, 10_000),
+		);
+		await t.apply(context);
 		const id = await session(t, folder, [
 			{ when: "@go", reply: [{ kind: "tool", name: "bash", args: JSON.stringify({ command: GATED }) }] },
 			{ when: "", reply: [{ kind: "text", text: "after the reload" }] },
@@ -308,6 +360,9 @@ describe("the harness end to end", () => {
 			within("the answer in the held transcript", context, 10_000),
 		);
 		assert.deepEqual(t.errors, []);
+		// The held transcript's follower followed the next harness: the old one's close failed no object.
+		const reported = await (await client.get(Reports, { session: id }, context)).lines({}, context);
+		assert.doesNotMatch(reported.join("\n"), /object_failed|session closed/);
 	});
 });
 

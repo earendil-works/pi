@@ -1,15 +1,19 @@
 // The transcript plugin on a session's worker: `Transcript`, the session's root conversation as the people in the session see it.
 // One local object per conversation follows Durable's view once (`self.follow` of `observeConversation`), however many
-// people read it; each holder's `Transcript` reads that one. Read gives the view and older entries, Send the send
+// people read it, across the harnesses the session's worker opens (a reload of the harness plugin replaces it); each
+// holder's `Transcript` reads that one. Read gives the view and older entries, Send the send
 // (through the harness's `submit`, the one way to start work), Stop the stop: the caller's ticks on the session.
 
 import {
 	type Context,
 	defineFacet,
+	type FollowObserver,
 	followSession,
 	forbidden,
 	invalid,
+	type JsonValue,
 	local,
+	type RegistryValue,
 	SessionFacts,
 	str,
 	unknown,
@@ -17,6 +21,7 @@ import {
 } from "@earendil-works/p3/v1";
 import {
 	type ConversationId,
+	type ConversationView,
 	type EntryId,
 	type OpenHarness,
 	ROOT_CONVERSATION_ID,
@@ -38,20 +43,10 @@ export default defineFacet((host) => {
 	// No linger: a follower left after its last reader would keep the worker from its idle stop.
 	host.serve(Followed, ({ conversation }, self) => {
 		const harness = self.registry(SessionHarness);
-		// A closed harness ends the follow; the next one's contribution follows again.
+		// A harness that fails its follow (not one replaced: that one is followed across) retries with the next.
 		self.retryOn(harness);
-		// The registry has a value (`undefined`) before the harness is open, so it is no dependency to park on: the
-		// attempt waits for the harness here (a reader may come while it opens or reopens), instead of failing.
-		const opened = self.open(
-			async (context) => {
-				const open = await until(harness, (value) => value !== undefined, context);
-				if (open === undefined) throw new Error("transcript: no harness");
-				return open;
-			},
-			() => {},
-		);
-		const view = self.follow(async (observer, context) =>
-			opened.value.durable.observeConversation(Number(conversation) as ConversationId, observer, context),
+		const view = self.follow((observer, context) =>
+			followAcross(harness, Number(conversation) as ConversationId, observer, context),
 		);
 		return { view };
 	});
@@ -93,6 +88,68 @@ export default defineFacet((host) => {
 		{ admit: followSession(TRANSCRIPT_GRANTS) },
 	);
 });
+
+/**
+ * Follows conversation `id`'s view across the harnesses `harness` gives, as one source: waits for the first (the
+ * registry is `undefined` before the harness is open; a reader may come while it opens or reopens), and when another
+ * one comes (the harness plugin reloaded: Chord withdraws the old one's contribution before it closes its Durable),
+ * observes the conversation there and gives its view as a whole replacement. The old Durable's end ("session closed")
+ * then belongs to an observation detached already, so a reload fails no follower (Astra, slice 5 round 1, should 8);
+ * an end of the harness still given fails the follow, as before.
+ */
+async function followAcross(
+	harness: RegistryValue<OpenHarness | undefined>,
+	id: ConversationId,
+	observer: FollowObserver<unknown>,
+	context: Context,
+): Promise<{ value: ConversationView; detach(): void }> {
+	const first = await until(harness, (value) => value !== undefined, context);
+	if (first === undefined) throw new Error("transcript: no harness");
+	let current: OpenHarness = first;
+	let detached = false;
+	/** Observes the conversation on `open`, forwarding its calls while it is the one followed. */
+	const observe = (open: OpenHarness) =>
+		open.durable.observeConversation(
+			id,
+			{
+				advance: (call, ctx) => {
+					if (open === current) observer.advance(call, ctx);
+				},
+				end: (end) => {
+					// A replaced harness's end is expected: the next one is followed already, or will be.
+					if (open === current && harness.value === open) observer.end(end);
+				},
+			},
+			context,
+		);
+	let observation = await observe(current);
+	const watch = await harness.watch(context);
+	// One rebinding at a time, in the order the values came.
+	let rebinding = Promise.resolve();
+	watch.start(async (call) => {
+		if (call.kind !== "value" || call.value === undefined || call.value === current) return;
+		const next = call.value;
+		rebinding = rebinding.then(async () => {
+			if (detached || next !== harness.value) return;
+			observation.detach();
+			current = next;
+			observation = await observe(next);
+			if (detached) return observation.detach();
+			// The view is plain JSON (Durable's own calls carry it in their ops); typed readonly, as Durable keeps it.
+			const replaced = observation.value as unknown as JsonValue;
+			observer.advance({ kind: "value", value: observation.value, ops: [["r", replaced]], retired: false }, context);
+		});
+		await rebinding;
+	});
+	return {
+		value: observation.value,
+		detach: () => {
+			detached = true;
+			observation.detach();
+			void watch.stop();
+		},
+	};
+}
 
 /** A page of the root conversation's entries, newest last: the ones right before `maxEntryId` unless `ascending`. */
 async function entriesOf(

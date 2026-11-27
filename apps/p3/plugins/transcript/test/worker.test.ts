@@ -2,7 +2,8 @@
 // with a faux model, its `submit` the harness's way in) and the harness tests' stand-in server, which answers each
 // caller's ticks on the session: Read sees the view and pages entries, Send sends, Stop stops (not in an archived
 // session); Read without Send has no send, Send without Read no view; two readers share one follower of the
-// conversation, and a caller given nothing any more while holding the transcript is denied at once.
+// conversation, which follows it across a harness replaced while it is held (a reload of the harness plugin) failing
+// nothing; and a caller given nothing any more while holding the transcript is denied at once.
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -15,6 +16,7 @@ import {
 	type P3Principal,
 	Transcript,
 	until,
+	type Writable,
 	withGranted,
 } from "@earendil-works/p3/v1";
 import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
@@ -83,6 +85,52 @@ function standInHarness(counts: { observers: number; opens?: number }) {
 				},
 			};
 			self.contribute(SessionHarness, harness);
+		});
+	});
+}
+
+/**
+ * A stand-in harness that `swap` replaces as a reload of the harness plugin does: its contribution withdrawn first,
+ * then its Durable closed (which ends the observers it had), then a new one opened on the store and contributed.
+ */
+function swappableHarness(control: { swap?: () => Promise<void> }) {
+	return defineFacet((host) => {
+		host.serve(SessionHarness, { compose: (table) => table[0]?.value });
+		contribute(host, "test.harness", (self) => {
+			const runtime = self.registry(WorkerRuntime);
+			const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-model" }] });
+			const given = self.writable<OpenHarness | undefined>(undefined);
+			// The registry composes its first entry's value: `undefined` stands for the contribution withdrawn.
+			self.contribute(SessionHarness, given as Writable<OpenHarness>);
+			let durable: Harness | undefined;
+			const open = async (ctx: typeof context): Promise<OpenHarness> => {
+				const models = createModels();
+				models.setProvider(faux.provider);
+				const storage = await StoreStorage.open(runtime.value.store, "harness", ctx);
+				const opened = await Harness.open(storage, { models, registry: createRegistry() }, ctx);
+				await opened.root(ctx, { agent: { model: { provider: "faux", modelId: "faux-model" } } });
+				opened.resume();
+				durable = opened;
+				return {
+					durable: opened,
+					submit: async (_conversation, { text, requestId }, call) => {
+						faux.appendResponses([fauxAssistantMessage(`ok: ${text}`)]);
+						await (await opened.root(call)).submit({ type: "input", content: text, requestId }, call);
+					},
+				};
+			};
+			self.open(
+				async (ctx) => {
+					given.set(await open(ctx));
+					return null;
+				},
+				async (_none, _reason, ctx) => durable?.close(ctx),
+			);
+			control.swap = async () => {
+				given.set(undefined);
+				await durable?.close(context);
+				given.set(await open(context));
+			};
 		});
 	});
 }
@@ -297,5 +345,43 @@ describe("the transcript plugin on a worker", () => {
 			context,
 			{ principal: ALICE },
 		);
+	});
+
+	// Astra, slice 5 round 1 (should 8): the old Durable's "session closed" failed the follower (`object_failed`).
+	it("follows the conversation across a harness replaced while held, failing nothing", async () => {
+		const control: { swap?: () => Promise<void> } = {};
+		const stand = standIns(sessionRow(SESSION, "/tmp"), []);
+		const swapped = await testPlugin(
+			fileURLToPath(new URL("../", import.meta.url)),
+			{
+				kind: "worker",
+				session: SESSION,
+				stubs: [{ name: "test.harness", facet: swappableHarness(control) }],
+				server: stand.server,
+			},
+			context,
+		);
+		try {
+			await swapped.root(
+				async (ctx) => {
+					const transcript = withGranted(await ctx.get(Transcript, { session: SESSION }), ...ALL)!;
+					await transcript.send({ text: "one", requestId: "one" }, ctx);
+					await until(transcript.view, (view) => texts(view).includes("ok: one"), within("the first answer", ctx));
+					await control.swap?.();
+					await transcript.send({ text: "two", requestId: "two" }, ctx);
+					await until(
+						transcript.view,
+						(view) => texts(view).includes("ok: two"),
+						within("the next harness's answer", ctx),
+					);
+					assert.equal(transcript.state.value.kind, "live");
+				},
+				context,
+				{ principal: OWNER },
+			);
+			assert.deepEqual(swapped.errors, []);
+		} finally {
+			await swapped.close(context);
+		}
 	});
 });
