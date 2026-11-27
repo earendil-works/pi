@@ -2508,7 +2508,7 @@ validation and copies the v2 kernel added around Delta.
   contributors. (c) A request waiting unbound (`not_served`, `waiting`) is reported once through `onError` after 5 s,
   naming what it waits for; it keeps waiting until its `readyTimeout` as before. (d) An invalid plugin name is a
   programming error: `load` and `reload` throw instead of listing it in the report's `failed`. (e) (owner, 2026-11-03:
-  "add report"; p2 port footgun 10; **changed by ERNDL-1190, 2026-11-26, pending Mario's confirmation**) Work a seal
+  "add report"; p2 port footgun 10; **changed by ERNDL-1190, owner, 2026-11-27: the narrow rule**) Work a seal
   cancels before it ran (a document change or transaction waiting on its object's line, or whose `fn` settled before
   it committed) is also reported through `onError`, naming the object and the scope, besides rejecting, when the
   context it was started with ended first because of someone else: a root's context that settled, a handler's context
@@ -2520,9 +2520,9 @@ validation and copies the v2 kernel added around Delta.
   or the abort's reason), not an exception of the transaction's own, which still reports. What this gives up: a
   fire-and-forget `void self.tx(…, ctx)` in `onLive` whose change is lost because the object is released or reloaded
   right after is now silent (the object's end loses it as a crash would; its successor starts from what was
-  committed). The rule itself stays: what is started with a context ends with it; await it. Open question for Mario:
-  the broad alternative, no object's end is a mistake whoever's (a caller object's end silent on the callee too; a tag
-  on end reasons instead of the token's signals).
+  committed). The rule itself stays: what is started with a context ends with it; await it. Not taken: the broad
+  alternative, no object's end is a mistake whoever's (a caller object's end silent on the callee too; a tag on end
+  reasons instead of the token's signals).
 - **No limit on calls in progress per link; references in a method act as the caller (owner, 2026-11-03: "i guess
   it's fine without, guess we document it"; p2 port footguns 7, 11):** v1's `maxCalls` per link has no counterpart and
   gets none (the call window N bounds calls per origin; part limits bound sizes); documented. `ctx.get` in a method

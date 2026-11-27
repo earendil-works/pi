@@ -1222,7 +1222,7 @@ change or transaction (`handle.change`, `retire`, `self.tx`, `job.start`) that d
 ended first (it waited on its object's line, or `fn` returned before it committed) rejects with that context's abort
 reason, and is also reported through `onError` as `transaction_cancelled { object, error }` (`error` the abort
 reason, naming the scope that ended): an empty `catch` cannot hide a change that never happened. Not reported: one its
-own object's end cancelled (ERNDL-1190, pending Mario's confirmation of decision (e)'s change). The check compares
+own object's end cancelled (ERNDL-1190; decision (e) as changed by the owner, 2026-11-27). The check compares
 origins, not reasons: Chord's linked signals (a call's context, linked to its caller's and to its attempt's) remember
 which source aborted them first (`context/abort-origin.ts`), the attempt's seal token remembers the signals it aborted
 to end its own work (any end of the attempt, a reload stopping its routines, the job runs its seal cut off), and the
