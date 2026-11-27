@@ -67,7 +67,8 @@ export const TerminalsKind = defineThing("terminals.pane", {
 			gives: ["terminals", "attach", "backlog", "open", "type", "resize", "close"],
 		},
 	},
-	defaultGrants: { everyone: ["watch"], agents: ["use"] },
+	// A Read share's guests watch (decision 100): Watch changes nothing.
+	defaultGrants: { everyone: ["watch"], agents: ["use"], guests: ["watch"] },
 });
 
 /** Terminals held in a workspace: `TerminalsKind`'s contract. */

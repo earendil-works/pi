@@ -36,7 +36,8 @@ export const MachineKind = defineThing(MACHINE_KIND, {
 	create: { input: unknown() },
 	state: { info: MachineInfo },
 	ticks: { work: { label: messages.message("tickWork"), for: "agents" } },
-	defaultGrants: { everyone: [], agents: ["work"] },
+	// A Read share's guests are let in with no tick (decision 100), so Files and Terminals let them browse and watch.
+	defaultGrants: { everyone: [], agents: ["work"], guests: [] },
 });
 
 /** One machine held in a workspace: `MachineKind`'s contract. */

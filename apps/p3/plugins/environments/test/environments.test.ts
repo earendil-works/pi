@@ -123,6 +123,26 @@ describe("the environments plugin on the server", () => {
 		);
 	});
 
+	it("gives the owner no tick on it (Work here is the agents'), and lets them in (decision 99)", async () => {
+		const id = await things.createPerson({ name: "Olga", madeBy: BY }, context);
+		await things.setOwner({ person: id, owner: true }, context);
+		const olga: P3Principal = { kind: "person", id, name: "Olga" };
+		assert.deepEqual((await held(olga)).granted, []);
+	});
+
+	it("lets a Read share's guests in with no tick (decision 100)", () => {
+		assert.deepEqual(MachineKind.info.defaultGrants.guests, []);
+	});
+
+	it("is made again with a new id when its last link goes: this device's machine again", async () => {
+		await things.unlink({ workspace: pi, thing: machine }, context);
+		const again = await t.host.get(OneThing, { kind: MachineKind.name }, context);
+		const next = await until(again.thing, (id) => id !== "" && id !== machine, within("the new machine", context));
+		machine = next;
+		const info = { name: hostname(), type: "local", status: "ready" };
+		assert.deepEqual(await held(await person("Ann")), { granted: [], info });
+	});
+
 	it("keeps no machine's info once every hold is released (guide 8.7)", async () => {
 		const ann = await person("Ann");
 		const info = await t.root(

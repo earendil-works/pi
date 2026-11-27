@@ -39,7 +39,7 @@ import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Party, type Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
 import { refused } from "../../things/test/kind-server.ts";
-import { DOWNLOAD_PATH, Files, FilesKind, UPLOAD_PATH } from "../kind.ts";
+import { DOWNLOAD_PATH, FILES_BROWSES, FILES_EDITS, Files, FilesKind, UPLOAD_PATH } from "../kind.ts";
 import { must } from "../places.ts";
 import { StagingStore } from "../staging.ts";
 import { owned } from "../transfers.ts";
@@ -235,6 +235,36 @@ describe("Files and its ticks", () => {
 			// The best of three: the budget is the page's work, not the machine's load meanwhile.
 			assert.ok(Math.min(...took) < 50, `${Math.min(...took)} ms`);
 		});
+	});
+});
+
+describe("the owner, guests and the one thing (slice 1's rules)", () => {
+	it("gives the owner Browse and Edit without being put in, also where Browse is withheld from everyone", async () => {
+		const id = await things.createPerson({ name: "Olga", madeBy: BY }, context);
+		await things.setOwner({ person: id, owner: true }, context);
+		await grant(pi, files, { kind: "everyone" }, ["browse"], false);
+		const olga: Person = { kind: "person", id, name: "Olga" };
+		assert.deepEqual(await holding(olga, pi, async (f) => [...f.granted].sort()), [
+			...[...FILES_BROWSES, ...FILES_EDITS].sort(),
+		]);
+	});
+
+	it("gives a Read share's guests Browse (decision 100)", () => {
+		assert.deepEqual(FilesKind.info.defaultGrants.guests, ["browse"]);
+	});
+
+	it("is made again with a new id when its last link goes, and the new one is the one in Pi", async () => {
+		await things.unlink({ workspace: pi, thing: files }, context);
+		const again = await t.host.get(OneThing, { kind: FilesKind.name }, context);
+		const next = await until(again.thing, (id) => id !== "" && id !== files, within("the new Files", context));
+		const ann = await person("Ann");
+		const granted = await t.root(
+			async (ctx) =>
+				[...(await ctx.get(Files, { workspace: pi, thing: next }, { readyTimeout: 500 })).granted].sort(),
+			context,
+			{ principal: ann },
+		);
+		assert.deepEqual(granted, [...FILES_BROWSES].sort());
 	});
 });
 

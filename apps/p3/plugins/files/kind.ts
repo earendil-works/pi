@@ -81,7 +81,8 @@ export const FilesKind = defineThing("files.browser", {
 		browse: { label: messages.message("tickBrowse"), for: "people", gives: FILES_BROWSES },
 		edit: { label: messages.message("tickEdit"), for: "people", gives: FILES_EDITS },
 	},
-	defaultGrants: { everyone: ["browse"] },
+	// A Read share's guests browse (decision 100): Browse changes nothing.
+	defaultGrants: { everyone: ["browse"], guests: ["browse"] },
 });
 
 /** Files held in a workspace: `FilesKind`'s contract. */

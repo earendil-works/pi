@@ -13,7 +13,6 @@ import {
 	SessionFacts,
 	SessionObject,
 	SessionWorker,
-	ThisDevice,
 	until,
 	Workspace,
 	WorkspaceChildren,

@@ -162,6 +162,42 @@ describe("Terminals and its ticks", () => {
 	});
 });
 
+describe("the owner, guests and the one thing (slice 1's rules)", () => {
+	it("gives the owner Use without being put in, also where Watch is withheld from everyone", async () => {
+		const id = await things.createPerson({ name: "Olga", madeBy: BY }, context);
+		await things.setOwner({ person: id, owner: true }, context);
+		await grant(pi, terminals, { kind: "everyone" }, ["watch"], false);
+		assert.deepEqual(await holding({ kind: "person", id, name: "Olga" }, async (r) => [...r.granted].sort()), [
+			"attach",
+			"backlog",
+			"close",
+			"open",
+			"resize",
+			"terminals",
+			"type",
+		]);
+	});
+
+	it("gives a Read share's guests Watch (decision 100)", () => {
+		assert.deepEqual(TerminalsKind.info.defaultGrants.guests, ["watch"]);
+	});
+
+	it("is made again with a new id when its last link goes, its terminals ended", async () => {
+		const worker = await agent("s1");
+		await holding(worker, (w, ctx) => w.open!({ machine, folder: "/tmp", ...SIZE }, ctx));
+		await things.unlink({ workspace: pi, thing: terminals }, context);
+		await started()[0]!.ended;
+		const again = await t.host.get(OneThing, { kind: TerminalsKind.name }, context);
+		const next = await until(
+			again.thing,
+			(id) => id !== "" && id !== terminals,
+			within("the new Terminals", context),
+		);
+		terminals = next;
+		assert.deepEqual(await holding(worker, async (w) => w.terminals!.value), []);
+	});
+});
+
 describe("one terminal, many viewers", () => {
 	it("types into the program, shows its bytes to every viewer and in the backlog, resizes and closes it", async () => {
 		const ann = await person("Ann");
