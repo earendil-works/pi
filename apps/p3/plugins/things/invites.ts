@@ -5,7 +5,7 @@
 // in `things.invites`: the link is `<invite>.<secret>`, the secret never stored. Its maker's rights are checked again
 // when it is redeemed: a link stays good only while its maker may still write it.
 
-import { and, type Context, eq, invalid, lte, query, type TableOf, type Tx } from "@earendil-works/p3/v1";
+import { and, type Context, eq, invalid, lte, query, type Tx } from "@earendil-works/p3/v1";
 import { hashToken, matchesHash, newToken } from "@earendil-works/p3/v1/server";
 import type { Asks, Touched } from "./access.ts";
 import type { InviteInput, PersonName } from "./contract.server.ts";
@@ -40,11 +40,6 @@ function expiredBy(now: number) {
 	return query(Invites)
 		.where((r) => lte(r.expires, now))
 		.orderBy((r) => r.expires, "asc");
-}
-
-/** Whether any link has expired by `now` (one row read, outside a transaction: the start's question). */
-export async function anyExpired(invites: TableOf<typeof Invites>, now: number, context: Context): Promise<boolean> {
-	return (await invites.page(expiredBy(now), 1, context)).items.length > 0;
 }
 
 /** The writes of invite links inside a store transaction; none checks a caller. */

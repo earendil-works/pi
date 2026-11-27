@@ -116,7 +116,10 @@ describe("the plans of the stores' queries", () => {
 				if (i % 2 === 0) await sessions.archive({ session: one }, context);
 			}
 			const settings = await host.get(DefaultsSettings, {}, context);
-			await settings.set({ thing: "d1", defaults: { model: null, shared: false, opensWith: null } }, context);
+			await settings.set(
+				{ thing: "d1", defaults: { model: null, shared: false, opensWith: null, location: null } },
+				context,
+			);
 			const canvas = await host.get(CanvasStore, {}, context);
 			for (const board of ["b1", "b2"]) {
 				await canvas.add(

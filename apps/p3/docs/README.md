@@ -7,12 +7,14 @@ agent needs while building, and the record of how p3 got here.
 
 ## Read before you build, in this order, in full
 
-1. `process.md`: how a package goes from its Linear issue to the nightly; what you must never change.
+1. `process.md`: how a package goes from its Linear issue to the nightly; whose the base files are.
 2. `chord-practices.md`: how p3 fits together and how a p3 plugin is built on Chord: the shape, the rules, the
    mistakes made and their fixes.
-3. `testing.md`: the tiers, what every package tests, the commands.
-4. `performance.md`: the budgets, how to measure, the traps.
-5. `names.md`: one name per thing; use these words in code, contracts and text.
+3. `kind-pattern.md`: how a kind plugin is built, file by file: the layout, the declaration, serving, the harness
+   part and its tools, views and messages, refusals, tests, with the built-in plugin that shows each point.
+4. `testing.md`: the tiers, what every package tests, the commands.
+5. `performance.md`: the budgets, how to measure, the traps.
+6. `names.md`: one name per thing; use these words in code, contracts and text.
 
 For depth, only when a guide sends you there: Chord's design (`packages/chord/docs/design.md`; §3 hosts and links, §6
 objects and admission, §§9-11 documents, tables, queries, lists, §17 registries, §21 reload, §23 HTTP, workers and
@@ -31,7 +33,7 @@ surfaces) and its plugin guide (`packages/chord/docs/plugin-authoring.md`).
 
 | Path | What |
 | --- | --- |
-| `apps/p3/plugins/<name>/` | the built-in plugins; `sessions` is the model plugin |
+| `apps/p3/plugins/<name>/` | the built-in plugins, the examples to copy from, by shape: `notes` (the reference) and `checklist`: a kind with a store and a view; `tools`: a flag kind with a harness part and no view; `prompt`: two kinds in one plugin; `environments` and `files`: a family of types, and HTTP routes held as the person; `sessions`: a workspace kind. `canvas` shows flag ticks and live events, but copy it only after its cleanup lands (it is not yet on the kind pattern) |
 | `apps/p3/src/api/v1/` | the API plugins import: `@earendil-works/p3/v1`, `/v1/server`, `/v1/worker`, `/v1/web` (web facets: the components plugins offer each other, the route, icons, and the built-in plugins' web contracts, the `layout` plugin's pane layout among them), and `/v1/testing` for their tests (`testPlugin`, `testServer`) |
 | `apps/p3/src/` | the base: `bin.ts` (the `p3` command), `server.ts`, `worker.ts`, `supervisor.ts`, the Pis and their data directories (`files.ts`), the sockets that are the locks and the command's channel (`local-socket.ts`), what p3 is (`app.ts`: its API, facet kinds, principals) |
 | `apps/p3/test/` | the tests of the base and of the whole, their harness (`topology.ts`, `support.ts`, `until.ts`) and the tests' probe plugin (`test/plugins/probe/`); a plugin's own tests, unit and end to end, sit in its `test/` folder |

@@ -11,16 +11,25 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 // Left out as equivalent (no test can see it): a removed group's members not told (every entry and grant naming the
-// group goes in the same commit, so a person's stale membership in it names a party present nowhere); and
-// `ensureOwner`'s own check (the store's start reads the owners first and opens a transaction only without one). Not
-// pinned: the start's reads outside a transaction (a store ended
-// during its start then cancels none; a gated read did not reproduce the 30 s drain on close, and the reads go back
-// into transactions with ERNDL-1190).
+// group goes in the same commit, so a person's stale membership in it names a party present nowhere).
 
 /** One bug: in `file` (of the plugin), the text to find (exactly once) and what to put there instead. */
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- the start's reads in its transaction (ERNDL-1190 landed) ----
+	{
+		name: "every start makes another owner",
+		file: "people.ts",
+		find: "		if (owners.items.length > 0) return null;\n",
+		put: "",
+	},
+	{
+		name: "every start makes another Pi",
+		file: "store.ts",
+		find: "	if ((await rootOf(tx, t)) !== undefined) return null;\n",
+		put: "",
+	},
 	// ---- push B: the owner, Me, the invite route ----
 	{
 		name: "the machine's owner is the first owner by key",
@@ -167,7 +176,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "expired links are not swept at the start",
 		file: "store.ts",
-		find: "if (await anyExpired(t.invites, now, ctx)) await self.tx((tx) => invites.sweep(tx, now), ctx);",
+		find: "				await invites.sweep(tx, Date.now());\n",
 		put: "",
 	},
 	{
