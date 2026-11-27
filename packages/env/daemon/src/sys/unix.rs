@@ -370,26 +370,21 @@ pub fn kill_tree(pid: u32) {
     }
 }
 
-/// `pidfd_open` and `pidfd_send_signal`: one number on every Linux architecture (the unified table, Linux 5.1 and 5.3).
-#[cfg(target_os = "linux")]
-const PIDFD_OPEN: libc::c_long = 434;
-#[cfg(target_os = "linux")]
-const PIDFD_SEND_SIGNAL: libc::c_long = 424;
-
 /// Kills `member` if it is still of session `sid` when the signal goes: a pid found earlier may name another process
-/// since. On Linux a pidfd holds the process while it is checked; without one (an older kernel, Android, whose seccomp
-/// may forbid the call, macOS) the check is made right before the signal, a window of a few instructions.
+/// since. On Linux a pidfd (`pidfd_open`, Linux 5.3) holds the process while it is checked; without one (an older
+/// kernel, Android, whose seccomp may forbid the call, macOS) the check is made right before the signal, a window of a
+/// few instructions.
 fn kill_member(member: i32, sid: i32) {
     #[cfg(target_os = "linux")]
     // SAFETY: plain system calls on a descriptor this function owns and closes.
     unsafe {
-        let fd = libc::syscall(PIDFD_OPEN, member, 0) as libc::c_int;
+        let fd = libc::syscall(libc::SYS_pidfd_open, member, 0) as libc::c_int;
         if fd >= 0 {
             // The descriptor names the process `member` named when it was opened: if that one exited and the pid was
             // reused before the check, the signal goes to the gone process and does nothing.
             if libc::getsid(member) == sid {
                 libc::syscall(
-                    PIDFD_SEND_SIGNAL,
+                    libc::SYS_pidfd_send_signal,
                     fd,
                     libc::SIGKILL,
                     std::ptr::null::<libc::siginfo_t>(),
