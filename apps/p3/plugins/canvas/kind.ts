@@ -59,7 +59,10 @@ export const Shape = union([
 /** A shape on the board (see `Shape`). */
 export type Shape = Static<typeof Shape>;
 
-/** The most shapes a board holds: an add past it is refused, so a board's view loads it whole (20 pages). */
+/**
+ * The most shapes a board holds: an add past it is refused, so a board's view loads it whole in 20 pages. A board
+ * drawn on before the bound may hold more; it is shown whole and takes no more shapes.
+ */
 export const MAX_SHAPES = 10_000;
 
 /** A committed shape: its id, who drew it, as their admission said, and the shape. */

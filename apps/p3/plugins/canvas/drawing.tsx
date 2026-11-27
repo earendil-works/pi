@@ -1,8 +1,8 @@
 // A drawer's drawing on the page (`useDrawing`): the pointer's way over the board as a draft (a stroke with the pen, a
 // rectangle with the box, text placed with a tap), shown to the others as it grows, committed when the pointer goes
 // up, and the shapes sent but not yet among the board's rows, shown meanwhile so a stroke never blinks out between up
-// and commit. A gesture the browser cancels (a touch taken over by a scroll or the system) is dropped, never committed.
-// A viewer's pointer only travels.
+// and commit. Text is placed when its tap ends. A gesture the browser cancels (a touch taken over by a scroll or the
+// system) is dropped, never committed. A viewer's pointer only travels.
 
 import type { Context, Reference, With } from "@earendil-works/p3/v1";
 import { type PointerEvent, useEffect, useRef, useState } from "react";
@@ -68,6 +68,8 @@ export function useDrawing(of: DrawingOf): Drawing {
 	const start = useRef<{ readonly x: number; readonly y: number; readonly tool: Exclude<Tool, "text"> } | undefined>(
 		undefined,
 	);
+	// The text a tap on the board places when it ends.
+	const placing = useRef<Shape | undefined>(undefined);
 	const sender = useMotionSender(of.live);
 	// The handlers are the surface's own: the event's current target is the board.
 	const at = (event: PointerEvent<SVGSVGElement>): { x: number; y: number } => {
@@ -105,13 +107,15 @@ export function useDrawing(of: DrawingOf): Drawing {
 			if (drawer === undefined) return;
 			const point = at(event);
 			const { tool, color, text } = of.picked;
-			if (tool === "text") {
-				const placed = text.trim();
-				if (placed !== "") commit({ kind: "text", color, x: point.x, y: point.y, text: placed, size: TEXT_SIZE });
+			event.currentTarget.setPointerCapture(event.pointerId);
+			if (tool !== "text") {
+				begin(point, tool, color);
 				return;
 			}
-			event.currentTarget.setPointerCapture(event.pointerId);
-			begin(point, tool, color);
+			// Placed when the tap ends (`up`), not when it starts: a tap the browser cancels places nothing.
+			const placed = text.trim();
+			placing.current =
+				placed === "" ? undefined : { kind: "text", color, x: point.x, y: point.y, text: placed, size: TEXT_SIZE };
 		},
 		move: (event) => {
 			const point = at(event);
@@ -131,6 +135,9 @@ export function useDrawing(of: DrawingOf): Drawing {
 			sender.point({ ...point, draft: next });
 		},
 		up: (event) => {
+			const text = placing.current;
+			placing.current = undefined;
+			if (text !== undefined) commit(text);
 			if (start.current === undefined || draft === null) return;
 			start.current = undefined;
 			setDraft(null);
@@ -140,6 +147,7 @@ export function useDrawing(of: DrawingOf): Drawing {
 		},
 		cancel: () => {
 			// The browser took the gesture over: what was drawn so far goes, here and on the others' boards.
+			placing.current = undefined;
 			start.current = undefined;
 			setDraft(null);
 			sender.leave();

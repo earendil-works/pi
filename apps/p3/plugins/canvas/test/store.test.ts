@@ -3,14 +3,15 @@
 // gone, so a later add is refused; a board holds `MAX_SHAPES` at most, an add past it refused with its message, and
 // removing or clearing makes room again; and a store version 1 wrote (7093618af, authors as text keys) opened by this
 // version (decision 125): `person:<id>`, `agent:<session>` and `server` read as the things plugin's `Caller`, a key of
-// none of those forms as the Pi itself, its shapes counted once by the first add, and a shape drawn after the update
-// stores its author as written. A two-version
+// none of those forms as the Pi itself, its shapes counted once by the first add (also one already past `MAX_SHAPES`:
+// the refused add stores the count), and a shape drawn after the update stores its author as written. A two-version
 // restart is not possible in-tree: a stand-in of the older plugin writes the old rows.
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -23,6 +24,7 @@ import {
 	local,
 	method,
 	obj,
+	opt,
 	str,
 } from "@earendil-works/p3/v1";
 import { type KindServer, kindServer, refused } from "../../things/test/kind-server.ts";
@@ -110,17 +112,18 @@ const OldShapes = defineTable("canvas.shapes", {
 const OldStore = local("canvas.store", {
 	version: 1,
 	params: {},
-	members: { put: method(obj({ canvas: str(), authors: arr(str()) })) },
+	members: { put: method(obj({ canvas: str(), authors: arr(str()), from: opt(int()) })) },
 });
 
-/** The canvas plugin as version 1 served it, enough to write its rows: one box per author, in order. */
+/** The canvas plugin as version 1 served it, enough to write its rows: one box per author, in order from `from`. */
 const older = defineFacet((host) => {
 	host.serve(OldStore, (_params, self) => {
 		const shapes = self.table(OldShapes);
 		return {
-			put: ({ canvas, authors }, ctx) =>
+			put: ({ canvas, authors, from = 0 }, ctx) =>
 				self.tx(async (tx) => {
-					authors.forEach((author, seq) => {
+					authors.forEach((author, at) => {
+						const seq = from + at;
 						tx.put(shapes, { canvas, id: `s${seq}`, seq, author, shape: BOX });
 					});
 					return null;
@@ -169,4 +172,44 @@ describe("a store version 1 wrote (decision 125)", () => {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("counts a board already past MAX_SHAPES once: its first refused add stores the count (Astra, round 2)", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "p3-canvas-"));
+		const path = join(dir, "old.sqlite");
+		try {
+			const old = await world(context, [{ name: PLUGIN, facet: older }], path);
+			const put = await old.host.get(OldStore, {}, context);
+			for (let i = 0; i < 101; i++) {
+				// 10,100 shapes of 101 authors' keys, each batch its own ids.
+				await put.put({ canvas: "big", authors: Array(100).fill(`person:p${i}`), from: i * 100 }, context);
+			}
+			await old.close(context);
+			const now = await world(context, [{ name: PLUGIN, facet: canvasServer }], path);
+			try {
+				const store = await now.host.get(CanvasStore, {}, context);
+				const add = () => store.add({ canvas: "big", author: ANN, shapes: [BOX] }, context);
+				await refused(add(), "invalid", "full");
+				assert.equal(storedCount(path, "big"), MAX_SHAPES + 100);
+				await refused(add(), "invalid", "full");
+				assert.equal(
+					(await store.shapes.of.page({ canvas: "big" }, MAX_SHAPES + 200, context)).items.length,
+					10_100,
+				);
+			} finally {
+				await now.close(context);
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 });
+
+/** Board `canvas`'s count as the file at `path` has it now (`undefined`: no row). */
+function storedCount(path: string, canvas: string): unknown {
+	const database = new DatabaseSync(path, { readOnly: true });
+	try {
+		return database.prepare(`SELECT shapes FROM "canvas.store:canvas.boards" WHERE canvas = ?`).get(canvas)?.shapes;
+	} finally {
+		database.close();
+	}
+}

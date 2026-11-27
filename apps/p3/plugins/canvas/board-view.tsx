@@ -60,7 +60,7 @@ export function BoardView(props: ThingViewProps) {
 		setFailure(undefined);
 		call(BACKGROUND_CONTEXT).catch((error: unknown) => setFailure({ error }));
 	};
-	// The whole board is shown: every page is loaded as it becomes known (`MAX_SHAPES` bounds it: 20 pages).
+	// The whole board is shown: every page is loaded as it becomes known (`MAX_SHAPES` bounds it).
 	useEffect(() => {
 		if (live === undefined || shapes?.moreAfter !== true) return;
 		live.more(BACKGROUND_CONTEXT).catch((error: unknown) => setFailure({ error }));

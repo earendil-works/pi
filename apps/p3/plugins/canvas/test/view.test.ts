@@ -3,7 +3,7 @@
 // drawer draws with the pen, the box and text, undoes their own last shape and clears; a viewer (Draw withheld) sees
 // the drawer's shapes and named pointer live, and the pointer go when the drawer's mouse leaves, on a desktop and a
 // phone; Moderate without Draw shows Clear alone, live as the ticks change; a touch the browser cancels is dropped and
-// one that ends is drawn, on a phone; what a drawer picked (the tool, a text not placed yet) survives an apply of the
+// one that ends is drawn, a stroke as text, on a phone; what a drawer picked (the tool, a text not placed yet) survives an apply of the
 // web facet, and does not follow them to another board; a refusal is said as its message (a full board, whose 20
 // pages are all loaded). Screenshots, light and dark, go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another).
 
@@ -11,10 +11,10 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
 import { BROWSER_SKIP, Browser, DESKTOP, PHONE } from "../../chrome/test/browser.ts";
 import { SignIns } from "../../sign-in/contract.ts";
-import { OPEN, type Party } from "../../things/contract.ts";
+import { Me, OPEN, type Party } from "../../things/contract.ts";
 import { type KindE2E, kindE2E } from "../../things/test/kind-e2e.ts";
 import { Canvas, CanvasKind, MAX_SHAPES, type Shape } from "../kind.ts";
 
@@ -32,7 +32,7 @@ describe("the board view", { skip: BROWSER_SKIP }, () => {
 	let origin: string;
 	/** The owner's browser: every tick on every board. */
 	let owner: Browser;
-	/** The owner's name, as the page shows it. */
+	/** The owner's name, as the things store has it. */
 	let ownerName: string;
 
 	before(async () => {
@@ -97,11 +97,8 @@ describe("the board view", { skip: BROWSER_SKIP }, () => {
 	}
 
 	it("lets a drawer draw with the pen, the box and text, undo their own last shape and clear", async () => {
-		ownerName = await (async () => {
-			await owner.open(`${origin}/w/${e.pi}`);
-			await owner.wait(`document.querySelector("[data-nav-me]")?.textContent.length > 0`);
-			return owner.evaluate<string>(`document.querySelector("[data-nav-me]").textContent`);
-		})();
+		const me = await until((await (await e.t.client(context)).get(Me, {}, context)).me, () => true, context);
+		ownerName = me.kind === "person" ? me.name : "";
 		const board = await e.thingIn(CanvasKind.name, "Drawing");
 		await open(owner, board, "drawer");
 		await stroke(owner, 0.2, 0.2, 0.5, 0.4);
@@ -199,7 +196,7 @@ describe("the board view", { skip: BROWSER_SKIP }, () => {
 		}
 	});
 
-	it("drops a touch the browser cancels and draws one that ends, on a phone (Astra, round 2)", async () => {
+	it("drops a touch the browser cancels and draws one that ends, a stroke or text, on a phone (Astra, round 2)", async () => {
 		const board = await e.thingIn(CanvasKind.name, "Touched");
 		await owner.size(PHONE);
 		try {
@@ -217,6 +214,15 @@ describe("the board view", { skip: BROWSER_SKIP }, () => {
 			await owner.swipe(at.x, at.y, at.x + 40, at.y + 20);
 			await shapes(owner, 1);
 			assert.equal(await rows(board), 1);
+			// A text's tap cancelled places nothing; one that ends places it (Astra, round 2, second look).
+			await owner.click('[data-tool="text"]');
+			await owner.type("[data-canvas-text]", "tapped");
+			await touch("touchStart", [at]);
+			await touch("touchCancel", []);
+			await touch("touchStart", [{ x: at.x, y: at.y + 40 }]);
+			await touch("touchEnd", []);
+			await owner.wait(`document.querySelector("text[data-shape]")?.textContent === "tapped"`);
+			assert.equal(await rows(board), 2);
 		} finally {
 			await owner.size(DESKTOP);
 		}

@@ -105,7 +105,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		const boards = self.table(Boards);
 		/**
 		 * Board `canvas`'s count of shapes, in a write's own transaction (`drop`'s is ordered with it): refused once it is
-		 * gone; counted through index `by_order` while it has no row.
+		 * gone. A board without a row is counted once through its index and the count stored now, whatever the write
+		 * does next, so no later write counts it again (a board from before version 2 may already be full).
 		 */
 		const counted = async (tx: Tx, canvas: string) => {
 			const board = await tx.get(boards, { canvas });
@@ -113,12 +114,14 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				throw invalid("args", `canvas: ${canvas} is gone`, { message: messages.message("gone") });
 			}
 			if (board !== undefined) return board.shapes;
+			// The key's prefix `canvas`: once per board.
 			let count = 0;
 			for await (const _ of tx.rows(
 				shapes,
 				query(Shapes).where((shape) => eq(shape.canvas, canvas)),
 			))
 				count++;
+			tx.put(boards, { canvas, shapes: count, gone: false });
 			return count;
 		};
 		return {
@@ -139,13 +142,10 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			),
 			add: async ({ canvas, shapes: added, author }, ctx) => {
 				const ids = added.map(() => crypto.randomUUID());
-				await self.tx(async (tx) => {
+				// A full board commits nothing but a count stored by this transaction; the refusal follows the commit.
+				const full = await self.tx(async (tx) => {
 					const count = await counted(tx, canvas);
-					if (count + added.length > MAX_SHAPES) {
-						throw invalid("args", `canvas: ${canvas} holds ${MAX_SHAPES} shapes at most`, {
-							message: messages.message("full", MAX_SHAPES),
-						});
-					}
+					if (count + added.length > MAX_SHAPES) return true;
 					tx.put(boards, { canvas, shapes: count + added.length, gone: false });
 					// After the board's last stored shape, whatever this process's clock or an earlier attempt gave: a
 					// reload or a clock gone back keeps the order shapes were added in. Index `by_order`, one row.
@@ -157,8 +157,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 					added.forEach((shape, at) => {
 						tx.put(shapes, { canvas, id: ids[at]!, seq: seq++, author, shape });
 					});
-					return null;
+					return false;
 				}, ctx);
+				if (full) {
+					throw invalid("args", `canvas: ${canvas} holds ${MAX_SHAPES} shapes at most`, {
+						message: messages.message("full", MAX_SHAPES),
+					});
+				}
 				return ids;
 			},
 			remove: ({ canvas, id, author }, ctx) =>
