@@ -21,7 +21,9 @@ The stage of a package is a label in the group "Pi stage", one at a time, set on
 in Design. Whoever moves the package changes the label in the same moment and says why in a comment on the issue.
 
 ```text
-Design → Implementation → Review ⇄ Polish → done
+Design → Implementation → Review → done     a Review that comes back clean
+                           ↓  ↑
+                          Polish             a Review with findings: fixed, then reviewed again
 ```
 
 | Label | Means | Who sets it, when |

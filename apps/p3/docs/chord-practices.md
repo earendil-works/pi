@@ -203,11 +203,12 @@ reference or a native.
 - A table's definition (columns, key, indexes) is part of its version: changing it means a new version and a
   migration. Chord refuses to open a version recorded with another definition ("a history edited in place").
   Stored data survives updates (decision 125): no data directory is deleted for a new build, and nothing is
-  changed in place, however small the change and however short the old shape was on main. A table change is
-  `evolveTable` to a new version with its migration; a contract whose members change bumps its `version`. Every
-  changed definition comes with its migration and a test of it (a document's and a `json` column's
-  `migrate(old, from)`: `plugins/sessions/defaults.ts`, `plugins/sessions/store.ts`); the migrations are collapsed
-  once before the first release
+  changed in place, however small the change and however short the old shape was on main. Every changed stored
+  definition comes with its migration and a test of it: `evolveTable` to a new version for a table
+  (`plugins/sessions/store.ts`, `RowsV2`), `migrate(old, from)` for a `json` column (`plugins/sessions/defaults.ts`)
+  and for a document (`packages/chord/src/documents/README.md`). A contract whose members change bumps its `version`:
+  that is the wire's version, nothing stored migrates with it. The migrations are collapsed once before the first
+  release
   ([ERNDL-1192](https://linear.app/earendil/issue/ERNDL-1192)).
 
 **Lists**
@@ -266,9 +267,10 @@ reference or a native.
   MCP server's tool list) use `again`, which gives only that kind again (decision 137). Decided (142), being changed
   on main (today the harness gives only kinds that hold something): the harness calls every part on every change of
   what the agent holds, possibly nothing, and the part checks for none itself (`const nearest = things.at(-1); if
-  (nearest === undefined) …`). A part with nothing to give answers an extension with no tools, never `{}`, so the kind
-  keeps its place in Durable's registry (appended again, it changes the prompt's order and loses the provider's
-  prompt cache); a part that gives tasks keeps giving them with nothing held.
+  (nearest === undefined) …`). A separate requirement, from Durable's registry: a kind that once gave an extension
+  keeps its place there with nothing held (no tools, its tasks still given), because a kind appended again changes
+  the prompt's order and loses the provider's prompt cache. What a part answers for that, and whether the part or
+  the harness makes the empty answer, comes with the harness's change: not on main yet.
 - A kind's method never checks the caller's access to its own thing again. Only a method that names another thing
   (Files and Terminals name a machine) checks the caller's answer on that thing.
 - Nothing a person reads is written outside `messages.ts`: no English in a state value, a view or a key.
