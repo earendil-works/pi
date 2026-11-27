@@ -22,6 +22,25 @@ import { join, resolve } from "node:path";
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- the picker's check where the party and the caller meet ----
+	{
+		name: "the picker's check misses a party put in below where the caller is",
+		file: "picker.ts",
+		find: "if (entry.pathText.startsWith(root.pathText)) meets.add(entry.workspace);",
+		put: "if (false) meets.add(entry.workspace);",
+	},
+	{
+		name: "the picker's check misses a party put in above where the caller is",
+		file: "picker.ts",
+		find: "else if (root.pathText.startsWith(entry.pathText)) meets.add(root.workspace);",
+		put: "",
+	},
+	{
+		name: "the picker's check ignores the workspace it is used in",
+		file: "picker.ts",
+		find: "if (workspace !== undefined && (await offered(workspace, [], caller, context)).has(key)) return true;",
+		put: "",
+	},
 	// ---- invite links at redemption ----
 	{
 		name: "a link's maker's Manage people is not checked at redemption",
@@ -877,8 +896,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the picker offers only the workspace it is used in",
 		file: "picker.ts",
-		find: "for (const entry of await readAll(q.workspaceMembers.where, { partyKey: key }, context)) {",
-		put: "for (const entry of [] as { workspace: string }[]) {",
+		find: "for (const { workspace, pathText } of await linesOf(q, await keysOf(q, caller, context), context)) {",
+		put: "for (const { workspace, pathText } of [] as { workspace: string; pathText: string }[]) {",
 	},
 	{
 		name: "the cleanup takes the persons a source made even if something else is left of them",
@@ -991,7 +1010,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the picker offers nothing below where the caller is put in",
 		file: "picker.ts",
-		find: "for (const below of await readAll(q.workspaces.under, { pathPrefix: row.pathText }, context)) {",
+		find: "for (const below of await readAll(q.workspaces.under, { pathPrefix: pathText }, context)) {",
 		put: "for (const below of [] as { workspace: string }[]) {",
 	},
 	{
