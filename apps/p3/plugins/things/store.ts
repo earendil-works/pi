@@ -201,7 +201,8 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			pending: async (ctx) => {
 				const rows = [];
 				// The whole table, outside a transaction: a store started lazily and reloaded at once (its start cut short)
-				// leaves no transaction cancelled. What waits for a delete hook is few rows, read at the start and when the
+				// leaves no transaction cancelled (back into one when Chord stops reporting a transaction its own object's
+				// end cancels: the main session's Chord issue, core2). What waits for a delete hook is few rows, read at the start and when the
 				// hooks change.
 				for await (const row of pending.rows(query(Pending), ctx)) rows.push(row);
 				return rows;

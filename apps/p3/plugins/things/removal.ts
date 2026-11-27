@@ -93,7 +93,8 @@ export class Removal {
 		const removing = [];
 		const gone = [];
 		// Whole tables, outside a transaction: a store started lazily and reloaded at once (its start cut short) leaves
-		// no transaction cancelled. The removals and tellings due are few rows, read at the start and when the hooks
+		// no transaction cancelled (back into one when Chord stops reporting a transaction its own object's end
+		// cancels: the main session's Chord issue, core2). The removals and tellings due are few rows, read at the start and when the hooks
 		// change.
 		for await (const row of this.#store.removing.rows(query(Removing), ctx)) removing.push(row);
 		for await (const row of this.#store.gone.rows(query(Gone), ctx)) gone.push(row);
