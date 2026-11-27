@@ -54,8 +54,9 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   out, this device in a folder of its own (`<work root>/<id>`) if its maker may use this device there, else none (its
   agent has no environment until a conversation is moved; the new-session step says so). A subagent's conversation
   works where its caller works, and follows its moves. A conversation moved (`SessionObject.moveLocation` with
-  Manage, by a client: the Settings view has no form for it yet; `SessionFacts.moveLocation` is there for the agent's
-  `location_move`, which the machine part does not offer yet) works at its own location from its next tool call on; a call under way keeps its environment. A move with `location: null` is
+  Manage, by a client: the Settings view has no form for it yet; or by the agent with the machine part's
+  `location_move`, through `SessionFacts.moveLocation`) works at its own location from its next tool call on; a call
+  under way keeps its environment. A move with `location: null` is
   undone (the conversation follows its owner again); a subagent keeps its own while archived (a restore finds it).
   A move is refused unless the folder is a full path and the agents have Work on the machine in the session, and a
   person's unless the machine is available to them there (the environments plugin's `checkMachine`, as Files and
