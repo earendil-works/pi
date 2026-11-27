@@ -66,6 +66,15 @@ export type Offered = (
 	context: Context,
 ) => Promise<ReadonlySet<string>>;
 
+/**
+ * What a check inside an operation (`commitIf`) asks of the index, unqueued: what the picker offers a caller, and the
+ * answer a caller gets for a thing now.
+ */
+export type Asks = {
+	readonly offered: Offered;
+	answer(workspace: string, thing: string, caller: Caller, context: Context): Promise<Answer | undefined>;
+};
+
 /** An attached watcher: the answers now, and how to stop. */
 export type Attachment = { readonly value: Answers; detach(): void };
 
@@ -304,18 +313,21 @@ export class AccessIndex {
 	}
 
 	/**
-	 * `transaction` as `commit` runs it, if `allowed` (asked first, in the same operation: what it reads through
-	 * `offered` cannot change before the write); else `refused`'s throw. The picker's check and its write as one.
+	 * `transaction` as `commit` runs it, if `allowed` (asked first, in the same operation: what it reads through `asks`
+	 * cannot change before the write); else what `refused` answers or throws. A check and its write as one (the
+	 * picker's, an invite link's maker's rights).
 	 */
 	commitIf<R>(
-		allowed: (offered: Offered) => Promise<boolean>,
+		allowed: (asks: Asks) => Promise<boolean>,
 		transaction: (touched: Touched) => Promise<R>,
-		refused: () => never,
+		refused: () => R,
 	): Promise<R> {
 		return this.#run(async () => {
-			const offered: Offered = (workspace, candidates, caller, context) =>
-				this.#offered(workspace, candidates, caller, context);
-			if (!(await allowed(offered))) refused();
+			const asks: Asks = {
+				offered: (workspace, candidates, caller, context) => this.#offered(workspace, candidates, caller, context),
+				answer: (workspace, thing, caller, context) => this.#answer(workspace, thing, caller, context),
+			};
+			if (!(await allowed(asks))) return refused();
 			return this.#committed(transaction, performance.now());
 		});
 	}
@@ -599,11 +611,14 @@ export class AccessIndex {
 	 * time with every other operation: not live (R41, `ThingsStore.answerOf`; linking's check, R9).
 	 */
 	answer(workspace: string, thing: string, caller: Caller, context: Context): Promise<Answer | undefined> {
-		return this.#run(async () => {
-			await this.#ensure(workspace, context);
-			if (caller.kind === "person") await this.#ensurePerson(caller.person, context);
-			return this.#answerNow(workspace, thing, caller, context);
-		});
+		return this.#run(() => this.#answer(workspace, thing, caller, context));
+	}
+
+	/** `answer`'s work, inside the queue. */
+	async #answer(workspace: string, thing: string, caller: Caller, context: Context): Promise<Answer | undefined> {
+		await this.#ensure(workspace, context);
+		if (caller.kind === "person") await this.#ensurePerson(caller.person, context);
+		return this.#answerNow(workspace, thing, caller, context);
 	}
 
 	/** The answer `caller` (a person loaded) gets for `thing` in loaded workspace `workspace` now. */

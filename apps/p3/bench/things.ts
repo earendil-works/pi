@@ -16,7 +16,8 @@
 //   the index's work after it (`things.access.adopt`), and the last of its holders rebound; the same at a leaf; a new
 //   session; a workspace made by a person (slice 2: its maker's ticks and membership in the same commit), a
 //   removal's first commit (the line cut), and a share with 50 guests removed (slice 3, test 8: the cleanup of its
-//   grants, its guest group and the guests it made, one commit; the target is under 20 ms).
+//   grants, its guest group and the guests it made, one commit; the target is under 20 ms), and the picker of a person
+//   put into Pi (every workspace a candidate) with a putParty it checks.
 // Run from apps/p3 with Node 26:
 //   node --expose-gc --conditions=source --disable-warning=ExperimentalWarning bench/things.ts
 
@@ -480,6 +481,35 @@ async function changes(
 		await things.deleteEverythingFrom({ source: share }, context);
 		cleanups.push(performance.now() - t0);
 	}
+	// Slice 3: the picker of a person put into Pi, where every workspace is one they are present in (the whole tree is
+	// a candidate), and a checked putParty there; the first call cold for most of the tree, then warm.
+	const everywhere = await things.createPerson({ name: "everywhere", madeBy: bench }, context);
+	await things.putParty({ workspace: pi, party: { kind: "person", person: everywhere }, source: bench }, context);
+	const caller = { kind: "person", person: everywhere } as const;
+	// Whom the checked putParty names: a person present in the project, so the picker offers them.
+	const named = await things.createPerson({ name: "named", madeBy: bench }, context);
+	await things.putParty({ workspace: project, party: { kind: "person", person: named }, source: bench }, context);
+	const reads = () =>
+		telemetry
+			.getMetrics()
+			.filter((metric) => metric.name === "things.access.reads")
+			.reduce((sum, metric) => sum + metric.value, 0);
+	const pickers: number[] = [];
+	const pickerReads: number[] = [];
+	const checked: number[] = [];
+	for (let round = 0; round < 5; round++) {
+		const before = reads();
+		const t0 = performance.now();
+		await things.picker({ workspace: project, caller, query: "" }, context);
+		pickers.push(performance.now() - t0);
+		pickerReads.push(reads() - before);
+		const t1 = performance.now();
+		await things.putParty(
+			{ workspace: project, party: { kind: "person", person: named }, source: bench, caller },
+			context,
+		);
+		checked.push(performance.now() - t1);
+	}
 	return {
 		rootHolders: affected.length,
 		...medians("root", roots),
@@ -491,6 +521,11 @@ async function changes(
 		removeCutMaxMs: Math.max(...cuts),
 		shareCleanupMs: median(cleanups),
 		shareCleanupMaxMs: Math.max(...cleanups),
+		pickerFirstMs: pickers[0]!,
+		pickerFirstReads: pickerReads[0]!,
+		pickerMs: median(pickers.slice(1)),
+		pickerReads: median(pickerReads.slice(1)),
+		checkedPutPartyMs: median(checked),
 	};
 }
 

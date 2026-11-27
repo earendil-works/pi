@@ -35,7 +35,8 @@ export async function offeredTo(
 
 /**
  * Whether the picker offers `caller` the party `party` in `workspace`: an owner anyone who exists (read by key), anyone
- * else as `offeredTo` says. What `putParty` and `addMember` check, in the operation of their write.
+ * else as `offeredTo` says. What `putParty` and `addMember` check, in the operation of their write: never the whole
+ * tree below the caller (a person put into Pi), only where the party can meet them (`meetings`).
  */
 export async function offers(
 	q: PickerReads,
@@ -53,9 +54,65 @@ export async function offers(
 				return true;
 		}
 	}
-	return (await offeredTo(q, offered, { ...(workspace === undefined ? {} : { workspace }), caller }, context)).has(
-		partyKey(party),
-	);
+	const key = partyKey(party);
+	if (workspace !== undefined && (await offered(workspace, [], caller, context)).has(key)) return true;
+	const meets = await meetings(q, await keysOf(q, caller, context), key, context);
+	return meets.size > 0 && (await offered(undefined, meets, caller, context)).has(key);
+}
+
+/**
+ * Where the party with key `party` can be offered to a caller whose parties have keys `keys`: for each workspace a
+ * party of the caller's is put in and each the party is put in, on one line, the deeper of the two. A party is present
+ * below where it is put in only where it is present all the way down (rules 1 and 2: a workspace passes on only what
+ * is present in it), and so is the caller; so if it is offered anywhere below that workspace, it is there too (deeper,
+ * the next meeting is another entry's).
+ */
+async function meetings(
+	q: PickerReads,
+	keys: readonly string[],
+	party: string,
+	context: Context,
+): Promise<ReadonlySet<string>> {
+	const roots = await linesOf(q, keys, context);
+	const entries = await linesOf(q, [party], context);
+	const meets = new Set<string>();
+	for (const root of roots) {
+		for (const entry of entries) {
+			if (entry.pathText.startsWith(root.pathText)) meets.add(entry.workspace);
+			else if (root.pathText.startsWith(entry.pathText)) meets.add(root.workspace);
+		}
+	}
+	return meets;
+}
+
+/** The workspaces the parties with keys `keys` are put in, with their path texts (gone ones left out). */
+async function linesOf(
+	q: PickerReads,
+	keys: readonly string[],
+	context: Context,
+): Promise<{ readonly workspace: string; readonly pathText: string }[]> {
+	const lines = [];
+	for (const key of keys) {
+		for (const { workspace } of await readAll(q.workspaceMembers.where, { partyKey: key }, context)) {
+			const [row] = (await q.workspaces.one.page({ workspace }, 1, context)).items;
+			if (row !== undefined) lines.push({ workspace, pathText: row.pathText });
+		}
+	}
+	return lines;
+}
+
+/** The party keys `caller` counts as where they are put in: their person and groups, or their agent. */
+async function keysOf(q: PickerReads, caller: Caller, context: Context): Promise<string[]> {
+	switch (caller.kind) {
+		case "person": {
+			const groups = await readAll(q.groupMembers.ofPerson, { person: caller.person }, context);
+			return [partyKey(caller), ...groups.map(({ group }) => partyKey({ kind: "group", group }))];
+		}
+		case "agent":
+			return [partyKey(caller)];
+		case "server":
+			return [];
+	}
 }
 
 /**
@@ -64,23 +121,10 @@ export async function offers(
  * keeps those where they count as present.
  */
 export async function whereFrom(q: PickerReads, caller: Caller, context: Context): Promise<ReadonlySet<string>> {
-	const keys: string[] = [];
-	if (caller.kind === "person") {
-		keys.push(partyKey({ kind: "person", person: caller.person }));
-		for (const { group } of await readAll(q.groupMembers.ofPerson, { person: caller.person }, context)) {
-			keys.push(partyKey({ kind: "group", group }));
-		}
-	} else if (caller.kind === "agent") keys.push(partyKey({ kind: "agent", session: caller.session }));
 	const candidates = new Set<string>();
-	for (const key of keys) {
-		for (const entry of await readAll(q.workspaceMembers.where, { partyKey: key }, context)) {
-			candidates.add(entry.workspace);
-		}
-	}
-	for (const at of [...candidates]) {
-		const [row] = (await q.workspaces.one.page({ workspace: at }, 1, context)).items;
-		if (row === undefined) continue;
-		for (const below of await readAll(q.workspaces.under, { pathPrefix: row.pathText }, context)) {
+	for (const { workspace, pathText } of await linesOf(q, await keysOf(q, caller, context), context)) {
+		candidates.add(workspace);
+		for (const below of await readAll(q.workspaces.under, { pathPrefix: pathText }, context)) {
 			candidates.add(below.workspace);
 		}
 	}

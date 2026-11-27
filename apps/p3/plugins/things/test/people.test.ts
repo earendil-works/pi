@@ -29,7 +29,7 @@ import {
 import { eventually, within } from "../../../test/until.ts";
 import { SignIns } from "../../sign-in/contract.ts";
 import { Gives, GroupPresence, OwnerSeeds, ThingsStore } from "../contract.server.ts";
-import { Group, type Party, type Source } from "../contract.ts";
+import { Group, type Party, partyKey, type Source } from "../contract.ts";
 import { Workspace } from "../workspace.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
 import { signInsStub, storedRows, THINGS, type World, world } from "./world.ts";
@@ -720,6 +720,18 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 	});
 
 	it("a redeemed link keeps an entry there already, spends nothing for a person who does not exist (Opus S3)", async () => {
+		// Anna, with Manage people in Family, makes the link: a replaced entry would name her as its source.
+		await store.setTick(
+			{
+				workspace: f.family,
+				thing: f.family,
+				party: person(f.anna),
+				tick: "managePeople",
+				gives: true,
+				source: ADMIN,
+			},
+			context,
+		);
 		const link = await store.createInvite(
 			{ workspace: f.family, name: "x", as: "member", by: { kind: "person", person: f.anna } },
 			context,
@@ -769,6 +781,87 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 		await store.removeGroup({ group: f.parents }, context);
 		assert.ok(!storedRows(w.path, "group-managers").some((row) => row.partyKey === `group/${f.parents}`));
 		assert.equal(await store.redeemInvite({ secret: link }, context), null);
+	});
+});
+
+describe("after push A (Opus's check of the explainer)", () => {
+	it("a link redeems only while its maker may still write it: Manage people where it points, its group's own tick", async () => {
+		const anna = { kind: "person", person: f.anna } as const;
+		const club = await store.createWorkspace(
+			{ kind: "things.workspace", name: "Club", parent: f.family, by: anna },
+			context,
+		);
+		const link = (group?: string) =>
+			store.createInvite(
+				{ workspace: club, name: "x", as: "member", by: anna, ...(group === undefined ? {} : { group }) },
+				context,
+			);
+		const plain = await link();
+		const grouped = await link(f.parents);
+		const managePeople = (gives: boolean) =>
+			store.setTick(
+				{ workspace: club, thing: club, party: person(f.anna), tick: "managePeople", gives, source: ADMIN },
+				context,
+			);
+		// Manage people withheld from Anna in Club: her link redeems nothing, and stays good.
+		await managePeople(false);
+		assert.equal(await store.redeemInvite({ secret: plain }, context), null);
+		await managePeople(true);
+		assert.notEqual(await store.redeemInvite({ secret: plain }, context), null);
+		// The group's own tick taken from her: the link naming the group redeems nothing, until she has it again.
+		await store.setGroupManagers({ group: f.parents, parties: [] }, context);
+		assert.equal(await store.redeemInvite({ secret: grouped }, context), null);
+		await store.setGroupManagers({ group: f.parents, parties: [person(f.anna)] }, context);
+		assert.notEqual(await store.redeemInvite({ secret: grouped }, context), null);
+	});
+});
+
+describe("the picker's check against its list", () => {
+	it("offers agrees with the picker's list for every caller, place and party, with hides and a people default", async () => {
+		// The check looks only where a party and the caller can meet; the list looks at the whole tree below the caller.
+		const sub = await store.createPerson({ name: "Sub", madeBy: ADMIN }, context);
+		const deep = await store.createWorkspace(
+			{ kind: "things.workspace", name: "Deep", parent: f.session, by: ADMIN },
+			context,
+		);
+		await store.putParty({ workspace: f.session, party: person(sub), source: ADMIN }, context);
+		await store.putParty({ workspace: deep, party: person(f.leo), source: ADMIN }, context);
+		await store.putParty({ workspace: deep, party: { kind: "agent", session: deep }, source: ADMIN }, context);
+		const callers = [f.anna, f.kim, f.leo, sub].map((id) => ({ kind: "person", person: id }) as const);
+		const parties: Party[] = [
+			...[f.anna, f.kim, f.leo, sub].map(person),
+			group(f.kids),
+			group(f.parents),
+			{ kind: "agent", session: deep },
+		];
+		const places = [undefined, f.pi, f.family, f.session, deep];
+		const agree = async (what: string) => {
+			for (const caller of [...callers, { kind: "agent", session: deep } as const]) {
+				for (const workspace of places) {
+					const at = workspace === undefined ? {} : { workspace };
+					const listed = new Set(
+						(await store.picker({ ...at, caller, query: "" }, context)).map(({ party }) => partyKey(party)),
+					);
+					for (const party of parties) {
+						const offered = await store.offers({ ...at, caller, party }, context);
+						assert.equal(
+							offered,
+							listed.has(partyKey(party)),
+							`${what}: ${JSON.stringify([caller, workspace, party])}`,
+						);
+					}
+				}
+			}
+		};
+		await agree("plain");
+		await store.setSwitch(
+			{ workspace: f.session, item: { kind: "party", party: group(f.kids) }, shown: false },
+			context,
+		);
+		await store.setSwitch({ workspace: deep, item: { kind: "party", party: person(f.anna) }, shown: false }, context);
+		await agree("hides");
+		await store.setDefaults({ workspace: f.session, showsPeople: false }, context);
+		await agree("people from above hidden in the session");
 	});
 });
 
