@@ -221,8 +221,9 @@ async function openAgent(sources: Sources, opening: Context): Promise<{ durable:
 		call: (fn, context) => worker.root(fn, context),
 		location,
 		moveLocation: async (conversation, location, context) => {
-			// Only a conversation the session has (Opus): any other key would hold one of the session's moved places.
-			if ((await record(conversation, context)) === undefined) {
+			// A move only for a conversation the session has (Opus): any other key would hold one of the session's moved
+			// places. An undo always goes through: it frees a place, also one whose record is gone (Astra, round 3).
+			if (location !== null && (await record(conversation, context)) === undefined) {
 				throw invalid("args", `harness: no conversation ${conversation}`);
 			}
 			await facts.moveLocation({ conversation: String(conversation), location }, context);

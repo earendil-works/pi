@@ -59,9 +59,12 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   environment. A move with `location: null` is undone (the conversation follows its owner again); a subagent keeps its
   own while archived (a restore finds it). A move is refused unless the folder is a full path and the agents have Work
   on the machine in the session, and a person's unless the machine is available to them there (the environments plugin's
-  `checkMachine`, as Files and Terminals). The worker's path refuses a conversation the session does not have; Manage's
-  takes any well-formed id for now (carry-over of ERNDL-704). Manage shows the moved conversations (`detail`, one
-  document per session, by conversation id); the worker reads the same in `SessionFacts.detail`.
+  `checkMachine`, as Files and Terminals). The harness (`HarnessSession.moveLocation`, the path the agent's tool takes)
+  refuses to move a conversation the session does not have; an undo always goes through. A direct
+  `SessionFacts.moveLocation` call by the session's worker is not checked: the worker is trusted plugin code (decision
+  111). Manage's path takes any well-formed id for now (carry-over 3 of ERNDL-704: the server asking the session's
+  worker). Manage shows the moved conversations (`detail`, one document per session, by conversation id); the worker
+  reads the same in `SessionFacts.detail`.
 - **What its workers keep** (their directory, `<data>/workers/<id>`) goes with the session: removing the session stops
   its worker and deletes it (the runner's `remove`, refusing an id that names no session). A directory of a session
   with no row is swept whenever a runner appears (at every start), each one reported as it goes, one that fails

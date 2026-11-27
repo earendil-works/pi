@@ -536,7 +536,7 @@ describe("the harness plugin on a worker", () => {
 	});
 
 	// Opus, after push 4: a key that names no conversation would hold one of the session's 1000 moved places for good.
-	it("refuses to move a conversation the session does not have", async () => {
+	it("refuses to move a conversation the session does not have, and undoes any move", async () => {
 		const sessions: HarnessSession[] = [];
 		const server = await start([other("test.located", "l")], {}, [
 			{ kind: "test.located", seen: (session) => sessions.push(session) },
@@ -546,8 +546,19 @@ describe("the harness plugin on a worker", () => {
 		assert.ok(session !== undefined);
 		const nowhere = 999_999 as ConversationId;
 		await assert.rejects(session.moveLocation(nowhere, { machine: "m", folder: "/srv" }, context), /no conversation/);
-		await assert.rejects(session.moveLocation(nowhere, null, context), /no conversation/);
 		await session.moveLocation(ROOT_CONVERSATION_ID, { machine: "m", folder: "/srv" }, context);
+		assert.deepEqual(Object.keys(server.moved()), ["1"]);
+		// Astra, round 3: a move whose conversation's record is gone (a store recovered without it) is still undone.
+		await session.call(
+			async (ctx) =>
+				(await ctx.get(SessionFacts, {})).moveLocation(
+					{ conversation: String(nowhere), location: { machine: "m", folder: "/srv" } },
+					ctx,
+				),
+			context,
+		);
+		assert.deepEqual(Object.keys(server.moved()).toSorted(), ["1", String(nowhere)]);
+		await session.moveLocation(nowhere, null, context);
 		assert.deepEqual(Object.keys(server.moved()), ["1"]);
 	});
 
