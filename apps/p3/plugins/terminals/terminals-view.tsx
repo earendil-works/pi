@@ -29,7 +29,8 @@ const START = { columns: 80, rows: 24 };
 export function TerminalsView(props: ThingViewProps) {
 	const { t } = useMessages(messages);
 	const at = useWorkLocation(props.workspace);
-	if (at === undefined) return <p className={styles.note}>{t("loading")}</p>;
+	if (at.kind === "loading") return <p className={styles.note}>{t("loading")}</p>;
+	if (at.kind === "unreadable") return <p className={styles.note}>{t("unavailable")}</p>;
 	return <Tabs {...props} folder={at.folder} key={at.machine} machine={at.machine} />;
 }
 

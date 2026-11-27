@@ -185,6 +185,20 @@ describe("making a session (1)", () => {
 			/machine nowhere is not available/,
 		);
 	});
+
+	// Opus, round 5: a session on a machine its maker is not let in on could not show them its files or terminals.
+	it("refuses a location on a machine its maker is not let in on where the session is made", async () => {
+		const { leo, fam } = await family();
+		const machine = await seeded(await w.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+		const at = { location: { machine, folder: "/tmp" } };
+		await makeSession(leo, fam, "one", at);
+		const party = { kind: "person", person: leo.id } as const;
+		await store.setGrants(
+			{ source: BY, grants: [{ workspace: fam, thing: machine, party, tick: OPEN, gives: false }] },
+			context,
+		);
+		await assert.rejects(makeSession(leo, fam, "two", at), /machine .* is not available/);
+	});
 });
 
 describe("archiving and unlinking (2)", () => {

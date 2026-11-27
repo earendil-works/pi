@@ -4,9 +4,9 @@
 // may do what is the things plugin's (the session's workspace); this store checks no caller and holds no members, but
 // a move needs the agents' Work on the machine (decision 24). Rows older code wrote naming this device as `this-device`
 // are rewritten once per Pi to its machine's id, a session's own folder moved from the data directory to the work
-// root (decision 125).
+// root where one rename can (decision 125).
 
-import { cp, mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, rename, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import {
 	and,
@@ -308,9 +308,10 @@ function noMachine(machine: string): Error {
 }
 
 /**
- * Moves a session's own folder `from` to `to` and answers where its files are now: `to` once moved; `from` when `to`
- * is taken or the move failed (nothing is lost, nothing overwritten); `to` when only `to` is there (a move a crash cut
- * short after the rename).
+ * Moves a session's own folder `from` to `to` with one atomic rename and answers where its files are now: `to` once
+ * moved; `from` when `to` is taken or the rename is not possible (another file system, no permission): the folder stays
+ * whole where it is and the row keeps its path, never a copy and a removal (Astra, round 5); `to` when only `to` is
+ * there (a move a crash cut short after the rename).
  */
 async function movedFolder(from: string, to: string): Promise<string> {
 	const [source, target] = await Promise.all([present(from), present(to)]);
@@ -319,21 +320,10 @@ async function movedFolder(from: string, to: string): Promise<string> {
 	try {
 		await mkdir(dirname(to), { recursive: true, mode: 0o700 });
 		await rename(from, to);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "EXDEV") return from;
-		// Another file system: a copy beside the target, renamed into place once whole, so `to` is never a part.
-		const part = `${to}.moving`;
-		try {
-			await rm(part, { recursive: true, force: true });
-			await cp(from, part, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
-			await rename(part, to);
-		} catch {
-			await rm(part, { recursive: true, force: true });
-			return from;
-		}
-		await rm(from, { recursive: true, force: true });
+		return to;
+	} catch {
+		return from;
 	}
-	return to;
 }
 
 /** Whether `path` is there. */

@@ -3,11 +3,15 @@
 // it); a row older than this server process is a crash's leftover (this process's own are uploads under way, which a
 // reload of this plugin must not touch), and the next upload to its machine removes its file, only while it is still
 // that file, and then the row (`stale` before the process's start, then `forget`). A crash between making a staged file
-// and writing its row leaves one empty file only its owner can read (ERNDL-1173, Known).
+// and writing its row leaves one empty file only its owner can read (ERNDL-1173, Known). One upload's staged file
+// with its row (`owned`) and the sweep of a machine's leftovers (`sweep`) are here; the upload route (transfers.ts)
+// uses them.
 
 import {
 	and,
 	arr,
+	BACKGROUND_CONTEXT,
+	type Context,
 	defineTable,
 	eq,
 	type FacetHost,
@@ -18,8 +22,12 @@ import {
 	obj,
 	type P3Principal,
 	query,
+	type Reference,
+	reportError,
 	str,
 } from "@earendil-works/p3/v1";
+import type { MachineHost, StagedFile } from "../environments/contract.server.ts";
+import { must } from "./places.ts";
 
 /** The staged files of uploads, by id. */
 export const StagingStore = local("files.staging", {
@@ -74,4 +82,61 @@ export function serveStaging(host: FacetHost<P3Principal>): void {
 				}, ctx),
 		};
 	});
+}
+
+/**
+ * One upload's staged file with its row: remembered once it exists, forgotten once (it landed or was
+ * removed). A discard that failed keeps the row: the first upload to the machine after the next server start sweeps
+ * it. A discard before the row was written forgets it once it is.
+ */
+export function owned(file: StagedFile, machine: string, staging: Reference<typeof StagingStore>) {
+	// Written whatever becomes of the request: the row must outlive a disconnect.
+	const remembered = staging.remember(
+		{ machine, path: file.path, identity: file.identity, at: Date.now() },
+		BACKGROUND_CONTEXT,
+	);
+	// Each runs once however often it is called; every call waits for that one run.
+	let forgotten: Promise<unknown> | undefined;
+	const forget = () => {
+		const run = forgotten ?? remembered.then((id) => staging.forget({ id }, BACKGROUND_CONTEXT));
+		forgotten = run;
+		return run;
+	};
+	let discarded: Promise<unknown> | undefined;
+	const discard = async () => {
+		const result = await file.discard(BACKGROUND_CONTEXT);
+		if (!result.ok) return reportError("files: a staged file's removal", result.error, BACKGROUND_CONTEXT);
+		await forget().catch((error: unknown) => reportError("files: a staged file's row", error, BACKGROUND_CONTEXT));
+	};
+	return {
+		remembered,
+		land: async (destination: string, context: Context) => {
+			must(await file.publish(destination, context));
+			await forget();
+		},
+		discard: () => {
+			const run = discarded ?? discard();
+			discarded = run;
+			return run;
+		},
+	};
+}
+
+/**
+ * Removes the staged files on `machine` an earlier server process left (a crash), and forgets them: those made before
+ * this process started, each only while it is still that staged file (never one that replaced it). A removal that
+ * failed keeps its row, for the next sweep.
+ */
+export async function sweep(
+	at: MachineHost,
+	machine: string,
+	staging: Reference<typeof StagingStore>,
+	context: Context,
+): Promise<void> {
+	const before = Math.floor(performance.timeOrigin);
+	for (const { id, path, identity } of await staging.stale({ machine, before }, context)) {
+		const removed = await at.removeStaged(path, identity, context);
+		if (!removed.ok) reportError("files: a crash's staged file's removal", removed.error, context);
+		else await staging.forget({ id }, context);
+	}
 }

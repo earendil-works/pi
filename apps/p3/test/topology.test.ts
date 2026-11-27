@@ -407,14 +407,15 @@ describe("counted work", () => {
 
 	// The route's admission and the worker objects' (`followSession`) read the access index, no query. The worker's
 	// start reads its session's row (its facts; its moved conversations are a document, no query), and its holding this
-	// device's machine's info, once: two runs until the worker holds what its agent may use (where the hold resolves
-	// in between depends on timing, so the count spans both). A second hold shares them all.
-	it("a hold of a session's worker costs two reads until it holds its things: its row, its machine; a second hold none", async () => {
+	// device's machine's info, once: two runs by the time it holds its machine (Astra, round 5 of the machines: the
+	// start is counted whole, wherever the machine's read lands around the first hold). A second hold shares them all.
+	it("a session's worker costs two reads by the time it holds its machine: its row and the machine's; a second hold none", async () => {
 		const { t, owner, id, pi } = await withSession();
 		await owner.get(WorkspaceChildren, { workspace: pi, view: "v" }, context);
 		const counted = () => [t.count("chord.query.runs"), t.count("chord.query.probes")];
 		const first = counted();
 		await owner.get(SessionWorker, { session: id }, context);
+		// The worker, once started, holds what its agent may use: this device's machine, its info one read, once.
 		const holding = await t.workers.get(id)!.host.registry(HeldThings, context);
 		await until(holding, (held) => held?.has(MACHINE_KIND) === true, within("the worker's holding", context));
 		const settled = counted();

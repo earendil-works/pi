@@ -45,7 +45,7 @@ import {
 import { abortWhen, abortWhenLost, Gives } from "../things/contract.server.ts";
 import { DOWNLOAD_PATH, Files, UPLOAD_PATH } from "./kind.ts";
 import { must, placed, placedNew } from "./places.ts";
-import { StagingStore, serveStaging } from "./staging.ts";
+import { owned, StagingStore, serveStaging, sweep } from "./staging.ts";
 
 /** How many bytes one upload carries at most. */
 const MAX_UPLOAD = 2 * 1024 * 1024 * 1024;
@@ -179,34 +179,6 @@ async function upload(
 	}
 }
 
-/**
- * One upload's staged file with its row (staging.ts): remembered once it exists, forgotten once (it landed or was
- * removed). A discard that failed keeps the row: the first upload to the machine after the next server start sweeps
- * it. A discard before the row was written forgets it once it is. Exported for its test.
- */
-export function owned(file: StagedFile, machine: string, staging: Reference<typeof StagingStore>) {
-	// Written whatever becomes of the request: the row must outlive a disconnect.
-	const remembered = staging.remember(
-		{ machine, path: file.path, identity: file.identity, at: Date.now() },
-		BACKGROUND_CONTEXT,
-	);
-	const forget = once(async () => {
-		await staging.forget({ id: await remembered }, BACKGROUND_CONTEXT);
-	});
-	return {
-		remembered,
-		land: async (destination: string, context: Context) => {
-			must(await file.publish(destination, context));
-			await forget();
-		},
-		discard: once(async () => {
-			const discarded = await file.discard(BACKGROUND_CONTEXT);
-			if (!discarded.ok) return reportError("files: a staged file's removal", discarded.error, BACKGROUND_CONTEXT);
-			await forget().catch((error: unknown) => reportError("files: a staged file's row", error, BACKGROUND_CONTEXT));
-		}),
-	};
-}
-
 /** Calls `member` of the person's Files for `target`: the tick, the machine and the path checked as they are now. */
 async function check(
 	files: Reference<typeof Files>,
@@ -298,25 +270,6 @@ async function letGo(
 	const end = () => pieces.return?.().catch(() => undefined);
 	if (pending === undefined) await end();
 	else void pending.then(end, end);
-}
-
-/**
- * Removes the staged files on `machine` an earlier server process left (a crash), and forgets them: those made before
- * this process started, each only while it is still that staged file (never one that replaced it). A removal that
- * failed keeps its row, for the next sweep.
- */
-async function sweep(
-	at: MachineHost,
-	machine: string,
-	staging: Reference<typeof StagingStore>,
-	context: Context,
-): Promise<void> {
-	const before = Math.floor(performance.timeOrigin);
-	for (const { id, path, identity } of await staging.stale({ machine, before }, context)) {
-		const removed = await at.removeStaged(path, identity, context);
-		if (!removed.ok) reportError("files: a crash's staged file's removal", removed.error, context);
-		else await staging.forget({ id }, context);
-	}
 }
 
 /** `fn`, run once however often the answer is called; every call waits for that one run. */

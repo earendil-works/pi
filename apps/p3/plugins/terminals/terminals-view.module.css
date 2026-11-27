@@ -6,7 +6,9 @@
 	gap: var(--semantic-dimension-space-gap-small);
 	min-inline-size: 0;
 	min-block-size: 0;
+	box-sizing: border-box;
 	block-size: 100%;
+	padding: var(--semantic-dimension-space-padding-medium);
 }
 
 .tabs {

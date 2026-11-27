@@ -4,6 +4,7 @@
 // it (its host and catalog base: the base's, stubbed).
 
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	type Context,
 	constant,
@@ -54,7 +55,7 @@ export function providerFacets(
 							},
 							catalogBaseUrl,
 							dataDir: tmpdir(),
-							workRoot: tmpdir(),
+							workRoot: join(tmpdir(), "p3-providers-test-work"),
 							machine: { user: "test", hostname: "test" },
 						}) as unknown as ServerRuntime,
 				});

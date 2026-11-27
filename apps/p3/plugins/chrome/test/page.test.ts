@@ -29,6 +29,7 @@ import { BACKGROUND_CONTEXT as context, type Host, Me, type P3Principal, People,
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { scriptFaux } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
+import { SignIns } from "../../sign-in/contract.ts";
 import { ThingsStore } from "../../things/contract.server.ts";
 import { ThingKindsView } from "../../things/kind.ts";
 import { Workspace } from "../../things/workspace.ts";
@@ -261,6 +262,76 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 			await browser.size(DESKTOP);
 		}
 		await browser.open(`${origin}/w/${pi}`);
+	});
+
+	// Opus, round 5 (S4): the views as a person with Browse and Watch only, and as one with neither (the kinds' default).
+	it("shows Files and Terminals to a person with Browse and Watch only, read only, and nothing to one without", async () => {
+		await browser.wait(
+			`["Files", "Terminals"].every((name) => [...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === name))`,
+		);
+		const [files, terminals] = await Promise.all(
+			["Files", "Terminals"].map((name) =>
+				browser.evaluate<string>(
+					`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === ${JSON.stringify(name)})?.dataset.navThing`,
+				),
+			),
+		);
+		/** A person put into Pi, with Browse and Watch (`ticks`) or none, and their browser cookie. */
+		const personWith = (name: string, ticks: boolean) =>
+			t.host.root(async (ctx) => {
+				const things = await ctx.get(ThingsStore, {});
+				const by = { kind: "plugin", plugin: "test" } as const;
+				const id = await things.createPerson({ name, madeBy: by }, ctx);
+				const party = { kind: "person", person: id } as const;
+				await things.putParty({ workspace: pi, party, source: by }, ctx);
+				if (ticks) {
+					const grants = [
+						{ workspace: pi, thing: files!, party, tick: "browse", gives: true },
+						{ workspace: pi, thing: terminals!, party, tick: "watch", gives: true },
+					];
+					await things.setGrants({ source: by, grants }, ctx);
+				}
+				const principal = { kind: "person", id, name } as const;
+				const issued = await (await ctx.get(SignIns, {})).issue({ principal, kind: "browser", label: "test" }, ctx);
+				return issued.cookie.split(";")[0]!;
+			}, context);
+		const other = await Browser.start();
+		try {
+			await other.signIn(origin, await personWith("Bea", true));
+			for (const size of [DESKTOP, PHONE]) {
+				await other.size(size);
+				await other.open(`${origin}/w/${pi}/t/${files}`);
+				await other.wait(
+					`document.querySelector('section[aria-label="Files"][data-files="reader"] [data-files-entry]')`,
+				);
+				assert.equal(
+					await other.evaluate<boolean>(
+						`!!document.querySelector("[data-files-upload], [data-files-rename], [data-files-remove]")`,
+					),
+					false,
+				);
+				await other.open(`${origin}/w/${pi}/t/${terminals}`);
+				await other.wait(`document.querySelector('section[aria-label="Terminals"][data-terminals]')`);
+				assert.equal(
+					await other.evaluate<boolean>(
+						`!!document.querySelector("[data-terminals-open], [data-terminal-close]")`,
+					),
+					false,
+				);
+			}
+			// Not let in on either: the page says so in place of the view.
+			await other.signIn(origin, await personWith("Cal", false));
+			await other.open(`${origin}/w/${pi}/t/${files}`);
+			await other.wait(
+				`!document.querySelector('[data-files]') && document.body.textContent.includes("You have no access to this here.")`,
+			);
+			await other.open(`${origin}/w/${pi}/t/${terminals}`);
+			await other.wait(
+				`!document.querySelector('[data-terminals]') && document.body.textContent.includes("You have no access to this here.")`,
+			);
+		} finally {
+			await other.close();
+		}
 	});
 
 	it("says a machine's refusal in the Terminals view as its message, not as the log's text (Fable, round 5)", async () => {
