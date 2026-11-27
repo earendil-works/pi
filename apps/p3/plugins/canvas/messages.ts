@@ -1,6 +1,6 @@
 // The canvas plugin's texts people see (decision 65): its ticks' labels (flag ticks among them), as the things plugin's
-// Settings view shows them, its title in the add-thing picker, its view's title and the board view's texts. Imported by the contract and by
-// every facet that renders.
+// Settings view shows them, its title in the add-thing picker, the board view's texts and the refusals a person can
+// cause. Imported by the kind, the store and every facet that renders.
 
 import { defineMessages } from "@earendil-works/p3/v1";
 
@@ -34,5 +34,11 @@ export const messages = defineMessages("canvas", {
 		textToPlace: "Text to place",
 		textHint: "Type, then tap the board",
 		drawing: "Drawing",
+		someone: "Someone",
+		byAgent: "An agent",
+		byPi: "Pi",
+		noShape: "This shape is not here any more.",
+		notYours: "Someone else drew this shape.",
+		gone: "This canvas does not exist any more.",
 	},
 });

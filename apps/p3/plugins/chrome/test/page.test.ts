@@ -231,6 +231,13 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await press(`[data-nav-thing="${sketch}"]`);
 		await browser.wait(`document.querySelector('section[aria-label="Canvas"]')`);
+		// The owner draws a stroke with the mouse: it is committed, then undone (the canvas's drawing and toolbar).
+		await browser.wait(`document.querySelector('[data-canvas="drawer"]')`);
+		const surface = await browser.box("[data-canvas-surface]");
+		await browser.drag("[data-canvas-surface]", surface.x + surface.width * 0.7, surface.y + surface.height * 0.6);
+		await browser.wait(`document.querySelectorAll("[data-shape]").length === 1`);
+		await press("[data-canvas-undo]");
+		await browser.wait(`document.querySelectorAll("[data-shape]").length === 0`);
 		await browser.wait(`document.querySelector("[data-gear]")`);
 		await shots("06-canvas-desktop");
 		await press("[data-gear]");

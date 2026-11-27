@@ -125,7 +125,10 @@ describe("the plans of the stores' queries", () => {
 			const canvas = await host.get(CanvasStore, {}, context);
 			for (const board of ["b1", "b2"]) {
 				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
-				await canvas.add({ canvas: board, shapes: [rect, rect, rect], author: "person:owner" }, context);
+				await canvas.add(
+					{ canvas: board, shapes: [rect, rect, rect], author: { kind: "person", person: "owner" } },
+					context,
+				);
 			}
 			const prompt = await host.get(PromptStore, {}, context);
 			for (const thing of ["t1", "t2"]) {

@@ -7,7 +7,7 @@ import { EditIcon } from "@earendil-works/p3/v1/web";
 // Other plugins' web contracts by path, never through `/v1/web` (see `board-view.tsx`).
 import { PluginTitles, ThingParts, Views } from "../things/contract.web.tsx";
 import { BoardView } from "./board-view.tsx";
-import { CanvasKind } from "./contract.ts";
+import { CanvasKind } from "./kind.ts";
 import { messages } from "./messages.ts";
 
 export default defineFacet((_host, self) => {
