@@ -111,6 +111,10 @@ describe("classifyGoogleInteractionsError", () => {
 		expect(classify(403, errorInfo("ACCESS_TOKEN_SCOPE_INSUFFICIENT")).message).toBe(
 			"403 Permission denied. Run /login to sign in again.",
 		);
+		expect(
+			classify(403, JSON.stringify({ error: { message: "Request had insufficient authentication scopes." } }))
+				.message,
+		).toBe("403 Request had insufficient authentication scopes. Run /login to sign in again.");
 		expect(classify(403, errorInfo("SERVICE_DISABLED")).message).toBe(
 			"403 Permission denied. The Google AI Ultra plan is currently unavailable in pi.",
 		);

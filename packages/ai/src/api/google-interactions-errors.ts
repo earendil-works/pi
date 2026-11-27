@@ -72,7 +72,13 @@ function classifyRateLimit(error: ErrorBody): RateLimit {
 function hintFor(status: number, error: ErrorBody, modelId: string): string | undefined {
 	if (status === 400 && /not supported for per-user quota/i.test(error.message)) return notOnPlan(modelId);
 	if (status === 401) return SIGN_IN_AGAIN;
-	if (status === 403 && error.reason === "ACCESS_TOKEN_SCOPE_INSUFFICIENT") return SIGN_IN_AGAIN;
+	// Flat error bodies carry no `ErrorInfo`, so Google's classifier also matches the message.
+	if (
+		status === 403 &&
+		(error.reason === "ACCESS_TOKEN_SCOPE_INSUFFICIENT" || /insufficient authentication scopes/i.test(error.message))
+	) {
+		return SIGN_IN_AGAIN;
+	}
 	// Our project's API is disabled or the client is blocked (the kill switch); the user cannot fix that.
 	if (
 		status === 403 &&
