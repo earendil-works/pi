@@ -1,17 +1,20 @@
 // Tests of `self.follow` (slice 6b §3, D9, R4): a source over another runtime's synchronous observer, attached during
-// activation, its calls marked in the running batch or grouped into one batch outside it, its ends.
+// activation, its calls marked in the running batch or grouped into one batch outside it, its ends; and of
+// `self.follow(over, attach)` (ERNDL-1191), attached again to each runtime a registry gives, with the races p3's
+// plugin-side follower met in review (Opus, Astra, Fable).
 
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "../../src/context/index.ts";
-import { int, local, obj } from "../../src/contracts/index.ts";
+import { int, local, obj, str } from "../../src/contracts/index.ts";
 import { ChordError } from "../../src/data/index.ts";
-import type { Op } from "../../src/delta/index.ts";
+import { applyImmutable, type Op } from "../../src/delta/index.ts";
 import { FollowSource } from "../../src/host/follow.ts";
 import type { ChordHost } from "../../src/host/host.ts";
 import type { FollowAttach, FollowObserver } from "../../src/host/index.ts";
+import { defineRegistry } from "../../src/registries/index.ts";
 import { Batch } from "../../src/state/batch.ts";
-import type { Watchable, WatchEnd } from "../../src/watch.ts";
-import { changesOf, delivered, expectCollected, instancesOf, loaded, valuesOf } from "../support.ts";
+import type { NativeWatchable, Watchable, WatchEnd } from "../../src/watch.ts";
+import { changesOf, delivered, expectCollected, instancesOf, loaded, valuesOf, waitLive } from "../support.ts";
 
 const followed = instancesOf(FollowSource, "attach");
 
@@ -19,18 +22,28 @@ type Count = { readonly n: number };
 
 /** A runtime with synchronous observers, as Durable's views have them. */
 class Runtime {
-	value: Count = { n: 0 };
+	value: Count;
 	readonly observers = new Set<FollowObserver<Count>>();
 	attachments = 0;
 	detached = 0;
 	/** Resolves the next attachment when set (an attachment that takes time). */
 	gate: Promise<void> | undefined;
 	absent = false;
+	/** What its attachments reject with, when set (a runtime that cannot be observed). */
+	rejects: Error | undefined;
+
+	constructor(n = 0) {
+		this.value = { n };
+	}
 
 	readonly attach: FollowAttach<Count> = async (observer) => {
 		this.observers.add(observer);
 		this.attachments++;
 		await this.gate;
+		if (this.rejects !== undefined) {
+			this.observers.delete(observer);
+			throw this.rejects;
+		}
 		if (this.absent) return undefined;
 		return {
 			value: this.value,
@@ -205,11 +218,14 @@ describe("ends (R4)", () => {
 describe("ends during activation and in one batch (review regressions)", () => {
 	it("an end before the attachment resolved keeps the attachment's value on the source", async () => {
 		const source = new FollowSource(
-			async (observer) => {
-				observer.end({ kind: "ended" });
-				return { value: { n: 7 }, detach() {} };
+			{
+				kind: "once",
+				attach: async (observer) => {
+					observer.end({ kind: "ended" });
+					return { value: { n: 7 }, detach() {} };
+				},
 			},
-			{ label: "early end", context, ended() {} },
+			{ label: "early end", context, ended() {}, report() {} },
 			new Batch(() => {}, undefined),
 		);
 		await source.attach(context);
@@ -271,11 +287,14 @@ describe("ends during activation and in one batch (review regressions)", () => {
 		const batch = new Batch(() => {}, undefined);
 		let observer: FollowObserver<unknown> | undefined;
 		const source = new FollowSource(
-			async (attached) => {
-				observer = attached;
-				return { value: { n: 7 }, detach() {} };
+			{
+				kind: "once",
+				attach: async (attached) => {
+					observer = attached;
+					return { value: { n: 7 }, detach() {} };
+				},
 			},
-			{ label: "retirement", context, ended() {} },
+			{ label: "retirement", context, ended() {}, report() {} },
 			batch,
 		);
 		await source.attach(context);
@@ -292,11 +311,14 @@ describe("ends during activation and in one batch (review regressions)", () => {
 	it("a call and an end outside a batch with nothing watching: a later watch opens at the value and ends", async () => {
 		let observer: FollowObserver<unknown> | undefined;
 		const source = new FollowSource(
-			async (attached) => {
-				observer = attached;
-				return { value: { n: 0 }, detach() {} };
+			{
+				kind: "once",
+				attach: async (attached) => {
+					observer = attached;
+					return { value: { n: 0 }, detach() {} };
+				},
 			},
-			{ label: "unwatched", context, ended() {} },
+			{ label: "unwatched", context, ended() {}, report() {} },
 			new Batch(() => {}, undefined),
 		);
 		await source.attach(context);
@@ -323,6 +345,396 @@ describe("ends during activation and in one batch (review regressions)", () => {
 	});
 });
 
+/** The runtime followed now, as a registry gives it (p3's harness): `undefined` while there is none. */
+const Runtimes = defineRegistry<Runtime | undefined, Runtime | undefined>("app.runtimes", { version: 1 });
+
+/** The host-lifetime object contributing the runtime given now (a harness plugin's object). */
+const Giver = local("app.giver", { version: 1, params: {}, members: {} });
+
+/** An object following the runtime given now: ended with its last reference (non-empty params). */
+const Follower = local("app.follower", { version: 1, params: { id: str() }, members: { a: obj({ n: int() }) } });
+
+/**
+ * A host serving `Runtimes` (its first contribution's value), `Giver` with `first` given, and `Follower` over the
+ * registry; `give` replaces the runtime given, as a reload of the runtime's plugin does (`undefined`: withdrawn).
+ */
+async function overRuntimes(first: Runtime | undefined) {
+	// The first runtime given is let go of once given: a factory keeps what it reads.
+	const control: { first: Runtime | undefined; give?: (runtime: Runtime | undefined) => void } = { first };
+	const { host, errors } = await loaded(
+		(h) => {
+			h.serve(Runtimes, { compose: (table) => table[0]?.value });
+			h.serve(Giver, (_, self) => {
+				const given = self.writable(control.first);
+				self.contribute(Runtimes, given);
+				control.give = (runtime) => given.set(runtime);
+				return {};
+			});
+			h.serve(Follower, (_, self) => {
+				const runtimes = self.registry(Runtimes);
+				self.retryOn(runtimes);
+				const a = self.follow(runtimes, (runtime, observer, ctx) => runtime.attach(observer, ctx));
+				expectTypeOf(a).toEqualTypeOf<Watchable<Count>>();
+				return { a };
+			});
+		},
+		{ readyTimeout: 500 },
+	);
+	control.first = undefined;
+	const give = (runtime: Runtime | undefined) => control.give!(runtime);
+	return { host, errors, give, hold: () => host.hold(Follower, { id: "1" }, context) };
+}
+
+/** A runtime whose next attachment waits for `open()`. */
+function gated(n = 0): { readonly runtime: Runtime; open(): void } {
+	const runtime = new Runtime(n);
+	const gate = Promise.withResolvers<void>();
+	runtime.gate = gate.promise;
+	return { runtime, open: () => gate.resolve() };
+}
+
+/** The ops of a replacement with `n`. */
+const replaced = (n: number) => ({ kind: "value", value: { n }, ops: [["r", { n }]], retired: false });
+
+describe("over a changing source (ERNDL-1191)", () => {
+	// The issue's test 1; p3: the transcript's swap case.
+	it("a replaced source: its holders get one replacement, the object stays live, nothing is reported", async () => {
+		const a = new Runtime();
+		const { host, errors, give, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const calls = changesOf(await ref.a.watch(context));
+		a.set(1);
+		await delivered();
+		const b = new Runtime(10);
+		give(b);
+		await delivered();
+		b.set(11);
+		await delivered();
+		expect(calls).toEqual([
+			{ kind: "value", value: { n: 1 }, ops: [["s", ["n"], 1]], retired: false },
+			replaced(10),
+			{ kind: "value", value: { n: 11 }, ops: [["s", ["n"], 11]], retired: false },
+		]);
+		expect([a.detached, a.observers.size, b.attachments]).toEqual([1, 0, 1]);
+		expect(ref.state.value).toEqual({ kind: "live" });
+		expect(errors).toEqual([]);
+		await host.close(context);
+	});
+
+	// Fable S1; Astra "replacement completing during the first attach is not lost" (round 3: its early calls never show).
+	it("replaced while the first attachment attaches: the newest is followed, the first detached once it resolves", async () => {
+		const a = gated();
+		const { host, errors, give, hold } = await overRuntimes(a.runtime);
+		const ref = hold();
+		await delivered();
+		a.runtime.set(5);
+		const b = new Runtime(20);
+		give(b);
+		await delivered();
+		a.open();
+		await waitLive(ref);
+		expect(ref.a.value).toEqual({ n: 20 });
+		b.set(21);
+		await delivered();
+		expect(ref.a.value).toEqual({ n: 21 });
+		expect([a.runtime.attachments, a.runtime.detached, b.attachments]).toEqual([1, 1, 1]);
+		expect(errors).toEqual([]);
+		await host.close(context);
+	});
+
+	// Astra round 2 (1): a superseded first attachment rejecting failed a normal reload's activation.
+	it("a superseded first attachment that rejects fails nothing", async () => {
+		const a = gated();
+		a.runtime.rejects = new Error("session closed");
+		const { host, errors, give, hold } = await overRuntimes(a.runtime);
+		const ref = hold();
+		await delivered();
+		give(new Runtime(30));
+		a.open();
+		await waitLive(ref);
+		expect(ref.a.value).toEqual({ n: 30 });
+		expect(errors).toEqual([]);
+		await host.close(context);
+	});
+
+	// The issue's test 2; Opus M1, Fable S2, Astra "a new frame before the replacement attachment resolves".
+	it("calls while it attaches again are held: one replacement with the newest value, then the later calls", async () => {
+		const { host, errors, give, hold } = await overRuntimes(new Runtime());
+		const ref = hold();
+		await waitLive(ref);
+		const calls = changesOf(await ref.a.watch(context));
+		const b = gated(10);
+		give(b.runtime);
+		await delivered();
+		b.runtime.set(11);
+		b.runtime.set(12);
+		await delivered();
+		expect([calls, ref.a.value]).toEqual([[], { n: 0 }]);
+		b.open();
+		await delivered();
+		b.runtime.set(13);
+		await delivered();
+		expect(calls).toEqual([
+			replaced(12),
+			{ kind: "value", value: { n: 13 }, ops: [["s", ["n"], 13]], retired: false },
+		]);
+		expect(errors).toEqual([]);
+		await host.close(context);
+	});
+
+	// Astra round 1 (3) and round 2 (2); Opus "skips a superseded replacement's successful attachment".
+	it.each(["resolves", "rejects"])(
+		"an attachment overtaken while it attaches never shows when it %s, and the newest is followed",
+		async (outcome) => {
+			const { host, errors, give, hold } = await overRuntimes(new Runtime());
+			const ref = hold();
+			await waitLive(ref);
+			const calls = changesOf(await ref.a.watch(context));
+			const b = gated(10);
+			if (outcome === "rejects") b.runtime.rejects = new Error("session closed");
+			give(b.runtime);
+			await delivered();
+			const c = gated(20);
+			give(c.runtime);
+			await delivered();
+			b.open();
+			await delivered();
+			expect([calls, ref.a.value]).toEqual([[], { n: 0 }]);
+			c.open();
+			await delivered();
+			expect(calls).toEqual([replaced(20)]);
+			expect([b.runtime.observers.size, c.runtime.attachments]).toEqual([0, 1]);
+			expect(errors).toEqual([]);
+			await host.close(context);
+		},
+	);
+
+	// The issue's test 3; Opus M2, Fable S3 ("fails the follow when the next harness cannot be observed").
+	it("an attachment that rejects fails the member once, the object stays live, and the backoff's retry follows", async () => {
+		const { host, errors, give, hold } = await overRuntimes(new Runtime());
+		const ref = hold();
+		await waitLive(ref);
+		const calls = changesOf(await ref.a.watch(context));
+		const b = new Runtime(10);
+		b.rejects = new Error("no observation");
+		give(b);
+		await delivered();
+		expect(valuesOf(calls)).toEqual([{ failed: "no observation" }]);
+		expect(() => ref.a.value).toThrow("no observation");
+		expect(ref.state.value).toEqual({ kind: "live" });
+		expect(errors).toMatchObject([{ kind: "follow_failed", object: "app.follower(1)" }]);
+		b.rejects = undefined;
+		await new Promise((resolve) => setTimeout(resolve, 1_100));
+		expect(calls.slice(1)).toEqual([replaced(10)]);
+		expect(b.attachments).toBe(2);
+		expect(errors).toHaveLength(1);
+		await host.close(context);
+	});
+
+	it("a failed member attaches again at once on the next value of its source, with no second report", async () => {
+		const { host, errors, give, hold } = await overRuntimes(new Runtime());
+		const ref = hold();
+		await waitLive(ref);
+		const calls = changesOf(await ref.a.watch(context));
+		const b = new Runtime(10);
+		b.rejects = new Error("no observation");
+		give(b);
+		await delivered();
+		give(new Runtime(20));
+		await delivered();
+		expect(valuesOf(calls)).toEqual([{ failed: "no observation" }, { n: 20 }]);
+		expect(calls[1]).toEqual(replaced(20));
+		expect(errors.map((error) => error.kind)).toEqual(["follow_failed"]);
+		await host.close(context);
+	});
+
+	// Decision 131 (owner); Opus S1, Astra "a genuine end from the still-given harness fails the follower".
+	it("a failed end of the runtime still given fails the member, not the object, and its retry attaches again", async () => {
+		const a = new Runtime(3);
+		const { host, errors, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const calls = changesOf(await ref.a.watch(context));
+		a.end({ kind: "failed", error: new Error("session failed") });
+		await delivered();
+		expect(valuesOf(calls)).toEqual([{ failed: "session failed" }]);
+		expect(ref.state.value).toEqual({ kind: "live" });
+		expect(errors.map((error) => error.kind)).toEqual(["follow_failed"]);
+		await new Promise((resolve) => setTimeout(resolve, 1_100));
+		expect(calls.slice(1)).toEqual([replaced(3)]);
+		expect([a.attachments, a.detached]).toEqual([2, 1]);
+		await host.close(context);
+	});
+
+	it("an ended end of the runtime still given keeps the value, the watches open, until the next value attaches", async () => {
+		const a = new Runtime(3);
+		const { host, errors, give, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const watch = await ref.a.watch(context);
+		const calls = changesOf(watch);
+		a.end({ kind: "ended" });
+		await delivered();
+		expect([calls, ref.a.value, a.detached]).toEqual([[], { n: 3 }, 1]);
+		give(new Runtime(4));
+		await delivered();
+		expect(calls).toEqual([replaced(4)]);
+		expect(errors).toEqual([]);
+		await watch.stop();
+		await host.close(context);
+	});
+
+	// Astra "a late end from the old harness cannot end the new one".
+	it("a late end and late calls of a replaced runtime's observer change nothing", async () => {
+		const a = new Runtime();
+		const { host, errors, give, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const [old] = a.observers;
+		give(new Runtime(10));
+		await delivered();
+		old!.advance({ kind: "value", value: { n: 99 }, ops: [["s", ["n"], 99]], retired: false }, context);
+		old!.end({ kind: "failed", error: new Error("session closed") });
+		await delivered();
+		expect([ref.a.value, ref.state.value]).toEqual([{ n: 10 }, { kind: "live" }]);
+		expect(errors).toEqual([]);
+		await host.close(context);
+	});
+
+	it("an end in the batch that replaced its runtime, before the source's call came, changes nothing", async () => {
+		const a = new Runtime();
+		const { host, errors, give, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const batch = (host as unknown as ChordHost).batch;
+		// As Durable's close inside a commit that also withdrew it: the end comes before the registry's frame.
+		batch.commit(() => {
+			give(new Runtime(10));
+			a.end({ kind: "failed", error: new Error("session closed") });
+		}, context);
+		await delivered();
+		expect([ref.a.value, errors]).toEqual([{ n: 10 }, []]);
+		await host.close(context);
+	});
+
+	// Astra must 5: a withdrawn harness with no successor stayed reachable from the follower.
+	it("withdrawn: the last value stays, nothing is followed, and the withdrawn runtime is collected", async () => {
+		let a: Runtime | undefined = new Runtime();
+		const weak = new WeakRef(a);
+		const { host, errors, give, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const calls = changesOf(await ref.a.watch(context));
+		a.set(3);
+		a = undefined;
+		await delivered();
+		give(undefined);
+		await delivered();
+		await expectCollected(weak);
+		expect([valuesOf(calls), ref.a.value, ref.state.value]).toEqual([[{ n: 3 }], { n: 3 }, { kind: "live" }]);
+		give(new Runtime(4));
+		await delivered();
+		expect(calls[1]).toEqual(replaced(4));
+		expect(errors).toEqual([]);
+		await host.close(context);
+	});
+
+	it("waits for a first value while it activates, under the activation's deadline", async () => {
+		const { host, errors, give, hold } = await overRuntimes(undefined);
+		const ref = hold();
+		await delivered();
+		expect(ref.state.value.kind).toBe("loading");
+		give(new Runtime(5));
+		await waitLive(ref);
+		expect(ref.a.value).toEqual({ n: 5 });
+		expect(errors).toEqual([]);
+		await host.close(context);
+	});
+
+	// Astra must 4: a reader dropped during the first attach kept an observer.
+	it("released during its first attachment: the attachment is detached once it resolves, no frame follows", async () => {
+		const a = gated();
+		const { host, hold } = await overRuntimes(a.runtime);
+		const ref = hold();
+		await delivered();
+		const released = ref.release();
+		await delivered();
+		a.open();
+		await released;
+		await delivered();
+		expect([a.runtime.attachments, a.runtime.detached, a.runtime.observers.size]).toEqual([1, 1, 0]);
+		await host.close(context);
+	});
+
+	it("released while it attaches again: the new attachment is detached once it resolves", async () => {
+		const a = new Runtime();
+		const { host, give, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const b = gated(10);
+		give(b.runtime);
+		await delivered();
+		await ref.release();
+		b.open();
+		await delivered();
+		expect([a.detached, b.runtime.attachments, b.runtime.detached, b.runtime.observers.size]).toEqual([1, 1, 1, 0]);
+		await host.close(context);
+	});
+
+	// Astra "an in-flight reader frame over a link folds a replacement and its later frames correctly".
+	it("a busy watch gets the replacement and the calls after it folded, which take its value to the newest", async () => {
+		const a = new Runtime();
+		const { host, give, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const watch = await ref.a.watch(context);
+		const busy = Promise.withResolvers<void>();
+		let mirror: Count = watch.value;
+		let first = true;
+		watch.start(async (call) => {
+			if (call.kind !== "value") return;
+			mirror = applyImmutable(mirror, call.ops);
+			if (first) {
+				first = false;
+				await busy.promise;
+			}
+		});
+		a.set(1);
+		await delivered();
+		const b = new Runtime(10);
+		give(b);
+		await delivered();
+		b.set(11);
+		await delivered();
+		const c = new Runtime(20);
+		give(c);
+		await delivered();
+		c.set(21);
+		await delivered();
+		busy.resolve();
+		await delivered();
+		expect([mirror, ref.a.value]).toEqual([{ n: 21 }, { n: 21 }]);
+		await watch.stop();
+		await host.close(context);
+	});
+
+	it("follows registry values and writables only: another source breaks the factory", async () => {
+		const { host } = await loaded((h) =>
+			h.serve(View, (_, self) => {
+				const a = self.follow(new Runtime().attach);
+				const sum = self.derive([a], ([x]) => x.n);
+				self.follow(sum as unknown as NativeWatchable<Runtime>, (runtime, observer, ctx) =>
+					runtime.attach(observer, ctx),
+				);
+				return { a, sum };
+			}),
+		);
+		await expect(host.get(View, {}, context)).rejects.toThrow("follows registry values and writables");
+		await host.close(context);
+	});
+});
+
 describe("GC", () => {
 	it("a source its runtime ended is still detached at the object's end, then collected", async () => {
 		const a = new Runtime();
@@ -333,6 +745,22 @@ describe("GC", () => {
 		await host.close(context);
 		expect(a.detached).toBe(1);
 		await expectCollected(...followed.splice(0));
+	});
+
+	it("an ended object's source over a changing source is collected, unsubscribed, its retry dropped", async () => {
+		const a = new Runtime();
+		const { host, give, hold } = await overRuntimes(a);
+		const ref = hold();
+		await waitLive(ref);
+		const b = new Runtime();
+		b.rejects = new Error("no observation");
+		give(b);
+		await delivered();
+		await ref.release();
+		await delivered();
+		await expectCollected(...followed.splice(0));
+		expect([a.observers.size, b.attachments]).toEqual([0, 1]);
+		await host.close(context);
 	});
 
 	it("an ended object's followed sources are collected, and their observers detached", async () => {

@@ -219,6 +219,12 @@ export type HostError =
 	 * `self.query`, the named query's label for `self.liveQuery`, `self.count` and `self.list`.
 	 */
 	| { readonly kind: "query_failed"; readonly object: string; readonly query: string; readonly error: unknown }
+	/**
+	 * A source followed over a changing source (`self.follow(over, attach)`) failed while live: the attach to the
+	 * value given rejected, or its runtime failed its observer. Once per failure episode (its next attachment ends
+	 * it): the member is failed until then, the object stays live.
+	 */
+	| { readonly kind: "follow_failed"; readonly object: string; readonly error: unknown }
 	/** A routine's call threw, or its source failed for good; `routine` is its kind and position. */
 	| { readonly kind: "routine_failed"; readonly object: string; readonly routine: Position; readonly error: unknown }
 	/** A job's `run` threw (not after an abort): its outcome is `failed { threw }`. */

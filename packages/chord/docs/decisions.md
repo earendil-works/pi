@@ -3878,6 +3878,24 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   old value, and nothing reports it. Make a new object for every new value. No freezing, no development mode checks
   it (R9): the guides say it (`plugin-authoring.md` "Values you hand to Chord", p3's `chord-practices.md`).
 
+- **A follow re-attaches over a changing source (owner, 2026-11-27, decision 131; ERNDL-1191):** the problem: an
+  object following a view of a runtime that a registry gives (p3's transcript over the session's harness) could only
+  fail and `retryOn` when a reload replaced the entry, which reported `object_failed` per open holder at every reload;
+  p3 rebuilt the follow in a plugin (`followAcross`), and its reviews found six races there (an attachment overtaken
+  while it attaches publishing, its rejection failing the follow, early calls lost or applied on the wrong view, a
+  withdrawn runtime kept, an observer left after its last reader). The rule: `self.follow(over, attach)`, `over` a
+  registry value or a writable (Chord's native sources, compared by identity; a JSON watchable is carry-over),
+  `attach(value, observer, ctx)` for each value that is not `undefined`. Each attachment has its own observer; only
+  the current one's calls and end count, and its end only while `over` still has its value. Activation waits for a
+  value under its deadline and attaches to the newest (one overtaken is dropped, its rejection too); a rejection of
+  the current one fails it `transient` as before. Live, a new value drops the current attachment at once and attaches
+  outside the batch; the new one's calls are held, then given as one `[["r", newest]]`; one overtaken never
+  publishes; `undefined` lets the attachment go and keeps the last value. **A failure of the source still given while
+  live (its attach rejecting or giving `undefined`, its runtime's `failed` end) fails the member, not the object**:
+  one failure call, `follow_failed` once per episode, retried after `nextDelay`'s backoff and at once on the next
+  value, the next attachment replacing the value whole. Its `ended` end lets the attachment go. `self.follow(attach)`
+  keeps R4.
+
 ## Still valid from `target-design.md`
 
 Documents and the store (async `tx.draft`, keys, tags, eviction, Durable's transaction rule), job sandwich, routines

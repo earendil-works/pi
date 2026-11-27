@@ -56,7 +56,7 @@ import { CallContext, type Caller, type Ctx, withLinkedAbortSignal } from "./ctx
 import { Deadline } from "./deadline.ts";
 import { checkDependencies, type Dependency, ParkedLong, type Parking, parkedCause, pinKeys } from "./dependencies.ts";
 import { type EventNode, OwnEventSource, type SourceOwner } from "./events.ts";
-import { type FollowAttach, FollowSource } from "./follow.ts";
+import { type FollowAttach, type Followed, type FollowOverAttach, FollowSource, followedOver } from "./follow.ts";
 import type { HostError } from "./host.ts";
 import type { ListOptions } from "./list.ts";
 import {
@@ -178,6 +178,15 @@ export interface Self<P extends Principal = Principal> extends RoutineDeclaratio
 	 * source keeping its last value. A state member, a derive source, an `on` source.
 	 */
 	follow<T>(attach: FollowAttach<T>): Watchable<T>;
+	/**
+	 * A followed source over a changing source (ERNDL-1191): `attach` runs for each value of `over` (a registry value
+	 * or a writable) that is not `undefined`. Activation waits for a value; a new value replaces the attachment (the
+	 * old one detached, the new one's calls held until it attached, then one replacement with its newest value), and
+	 * one overtaken while it attaches never shows; `undefined` keeps the last value. A failure of the source still
+	 * given while live (its attach rejecting, its runtime failing) makes the member failed (`follow_failed`), retried
+	 * after a backoff or at the next value; the object stays live. A rejection while activating fails it `transient`.
+	 */
+	follow<S, T>(over: NativeWatchable<S | undefined>, attach: FollowOverAttach<S, T>): Watchable<T>;
 	/**
 	 * This object's job `definition` (§15), once per job name: `run` runs each started run outside transactions,
 	 * `finish` records its outcome in one. Starts are taken once the object is live.
@@ -760,12 +769,31 @@ export class Attempt implements StoreSelf, KeyDeclarer, RegistryWaiter {
 		return this.#object.documents.tx(fn, this.#token, context);
 	}
 
-	follow<T>(attach: FollowAttach<T>): Watchable<T> {
+	follow<T>(attach: FollowAttach<T>): Watchable<T>;
+	follow<S, T>(over: NativeWatchable<S | undefined>, attach: FollowOverAttach<S, T>): Watchable<T>;
+	follow<S, T>(
+		first: FollowAttach<T> | NativeWatchable<S | undefined>,
+		attach?: FollowOverAttach<S, T>,
+	): Watchable<T> {
 		this.#assertDeclaring("follow");
 		const object = this.#object;
-		const owner = { label: object.label, context: this.#context, ended: (end: WatchEnd) => this.#followEnded(end) };
-		// The source holds what the runtime gives it, `T`, as Chord's JSON sources do.
-		const source = new FollowSource(attach as unknown as FollowAttach<JsonValue>, owner, object.host.batch);
+		const { host, label } = object;
+		// The source holds what the runtime gives it, `T`, as Chord's JSON sources do; the forms differ by their arity.
+		const followed: Followed =
+			attach === undefined
+				? { kind: "once", attach: first as unknown as FollowAttach<JsonValue> }
+				: {
+						kind: "over",
+						over: followedOver(first, label),
+						attach: attach as unknown as FollowOverAttach<unknown, JsonValue>,
+					};
+		const owner = {
+			label,
+			context: this.#context,
+			ended: (end: WatchEnd) => this.#followEnded(end),
+			report: (error: unknown) => host.report({ kind: "follow_failed", object: label, error }),
+		};
+		const source = new FollowSource(followed, owner, host.batch);
 		this.#follows = appended(this.#follows, source);
 		return source as unknown as Watchable<T>;
 	}

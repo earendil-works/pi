@@ -282,7 +282,7 @@ background, as a tagged `HostError`: `listener_error` (a watch listener threw), 
 threw), `activation_failed { object, failure }`, `close_failed { object, native, error }`, `close_timeout { object,
 native }`, `drain_timeout { object }`, `protocol_error { error }`, `link_closed { reason: "heartbeat", role }` (slice 15
 §4), `resolve_failed { address, error }`; later routine
-errors (slice 5), `derive_failed { object, member?, error }` (a derive's compute threw, once per failure episode, slice 6a), the registries' `registry_conflict { registry, message, plugins }`, `registry_failed { registry, error }`, `contribution_failed { registry, plugin, type?, error }` and `contribution_refused { registry, plugin, type?, version }` (each once per episode, slice 8), `object_failed { object, failure }` (a live object failing, slice 6a, `broken`; `transient` when a `self.follow` source failed, slice 6b R4; `failure` where the value is a `FailureCause`, `error` otherwise, 2026-10-27), `job_interrupted { object, job, id, restarts }` (a persisted run ended at the restart limit, slice 6b D6), `parked_long { object, waitingFor, state, since }` (an attempt parked longer than its `readyTimeout`, whatever its blocker, once per parking episode: a diagnostic of a ring across hosts started at the same moment or a long wait, slice 7a, audit A11, §6), the reports of mistakes that would otherwise look like slowness (decision "Mistakes that wait are reported at once", 2026-11-03): `registry_undeclared { registry, plugins }` (at a publication, or when a host-lifetime object's contributions enter, a registry with contributions and no provider here, naming its contributing plugins; again only once they change), `unbound_long { waitingFor, error, since }` (a request waiting unbound after the publication, below) and `transaction_cancelled { object, error }` (§8), and `storage_failed { error }`
+errors (slice 5), `derive_failed { object, member?, error }` (a derive's compute threw, once per failure episode, slice 6a), the registries' `registry_conflict { registry, message, plugins }`, `registry_failed { registry, error }`, `contribution_failed { registry, plugin, type?, error }` and `contribution_refused { registry, plugin, type?, version }` (each once per episode, slice 8), `object_failed { object, failure }` (a live object failing, slice 6a, `broken`; `transient` when a `self.follow` source failed, slice 6b R4; `failure` where the value is a `FailureCause`, `error` otherwise, 2026-10-27), `follow_failed { object, error }` (a `self.follow(over, attach)` source failed while live: the member is failed, the object live; once per failure episode, ERNDL-1191), `job_interrupted { object, job, id, restarts }` (a persisted run ended at the restart limit, slice 6b D6), `parked_long { object, waitingFor, state, since }` (an attempt parked longer than its `readyTimeout`, whatever its blocker, once per parking episode: a diagnostic of a ring across hosts started at the same moment or a long wait, slice 7a, audit A11, §6), the reports of mistakes that would otherwise look like slowness (decision "Mistakes that wait are reported at once", 2026-11-03): `registry_undeclared { registry, plugins }` (at a publication, or when a host-lifetime object's contributions enter, a registry with contributions and no provider here, naming its contributing plugins; again only once they change), `unbound_long { waitingFor, error, since }` (a request waiting unbound after the publication, below) and `transaction_cancelled { object, error }` (§8), and `storage_failed { error }`
 (slice 6a), which every app must handle: Chord never ends the process,
 the app exits with its own code for its supervisor or reopens.
 
@@ -1670,7 +1670,7 @@ Spec `host-keyed/spec.md` §2 to §5.
 | --- | --- | --- |
 | document | data the object owns | `self.state`, `self.tx` |
 | derive | computed values | `self.derive(sources, fn)` |
-| Durable's views | the conversation view, task graph and Durable documents | `Watchable`s through Durable's watches; feed derives and state members |
+| Durable's views | the conversation view, task graph and Durable documents | `self.follow(attach)` over Durable's observers, `self.follow(over, attach)` over each runtime a registry gives (§24); feed derives and state members |
 | paged method | large or queryable collections | a method returning pages (chat history) |
 | table | a plugin's own records with queries (owner, 2026-10-21) | `self.table`, the store's query DSL |
 | live query (own) | the owner's own bounded window, live (owner, 2026-11-03) | `self.query(table, q, limit)` |
@@ -3343,9 +3343,13 @@ loop. Chord has no stream type (it would need its own rules for drops, cancellat
   stays blocked (`missing_task`) until the plugin is installed or the task is aborted, as Durable does.
 - **Durable's views from other objects** (slice 8 §5): the harness object contributes its `Native<Harness>` to a
   registry of p3's; another object declares that registry (`self.registry`), wakes on it (`self.retryOn`) and follows
-  a view through its value (`self.follow`). A Session close ends Durable's synchronous observers `failed` ("session
-  closed"; decision "Slice 8 S1"; app watches still end `ended`), so the follower fails `transient` and follows the
-  next Harness once its contribution arrives. `registryReader`'s listener runs inside Chord's batch: it only wakes
+  a view over its value (`self.follow(harness, (open, observer, ctx) => open.durable.observeConversation(id,
+  observer, ctx))`, decision "A follow re-attaches over a changing source", ERNDL-1191). A Session close ends
+  Durable's synchronous observers `failed` ("session closed"; decision "Slice 8 S1"; app watches still end `ended`);
+  a reload withdraws the old Harness first, so that end is an old attachment's and ignored, and the next Harness's
+  view arrives as one replacement (`[["r", view]]`, after what it committed while it attached): nothing fails. A
+  failure of the Harness still given fails the member (`follow_failed`), retried after a backoff or with the next
+  Harness; the object stays live. While no Harness is given the member keeps its last view. `registryReader`'s listener runs inside Chord's batch: it only wakes
   Durable's scheduler (a Chord call there throws `invalid/reentrant`).
 - `HarnessModels` and `HarnessEnvironments` start with one contribution each, from the models and envs plugins'
   objects that own the natives; several providers or environment kinds are their `compose`. After a models reload
