@@ -4,9 +4,9 @@
 // extension, installed under the kind's name, providers (a login's, one per thing),
 // composed into a new `Models` when they change, and an environment. A kind is given again only when its list of held
 // things (by identity: the holding keeps an unchanged kind's array) or its part changed; a kind no longer held is
-// uninstalled.
+// uninstalled. A `main` tool is installed guarded: it refuses calls from a subagent.
 
-import { BACKGROUND_CONTEXT, type Context, reportError, type TableItem } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT, type Context, forbidden, reportError, type TableItem } from "@earendil-works/p3/v1";
 import {
 	createModels,
 	createRegistry,
@@ -17,8 +17,10 @@ import {
 } from "@earendil-works/p3/v1/worker";
 import type {
 	HarnessContribution,
+	HarnessExtension,
 	HarnessLocation,
 	HarnessSession,
+	HarnessTool,
 	Held,
 	HeldThing,
 	ThingHarnessPart,
@@ -146,7 +148,7 @@ export class AgentParts {
 			return {
 				things,
 				part,
-				extension: given.extension === undefined ? undefined : { ...given.extension, name: kind },
+				extension: given.extension === undefined ? undefined : named(kind, given.extension),
 				providers: given.providers ?? [],
 				env: given.env,
 				ready: given.ready,
@@ -158,7 +160,11 @@ export class AgentParts {
 		}
 	}
 
-	/** Installs one kind's extension; one Durable refuses (a tool name another kind has) is left out, reported. */
+	/**
+	 * Installs one kind's extension; one Durable refuses (two tools or sections of one name in it, a reserved or malformed
+	 * section key, a task name another extension has) is left out, reported. A tool name another kind has too is not
+	 * refused: the later kind's tool takes the earlier's place.
+	 */
 	#install(kind: string, extension: Extension): void {
 		try {
 			this.registry.install(extension);
@@ -198,6 +204,34 @@ export class AgentParts {
 		this.#reported.add(key);
 		reportError(`p3 harness: session ${this.#session.session}: ${kind}`, error, BACKGROUND_CONTEXT);
 	}
+}
+
+/**
+ * `extension` as the harness installs it: under `kind`'s name, its `main` tools guarded. An installed tool keeps its
+ * `scope` (the guard spreads it): the subagents part reads it from the agent's tools.
+ */
+function named(kind: string, extension: HarnessExtension): Extension {
+	const { tools } = extension;
+	if (tools === undefined || !tools.some((tool) => tool.scope !== undefined)) return { ...extension, name: kind };
+	return { ...extension, name: kind, tools: tools.map((tool) => (tool.scope === undefined ? tool : guarded(tool))) };
+}
+
+/**
+ * The `main` tool `tool` refusing calls from a subagent, whose conversation is the one a task owns (its anchor's). The
+ * subagents part never gives a subagent a `main` tool; the guard holds the scope for any other conversation a task
+ * owns. It costs a read commit per call (the conversation's record): fine for a tool called now and then, not for a hot
+ * one.
+ */
+function guarded(tool: HarnessTool): HarnessTool {
+	return {
+		...tool,
+		execute: async (args, api, context) => {
+			const conversation = await api.commit((tx) => tx.conversation(api.conversationId), context);
+			if (conversation?.owner !== undefined)
+				throw forbidden(`${tool.name} works only in the session's main conversation, not in a subagent`);
+			return tool.execute(args, api, context);
+		},
+	};
 }
 
 /** Whether the providers differ between two applies: other kinds with providers, or other providers of one. */

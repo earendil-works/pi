@@ -58,8 +58,18 @@ export type HarnessSession = {
 	moveLocation(conversation: ConversationId, location: HarnessLocation | null, context: Context): Promise<void>;
 };
 
-/** A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. */
-export type HarnessExtension = Omit<Extension, "name">;
+/**
+ * A Durable tool as a kind gives it. `scope: "main"`: it works only in the session's top-level conversations (a tool
+ * acting on the session itself, or one starting agents), never in a subagent's. Unset: anywhere, and a subagent may be
+ * given it.
+ */
+export type HarnessTool = NonNullable<Extension["tools"]>[number] & { readonly scope?: "main" };
+
+/**
+ * A kind's Durable extension (tools, prompt sections, hooks): the harness installs it under the kind's name. A `main`
+ * tool refuses calls from a subagent.
+ */
+export type HarnessExtension = Omit<Extension, "name" | "tools"> & { readonly tools?: readonly HarnessTool[] };
 
 /** A model provider a held thing gives, with that thing (a login's provider: a model choice names the login). */
 export type ThingProvider = { readonly thing: string; readonly provider: Provider };
@@ -117,7 +127,8 @@ export function thingHarnessPart<C extends Contract>(
  * new map whenever a list changes; a kind whose list did not change keeps the same array, so the harness gives only
  * kinds whose array is new (a reference granted anew makes its kind's array new). `undefined`: not ready yet (no
  * contribution, or the holding still waits for a wanted reference to be live or failed once); the harness keeps what
- * it gave meanwhile, and its open, resume and submit wait for a value. One contributor, the holding (slice 5).
+ * it gave meanwhile, its resume and submit wait for a value (bounded), and its open applies one only if there is one.
+ * One contributor, the holding (slice 5).
  */
 export const HeldThings: Registry<Held | undefined, Held | undefined> = defineRegistry<
 	Held | undefined,

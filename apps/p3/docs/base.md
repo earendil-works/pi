@@ -56,8 +56,8 @@ const id = await workspace.make({ kind: SessionKind.name, name: "Fix the build",
   works where its caller works, and follows its moves. A conversation moved (`SessionObject.moveLocation` with
   Manage, or the agent's `location_move`, the machine part's tool, through `SessionFacts.moveLocation`) works at its
   own location from its next tool call on; a call under way keeps its environment. A move with `location: null` is
-  undone (the conversation follows its owner again); an archived subagent's is undone with it. A move is refused
-  unless the folder is a full path and the agents have Work on the machine in the session, and a person's unless the
+  undone (the conversation follows its owner again); a subagent keeps its own while archived (a restore finds it).
+  A move is refused unless the folder is a full path and the agents have Work on the machine in the session, and a person's unless the
   machine is available to them there (the environments plugin's `checkMachine`, as Files and Terminals). Manage shows
   the moved conversations (`detail`, one document per session, by conversation id); the worker reads the same in
   `SessionFacts.detail`.
@@ -129,6 +129,10 @@ with them:
   on some thing (`ref.add`, `ref.granted.has("bash")`).
 - **A tool acts as the agent** through the held reference (decision 120.1); `session.call(fn, context)` runs `fn` as
   the session's worker with references of its own, released when `fn` settles, for a tool that needs one.
+- **A `main` tool** (`HarnessTool`'s `scope: "main"`) works only in the session's top-level conversations (the
+  `subagent` tool: no subagent starts subagents). A subagent gets the agent's tools again with every message it is
+  sent: those offered to the agent then, minus the `main` ones (never one the agent has not); the harness installs
+  `main` tools guarded (a call from a subagent is refused).
 - **A part's environment** is a function of the conversation's location (`{ machine, folder }`), answered by the
   machine kind for the machines the agent may work on. Only parts give environments: a machine withheld or let go of
   leaves none.

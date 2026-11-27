@@ -5,11 +5,14 @@
 // identity) and a scripted login's kind (`test.login`: a pi-ai faux provider per thing answering from its script,
 // each request recorded, and with `tool` the tool `test_session`, which reads the session's folder through the
 // session's `call`). The real things plugin's worker facet (the registries) and the tools plugin's (the coding tools'
-// part) load beside them, imported as modules.
+// part) load beside them, imported as modules. `harnessed` loads the harness plugin beside them; `says`, `runs` and
+// `calls` write a script's steps.
 
+import { fileURLToPath } from "node:url";
 import {
 	arr,
 	bool,
+	type Context,
 	constant,
 	contribute,
 	defineFacet,
@@ -27,8 +30,10 @@ import {
 	type Static,
 	str,
 	union,
+	until,
 	type Writable,
 } from "@earendil-works/p3/v1";
+import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import {
 	defineTool,
 	type ExecutionEnv,
@@ -38,11 +43,15 @@ import {
 	fauxToolCall,
 	type Message,
 	NodeExecutionEnv,
+	type OpenHarness,
+	SessionHarness,
 	section,
 } from "@earendil-works/p3/v1/worker";
+import { within } from "../../../test/until.ts";
 import {
 	type HarnessLocation,
 	type HarnessSession,
+	type HarnessTool,
 	type Held,
 	type HeldThing,
 	HeldThings,
@@ -64,6 +73,21 @@ const Step = obj({ when: str(), reply: arr(Reply) });
 
 /** A scripted answer (see `Step`). */
 export type Step = Static<typeof Step>;
+
+/** A scripted step answering `when` with text. */
+export function says(when: string, text: string): Step {
+	return { when, reply: [{ kind: "text", text }] };
+}
+
+/** A scripted step answering `when` with a bash call. */
+export function runs(when: string, command: string): Step {
+	return calls(when, "bash", { command });
+}
+
+/** A scripted step answering `when` with a call of the tool `name`. */
+export function calls(when: string, name: string, args: object): Step {
+	return { when, reply: [{ kind: "tool", name, args: JSON.stringify(args) }] };
+}
 
 /** The stand-ins' tick labels. */
 const messages = defineMessages("test", { en: { use: "Use" } });
@@ -103,8 +127,6 @@ export type Server = {
 	row(change: Partial<SessionRow>): void;
 	/** The conversations moved, by id (`SessionFacts.detail`, as `moveLocation` set them). */
 	readonly moved: () => SessionDetail["locations"];
-	/** Makes the next undo of a move fail (the server away for one call). */
-	failNextUndo(): void;
 	/**
 	 * Sets what the agent holds (and makes the holding ready); a kind whose entries are the same objects in the same
 	 * order keeps its list.
@@ -165,16 +187,23 @@ export type Extra = {
 	readonly kind: string;
 	readonly prompt?: string;
 	readonly env?: (location: HarnessLocation) => ExecutionEnv | undefined;
+	readonly tools?: readonly HarnessTool[];
 	/** Gets the session the part is called with. */
 	readonly seen?: (session: HarnessSession) => void;
 };
+
+/**
+ * How the stand-ins start: `ready: false`, the holding not ready until the test holds something; `facts`, the
+ * session's row not served until it resolves (so the harness opens only then: a case writes the store first).
+ */
+export type StandInOptions = { readonly ready?: boolean; readonly facts?: Promise<void> };
 
 /** The stand-ins (plus the things and tools plugins) for session `row.id`, the extra parts, and the controls. */
 export function standIns(
 	row: SessionRow,
 	held: readonly Holding[],
 	extras: readonly Extra[] = [],
-	{ ready = true }: { readonly ready?: boolean } = {},
+	{ ready = true, facts }: StandInOptions = {},
 ): { stubs: PluginFacet<P3Principal>[]; server: PluginFacet<P3Principal>[]; control: Server } {
 	let rowValue = row;
 	let grouped = group([...held, DEVICE], new Map());
@@ -185,7 +214,6 @@ export function standIns(
 	let readies = 0;
 	const rows = new Set<Writable<SessionRow>>();
 	let movedValue: SessionDetail = { locations: {} };
-	let failUndo = false;
 	const details = new Set<Writable<SessionDetail>>();
 	const holdings = new Set<Writable<Held | undefined>>();
 	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
@@ -204,9 +232,6 @@ export function standIns(
 			for (const writable of rows) writable.set(rowValue);
 		},
 		moved: () => movedValue.locations,
-		failNextUndo: () => {
-			failUndo = true;
-		},
 		hold: (next) => {
 			grouped = group([...next, DEVICE], grouped);
 			heldValue = grouped;
@@ -232,6 +257,12 @@ export function standIns(
 	const count = (kind: string) => control.given.set(kind, (control.given.get(kind) ?? 0) + 1);
 	const server = defineFacet((host) => {
 		host.serve(SessionFacts, (_params, _principal, self) => {
+			// Held back until `facts` resolves: the harness opens only once the session's row is known.
+			if (facts !== undefined)
+				self.open(
+					() => facts,
+					() => {},
+				);
 			const session = self.writable(rowValue);
 			rows.add(session);
 			const detail = self.writable(movedValue);
@@ -240,10 +271,6 @@ export function standIns(
 				session: self.derive([session], ([value]) => value),
 				detail: self.derive([detail], ([value]) => value),
 				moveLocation: async ({ conversation, location }) => {
-					if (location === null && failUndo) {
-						failUndo = false;
-						throw new Error("stand-in: the server is away for this undo");
-					}
 					const { [conversation]: _undone, ...others } = movedValue.locations;
 					movedValue = { locations: location === null ? others : { ...others, [conversation]: location } };
 					for (const writable of details) writable.set(movedValue);
@@ -311,19 +338,25 @@ export function standIns(
 			}),
 		);
 	});
-	const extra = defineFacet((_host, self) => {
-		for (const { kind, prompt, env, seen } of extras) {
+	// One object per extra part: a facet contributes to a registry once.
+	const extra = defineFacet((host) => {
+		for (const { kind, prompt, env, tools: given, seen } of extras) {
 			const Kind = defineThing(kind, { version: 1, ticks: {} });
-			self.contribute(
-				ThingHarnessParts,
-				thingHarnessPart(Kind, (_things, session) => {
-					count(kind);
-					seen?.(session);
-					return {
-						...(prompt === undefined ? {} : { extension: { sections: [section("test-extra", () => prompt)] } }),
-						...(env === undefined ? {} : { env }),
-					};
-				}),
+			contribute(host, `test.extra.${kind}`, (self) =>
+				self.contribute(
+					ThingHarnessParts,
+					thingHarnessPart(Kind, (_things, session) => {
+						count(kind);
+						seen?.(session);
+						const sections = prompt === undefined ? [] : [section("test-extra", () => prompt)];
+						return {
+							...(prompt === undefined && given === undefined
+								? {}
+								: { extension: { sections, tools: given ?? [] } }),
+							...(env === undefined ? {} : { env }),
+						};
+					}),
+				),
 			);
 		}
 	});
@@ -336,6 +369,55 @@ export function standIns(
 		{ name: "test.extra", facet: extra },
 	];
 	return { server: [{ name: "test.server", facet: server }], stubs, control };
+}
+
+/** The harness plugin on stand-ins: the loaded plugin, the stand-ins' controls, the open harness and a request. */
+export type Harnessed = {
+	readonly t: TestedPlugin<P3Principal>;
+	readonly control: Server;
+	/** The open harness, once contributed. */
+	harness(): Promise<OpenHarness>;
+	/** Submits `text` to the root conversation (its request id) and waits until the session is idle again. */
+	ask(text: string): Promise<void>;
+};
+
+/**
+ * Loads the harness plugin on worker `row.id` beside the stand-ins holding `held` (and the `extras` parts), and
+ * `options.stubs` and `options.server`: real plugins a case loads beside them (the providers, the machine part).
+ */
+export async function harnessed(
+	row: SessionRow,
+	held: readonly Holding[],
+	context: Context,
+	extras: readonly Extra[] = [],
+	options: StandInOptions & {
+		readonly stubs?: readonly PluginFacet<P3Principal>[];
+		readonly server?: readonly PluginFacet<P3Principal>[];
+	} = {},
+): Promise<Harnessed> {
+	const { stubs, server, control } = standIns(row, held, extras, options);
+	const t = await testPlugin(
+		fileURLToPath(new URL("../", import.meta.url)),
+		{
+			kind: "worker",
+			session: row.id,
+			stubs: [...stubs, ...(options.stubs ?? [])],
+			server: [...server, ...(options.server ?? [])],
+		},
+		context,
+	);
+	const harness = async (): Promise<OpenHarness> => {
+		const registry = await t.host.registry(SessionHarness, context);
+		const open = await until(registry, (value) => value !== undefined, within("the harness", context));
+		if (open === undefined) throw new Error("the harness did not open");
+		return open;
+	};
+	const ask = async (text: string): Promise<void> => {
+		const open = await harness();
+		await open.submit(undefined, { text, requestId: text }, context);
+		await open.durable.waitForIdle(context);
+	};
+	return { t, control, harness, ask };
 }
 
 /** `holdings` grouped by kind; a kind whose entries are those of `before`'s list, in order, keeps that list. */
