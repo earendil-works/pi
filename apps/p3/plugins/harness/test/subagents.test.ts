@@ -12,9 +12,22 @@ import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { BACKGROUND_CONTEXT as context, obj } from "@earendil-works/p3/v1";
-import { configure, defineTool, type OpenHarness } from "@earendil-works/p3/v1/worker";
+import {
+	allow,
+	constant,
+	BACKGROUND_CONTEXT as context,
+	defineFacet,
+	type JsonValue,
+	obj,
+	type Watchable,
+} from "@earendil-works/p3/v1";
+import { configure, defineTool, fauxProvider, type OpenHarness } from "@earendil-works/p3/v1/worker";
+import { FAUX_MODEL, FAUX_PROVIDER, FauxRequests, keyOf } from "../../../test/plugins/faux-login/contract.ts";
+import fauxWorker from "../../../test/plugins/faux-login/worker.ts";
 import { eventually } from "../../../test/until.ts";
+import { type LoginDefinitions, SessionModels } from "../../providers/contract.ts";
+import { LoginKind } from "../../providers/kind.ts";
+import providersWorker from "../../providers/worker.ts";
 import type { HarnessTool } from "../../things/contract.worker.ts";
 import { SESSION } from "../../things/test/part.ts";
 import { Subagents } from "../roster.ts";
@@ -198,7 +211,7 @@ describe("the subagents' part", () => {
 		assert.deepEqual(child?.tools, ["bash", "edit", "read", "write"], "the subagent has no subagent tool");
 		await ask("@status");
 		const all = "all";
-		const reader = { name: "reader", working: false, model: "faux/faux-model", thinkingLevel: "off", tools: all };
+		const reader = { name: "reader", working: false, model: "faux-model", thinkingLevel: "off", tools: all };
 		assert.deepEqual(statuses(), [{ subagents: [reader] }]);
 		control.hold([held[0]!, held[1]!, subagents(false)]);
 		await ask("after");
@@ -266,7 +279,7 @@ describe("the subagents' part", () => {
 		await ask("@third");
 		await reported("[subagent reader answered] third answer");
 		await ask("@all-3");
-		const reader = { name: "reader", working: false, model: "faux/faux-model", thinkingLevel: "off", tools: "all" };
+		const reader = { name: "reader", working: false, model: "faux-model", thinkingLevel: "off", tools: "all" };
 		assert.deepEqual(statuses(), [
 			{ subagents: [], archived: 1 },
 			{ subagents: [{ ...reader, archived: true }] },
@@ -340,7 +353,7 @@ describe("the subagents' part", () => {
 		assert.deepEqual(configured, {
 			name: "reader",
 			working: false,
-			model: "faux-b/faux-b-model",
+			model: "faux-b-model",
 			// Clamped: the faux model has no reasoning.
 			thinkingLevel: "off",
 			tools: ["read"],
@@ -374,7 +387,7 @@ describe("the subagents' part", () => {
 			.filter((last) => last.includes("subagent: "));
 		const expected = [
 			/you cannot give the tool subagent; you may give: read, write, edit, bash/,
-			/no model faux\/model\. Close matches: faux\/faux-model\./,
+			/no model faux\/model\. Close matches: faux-model\./,
 			/reader exists already/,
 			/you have no subagent named nobody/,
 			/configure takes `model`, `thinkingLevel` or `tools`/,
@@ -457,7 +470,7 @@ describe("the subagents' part", () => {
 		const listed = requests()
 			.filter(({ last }) => last.startsWith('{"models"'))
 			.map(({ last }) => (JSON.parse(last) as { models: { model: string }[] }).models.map(({ model }) => model));
-		assert.deepEqual(listed, [["faux-a/faux-a-model", "faux-b/faux-b-model"], ["faux-b/faux-b-model"]]);
+		assert.deepEqual(listed, [["faux-a-model", "faux-b-model"], ["faux-b-model"]]);
 	});
 
 	it("leaves main tools out of a subagent's, also one given after its spawn", async () => {
@@ -574,7 +587,7 @@ describe("the subagents' part", () => {
 				subagents: [reader],
 			},
 		] = statuses() as [{ subagents: [{ model: string; tools: string[] }] }];
-		assert.deepEqual({ model: reader.model, tools: reader.tools }, { model, tools: ["read"] });
+		assert.deepEqual({ model: reader.model, tools: reader.tools }, { model: "faux-b-model", tools: ["read"] });
 	});
 
 	it("gives a running subagent's next step its new model and tools (Astra, round 1 of the port)", async () => {
@@ -940,4 +953,126 @@ describe("the subagents' part", () => {
 		);
 		assert.ok(requests().some((r) => r.last.startsWith("[subagent reader failed: the message was withdrawn")));
 	});
+
+	it("delivers a follow-up sent before the thing was let go of and given back: only a withhold of Use counts", async () => {
+		// Opus, check of the port's explainer: the tool gone with the thing (hidden, unlinked) recorded a withhold.
+		const script = [
+			spawn("@spawn", "busy"),
+			runs("busy", "touch started; until [ -e gate ]; do sleep 0.02; done; echo released"),
+			on("@queue", "send", { message: "queued follow up", followUp: true }),
+			says("queued follow up", "revived"),
+			says("", "ok"),
+		];
+		const held = [login("a", "faux", script), coding(), subagents()];
+		const { ask, harness, control } = await start(held);
+		const { durable } = await harness();
+		await ask("@spawn");
+		await started();
+		await ask("@queue");
+		await waiting(1);
+		control.hold([held[0]!, held[1]!]);
+		await ask("@gone");
+		assert.equal(
+			requests()
+				.find(({ last }) => last === "@gone")
+				?.tools.includes("subagent"),
+			false,
+		);
+		control.hold(held);
+		await ask("@back");
+		assert.equal(
+			requests()
+				.find(({ last }) => last === "@back")
+				?.tools.includes("subagent"),
+			true,
+		);
+		const roster = await durable.snapshot(Subagents, context);
+		assert.deepEqual([roster?.withheld, roster?.withholds], [undefined, undefined]);
+		await writeFile(join(folder, "gate"), "");
+		await reported("[subagent reader answered] revived");
+	});
+
+	it("names a model two real logins of one provider offer by its login, one only one offers by its id", async () => {
+		// Opus, check of the port's explainer: a login's provider is `<provider>~<login thing>` (ERNDL-705).
+		const both = fauxProvider({ provider: FAUX_PROVIDER, api: "faux", models: [{ id: FAUX_MODEL }] }).models;
+		const solo = fauxProvider({ provider: FAUX_PROVIDER, api: "faux", models: [{ id: "faux-solo" }] }).models;
+		const catalog: LoginDefinitions[] = [
+			{ login: "one", models: [...both, ...solo] },
+			{ login: "two", models: [...both] },
+		];
+		const one = [
+			calls("@models", "subagent", { action: "models" }),
+			spawn("@ambiguous", "child", { model: `${FAUX_PROVIDER}/${FAUX_MODEL}` }),
+			spawn("@spawn", "child", { model: `two/${FAUX_MODEL}` }),
+			on("@status", "status"),
+			says("", "ok"),
+		];
+		const two = [says("child", "from two"), says("", "ok two")];
+		const models = defineFacet((host) =>
+			host.serve(
+				SessionModels,
+				() => ({
+					complete: constant(true),
+					models: constant([]),
+					// pi-ai's definitions are JSON: the catalog as the member types it.
+					catalog: () => constant(catalog as unknown as JsonValue) as unknown as Watchable<LoginDefinitions[]>,
+				}),
+				{ admit: () => constant(allow({ granted: ["catalog" as const] })) },
+			),
+		);
+		loaded = await harnessed(
+			sessionRow("s1", folder),
+			[realLogin("one", one), realLogin("two", two), subagents()],
+			context,
+			[],
+			{
+				stubs: [
+					{ name: "p3-providers", facet: providersWorker },
+					{ name: "p3-test-faux-login", facet: fauxWorker },
+				],
+				server: [{ name: "p3-test-models", facet: models }],
+			},
+		);
+		const { t, ask } = loaded;
+		const lasts = async () =>
+			(await t.host.get(FauxRequests, { session: "s1" }, context)).requests.value.map(({ last }) => last);
+		for (const text of ["@models", "@ambiguous", "@spawn"]) await ask(text);
+		await eventually(lasts, (all) => all.includes("[subagent reader answered] from two"), 5000);
+		await ask("@status");
+		const all = await lasts();
+		const listed = all.find((last) => last.startsWith('{"models"'));
+		assert.ok(listed !== undefined, all.join(" | "));
+		assert.deepEqual(
+			(JSON.parse(listed) as { models: { model: string; provider: string; login: string }[] }).models.map(
+				({ model, provider, login }) => [model, provider, login],
+			),
+			[
+				[`one/${FAUX_MODEL}`, FAUX_PROVIDER, "one"],
+				["faux-solo", FAUX_PROVIDER, "one"],
+				[`two/${FAUX_MODEL}`, FAUX_PROVIDER, "two"],
+			],
+		);
+		assert.ok(
+			all.some((last) =>
+				last.includes(`names more than one model; name one: one/${FAUX_MODEL}, two/${FAUX_MODEL}.`),
+			),
+			all.join(" | "),
+		);
+		const status = all.find((last) => last.startsWith('{"subagents"'));
+		assert.ok(status !== undefined, all.join(" | "));
+		assert.equal((JSON.parse(status) as { subagents: { model: string }[] }).subagents[0]?.model, `two/${FAUX_MODEL}`);
+	});
 });
+
+/** A real login `thing` of the faux provider for the providers worker, answering from `script` (its credential). */
+function realLogin(thing: string, script: Step[]): Holding {
+	// The providers part reads a held login's `login` and `authorize` only.
+	const ref = {
+		login: constant({ provider: FAUX_PROVIDER, providerName: thing }),
+		authorize: async () => ({ auth: { apiKey: keyOf(script) } }),
+	};
+	return {
+		kind: LoginKind.name,
+		held: { workspace: "s1", thing, depth: 0, ref } as unknown as Holding["held"],
+	};
+}

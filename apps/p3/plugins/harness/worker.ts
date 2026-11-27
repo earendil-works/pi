@@ -5,8 +5,8 @@
 // machine's: none where no held thing gives one). It resumes the work left only for a session that is not archived. It
 // contributes the open harness (`SessionHarness`), whose `submit` is the one way to start work, reports the session's
 // state to the server on each transition (`activity.ts`) and keeps the worker alive while working (`WorkerBusy`).
-// It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always; once the agent
-// no longer has the subagents' tool, it withdraws the messages to subagents still queued.
+// It contributes the subagents' part (`subagents.ts`), whose tasks (`reporter.ts`) it installs always; once Use is
+// withheld from the agent, it withdraws the messages to subagents still queued.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -81,18 +81,21 @@ export default defineFacet((host, facet) => {
 			const row = facts.session.value;
 			if (row !== null && row.state !== now) await facts.report({ state: now }, context);
 		};
-		/** Whether the agent had the subagents' tool at the last apply (none yet: unknown). */
+		/** Whether the agent had Use of the subagents at the last apply that held the thing (none yet: unknown). */
 		let subagents: boolean | undefined;
 		/**
-		 * Applies what the agent holds; not ready yet: what was given stays. Whether the agent has the subagents' tool is
-		 * recorded when it changes (and once at start); gone (Use withheld, or the thing let go of), the messages to
-		 * subagents still queued are withdrawn.
+		 * Applies what the agent holds; not ready yet: what was given stays. Whether the agent has Use of the subagents
+		 * (the `subagent` tool, which the thing gives with it) is recorded when it changes (and once at start); withheld,
+		 * the messages to subagents still queued are withdrawn. Only a held thing says it: one let go of (hidden,
+		 * unlinked, its reference failed or its kind reloaded) takes the tool, records nothing and withdraws nothing, so
+		 * the messages sent before it went are still delivered (Opus, check of the port's explainer).
 		 */
 		const apply = (): void => {
 			const now = held.value;
 			if (now === undefined) return;
 			const { things, durable } = opened.value;
 			things.apply(now, parts.value);
+			if (!now.has(SubagentsKind.name)) return;
 			const offered = things.registry.snapshot().extension(SubagentsKind.name) !== undefined;
 			if (offered !== subagents)
 				recordUse(durable, offered, BACKGROUND_CONTEXT).catch((error: unknown) =>
