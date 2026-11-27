@@ -1,4 +1,4 @@
-/* The terminal pane: the tabs of the open terminals with New terminal, the shown terminal's bar, then its screen. */
+/* The Terminals view: the tabs of the open terminals with New terminal, the shown terminal's bar, then its screen. */
 
 .view {
 	display: flex;
@@ -49,21 +49,6 @@
 	white-space: nowrap;
 	color: var(--semantic-color-text-secondary);
 	font: var(--semantic-typography-ui-secondary);
-}
-
-.screen {
-	flex: 1 1 auto;
-	min-block-size: 12rem;
-	margin: 0;
-	padding: var(--semantic-dimension-space-gap-small);
-	overflow: auto;
-	resize: none;
-	border: 0;
-	background: none;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	color: var(--semantic-color-text-code);
-	font: var(--semantic-typography-code-secondary);
 }
 
 .note {

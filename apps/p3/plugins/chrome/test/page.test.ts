@@ -337,7 +337,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		}
 	});
 
-	it("says a machine's refusal in the Terminals view as its message, not as the log's text (Fable, round 5)", async () => {
+	// Decision 133: this device's terminals run in pi-env's daemon, the page draws them with libghostty-vt.
+	it("runs a shell on this device in the Terminals view: drawn, typed into, sized, its queries answered only live", async () => {
 		await browser.wait(
 			`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Terminals")`,
 		);
@@ -346,15 +347,48 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
 		await press("[data-terminals-open]");
-		// This device has no terminals yet: the environments plugin's message, rendered in the terminals plugin's view.
+		const screen = `document.querySelector("[data-terminal-screen] [role=log]")`;
+		/** Types `line` into the terminal, Enter after it, as a keyboard does (text, then the Enter key). */
+		const line = async (text: string) => {
+			await browser.click("[data-terminal-screen]");
+			await browser.call("Input.insertText", { text });
+			await browser.enter();
+		};
+		/** Waits until the screen shows `text`. */
+		const shows = (text: string) => browser.wait(`${screen}?.textContent.includes(${JSON.stringify(text)})`);
+		await browser.wait(`document.querySelector("[data-terminal-input]") !== null`);
+		await line("echo page-$((6*7))");
+		await shows("page-42");
+		await line("printf '\\033[31mred-text\\033[0m\\n'");
+		// Drawn in its colour: a span of its own (the typed command's text is one run of the default colour).
 		await browser.wait(
-			`document.querySelector("[data-terminals]")?.textContent.includes("Terminals on this machine are not there yet.")`,
+			`[...${screen}.querySelectorAll("span")].some((e) => e.textContent.startsWith("red-text") && e.style.color !== "")`,
 		);
-		assert.equal(
-			await browser.evaluate<boolean>(
-				`document.querySelector("[data-terminals]").textContent.includes("environments:")`,
-			),
-			false,
+		// The screen sized the terminal to itself: not the size it opened with.
+		await line("echo size-$(stty size | tr ' ' x)");
+		await browser.wait(
+			`/size-\\d+x\\d+/.test(${screen}?.textContent) && !${screen}.textContent.includes("size-24x80")`,
+		);
+		// A query in the output replayed at attaching is not answered (it would be typed into the shell); a live one is.
+		await line("printf '\\033[c'; read -rs -t 1 -d c a; echo before-$((3*3))");
+		await shows("before-9");
+		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
+		await shows("before-9");
+		await line("read -rs -t 1 -n 1 x && echo stray-$((1*1)) || echo clean-$((5*5))");
+		await shows("clean-25");
+		await line("printf '\\033[c'; read -rs -t 2 -d c a; [ -n \"$a\" ] && echo live-$((40+2))");
+		await shows("live-42");
+		await browser.size(PHONE);
+		await line("echo phone-$(stty size | tr ' ' x)");
+		await browser.wait(`/phone-\\d+x\\d+/.test(${screen}?.textContent)`);
+		const columns = await browser.evaluate<number>(`Number(/phone-\\d+x(\\d+)/.exec(${screen}.textContent)[1])`);
+		assert.ok(columns < 60, `the phone's ${columns} columns`);
+		await shots("terminals-phone");
+		await browser.size(DESKTOP);
+		await shots("terminals");
+		await press("[data-terminal-close]");
+		await browser.wait(
+			`document.querySelector("[data-terminals]")?.textContent.includes("No terminals are open here.")`,
 		);
 		await browser.open(`${origin}/w/${pi}`);
 	});

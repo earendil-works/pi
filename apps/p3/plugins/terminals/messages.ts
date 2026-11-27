@@ -23,5 +23,9 @@ export const messages = defineMessages("terminals", {
 		denied: "You may not watch terminals here.",
 		unavailable: "Terminals cannot be shown now.",
 		ended: (code: number) => `Ended with code ${code}.`,
+		screenInput: "Terminal input",
+		screenKeys: "Keys",
+		screenPaste: "Paste",
+		screenFailed: "The terminal cannot be drawn here.",
 	},
 });

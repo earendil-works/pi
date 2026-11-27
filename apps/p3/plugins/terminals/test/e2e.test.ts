@@ -1,156 +1,146 @@
-// Terminals end to end (`testServer`: the real server, sessions' workers as processes, the tests' faux login): a
-// running worker offers the agent the `terminal` tool only while a machine type installed opens terminals, and follows
-// a type installed and removed while it runs, as a worker started later does; a reload of the harness leaves only the new
-// harness following (Astra, round 7).
+// Terminals end to end on this device (`testServer`: p3's real server, this device's machine type with its real
+// shell in pi-env's daemon, browsers' cookies, the attach socket over a real WebSocket): the owner opens a terminal,
+// attaches to it with their browser's cookie, types into it, reads its output on the socket and with `backlog` (as the
+// agent's read does), resizes it (the shell sees the size), and ends it (the socket closes 1000, the list is empty). No
+// cookie, a page of another site, and a signed-in person without Watch or Use are refused.
 
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { it } from "node:test";
-import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, SessionObject, Transcript, until, withGranted } from "@earendil-works/p3/v1";
-import { OneThing } from "@earendil-works/p3/v1/server";
+import { after, before, describe, it } from "node:test";
+import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
-import { FauxRequests } from "../../../test/plugins/faux-login/contract.ts";
-import { newSession, piOf, scriptFaux } from "../../../test/support.ts";
+import { WebSocket } from "ws";
+import { piOf } from "../../../test/support.ts";
 import { within } from "../../../test/until.ts";
-import { Terminals, TerminalsKind } from "../kind.ts";
+import { MACHINE_KIND } from "../../environments/contract.ts";
+import { seeded } from "../../environments/test/seeded.ts";
+import { SignIns } from "../../sign-in/contract.ts";
+import { OneThing, ThingsStore } from "../../things/contract.server.ts";
+import { SOCKET_REFUSED, Terminals, TerminalsKind } from "../kind.ts";
 
-/** The tests' faux login. */
-const FAUX = fileURLToPath(new URL("../../../test/plugins/faux-login/", import.meta.url));
+let t: TestServer;
+let folder: string;
 
-/** A user plugin contributing a machine type that opens terminals (its machines are never connected here). */
-const OPENING_TYPE = `import { defineFacet, obj } from "@earendil-works/p3/v1";
-import { MachineTypes } from "@earendil-works/p3/v1/server";
-export default defineFacet((_host, self) =>
-	self.contribute(MachineTypes, {
-		type: "opening",
-		label: { namespace: "test", key: "opening", params: [] },
-		settings: obj({}),
-		terminals: true,
-		connect: async () => {
-			throw new Error("not connected in this test");
-		},
-	}),
-);
-`;
+before(async () => {
+	t = await testServer({}, context);
+	folder = await mkdtemp(join(tmpdir(), "p3-terminals-e2e-"));
+});
 
-/** A new session whose agent answers `done`: sends `text` and answers whether that request offered `terminal`. */
-async function agent(t: TestServer): Promise<(text: string) => Promise<boolean>> {
-	return (await agentIn(t)).ask;
-}
+after(async () => {
+	await t.close(context);
+	await rm(folder, { recursive: true, force: true });
+});
 
-/** A new session whose agent answers `done`, its id, and `ask` (see `agent`). */
-async function agentIn(t: TestServer): Promise<{ session: string; ask: (text: string) => Promise<boolean> }> {
-	const owner = await t.client(context);
-	const session = await newSession(owner, "terminals", context);
-	await scriptFaux(t.host, session, [{ when: "", reply: [{ kind: "text", text: "done" }] }], context);
-	const transcript = withGranted(await owner.get(Transcript, { session }, context), "send")!;
-	const requests = (await owner.get(FauxRequests, { session }, context)).requests;
-	const row = (await owner.get(SessionObject, { workspace: session, thing: session }, context)).row;
-	const ask = async (text: string) => {
-		await transcript.send({ text, requestId: text }, context);
-		const seen = await until(requests, (all) => all.some(({ last }) => last === text), within(text, context, 10_000));
-		await until(row, ({ state }) => state === "settled", within("settled", context, 10_000));
-		return seen.find(({ last }) => last === text)!.tools.includes("terminal");
+/** A browser's attach socket at `url` (what `attach` answered) with `headers`; its frames and its close. */
+function attachSocket(url: string, headers: Record<string, string>) {
+	const socket = new WebSocket(`ws://127.0.0.1:${t.port}${url}`, { headers });
+	const told: unknown[] = [];
+	let output = "";
+	let seen: () => void = () => {};
+	socket.on("message", (data, binary) => {
+		// ws's default binary type: a Buffer per message.
+		const text = (data as Buffer).toString();
+		if (binary) output += text;
+		else told.push(JSON.parse(text));
+		seen();
+	});
+	const closed = new Promise<number>((resolve, reject) => {
+		socket.on("close", (code) => resolve(code));
+		socket.on("unexpected-response", (_request, response) => resolve(response.statusCode ?? 0));
+		socket.on("error", (error) => reject(error));
+	});
+	/** Waits until the output so far matches `pattern`; the output then. */
+	const printed = async (pattern: RegExp): Promise<string> => {
+		const deadline = Date.now() + 10_000;
+		while (!pattern.test(output)) {
+			if (Date.now() > deadline) throw new Error(`no ${pattern} in ${JSON.stringify(output)}`);
+			// The next frame, or a look at the deadline.
+			await new Promise<void>((resolve) => {
+				seen = resolve;
+				setTimeout(resolve, 1_000);
+			});
+		}
+		return output;
 	};
-	return { session, ask };
+	const opened = new Promise<void>((resolve) => socket.once("open", () => resolve()));
+	return { socket, told, printed, closed, opened };
 }
 
-it("offers a running worker's agent the terminal tool only while a machine type installed opens terminals", async () => {
-	// Idle long enough that the first worker keeps running through both changes.
-	const t = await testServer({ plugins: [FAUX], idleMs: 120_000 }, context);
-	try {
+/** The origin a page of this server has. */
+const origin = () => `http://127.0.0.1:${t.port}`;
+
+/** A person, put into Pi with no tick on Terminals, and their browser's cookie. */
+async function stranger(): Promise<string> {
+	return t.host.root(async (ctx: Ctx<P3Principal>) => {
+		const things = await ctx.get(ThingsStore, {});
+		const by = { kind: "plugin", plugin: "test" } as const;
+		const pi = (await things.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace;
+		const id = await things.createPerson({ name: "Sam", madeBy: by }, ctx);
+		await things.putParty({ workspace: pi, party: { kind: "person", person: id }, source: by }, ctx);
+		const principal = { kind: "person", id, name: "Sam" } as const;
+		const issued = await (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind: "browser" }, ctx);
+		return issued.cookie.split(";")[0]!;
+	}, context);
+}
+
+describe("a terminal on this device", () => {
+	it("runs the shell: typed into, read on the socket and as the agent reads, resized, ended", async () => {
+		const owner = await t.client(context);
+		const pi = await piOf(owner, context);
+		const [thing, machine] = await t.host.root(
+			async (ctx) => [
+				await seeded(await ctx.get(OneThing, { kind: TerminalsKind.name }), ctx),
+				await seeded(await ctx.get(OneThing, { kind: MACHINE_KIND }), ctx),
+			],
+			context,
+		);
+		const terminals = await owner.get(Terminals, { workspace: pi, thing }, context);
+		const id = await terminals.open!({ machine, folder, columns: 80, rows: 24 }, context);
+		const { url } = await terminals.attach!({ terminal: id }, context);
+		const browser = attachSocket(url, { cookie: await t.cookie(context), origin: origin() });
+		await browser.opened;
+		browser.socket.send(Buffer.from("echo typed-$((6*7)) && pwd\r"));
+		assert.match(await browser.printed(/typed-42/), new RegExp(folder));
+		assert.deepEqual(browser.told.slice(0, 2), [
+			{ kind: "kept", bytes: 0 },
+			{ kind: "size", columns: 80, rows: 24 },
+		]);
+		browser.socket.send(JSON.stringify({ kind: "resize", columns: 100, rows: 30 }));
+		// One socket: the resize reaches the program before the next keys do.
+		browser.socket.send(Buffer.from("stty size\r"));
+		await browser.printed(/30 100/);
+		const { text, ended } = await terminals.backlog!({ terminal: id, wait: 5_000 }, context);
+		assert.match(text, /typed-42/);
+		assert.match(text, /30 100/);
+		assert.equal(ended, false);
+		browser.socket.send(Buffer.from("exit\r"));
+		assert.equal(await browser.closed, 1000);
+		await until(terminals.terminals!, (list) => list[0]?.exitCode === 0, within("the exit", context));
+		await terminals.close!({ terminal: id }, context);
+		await until(terminals.terminals!, (list) => list.length === 0, within("closed", context));
+		assert.deepEqual(t.errors, []);
+	});
+
+	it("refuses a socket without a cookie, from another site's page, and to a person without Watch or Use", async () => {
 		const owner = await t.client(context);
 		const pi = await piOf(owner, context);
 		const thing = await t.host.root(
-			async (ctx) => until((await ctx.get(OneThing, { kind: TerminalsKind.name })).thing, (id) => id !== "", ctx),
+			async (ctx) => seeded(await ctx.get(OneThing, { kind: TerminalsKind.name }), ctx),
 			context,
 		);
-		const list = (await owner.get(Terminals, { workspace: pi, thing }, context)).terminals!;
-		const applied = async () => {
-			await until(t.plugins, (plugins) => plugins.set || plugins.dirty.length > 0, within("the change", context));
-			await t.apply(context);
-		};
-		const running = await agent(t);
-		assert.equal(await running("@before"), false, "this device's type opens no terminals");
-		const file = join(t.userRoot, "opening.server.ts");
-		await writeFile(file, OPENING_TYPE);
-		await applied();
-		await until(list, ({ opens }) => opens, within("opens", context));
-		assert.equal(await running("@installed"), true, "the running worker offers it once a type opens terminals");
-		await rm(file);
-		await applied();
-		await until(list, ({ opens }) => !opens, within("no longer opens", context));
-		assert.equal(await running("@removed"), false, "and takes it away once none does");
-		assert.deepEqual(t.errors, []);
-	} finally {
-		await t.close(context);
-	}
-});
-
-// Astra, round 7: a reloaded harness's parts kept following; the old harness gave its kind again too.
-it("leaves only the reloaded harness following whether a type opens terminals", async () => {
-	const root = await mkdtemp(join(tmpdir(), "p3-terminals-follow-"));
-	const built = join(root, "built-in");
-	const log = join(root, "followers");
-	await cp(fileURLToPath(new URL("../../", import.meta.url)), built, { recursive: true });
-	// The built-in copy's terminals part notes each follower's start, refresh and stop in `log`.
-	const part = join(built, "terminals", "worker.ts");
-	const noted = [
-		[
-			"const stopped = new AbortController();",
-			`const id = crypto.randomUUID(); note("start", id); const stopped = new AbortController();`,
-		],
-		[
-			'if (call.kind === "value" && call.value.opens !== opens) refresh();',
-			'if (call.kind === "value" && call.value.opens !== opens) { note("refresh", id); refresh(); }',
-		],
-		["return () => stopped.abort();", `return () => { note("stop", id); stopped.abort(); };`],
-	] as const;
-	let source = await readFile(part, "utf8");
-	for (const [from, to] of noted) {
-		assert.ok(source.includes(from), `the part still has ${from}`);
-		source = source.replace(from, to);
-	}
-	const note = `const note = (what: string, id: string) => appendFileSync(${JSON.stringify(log)}, \`\${what} \${id}\\n\`);`;
-	await writeFile(part, `import { appendFileSync } from "node:fs";\n${note}\n${source}`);
-	const t = await testServer({ builtIn: built, plugins: [FAUX], idleMs: 120_000 }, context);
-	/** The followers started and not stopped, and the refreshes, from the log. */
-	const followers = async () => {
-		const lines = (await readFile(log, "utf8").catch(() => "")).trim().split("\n").filter(Boolean);
-		const live = new Set<string>();
-		let refreshes = 0;
-		for (const line of lines) {
-			const [what, id] = line.split(" ");
-			if (what === "start") live.add(id!);
-			if (what === "stop") live.delete(id!);
-			if (what === "refresh") refreshes++;
-		}
-		return { live: live.size, refreshes };
-	};
-	const applied = async () => {
-		await until(t.plugins, (plugins) => plugins.set || plugins.dirty.length > 0, within("the change", context));
-		return (await t.apply(context)).steps;
-	};
-	try {
-		const { session, ask } = await agentIn(t);
-		assert.equal(await ask("@before"), false);
-		assert.deepEqual(await followers(), { live: 1, refreshes: 0 });
-		const harness = join(built, "harness", "worker.ts");
-		await writeFile(harness, `${await readFile(harness, "utf8")}\nexport const RELOADED = 1;\n`);
-		const steps = await applied();
-		const workers = steps.find((step) => step.name === "workers");
-		assert.ok(workers?.hosts.some((host) => host.kind === "reloaded" && host.host === session));
-		assert.equal(await ask("@reloaded"), false);
-		assert.deepEqual(await followers(), { live: 1, refreshes: 0 }, "the old harness's follower stopped");
-		await writeFile(join(t.userRoot, "opening.server.ts"), OPENING_TYPE);
-		await applied();
-		assert.equal(await ask("@installed"), true);
-		assert.deepEqual(await followers(), { live: 1, refreshes: 1 }, "one refresh, the new harness's");
-	} finally {
-		await t.close(context);
-		await rm(root, { recursive: true, force: true });
-	}
+		const machine = await t.host.root(
+			async (ctx) => seeded(await ctx.get(OneThing, { kind: MACHINE_KIND }), ctx),
+			context,
+		);
+		const terminals = await owner.get(Terminals, { workspace: pi, thing }, context);
+		const id = await terminals.open!({ machine, folder, columns: 80, rows: 24 }, context);
+		const { url } = await terminals.attach!({ terminal: id }, context);
+		assert.equal(await attachSocket(url, { origin: origin() }).closed, 401);
+		const cookie = await t.cookie(context);
+		assert.equal(await attachSocket(url, { cookie, origin: "https://elsewhere.example" }).closed, 403);
+		assert.equal(await attachSocket(url, { cookie: await stranger(), origin: origin() }).closed, SOCKET_REFUSED);
+		await terminals.close!({ terminal: id }, context);
+	});
 });

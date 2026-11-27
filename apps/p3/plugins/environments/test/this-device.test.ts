@@ -1,7 +1,9 @@
 // This device's host (this-device.ts), as the machine kind's one thing in Pi connects to it: a bounded listing stops
 // when its caller goes; a staged file is 0600 under a name of its own, and its landing and its removal have one owner
 // (a landing once called has won; a discard after it removes nothing); a crash's staged file is removed only while the
-// file at its path is still that one (astra round 3).
+// file at its path is still that one (astra round 3). Its terminals run the user's shell in pi-env's daemon (decision
+// 133): output, typing, a size the shell sees, the exit code; a close kills the program; a folder that does not exist
+// is refused; the connection's close stops the daemon, and its programs with it.
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -14,8 +16,8 @@ import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
 import peopleServer from "../../people/server.ts";
 import { OneThing } from "../../things/contract.server.ts";
 import thingsServer from "../../things/server.ts";
-import { type MachineHost, MachineHosts, type StagedFile } from "../contract.server.ts";
-import { MACHINE_KIND } from "../contract.ts";
+import { type MachineHost, MachineHosts, MachineTypes, type Pty, type StagedFile } from "../contract.server.ts";
+import { MACHINE_KIND, THIS_DEVICE_TYPE } from "../contract.ts";
 import { seeded } from "./seeded.ts";
 
 describe("this device's host", () => {
@@ -128,5 +130,72 @@ describe("this device's host", () => {
 		}
 		assert.equal(await opened(), before, "no descriptor left open");
 		await rm(join(root, "probe"));
+	});
+
+	describe("its terminals", () => {
+		/** A shell in `folder` on `host`, its output so far, and `printed`, which waits for `pattern` in it. */
+		async function shell(host: MachineHost, folder: string) {
+			let output = "";
+			let seen: () => void = () => {};
+			const opened = await host.openPty(
+				{
+					cwd: folder,
+					columns: 80,
+					rows: 24,
+					onData: (bytes) => {
+						output += Buffer.from(bytes).toString();
+						seen();
+					},
+				},
+				context,
+			);
+			assert.ok(opened.ok, opened.ok ? "" : opened.error.message);
+			const printed = async (pattern: RegExp) => {
+				const deadline = Date.now() + 10_000;
+				while (!pattern.test(output)) {
+					assert.ok(Date.now() < deadline, `no ${pattern} in ${JSON.stringify(output)}`);
+					// The next output, or a look at the deadline.
+					await new Promise<void>((resolve) => {
+						seen = resolve;
+						setTimeout(resolve, 1_000);
+					});
+				}
+			};
+			return { pty: opened.value as Pty, printed };
+		}
+
+		it("runs the shell: typed into, sized, its exit code", async () => {
+			const { pty, printed } = await shell(at, root);
+			pty.write("echo here-$((6*7)) && pwd\r");
+			await printed(/here-42/);
+			await printed(new RegExp(root));
+			pty.resize(100, 30);
+			pty.write(new TextEncoder().encode("stty size; exit 3\r"));
+			await printed(/30 100/);
+			assert.equal(await pty.exited, 3);
+		});
+
+		it("kills the program on close; refuses a folder that does not exist", async () => {
+			const { pty, printed } = await shell(at, root);
+			pty.write("echo up\r");
+			await printed(/up/);
+			pty.close();
+			assert.equal(await pty.exited, -1);
+			const missing = await at.openPty(
+				{ cwd: join(root, "missing"), columns: 80, rows: 24, onData: () => {} },
+				context,
+			);
+			assert.match(missing.ok ? "opened" : missing.error.message, /does not exist/);
+		});
+
+		it("ends its programs with the connection's close", async () => {
+			const types = await t.host.registry(MachineTypes, context);
+			const host = await types.value.get(THIS_DEVICE_TYPE)!.value.connect({}, context);
+			const { pty, printed } = await shell(host, root);
+			pty.write("echo up\r");
+			await printed(/up/);
+			await host.close(context);
+			assert.equal(await pty.exited, -1);
+		});
 	});
 });

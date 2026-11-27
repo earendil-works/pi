@@ -1,0 +1,171 @@
+/* The Ghostty screen: the terminal's rows drawn as text, its cursor and scrollbar, the hidden field typed into, and a
+   row of keys phones lack. `overflow: clip`, not hidden: a hidden box still scrolls when the browser reveals the
+   focused field (Android does as the keyboard opens), which shifted the rows out of place for good. */
+
+.terminal {
+	--term-fg: var(--semantic-color-text-code);
+	--term-bg: var(--semantic-color-background-canvas);
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-inline-size: 0;
+	min-block-size: 12rem;
+}
+
+.frame {
+	position: relative;
+	flex: 1 1 auto;
+	min-block-size: 0;
+	padding: var(--semantic-dimension-space-gap-x-small);
+	overflow: clip;
+	background: var(--term-bg);
+	cursor: default;
+	/* Fingers scroll the terminal itself (ghostty-screen.tsx), never the page. */
+	touch-action: none;
+}
+
+.content {
+	position: relative;
+	block-size: 100%;
+	overflow: clip;
+	background: var(--term-bg);
+	color: var(--term-fg);
+	font: var(--semantic-typography-code-secondary);
+	font-variant-ligatures: none;
+	white-space: pre;
+	user-select: text;
+}
+
+.row {
+	block-size: var(--cell-height);
+	overflow: hidden;
+	line-height: var(--cell-height);
+}
+
+/* Backgrounds fill the whole cell: an inline span's background covers only the font's height. */
+.row > span {
+	display: inline-block;
+	block-size: var(--cell-height);
+	vertical-align: top;
+}
+
+.cell {
+	display: inline-block;
+	overflow: visible;
+	text-align: center;
+	vertical-align: top;
+}
+
+/* Block elements are drawn as rectangles of the whole cell, not glyphs. */
+.block {
+	block-size: var(--cell-height);
+}
+
+.cursor {
+	position: absolute;
+	inset-block-start: 0;
+	inset-inline-start: 0;
+	inline-size: var(--cell-width);
+	block-size: var(--cell-height);
+	background: var(--cursor, var(--term-fg));
+	opacity: 0.45;
+	pointer-events: none;
+}
+
+.cursor[data-style="bar"] {
+	inline-size: 2px;
+	opacity: 1;
+}
+
+.cursor[data-style="underline"] {
+	inset-block-start: calc(var(--cell-height) - 2px);
+	block-size: 2px;
+	opacity: 1;
+}
+
+.cursor[data-style="hollow"],
+.frame:not(:focus-within) .cursor {
+	background: none;
+	outline: 1px solid var(--cursor, var(--term-fg));
+	outline-offset: -1px;
+	opacity: 1;
+}
+
+/* Where the shown rows are in the scrollback, while scrolled up. */
+.scrollbar {
+	position: absolute;
+	inset-inline-end: 0;
+	inline-size: 3px;
+	border-radius: 999px;
+	background: var(--semantic-color-border-secondary);
+	pointer-events: none;
+}
+
+/* Takes keys and text; invisible, at the cursor so input method popups appear there. 16px: iOS zooms smaller fields. */
+.input {
+	position: absolute;
+	inset-block-start: var(--semantic-dimension-space-gap-x-small);
+	inset-inline-start: var(--semantic-dimension-space-gap-x-small);
+	inline-size: 1px;
+	block-size: 1em;
+	padding: 0;
+	border: 0;
+	font-size: 16px;
+	opacity: 0;
+	resize: none;
+	caret-color: transparent;
+}
+
+/* Chrome needs a hit-testable editable field under a long press, not the 1px target at the cursor. */
+.input[data-native-menu] {
+	z-index: 1;
+	inline-size: 44px;
+	block-size: 44px;
+	opacity: 1;
+	background: transparent;
+	color: transparent;
+	user-select: text;
+	pointer-events: auto;
+	-webkit-touch-callout: default;
+}
+
+.keys {
+	display: none;
+	flex: none;
+	gap: var(--semantic-dimension-space-gap-x-small);
+	padding-block: var(--semantic-dimension-space-gap-x-small);
+	overflow-x: auto;
+	overscroll-behavior-x: contain;
+	scrollbar-width: none;
+	touch-action: pan-x;
+}
+
+/* Only on touch screens: a keyboard has these keys. */
+@media (pointer: coarse) {
+	.keys {
+		display: flex;
+	}
+}
+
+.keys button {
+	flex: none;
+	min-inline-size: 2.75rem;
+	min-block-size: 2.75rem;
+	padding-inline: var(--semantic-dimension-space-gap-small);
+	border: 1px solid var(--semantic-color-border-secondary);
+	border-radius: 4px;
+	background: none;
+	color: var(--semantic-color-text-secondary);
+	font: var(--semantic-typography-code-secondary);
+}
+
+.keys button[aria-pressed="true"] {
+	border-color: var(--semantic-color-text-primary);
+	color: var(--semantic-color-text-primary);
+}
+
+.failed {
+	margin: 0;
+	color: var(--semantic-color-text-negative);
+	font: var(--semantic-typography-ui-secondary);
+}

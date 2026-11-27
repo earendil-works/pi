@@ -2,7 +2,9 @@
 // terminals starts, ends or closes (a resize changes no row); an ended program's pseudo-terminal is released while its
 // row and output stay, it takes typing no more and frees its slot; `next` waits for output and ends at the terminal's
 // end; `tail` answers at most what is asked; an open under way is taken back by its caller, the machine's, the owner's
-// and the host's end, and a program that came late is closed, never listed; the host's end kills every program.
+// and the host's end, and a program that came late is closed, never listed; the host's end kills every program; a
+// terminal's size is followed by its viewers (`followSize`: now, after each change, never an unchanged one, not after
+// its close).
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -54,6 +56,36 @@ describe("the terminal host", () => {
 		assert.deepEqual(machine.started[0]!.size, [100, 30]);
 		assert.equal(terminals.list(own("a")), listA, "neither b's change nor a resize replaces a's list");
 		assert.deepEqual(seen, ["a"]);
+	});
+
+	it("tells a terminal's size to who follows it, now and after each change, until its close", async () => {
+		const { terminals, machine } = hosted();
+		const id = await terminals.open(request("a"), context);
+		const sizes: string[] = [];
+		const stop = terminals.followSize(id, ({ columns, rows }) => sizes.push(`${columns}x${rows}`));
+		terminals.resize(id, 80, 24);
+		terminals.resize(id, 100, 30);
+		assert.deepEqual(sizes, ["80x24", "100x30"], "the size now, then a change; the same size again is none");
+		const resized: unknown[] = [];
+		const program = machine.started[0]!;
+		const resize = program.resize;
+		program.resize = (columns, rows) => {
+			resized.push([columns, rows]);
+			resize(columns, rows);
+		};
+		terminals.resize(id, 100, 30);
+		assert.deepEqual(resized, [], "an unchanged size reaches no program");
+		stop();
+		terminals.resize(id, 90, 20);
+		assert.deepEqual(sizes, ["80x24", "100x30"]);
+		const other: string[] = [];
+		terminals.followSize(id, ({ columns }) => other.push(`${columns}`));
+		terminals.close(id);
+		terminals.resize(id, 70, 20);
+		assert.deepEqual(other, ["90"]);
+		// No terminal: nothing to tell.
+		terminals.followSize("gone", () => other.push("never"))();
+		assert.deepEqual(other, ["90"]);
 	});
 
 	it("releases an ended program's pseudo-terminal, keeps its row and output, ends its readers, takes no typing", async () => {

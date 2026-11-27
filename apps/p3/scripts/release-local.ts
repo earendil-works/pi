@@ -3,13 +3,16 @@
 // not have what p3 uses yet), packs them and installs p3's tarball, the others as overrides, into a directory outside
 // the repository, as a user installing from npm would (no lifecycle script of a dependency runs), so nothing there
 // resolves a workspace source. Its other dependencies (React, Elanor, esbuild, ws) come from the registry as p3 pins
-// them. Then the release test runs against the install, and with `--bench` the bench.
+// them. pi-env's package ships this system's terminal daemon (its `bin/`): a published one gets every system's from CI
+// (`.github/workflows/env-daemons.yml`), a local release the checkout's build. Then the release test runs against the
+// install, and with `--bench` the bench.
 // Run from the repository root: npm run release:p3:local -- --out /tmp/p3-release [--force] [--skip-test] [--bench]
 
 import { execFileSync } from "node:child_process";
-import { mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
+import { terminalDaemon } from "../src/api/v1/terminal-daemon.ts";
 import { buildRelease, P3, REPOSITORY, type WorkspacePackage, workspacePackage } from "./build-release.ts";
 
 const USAGE = `Usage: npm run release:p3:local -- --out <dir> [--force] [--skip-test] [--bench]
@@ -54,6 +57,29 @@ export async function workspaceDependencies(
 function buildPackage(found: WorkspacePackage): void {
 	const script = Object.hasOwn(found.scripts, "build:offline") ? "build:offline" : "build";
 	execFileSync("npm", ["run", script], { cwd: found.directory, stdio: "inherit" });
+}
+
+/** The package whose `bin/` ships the terminal daemon. */
+const PI_ENV = "@earendil-works/pi-env";
+
+/**
+ * Puts this system's terminal daemon into pi-env's `bin/` (gitignored: what its package ships) when it is not there,
+ * from the checkout's build (`terminalDaemon`: `cargo build --release --target <the system's>` in
+ * `packages/env/daemon`); without one the release fails, naming where it looked.
+ */
+async function shipDaemon(found: WorkspacePackage): Promise<void> {
+	const shipped = join(found.directory, "bin", `pi-env-${process.platform}-${process.arch}`, "pi-env");
+	if (
+		await access(shipped).then(
+			() => true,
+			() => false,
+		)
+	)
+		return;
+	const built = await terminalDaemon();
+	await mkdir(dirname(shipped), { recursive: true });
+	await copyFile(built, shipped);
+	await chmod(shipped, 0o755);
 }
 
 /**
@@ -138,7 +164,10 @@ if (import.meta.main) {
 		readonly dependencies: Readonly<Record<string, string>>;
 	};
 	const workspace = await workspaceDependencies(manifest.dependencies);
-	for (const found of workspace) buildPackage(found);
+	for (const found of workspace) {
+		buildPackage(found);
+		if (found.name === PI_ENV) await shipDaemon(found);
+	}
 	const built = await buildRelease();
 	console.log(`Built ${built.dist}: ${built.files.length} files, ${(built.bytes / 1024).toFixed(0)} KiB of bundles`);
 	const tarballs = join(out, "tarballs");

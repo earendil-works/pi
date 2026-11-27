@@ -33,10 +33,11 @@ export type PtyOptions = {
 
 /**
  * A program running in a pseudo-terminal on a machine (the user's shell). It ends when the program exits or `close`
- * kills it; `exited` resolves with the exit code then.
+ * kills it; `exited` resolves with the exit code then (-1 when its end is not known: the machine's connection to it
+ * was lost).
  */
 export type Pty = {
-	write(data: string): void;
+	write(data: string | Uint8Array): void;
 	resize(columns: number, rows: number): void;
 	close(): void;
 	readonly exited: Promise<number>;
@@ -99,8 +100,6 @@ export type MachineType = {
 	readonly type: string;
 	readonly label: MessageData;
 	readonly settings: Schema;
-	/** Whether its machines open terminals (a PTY): Terminals offers the agent its tool only while one type does. */
-	readonly terminals: boolean;
 	connect(settings: unknown, context: Context): Promise<MachineHost>;
 };
 

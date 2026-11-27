@@ -2,10 +2,9 @@
 // session's agent holds (real references, held as the session's worker on a server with the things and environments
 // plugins and a stand-in machine whose programs are fakes, `kindServer`): no tool without Use; with it, one tool
 // `terminal` whose tagged action lists the terminals (JSON), opens one at the conversation's location, types a line
-// (Enter after it) or keys, reads the output as plain text and closes; Use withheld after the part was built refuses
-// the next call (forbidden), a conversation on no machine refuses to open (invalid); no tool while no machine type
-// installed opens terminals. Holding Terminals costs no query run per holder: the list is the terminal host's, in
-// memory.
+// (Enter after it) or keys, reads the output as plain text (at once, or once the output went quiet) and closes; Use
+// withheld after the part was built refuses the next call (forbidden), a conversation on no machine refuses to open
+// (invalid). Holding Terminals costs no query run per holder: the list is the terminal host's, in memory.
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -30,7 +29,7 @@ import { seeded } from "../../environments/test/seeded.ts";
 import { OneThing } from "../../things/contract.server.ts";
 import type { HarnessExtension, HarnessLocation, HeldThing } from "../../things/contract.worker.ts";
 import { type KindServer, kindServer, refused, runTool, toolNames } from "../../things/test/kind-server.ts";
-import { type Terminals, TerminalsKind } from "../kind.ts";
+import { QUIET, type Terminals, TerminalsKind } from "../kind.ts";
 import terminalsServer from "../server.ts";
 
 /** The terminals plugin's root. */
@@ -99,16 +98,6 @@ describe("the terminals' harness part", () => {
 		);
 	});
 
-	// deck2: the tool's `open` always failed on this device, and its description costs every request.
-	it("gives no tool while no machine type installed opens terminals (this device's alone)", async () => {
-		await k.close();
-		await started([]);
-		await assert.rejects(
-			giving(async () => null),
-			/gave no extension/,
-		);
-	});
-
 	it("gives one tool whose tagged action lists, opens at the location, types, reads plain text and closes", async () => {
 		await giving(async (extension, ctx, [held]) => {
 			assert.deepEqual(toolNames(extension), ["terminal"]);
@@ -117,7 +106,7 @@ describe("the terminals' harness part", () => {
 			assert.equal(opened.folder, "/work");
 			const [program] = device.started;
 			assert.deepEqual([program?.options.cwd, program?.size], ["/work", [120, 40]]);
-			await until(held!.ref.terminals!, ({ rows: list }) => list.length === 1, within("the list", ctx));
+			await until(held!.ref.terminals!, (list) => list.length === 1, within("the list", ctx));
 			assert.deepEqual(JSON.parse(await terminal(extension, { kind: "list" }, ctx)), [
 				{ id: opened.terminal, folder: "/work", exitCode: null },
 			]);
@@ -126,6 +115,11 @@ describe("the terminals' harness part", () => {
 			assert.deepEqual(program?.typed, ["ls\r", "q"]);
 			program?.say("\u001b[1m$ \u001b[0mls\r\nREADME.md\r\n");
 			assert.equal(await terminal(extension, { kind: "read", terminal: opened.terminal }, ctx), "$ ls\nREADME.md\n");
+			// A read that waits answers once the output paused for `QUIET`: all of what came meanwhile.
+			const reading = terminal(extension, { kind: "read", terminal: opened.terminal, wait_ms: 10_000 }, ctx);
+			program?.say("build ");
+			setTimeout(() => program?.say("done\r\n"), QUIET / 2);
+			assert.equal(await reading, "$ ls\nREADME.md\nbuild done\n");
 			assert.equal(await terminal(extension, { kind: "close", terminal: opened.terminal }, ctx), "{}");
 			assert.equal(program?.closed, true);
 		});

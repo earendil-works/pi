@@ -40,6 +40,16 @@ export {
 export type { BinaryReader, ExecutionEnv, Result } from "@earendil-works/pi-durable/env";
 export { FileError } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+// pi-env's daemon and its terminals, for the machine types' (this device's). `Connection` is a name of Chord's HTTP
+// surface's too (an HTTP connection's info).
+export {
+	Connection as DaemonConnection,
+	isConnectionLost,
+	openTerminal,
+	RemoteError,
+	type RemoteTerminal,
+	type TerminalOptions,
+} from "@earendil-works/pi-env";
 export * from "../../../plugins/environments/contract.server.ts";
 export * from "../../../plugins/people/contract.server.ts";
 export * from "../../../plugins/sessions/contract.server.ts";
@@ -56,6 +66,7 @@ export {
 } from "../../../plugins/things/contract.server.ts";
 export { serveThing, type ThingCaller, type ThingImplementation } from "../../../plugins/things/serve.ts";
 export * from "./control.ts";
+export { terminalDaemon } from "./terminal-daemon.ts";
 
 /** The server's process values, for plugins: what only the base has. */
 export type ServerRuntime = {

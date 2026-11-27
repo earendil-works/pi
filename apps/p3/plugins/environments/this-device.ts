@@ -1,19 +1,39 @@
 // The machine type of this device (`local`, decision 117: the family's first type): the machine the server runs on,
 // with no settings. Its host is Node's environment here with Pi's data folder hidden, a folder's names in one read,
 // and an upload's file staged beside its target (only the server's user may read it, its name its own, known by its
-// device, inode and birth time, so a sweep leaves a file that replaced it before the check); its terminals are pending
-// a decision (pi-env's daemon, node-pty or a helper).
+// device, inode and birth time, so a sweep leaves a file that replaced it before the check), and its terminals in
+// pi-env's daemon (decision 133): one daemon per connection, started at the first terminal and stopped with the
+// connection (its programs with it), so the programs' output is read off the server's thread.
 
 import { randomBytes } from "node:crypto";
 import { type FileHandle, lstat, open, opendir, readdir, readlink, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { type Context, contribute, type FacetHost, obj, type P3Principal } from "@earendil-works/p3/v1";
-import { FileError, NodeExecutionEnv, type Result, ServerRuntime } from "@earendil-works/p3/v1/server";
+import {
+	BACKGROUND_CONTEXT,
+	type Context,
+	contribute,
+	type FacetHost,
+	obj,
+	type P3Principal,
+	reportError,
+} from "@earendil-works/p3/v1";
+import {
+	DaemonConnection,
+	FileError,
+	NodeExecutionEnv,
+	openTerminal,
+	RemoteError,
+	type Result,
+	ServerRuntime,
+	terminalDaemon,
+} from "@earendil-works/p3/v1/server";
 import {
 	type MachineHost,
 	type MachineType,
 	MachineTypes,
 	type NameEntry,
+	type Pty,
+	type PtyOptions,
 	type StagedFile,
 } from "./contract.server.ts";
 import { MACHINE_KIND, THIS_DEVICE_TYPE } from "./contract.ts";
@@ -30,24 +50,55 @@ export function serveThisDevice(host: FacetHost<P3Principal>): void {
 			type: THIS_DEVICE_TYPE,
 			label: messages.message("thisDevice"),
 			settings: obj({}),
-			// What opens a PTY on this device is undecided (ERNDL-731): `openPty` refuses.
-			terminals: false,
 			connect: async () => thisDevice(dataDir),
 		};
 		self.contribute(MachineTypes, type);
 	});
 }
 
-/** This device's host: one per connection, nothing to close. */
+/** This device's host: one per connection; its close stops its terminals' daemon, if one started. */
 function thisDevice(dataDir: string): MachineHost {
+	// Nothing starts before the first terminal: the daemon is found and started at the connection's first request.
+	const daemon = new DaemonConnection({ command: async () => [await terminalDaemon()] });
+	const connection = { daemon, closed: false };
 	return {
 		env: new NodeExecutionEnv({ cwd: homedir() }),
 		hidden: [dataDir],
 		listNames: (folder, max, context) => attempt(() => namesIn(folder, max, context)),
 		stageFile: (folder) => attempt(() => staged(folder)),
 		removeStaged: (path, identity) => attempt(() => removedIf(path, identity)),
-		openPty: async () => ({ ok: false, error: new FileError("not_supported", "this device has no terminals yet") }),
-		close: async () => {},
+		openPty: (options) => attempt(() => terminal(connection, options)),
+		close: async () => {
+			connection.closed = true;
+			daemon.close();
+		},
+	};
+}
+
+/** What a terminal's program finds in its environment besides the server's: a terminal with colours, as the page has. */
+const TERMINAL_ENV = { TERM: "xterm-256color", COLORTERM: "truecolor" };
+
+/**
+ * A program in a new pseudo-terminal of `connection`'s daemon: the user's shell as a login shell, in `cwd`, at its
+ * size.
+ */
+async function terminal(
+	connection: { readonly daemon: DaemonConnection; readonly closed: boolean },
+	{ cwd, columns, rows, onData }: PtyOptions,
+): Promise<Pty> {
+	const opened = await openTerminal(connection.daemon, { cwd, env: TERMINAL_ENV, cols: columns, rows, onData });
+	return {
+		write: (data) => opened.write(data),
+		resize: (width, height) => opened.resize(width, height),
+		close: () => opened.close(),
+		exited: opened.exited.catch((error: unknown) => {
+			// Its close ends it `aborted`, the connection's close ends the daemon: no failure. A lost daemon is one, and
+			// took the program with it.
+			if (!connection.closed && !(error instanceof RemoteError && error.code === "aborted")) {
+				reportError("environments: a terminal's daemon", error, BACKGROUND_CONTEXT);
+			}
+			return -1;
+		}),
 	};
 }
 
