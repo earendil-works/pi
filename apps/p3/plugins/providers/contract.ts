@@ -152,7 +152,8 @@ export type LoginDefinitions = Static<typeof LoginDefinitions>;
  * alone: the registry its agent asks. `complete` says that every login the agent may Use has its models in and every
  * model settings thing its overrides; while it is `false` (just held, a login or settings thing just given) the lists
  * hold only the logins listed before, as they are now (what takes away applies at once), so a login or a model is
- * never offered before its models and overrides are in, and the worker waits before it picks one (rounds 1 and 2). A login's entries keep their identity while its
+ * never offered before its models and overrides are in; the worker waits for it before it picks a model and before
+ * every request (rounds 1 and 2). A login's entries keep their identity while its
  * account and the overrides naming its models are unchanged. Computed once per session (`SessionModelSet`).
  */
 export const SessionModels = remote("providers.session-models", {

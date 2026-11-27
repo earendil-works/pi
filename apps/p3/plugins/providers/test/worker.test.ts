@@ -18,9 +18,11 @@ import {
 	defineFacet,
 	type JsonValue,
 	LoginProviders,
+	memoryLinkPair,
 	openStore,
 	type P3Principal,
 	type PluginFacet,
+	Server,
 	Session,
 	sqliteBackend,
 	until,
@@ -91,6 +93,7 @@ const SCRIPT: Step[] = [{ when: "hello", reply: [{ kind: "text", text: "hi there
 const CATALOGS: LoginDefinitions[] = [
 	...["a", "b", "c", "x"].map((login) => ({ login, models: [...CATALOG] })),
 	{ login: "r", models: [...fauxProvider({ provider: "rec", api: "rec", models: [{ id: "m" }] }).models] },
+	{ login: "w", models: [...fauxProvider({ provider: "swap", api: "swap", models: [{ id: "m" }] }).models] },
 ];
 
 /** The stand-in server's `complete` of the case running (set by its object). */
@@ -270,6 +273,16 @@ describe("a provider replaced while a login is held", () => {
 			store,
 			onError: (error) => assert.fail(error.kind),
 		});
+		// The stand-in server, linked: the session's models a request waits for.
+		const server = createHost<P3Principal>({
+			address: Server(),
+			principal: { kind: "server" },
+			onError: (error) => assert.fail(error.kind),
+		});
+		await server.load([{ name: "p3-session-models", facet: sessionModels }], context);
+		const [up, down] = memoryLinkPair();
+		server.accept(down, { principal: { kind: "worker", session: "s1" } }, context);
+		host.connect(up, { principal: { kind: "server" } }, context);
 		let facets: PluginFacet<P3Principal>[] = [
 			{ name: "@earendil-works/p3-providers", facet: providersWorker },
 			{ name: "@earendil-works/p3-things", facet: thingsWorker },
@@ -310,6 +323,7 @@ describe("a provider replaced while a login is held", () => {
 			assert.deepEqual(await ask(), [{ type: "text", text: "second" }]);
 		} finally {
 			await host.close(context);
+			await server.close(context);
 			await store.close(context);
 		}
 	});

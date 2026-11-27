@@ -1,11 +1,12 @@
 // The harness end to end (`testServer`: the real server, workers as processes, the faux login plugin under test): a
 // session made in Pi, so it has Pi's coding tools, with a faux login made in it, answers through its transcript, its
-// tool running in the session's folder; its state reaches its row (working, then settled); the worker stays alive while working with no
-// holder; a server restart mid-call resumes the run; an archived session's cut-off run schedules nothing; a row left
-// `working` with nothing to do (a crash before Durable took the input, or before the settled report) is settled by
-// the waker's start; a reload of the harness plugin mid-call finishes the run; Bash withheld from the agents in one
-// session is gone from the agent's next request there, and only there (ERNDL-704 test 5); of two logins, the one the
-// session's row chose is asked (ERNDL-705).
+// tool running in the session's folder; its state reaches its row (working, then settled); the worker stays alive while
+// working with no holder; a server restart mid-call resumes the run; an archived session's cut-off run schedules
+// nothing; a row left `working` with nothing to do (a crash before Durable took the input, or before the settled
+// report) is settled by the waker's start; a reload of the harness plugin mid-call finishes the run; Bash withheld from
+// the agents in one session is gone from the agent's next request there, and only there (ERNDL-704 test 5); of two
+// logins, the one the session's row chose is asked, and model settings linked mid-run are waited for before the next
+// request: a model they hide is not asked (ERNDL-705).
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -15,6 +16,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+	type Context,
 	BACKGROUND_CONTEXT as context,
 	type Host,
 	type P3Principal,
@@ -37,6 +39,9 @@ import {
 } from "../../../test/plugins/faux-login/contract.ts";
 import { newSession, scriptFaux, scriptFauxAs } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
+import type { ModelOverride } from "../../providers/contract.ts";
+import { SessionModels } from "../../providers/contract.ts";
+import { ModelSettings, ModelSettingsKind } from "../../providers/model-settings-kind.ts";
 import { OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { CodingToolsKind } from "../../tools/kind.ts";
 
@@ -239,6 +244,73 @@ describe("the harness end to end", () => {
 		);
 		assert.deepEqual(t.errors, []);
 	});
+
+	// Astra, round 2 of model settings: model settings linked into the session while a tool runs, their first value held
+	// back. The tool's result is sent only once they are in: to the model as they leave it, never to one they hide.
+	for (const { what, overrides, sent } of [
+		{ what: "renamed", overrides: [{ model: FAUX_MODEL, name: "Renamed" }], sent: true },
+		{ what: "hidden", overrides: [{ model: FAUX_MODEL, hidden: true }], sent: false },
+	] satisfies { what: string; overrides: ModelOverride[]; sent: boolean }[]) {
+		it(`waits for model settings linked mid-run before the next request: the model ${what} ${sent ? "is asked" : "is not"}`, async () => {
+			const folder = await directory("p3-harness-e2e-");
+			const t = await start();
+			const client = await t.client(context);
+			const id = await session(t, folder, [
+				{ when: "@go", reply: [{ kind: "tool", name: "bash", args: JSON.stringify({ command: GATED }) }] },
+				{ when: folder, reply: [{ kind: "text", text: "done" }] },
+			]);
+			const by = { kind: "plugin", plugin: "test" } as const;
+			const things = await t.host.get(ThingsStore, {}, context);
+			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+			const sibling = await things.createWorkspace(
+				{ kind: "things.workspace", name: "Sibling", parent: pi, by },
+				context,
+			);
+			const settings = await things.create(
+				{ kind: ModelSettingsKind.name, name: "m", workspace: sibling, by },
+				context,
+			);
+			await things.configure({ thing: settings, settings: { overrides } }, context);
+			const models = await t.host.get(SessionModels, { session: id }, context);
+			await until(models.complete, (complete) => complete, within("complete", context));
+			await send(client, id, "@go");
+			await eventually(() => existsSync(join(folder, "started")), Boolean);
+			const gate = Promise.withResolvers<void>();
+			const hold = t.host.hold.bind(t.host);
+			// The test's stand-in for a slow first read: the session's holding reads only `overrides` of the thing. The
+			// server loads its own copy of the providers plugin, so the contract is told by its name, not its identity.
+			t.host.hold = ((contract: { name: string }, params: { thing?: string }, holding: Context) => {
+				const ref = hold(contract as typeof ModelSettings, params as { workspace: string; thing: string }, holding);
+				if (contract.name !== ModelSettings.name || params.thing !== settings) return ref;
+				const { overrides: source } = ref;
+				return {
+					release: () => ref.release(),
+					overrides: {
+						watch: async (watching: Context) => {
+							await gate.promise;
+							return source.watch(watching);
+						},
+					},
+				};
+			}) as unknown as typeof t.host.hold;
+			try {
+				await things.link({ workspace: id, thing: settings }, context);
+				await until(models.complete, (complete) => !complete, within("the settings loading", context));
+				await writeFile(join(folder, "gate"), "");
+				// The tool's result waits: no request while the settings are not in.
+				await new Promise((resolve) => setTimeout(resolve, 300));
+				assert.equal((await requests(client, id)).length, 1);
+				gate.resolve();
+				await reaches(client, id, sent ? "settled" : "failed");
+				const seen = await requests(client, id);
+				assert.equal(seen.length, sent ? 2 : 1);
+				if (sent) assert.ok(seen[1]?.last.includes(folder), "the tool's result went to the model");
+			} finally {
+				gate.resolve();
+				t.host.hold = hold;
+			}
+		});
+	}
 
 	it("resumes a run cut off by a server restart", async () => {
 		const folder = await directory("p3-harness-e2e-");

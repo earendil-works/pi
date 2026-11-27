@@ -2,9 +2,10 @@
 // gives one model provider of its own (`<provider>~<login>`: two logins of one provider are two providers), whose
 // models are the login's entry in the session's `SessionModels.catalog` (from the server, the overrides of the model
 // settings that reach the session applied; the worker loads no catalog) and whose requests take their auth from the
-// login's `authorize` (as the agent: a grant taken back refuses the next request). The request code is, at
-// each request, a provider another plugin adds (`LoginProviders`: a test's faux one), else pi-ai's built-in one,
-// loaded on the first request (`loadProvider`), so a worker holds only the providers it uses.
+// login's `authorize` (as the agent: a grant taken back refuses the next request). Every request waits until the
+// session's models are complete (`SessionModels.complete`), and is made on the model as they have it then. The request
+// code is, at each request, a provider another plugin adds (`LoginProviders`: a test's faux one), else pi-ai's built-in
+// one, loaded on the first request (`loadProvider`), so a worker holds only the providers it uses.
 
 import {
 	type Api,
@@ -18,6 +19,7 @@ import {
 	type Reference,
 	type RegistryValue,
 	until,
+	withAbortSignal,
 } from "@earendil-works/p3/v1";
 import { lazyStream, loadProvider, WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { type HeldThing, ThingHarnessParts, thingHarnessPart } from "../things/contract.worker.ts";
@@ -38,15 +40,18 @@ export default defineFacet((host) => {
 		const catalogOf = (): readonly LoginDefinitions[] => models.value.catalog?.value ?? [];
 		self.contribute(
 			ThingHarnessParts,
-			thingHarnessPart(LoginKind, (things) => ({
-				providers: things.flatMap((held) => {
-					const shown = held.ref.login.value;
-					return held.ref.authorize === undefined || shown === null
-						? []
-						: [{ thing: held.thing, provider: loginProvider(held, shown.provider, added, catalogOf) }];
-				}),
-				ready: (context) => completed(models.value, things, context),
-			})),
+			thingHarnessPart(LoginKind, (things) => {
+				const ready = (context: Context) => completed(models.value, things, context);
+				return {
+					providers: things.flatMap((held) => {
+						const shown = held.ref.login.value;
+						return held.ref.authorize === undefined || shown === null
+							? []
+							: [{ thing: held.thing, provider: loginProvider(held, shown.provider, added, catalogOf, ready) }];
+					}),
+					ready,
+				};
+			}),
 		);
 	});
 });
@@ -70,6 +75,12 @@ async function completed(
 	}
 }
 
+/**
+ * How long a request waits for the session's models to be complete before it fails: the harness's bound for a submit
+ * (`READY_MS` in `harness/worker.ts`).
+ */
+const COMPLETE_MS = 10_000;
+
 /** No models (a login the session's catalog does not list yet). */
 const NONE: readonly unknown[] = [];
 
@@ -86,6 +97,7 @@ function loginProvider(
 	base: string,
 	added: RegistryValue<ProviderMap>,
 	catalogOf: () => readonly LoginDefinitions[],
+	ready: (context: Context) => Promise<void>,
 ): Provider {
 	const id = `${base}${SEPARATOR}${thing}`;
 	/** pi-ai's built-in request code, loaded on the first request that needs it; a failed load is tried again. */
@@ -101,20 +113,59 @@ function loginProvider(
 		if (found === undefined) throw new Error(`providers: no request code for the provider ${base}`);
 		return found;
 	};
-	/** A request of `model` made by the request code once it is there; the model under its provider's own id. */
+	/**
+	 * Waits until the session's models are complete, bounded (`COMPLETE_MS`) and cancelled with the request: no request
+	 * is made on models that are not, not in a run under way either, since a model settings thing just given may hide
+	 * its model (round 2 of model settings, Astra; decided by the main session).
+	 */
+	const complete = (signal: AbortSignal | undefined): Promise<void> => {
+		const bound = AbortSignal.timeout(COMPLETE_MS);
+		return ready(
+			withAbortSignal(signal === undefined ? bound : AbortSignal.any([signal, bound]), BACKGROUND_CONTEXT),
+		);
+	};
+	/**
+	 * A request of `model` made by the request code once it is there and the models are complete: the model as the
+	 * complete catalog has it now, under its provider's own id; refused when the catalog no longer has it (hidden).
+	 */
 	const later = (
 		model: Model<Api>,
 		signal: AbortSignal | undefined,
 		run: (provider: Provider, model: Model<Api>) => ReturnType<Provider["streamSimple"]>,
-	) => lazyStream(model, async () => run(await code(), { ...model, provider: base }), undefined, signal);
+	) =>
+		lazyStream(
+			model,
+			async () => {
+				await complete(signal);
+				const now = models().find(({ id: offered }) => offered === model.id);
+				if (now === undefined)
+					throw new PluginError("providers.hidden", `providers: ${id} offers no model ${model.id}`);
+				return run(await code(), { ...now, provider: base });
+			},
+			undefined,
+			signal,
+		);
 	let catalog: { readonly from: unknown; readonly models: readonly Model<Api>[] } | undefined;
+	/** The login's models in the session's catalog now, under this provider's id. */
+	const models = (): readonly Model<Api>[] => {
+		// A session holds few logins: its entry is found by a look over them.
+		const from = catalogOf().find(({ login }) => login === thing)?.models ?? NONE;
+		// Mapped once per entry the server sent (it keeps its identity while unchanged): a request asks more than once.
+		if (catalog?.from !== from) {
+			// The server's catalog is pi-ai's own definitions of the account's models.
+			catalog = { from, models: (from as unknown as Model<Api>[]).map((model) => ({ ...model, provider: id })) };
+		}
+		return catalog.models;
+	};
 	return {
 		id,
 		name: ref.login.value?.providerName ?? base,
 		auth: {
 			apiKey: {
 				name: ref.login.value?.providerName ?? base,
-				resolve: async () => {
+				resolve: async ({ signal }) => {
+					// The request's auth only for a request that will be made: once the models are complete (`later`).
+					await complete(signal);
 					const authorize = ref.authorize;
 					if (authorize === undefined) return undefined;
 					// On the agent's held reference (decision 120); the request's own cancellation is pi-ai's.
@@ -122,16 +173,7 @@ function loginProvider(
 				},
 			},
 		},
-		getModels: () => {
-			// A session holds few logins: its entry is found by a look over them.
-			const from = catalogOf().find(({ login }) => login === thing)?.models ?? NONE;
-			// Mapped once per entry the server sent (it keeps its identity while unchanged): a request asks more than once.
-			if (catalog?.from !== from) {
-				// The server's catalog is pi-ai's own definitions of the account's models.
-				catalog = { from, models: (from as unknown as Model<Api>[]).map((model) => ({ ...model, provider: id })) };
-			}
-			return catalog.models;
-		},
+		getModels: () => models(),
 		stream: (model, context, options) =>
 			later(model, options?.signal, (provider, restored) => provider.stream(restored, context, options)),
 		streamSimple: (model, context, options) =>
