@@ -266,11 +266,10 @@ reference or a native.
   helper variants. What it registers replaces what it registered before; a part's tools that follow live state (an
   MCP server's tool list) use `again`, which gives only that kind again (decision 137). Decided (142), being changed
   on main (today the harness gives only kinds that hold something): the harness calls every part on every change of
-  what the agent holds, possibly nothing, and the part checks for none itself (`const nearest = things.at(-1); if
-  (nearest === undefined) …`). A separate requirement, from Durable's registry: a kind that once gave an extension
-  keeps its place there with nothing held (no tools, its tasks still given), because a kind appended again changes
-  the prompt's order and loses the provider's prompt cache. What a part answers for that, and whether the part or
-  the harness makes the empty answer, comes with the harness's change: not on main yet.
+  what the agent holds, possibly nothing, and the part checks for none itself, first: `if (things.length === 0)
+  return { extension: {} };`. An empty extension, never `{}`: it keeps the kind's place in Durable's registry (a kind
+  appended again changes the prompt's order and loses the provider's prompt cache). A part that gives tasks gives
+  them always (`{ extension: { tasks: TASKS } }` with nothing held).
 - A kind's method never checks the caller's access to its own thing again. Only a method that names another thing
   (Files and Terminals name a machine) checks the caller's answer on that thing.
 - Nothing a person reads is written outside `messages.ts`: no English in a state value, a view or a key.
