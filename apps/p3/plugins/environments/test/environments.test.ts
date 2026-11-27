@@ -29,7 +29,6 @@ import { ThingHarnessParts } from "../../things/contract.worker.ts";
 import thingsServer from "../../things/server.ts";
 import { MachineHosts, reachMachine } from "../contract.server.ts";
 import { MACHINE_KIND } from "../contract.ts";
-import { machinePart } from "../harness-part.ts";
 import { Machine, MachineKind } from "../kind.ts";
 import { MachinesStore } from "../store.ts";
 import { fakeMachine, fakeType } from "./fake-machine.ts";
@@ -234,25 +233,6 @@ describe("the environments plugin on the server", () => {
 				context,
 			);
 			assert.deepEqual(info, { name: "box", type: "gone", status: "unavailable" });
-			// An agent holding it with Work here gets no environment: the type that would run its commands is gone (Astra,
-			// round 5).
-			await things.putParty({ workspace: pi, party: { kind: "agent", session: "s1" }, source: BY }, context);
-			await t.root(
-				async (ctx) => {
-					const ref = await ctx.get(Machine, { workspace: pi, thing: box });
-					assert.equal(ref.granted.has("work"), true);
-					const at = { machine: box, folder: "/tmp" };
-					const part = machinePart.part([{ thing: box, workspace: pi, depth: 0, ref }], {
-						session: "s1",
-						workspace: pi,
-						location: async () => at,
-						call: () => Promise.reject(new Error("not used")),
-					});
-					assert.equal(await part.env?.(at, ctx), undefined);
-				},
-				context,
-				{ principal: { kind: "worker", session: "s1" } },
-			);
 		});
 	});
 

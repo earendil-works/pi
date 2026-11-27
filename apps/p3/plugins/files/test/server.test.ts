@@ -16,6 +16,7 @@ import {
 	type Context,
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
+	defineFacet,
 	type P3Principal,
 	type Reference,
 	until,
@@ -38,9 +39,10 @@ import peopleServer from "../../people/server.ts";
 import { Gives, OneThing, ThingsStore } from "../../things/contract.server.ts";
 import { OPEN, type Party, type Source } from "../../things/contract.ts";
 import thingsServer from "../../things/server.ts";
-import { refused } from "../../things/test/kind-server.ts";
+import { kindServer, refused } from "../../things/test/kind-server.ts";
 import { DOWNLOAD_PATH, FILES_BROWSES, FILES_EDITS, Files, FilesKind, UPLOAD_PATH } from "../kind.ts";
 import { must } from "../places.ts";
+import filesServer from "../server.ts";
 import { StagingStore } from "../staging.ts";
 import { owned } from "../transfers.ts";
 
@@ -1028,5 +1030,47 @@ describe("a transfer's lifetime (round 2)", () => {
 			assert.equal((await route(`PUT ${UPLOAD_PATH}`)(bounded, ctx)).kind, "json");
 		});
 		assert.deepEqual(await readFile(path), Buffer.from(raw));
+	});
+});
+
+describe("the cost of Files", () => {
+	// On the counted host (`kindServer`): the machine's info and the caller's answer on it are shared, a listing reads
+	// the machine, not the store.
+	it("is no query run per holder after the first, and none for a listing", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "p3-files-cost-"));
+		const runtime = { dataDir: dir, workRoot: join(dir, "work"), machine: { user: "test", hostname: "test" } };
+		const beside = [
+			{
+				name: "p3.server",
+				facet: defineFacet((h) => h.serve(ServerRuntime, { compose: () => runtime as ServerRuntime })),
+			},
+			{ name: "@earendil-works/p3-environments", facet: environmentsServer },
+		];
+		const plugin = {
+			name: "@earendil-works/p3-files",
+			root: fileURLToPath(new URL("../", import.meta.url)),
+			server: filesServer,
+		};
+		const k = await kindServer(plugin, FilesKind, context, beside);
+		try {
+			const thing = await seeded(await k.host.get(OneThing, { kind: FilesKind.name }, context), context);
+			const device = await seeded(await k.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
+			const persons = [await k.person("Ann"), await k.person("Ben"), await k.person("Cy")];
+			await k.tick(k.pi, thing, { kind: "everyone" }, "browse", true);
+			const first = await k.holders(persons.slice(0, 1), k.pi, thing);
+			try {
+				const before = k.count("chord.query.runs");
+				const more = await k.holders(persons.slice(1), k.pi, thing);
+				await more.release();
+				const [{ ref, ctx }] = first.held as [(typeof first.held)[number]];
+				await ref.entries!({ machine: device, path: root }, ctx);
+				assert.equal(k.count("chord.query.runs") - before, 0);
+			} finally {
+				await first.release();
+			}
+		} finally {
+			await k.close();
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });

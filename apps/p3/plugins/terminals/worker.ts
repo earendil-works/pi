@@ -31,8 +31,8 @@ const READ_BYTES = 4 * READ;
 /** How long `read` waits at most before it reads. */
 const MAX_WAIT = 30_000;
 
-/** The terminals' harness part (exported for its test): the tool while the nearest Terminals gives Use. */
-export const terminalsPart = thingHarnessPart(TerminalsKind, (things, session) => {
+/** The terminals' harness part: the tool while the nearest Terminals gives Use. */
+const terminalsPart = thingHarnessPart(TerminalsKind, (things, session) => {
 	// Never called with none; the nearest is last (stacking "nearest").
 	const nearest = things[things.length - 1];
 	if (nearest === undefined || !nearest.ref.granted.has("open")) return {};
