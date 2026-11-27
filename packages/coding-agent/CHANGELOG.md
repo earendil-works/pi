@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed WSL detection in terminals that start the shell without the WSL environment variables (for example from a systemd user service): the Windows keybinding defaults (`alt+v` image paste, `ctrl+q` follow-up) and the footer's branch polling for repos under `/mnt/<drive>` now apply there too, because all WSL checks share one detection that falls back to `/proc/version`.
+- Fixed HTML export dropping the `$` from the session cost and altering the embedded highlight.js, because `$$` and `$&` in inserted files were expanded as replacement patterns ([#12608](https://github.com/earendil-works/pi/issues/12608), [#12609](https://github.com/earendil-works/pi/pull/12609) by [@acmerfight](https://github.com/acmerfight))
 
 ## [1.7.0] - 2026-11-27
 
