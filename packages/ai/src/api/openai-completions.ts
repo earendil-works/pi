@@ -1659,7 +1659,10 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		requiresReasoningContentOnAssistantMessages:
 			model.compat.requiresReasoningContentOnAssistantMessages ??
 			detected.requiresReasoningContentOnAssistantMessages,
-		thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
+		thinkingFormat:
+			model.compat.thinkingFormat === "ant-ling"
+				? "deepseek"
+				: (model.compat.thinkingFormat ?? detected.thinkingFormat),
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		chatTemplateKwargs: model.compat.chatTemplateKwargs ?? detected.chatTemplateKwargs,

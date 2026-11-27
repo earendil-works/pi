@@ -2,10 +2,6 @@
 
 ## [Unreleased]
 
-### Breaking Changes
-
-- Removed the `thinkingFormat: "ant-ling"` compat value. Ant Ling ignores `reasoning.effort`, so it could not turn thinking off; use `thinkingFormat: "deepseek"`, which sends `thinking: { type }`. Ant Ling endpoints are now detected as `"deepseek"`
-
 ### Added
 
 - Added `compat.supportsReasoningReplay` to the `bedrock-converse-stream` API. When `false`, reasoning from earlier assistant messages is not sent back
@@ -18,6 +14,7 @@
 
 ### Changed
 
+- Changed Ant Ling to send `thinking.type` so thinking can be turned off. The old `thinkingFormat: "ant-ling"` setting remains accepted as a deprecated alias for `"deepseek"`
 - Qwen Token Plan Individual now lists `qwen4-max` instead of the retired `qwen4-max-preview`
 - Together drops its reasoning-effort overrides for `openai/gpt-oss-20b`, `openai/gpt-oss-120b` and `deepseek-ai/DeepSeek-V4-Pro-0813`, which the upstream catalog deprecated (they were skipped already); every listed Together reasoning model takes the Together thinking toggle
 - Changed the `ant-ling` provider to load its models from models.dev (`bailing`), replacing the retired Ling 2.6 and Ring 2.6 models with Ling 3.0 Tiny, Ling 3.0 Flash, Ling 3.0 Flash VL, Ling 3.1 Flash, and Ling 3.2 Flash. Thinking is either off or high ([#11800](https://github.com/earendil-works/pi/pull/11800) by [@lvisei](https://github.com/lvisei))
@@ -30,6 +27,7 @@
 - Fixed GitHub Copilot models on the `openai-completions` API losing their reasoning state between turns: Copilot's `reasoning_opaque` is now stored on the thinking block and sent back with `reasoning_text`, including when it arrives without reasoning text ([#12418](https://github.com/earendil-works/pi/issues/12418))
 - Fixed `openrouter-images`, `pi-image` and `pi-decision` usage dropping reasoning tokens: `usage.reasoning` is now set from OpenRouter's `completion_tokens_details.reasoning_tokens` and from the `pi-image` and `pi-decision` backends' `usage.reasoning`, as a subset of `output`
 - Fixed OpenRouter image models pricing image tokens at the text rate: the catalog took `cost.output` from OpenRouter's `completion` price and ignored `image_output`. The catalog now sets `cost.imageOutput` from `image_output`, and `openrouter-images` prices usage with `calculateCost()`, which also applies context tiers
+- Fixed `openrouter-images` reporting success when OpenRouter returned no choices, a provider error, or an unsuccessful finish reason. Image generation now also uses OpenRouter's reported cost when available
 
 ## [1.6.1] - 2026-11-25
 

@@ -1876,6 +1876,14 @@ describe("openai-completions tool_choice", () => {
 		expect(params.prompt_cache_retention).toBeUndefined();
 	});
 
+	it("sends identical requests for the deprecated ant-ling format and deepseek", async () => {
+		const model = getModel("ant-ling", "Ling-3.1-flash")!;
+		const legacy = { ...model, compat: { ...model.compat, thinkingFormat: "ant-ling" } } as const;
+		for (const reasoning of [undefined, "high"] as const) {
+			expect(await captureSimpleParams(legacy, reasoning)).toEqual(await captureSimpleParams(model, reasoning));
+		}
+	});
+
 	// Ant Ling thinks by default; only thinking.type "disabled" turns it off.
 	it("toggles Ant Ling thinking on or off for every thinking level", async () => {
 		const model = getModel("ant-ling", "Ling-3.1-flash")!;
