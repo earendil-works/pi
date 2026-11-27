@@ -190,6 +190,8 @@ export interface ResourceLoader {
 	getAppendSystemPromptSources(): Array<{ path: string }>;
 	extendResources(paths: ResourceExtensionPaths): void;
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
+	/** Directories whose contents, when changed, warrant a reload (extensions, skills, prompts, themes). */
+	getWatchDirs(): string[];
 }
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
@@ -456,6 +458,20 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getExtensions(): LoadExtensionsResult {
 		return this.extensionsResult;
+	}
+
+	getWatchDirs(): string[] {
+		const dirs = [
+			join(this.agentDir, "extensions"),
+			join(this.agentDir, "skills"),
+			join(this.agentDir, "prompts"),
+			join(this.agentDir, "themes"),
+			join(this.cwd, CONFIG_DIR_NAME, "extensions"),
+			join(this.cwd, CONFIG_DIR_NAME, "skills"),
+			join(this.cwd, CONFIG_DIR_NAME, "prompts"),
+			join(this.cwd, CONFIG_DIR_NAME, "themes"),
+		];
+		return dirs.filter((dir) => existsSync(dir));
 	}
 
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {

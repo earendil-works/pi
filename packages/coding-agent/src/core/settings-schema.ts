@@ -234,8 +234,15 @@ export const SettingsSchema = Type.Object(
 			}),
 		),
 		steeringMode: Type.Optional(
-			Type.Union([Type.Literal("all"), Type.Literal("one-at-a-time")], {
+			Type.Union([Type.Literal("all"), Type.Literal("one-at-a-time"), Type.Literal("interrupt")], {
 				default: SETTINGS_DEFAULTS.steeringMode,
+			}),
+		),
+		interruptDebounceMs: Type.Optional(
+			Type.Number({
+				default: SETTINGS_DEFAULTS.interruptDebounceMs,
+				description:
+					'Debounce window (ms) used by steeringMode "interrupt" to coalesce consecutive user messages into one before dispatch.',
 			}),
 		),
 		followUpMode: Type.Optional(
@@ -333,6 +340,13 @@ export const SettingsSchema = Type.Object(
 			Type.Boolean({
 				description: "Register skills as /skill:name commands.",
 				default: SETTINGS_DEFAULTS.enableSkillCommands,
+			}),
+		),
+		autoReload: Type.Optional(
+			Type.Boolean({
+				description:
+					"Automatically reload extensions, skills, prompts, themes, and keybindings when their files change (no manual /reload).",
+				default: SETTINGS_DEFAULTS.autoReload,
 			}),
 		),
 		terminal: Type.Optional(TerminalSettingsSchema),

@@ -68,7 +68,8 @@ export interface SettingsConfig {
 	autoResizeImages: boolean;
 	blockImages: boolean;
 	enableSkillCommands: boolean;
-	steeringMode: "all" | "one-at-a-time";
+	autoReload: boolean;
+	steeringMode: "all" | "one-at-a-time" | "interrupt";
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
 	sessionShareDestination: SessionShareDestination;
@@ -110,7 +111,8 @@ export interface SettingsCallbacks {
 	onAutoResizeImagesChange: (enabled: boolean) => void;
 	onBlockImagesChange: (blocked: boolean) => void;
 	onEnableSkillCommandsChange: (enabled: boolean) => void;
-	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
+	onAutoReloadChange: (enabled: boolean) => void;
+	onSteeringModeChange: (mode: "all" | "one-at-a-time" | "interrupt") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
 	onSessionShareDestinationChange: (destination: SessionShareDestination) => void;
@@ -494,9 +496,9 @@ export class SettingsSelectorComponent extends Container {
 				id: "steering-mode",
 				label: "Steering mode",
 				description:
-					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
+					"Enter while streaming queues steering messages. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once. 'interrupt': aborts the running turn and coalesces consecutive messages (4s window) into one.",
 				currentValue: config.steeringMode,
-				values: ["one-at-a-time", "all"],
+				values: ["one-at-a-time", "all", "interrupt"],
 			},
 			{
 				id: "follow-up-mode",
@@ -815,9 +817,19 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
-		// Hardware cursor toggle (insert after skill-commands)
+		// Auto-reload toggle (insert after skill-commands)
 		const skillCommandsIndex = items.findIndex((item) => item.id === "skill-commands");
 		items.splice(skillCommandsIndex + 1, 0, {
+			id: "auto-reload",
+			label: "Auto reload",
+			description: "Reload extensions/skills/prompts/themes automatically on file change (no manual /reload)",
+			currentValue: config.autoReload ? "true" : "false",
+			values: ["true", "false"],
+		});
+
+		// Hardware cursor toggle (insert after auto-reload)
+		const autoReloadIndex = items.findIndex((item) => item.id === "auto-reload");
+		items.splice(autoReloadIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
 			description: "Use the terminal cursor instead of Pi's drawn cursor",
@@ -901,6 +913,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "skill-commands":
 						callbacks.onEnableSkillCommandsChange(newValue === "true");
+						break;
+					case "auto-reload":
+						callbacks.onAutoReloadChange(newValue === "true");
 						break;
 					case "steering-mode":
 						callbacks.onSteeringModeChange(newValue as "all" | "one-at-a-time");

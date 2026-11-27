@@ -733,11 +733,15 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getSteeringMode(): "all" | "one-at-a-time" {
+	getSteeringMode(): "all" | "one-at-a-time" | "interrupt" {
 		return this.settings.steeringMode || SETTINGS_DEFAULTS.steeringMode;
 	}
 
-	setSteeringMode(mode: "all" | "one-at-a-time"): void {
+	getInterruptDebounceMs(): number {
+		return this.settings.interruptDebounceMs ?? SETTINGS_DEFAULTS.interruptDebounceMs;
+	}
+
+	setSteeringMode(mode: "all" | "one-at-a-time" | "interrupt"): void {
 		this.globalSettings.steeringMode = mode;
 		this.markModified("steeringMode");
 		this.save();
@@ -1183,6 +1187,16 @@ export class SettingsManager {
 
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? SETTINGS_DEFAULTS.enableSkillCommands;
+	}
+
+	getAutoReload(): boolean {
+		return this.settings.autoReload ?? SETTINGS_DEFAULTS.autoReload;
+	}
+
+	setAutoReload(enabled: boolean): void {
+		this.globalSettings.autoReload = enabled;
+		this.markModified("autoReload");
+		this.save();
 	}
 
 	setEnableSkillCommands(enabled: boolean): void {

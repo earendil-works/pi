@@ -487,6 +487,11 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
+	// Interrupt mode (steeringMode === "interrupt"): coalesce consecutive user
+	// messages into one within a debounce window; a message while running aborts
+	// the current turn and merges the pending queue into a single dispatch.
+	private interruptBuffer: string[] = [];
+	private interruptTimer: ReturnType<typeof setTimeout> | undefined;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -1170,6 +1175,7 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
+		this.startAutoReloadWatcher();
 
 		if (!process.env.PI_OFFLINE) {
 			const controller = new AbortController();
@@ -3422,6 +3428,13 @@ export class InteractiveMode {
 				}
 			}
 
+			// Interrupt mode: coalesce consecutive messages (debounce) and hard-interrupt
+			// the running turn. Only for plain text (commands handled above).
+			if (this.settingsManager.getSteeringMode() === "interrupt" && !this.session.isCompacting) {
+				await this.handleInterruptSubmit(text);
+				return;
+			}
+
 			// Queue input during compaction (extension commands execute immediately)
 			if (this.session.isCompacting) {
 				if (this.isExtensionCommand(text)) {
@@ -3456,6 +3469,42 @@ export class InteractiveMode {
 			}
 			this.editor.addToHistory?.(text);
 		};
+	}
+
+	/**
+	 * Interrupt-mode submit handling (steeringMode === "interrupt").
+	 * - Buffers the message and (re)starts a debounce window.
+	 * - If the agent is streaming, aborts the current turn and folds any pending
+	 *   queued messages into the buffer so everything dispatches as ONE message.
+	 * - When the window elapses with no new input, dispatches the joined message.
+	 */
+	private async handleInterruptSubmit(text: string): Promise<void> {
+		this.editor.addToHistory?.(text);
+		this.editor.setText("");
+		this.interruptBuffer.push(text);
+
+		// A message while running interrupts execution and absorbs the pending queue.
+		if (this.session.isStreaming) {
+			const { steering, followUp } = this.session.clearQueue();
+			this.interruptBuffer = [...steering, ...followUp, ...this.interruptBuffer];
+			await this.session.abort();
+		}
+
+		const debounceMs = this.settingsManager.getInterruptDebounceMs();
+		if (this.interruptTimer) clearTimeout(this.interruptTimer);
+		this.showStatus(`Interrupt mode: coalescing (${Math.round(debounceMs / 1000)}s)...`);
+		this.interruptTimer = setTimeout(() => {
+			this.interruptTimer = undefined;
+			const merged = this.interruptBuffer.join("\n\n").trim();
+			this.interruptBuffer = [];
+			if (!merged) return;
+			this.flushPendingBashComponents();
+			if (this.onInputCallback) {
+				this.onInputCallback(merged);
+			} else {
+				this.pendingUserInputs.push(merged);
+			}
+		}, debounceMs);
 	}
 
 	private subscribeToAgent(): void {
@@ -4387,6 +4436,7 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		this.stopAutoReloadWatcher();
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.
@@ -5021,6 +5071,7 @@ export class InteractiveMode {
 					autoResizeImages: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
 					enableSkillCommands: this.settingsManager.getEnableSkillCommands(),
+					autoReload: this.settingsManager.getAutoReload(),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
 					transport: this.settingsManager.getTransport(),
@@ -5085,6 +5136,14 @@ export class InteractiveMode {
 					onEnableSkillCommandsChange: (enabled) => {
 						this.settingsManager.setEnableSkillCommands(enabled);
 						this.setupAutocompleteProvider();
+					},
+					onAutoReloadChange: (enabled) => {
+						this.settingsManager.setAutoReload(enabled);
+						if (enabled) {
+							this.startAutoReloadWatcher();
+						} else {
+							this.stopAutoReloadWatcher();
+						}
 					},
 					onSteeringModeChange: (mode) => {
 						this.session.setSteeringMode(mode);
@@ -6529,12 +6588,87 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(): Promise<void> {
+	private autoReloadWatchers: fs.FSWatcher[] = [];
+	private autoReloadTimer?: ReturnType<typeof setTimeout>;
+	private autoReloadPending = false;
+
+	/** Watch resource dirs and reload automatically on change so manual /reload is unnecessary. */
+	private startAutoReloadWatcher(): void {
+		if (!this.settingsManager.getAutoReload()) {
+			return;
+		}
+		this.stopAutoReloadWatcher();
+		let dirs: string[] = [];
+		try {
+			dirs = this.session.resourceLoader.getWatchDirs();
+		} catch {
+			return;
+		}
+		for (const dir of dirs) {
+			try {
+				const watcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
+					// Ignore transient editor artifacts and nothing-changed events.
+					if (typeof filename === "string" && /(~$|\.swp$|\.tmp$|\.DS_Store$)/.test(filename)) {
+						return;
+					}
+					this.scheduleAutoReload();
+				});
+				watcher.on("error", () => {});
+				this.autoReloadWatchers.push(watcher);
+			} catch {
+				// recursive watch may be unsupported on some platforms; skip that dir.
+			}
+		}
+	}
+
+	private stopAutoReloadWatcher(): void {
+		for (const watcher of this.autoReloadWatchers) {
+			try {
+				watcher.close();
+			} catch {
+				// ignore
+			}
+		}
+		this.autoReloadWatchers = [];
+		if (this.autoReloadTimer) {
+			clearTimeout(this.autoReloadTimer);
+			this.autoReloadTimer = undefined;
+		}
+	}
+
+	private scheduleAutoReload(): void {
+		if (this.autoReloadTimer) {
+			clearTimeout(this.autoReloadTimer);
+		}
+		// Debounce: coalesce bursts of writes (editors save multiple files) into one reload.
+		this.autoReloadTimer = setTimeout(() => {
+			this.autoReloadTimer = undefined;
+			if (this.session.isStreaming || this.session.isCompacting) {
+				// Defer until the current turn is idle; retry shortly.
+				this.autoReloadPending = true;
+				this.scheduleAutoReload();
+				return;
+			}
+			this.autoReloadPending = false;
+			void this.handleReloadCommand({ auto: true }).catch(() => {});
+		}, 1200);
+	}
+
+	private async handleReloadCommand(options: { auto?: boolean } = {}): Promise<void> {
+		const auto = options.auto ?? false;
 		if (this.session.isStreaming) {
+			if (auto) {
+				this.autoReloadPending = true;
+				return;
+			}
 			this.showWarning("Wait for the current response to finish before reloading.");
 			return;
 		}
 		if (this.session.isCompacting) {
+			if (auto) {
+				this.autoReloadPending = true;
+				return;
+			}
 			this.showWarning("Wait for compaction to finish before reloading.");
 			return;
 		}
@@ -6556,13 +6690,18 @@ export class InteractiveMode {
 		reloadBox.addChild(new DynamicBorder(borderColor));
 
 		const previousEditor = this.editor;
-		this.editorContainer.clear();
-		this.editorContainer.addChild(reloadBox);
-		this.ui.setFocus(reloadBox);
-		this.ui.requestRender(true);
-		await new Promise((resolve) => process.nextTick(resolve));
+		if (!auto) {
+			this.editorContainer.clear();
+			this.editorContainer.addChild(reloadBox);
+			this.ui.setFocus(reloadBox);
+			this.ui.requestRender(true);
+			await new Promise((resolve) => process.nextTick(resolve));
+		}
 
 		const dismissReloadBox = (editor: Component) => {
+			if (auto) {
+				return;
+			}
 			this.editorContainer.clear();
 			this.editorContainer.addChild(editor);
 			this.ui.setFocus(editor);
@@ -6605,12 +6744,16 @@ export class InteractiveMode {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
 			this.showStatus(
-				savedImplicitProjectTrust
-					? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
-					: "Reloaded keybindings, extensions, skills, prompts, themes, and context files",
+				auto
+					? "Auto-reloaded after file change (extensions, skills, prompts, themes, keybindings)"
+					: savedImplicitProjectTrust
+						? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
+						: "Reloaded keybindings, extensions, skills, prompts, themes, and context files",
 			);
 			dismissReloadBox(this.editor as Component);
 			reloadBoxDismissed = true;
+			// Re-arm the watcher to pick up new resource dirs or a toggled setting.
+			this.startAutoReloadWatcher();
 		} catch (error) {
 			if (!reloadBoxDismissed) {
 				dismissReloadBox(previousEditor as Component);

@@ -6,6 +6,7 @@ export const SETTINGS_DEFAULTS = {
 	sessionShareDestination: "auto",
 	steeringMode: "one-at-a-time",
 	followUpMode: "one-at-a-time",
+	interruptDebounceMs: 4000,
 	compaction: {
 		enabled: true,
 		reserveTokens: 16384,
@@ -32,6 +33,7 @@ export const SETTINGS_DEFAULTS = {
 	enableInstallTelemetry: true,
 	enableAnalytics: false,
 	enableSkillCommands: true,
+	autoReload: true,
 	terminal: {
 		showImages: true,
 		imageWidthCells: 60,
