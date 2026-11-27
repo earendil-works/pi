@@ -115,22 +115,37 @@ export const stream: StreamFunction<"google-interactions", GoogleInteractionsOpt
 
 			const response = await retryProviderRequest(
 				async () => {
-					const signal =
-						options?.timeoutMs !== undefined
-							? options.signal
-								? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)])
-								: AbortSignal.timeout(options.timeoutMs)
-							: options?.signal;
-					const res = await (options?.fetch ?? globalThis.fetch)(url, {
-						method: "POST",
-						headers: providerHeadersToRecord(
-							getIdentityHeaders(model, options?.identity),
-							{ accept: "text/event-stream", "content-type": "application/json" },
-							options?.headers,
-						),
-						body: JSON.stringify(payload),
-						signal,
-					});
+					// `timeoutMs` covers only the wait for the response headers, as in the other APIs: turns can stream for
+					// many minutes, and stalls in the body are left to the HTTP client's idle timeout. The caller's signal
+					// stays attached so an abort still stops the stream.
+					const timeoutMs = options?.timeoutMs;
+					const headerTimeout = new AbortController();
+					const timer =
+						timeoutMs !== undefined && timeoutMs > 0
+							? setTimeout(
+									() =>
+										headerTimeout.abort(new Error(`Google response headers timed out after ${timeoutMs}ms`)),
+									timeoutMs,
+								)
+							: undefined;
+					const signal = options?.signal
+						? AbortSignal.any([options.signal, headerTimeout.signal])
+						: headerTimeout.signal;
+					let res: Response;
+					try {
+						res = await (options?.fetch ?? globalThis.fetch)(url, {
+							method: "POST",
+							headers: providerHeadersToRecord(
+								getIdentityHeaders(model, options?.identity),
+								{ accept: "text/event-stream", "content-type": "application/json" },
+								options?.headers,
+							),
+							body: JSON.stringify(payload),
+							signal,
+						});
+					} finally {
+						clearTimeout(timer);
+					}
 					await options?.onResponse?.({ status: res.status, headers: headersToRecord(res.headers) }, model);
 					if (!res.ok) {
 						const { status, headers } = res;
