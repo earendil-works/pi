@@ -23,10 +23,10 @@ type Mutation = { readonly name: string; readonly file: string; readonly find: s
 const MUTATIONS: readonly Mutation[] = [
 	// ---- push B: the owner, Me, the invite route ----
 	{
-		name: "the owner link follows no handover",
+		name: "the machine's owner is the first owner by key",
 		file: "store.ts",
-		find: "const owner = mine?.owner === true ? mine :",
-		put: "const owner = mine !== undefined ? mine :",
+		find: "const [owner] = marked === undefined ? [] : (await q.persons.one.page({ person: marked }, 1, ctx)).items;",
+		put: "const [owner] = (await q.persons.owners.page({}, 1, ctx)).items;",
 	},
 	{
 		name: "Me reads no owner flag",
@@ -37,7 +37,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "OwnerAccess answers anyone about anyone",
 		file: "me.ts",
-		find: 'if (asker !== "server" && !asker.startsWith("worker:") && asker !== caller) {',
+		find: 'if (principal.kind === "person" && callerKey(principal) !== caller) {',
 		put: "if (false) {",
 	},
 	{
@@ -968,7 +968,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a link's secret is not checked",
 		file: "invites.ts",
-		find: "if (row === undefined || !matchesHash(link.slice(dot + 1), row.hash)) return null;",
+		find: "if (row === undefined || !matchesHash(link.slice(invite.length + 1), row.hash)) return null;",
 		put: "if (row === undefined) return null;",
 	},
 	{

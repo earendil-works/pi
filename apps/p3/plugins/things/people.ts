@@ -180,16 +180,18 @@ export class PeopleWrites {
 		this.#t = t;
 	}
 
-	/** Makes a person (no owner flag), made by `madeBy`; answers their id. */
-	async createPerson(tx: Tx, { name, madeBy }: { name: string; madeBy: Source }): Promise<string> {
-		const person = crypto.randomUUID();
+	/** Makes a person (no owner flag), made by `madeBy`, with id `person` (a new one if not given); answers it. */
+	async createPerson(
+		tx: Tx,
+		{ name, madeBy, person = crypto.randomUUID() }: { name: string; madeBy: Source; person?: string },
+	): Promise<string> {
 		tx.put(this.#t.persons, { person, name, owner: 0, madeBy, madeByKey: sourceKey(madeBy) });
 		return person;
 	}
 
 	/**
 	 * The owner's person, made once, at the store's first start, named after the machine's user `user` (capitalised;
-	 * "Owner" without one; people rename it), marked as the machine's owner (the owner link signs in as them).
+	 * "Owner" for an empty one; people rename it), marked as the machine's owner (the owner link signs in as them).
 	 */
 	async ensureOwner(tx: Tx, user: string): Promise<null> {
 		const owners = await this.#owners(tx, 1);

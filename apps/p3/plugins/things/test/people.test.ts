@@ -14,12 +14,18 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
+	admitOwner,
 	type Ctx,
+	constant,
 	BACKGROUND_CONTEXT as context,
 	createHost,
+	defineFacet,
+	num,
+	OwnerAdmission,
 	openStore,
 	type P3Principal,
 	type Reference,
+	remote,
 	Server,
 	sqliteBackend,
 	until,
@@ -111,7 +117,7 @@ describe("persons and the owner", () => {
 			owners.map(({ name, owner }) => [name, owner]),
 			[["Ann", true]],
 		);
-		assert.deepEqual(await store.ownerLink({}, context), { person: owners[0]!.person, name: "Ann" });
+		assert.deepEqual(await store.machineOwner({}, context), { person: owners[0]!.person, name: "Ann" });
 		// A start on the same disk (a copy of the committed file, opened by a host of its own) makes no second one.
 		const copy = `${w.path}.copy`;
 		const database = new DatabaseSync(w.path);
@@ -137,13 +143,58 @@ describe("persons and the owner", () => {
 		}
 	});
 
-	it("the owner link signs in as the machine's owner while they have the flag, else the first person with it", async () => {
-		const [first] = (await store.persons.owners.page({}, 1, context)).items;
-		await store.setOwner({ person: f.kim, owner: true }, context);
-		assert.equal((await store.ownerLink({}, context))?.person, first!.person);
-		// The flag handed over to Kim: the link signs in as her.
+	it("the machine's owner is the marked person, never the first owner by key, also after a handover (Opus S1, S2)", async () => {
+		const [marked] = (await store.persons.owners.page({}, 1, context)).items;
+		// Other owners until one sorts before the marked person: the index's first owner is someone else.
+		for (let i = 0; (await store.persons.owners.page({}, 1, context)).items[0]!.person === marked!.person; i++) {
+			const other = await store.createPerson({ name: `Owner ${i}`, madeBy: ADMIN }, context);
+			await store.setOwner({ person: other, owner: true }, context);
+		}
+		assert.equal((await store.machineOwner({}, context)).person, marked!.person);
+		// The flag handed over: the machine's user is still themself.
+		await store.setOwner({ person: marked!.person, owner: false }, context);
+		assert.equal((await store.machineOwner({}, context)).person, marked!.person);
+	});
+
+	it("a Pi from before push B: the owner the people plugin handed over stays the machine's owner (decision 125)", async () => {
+		// Push A's state: the adopted owner (made by the people plugin, the same id as there) has the flag and the mark,
+		// the first start's person is gone, and an owner sorts before the adopted one.
+		const people: Source = { kind: "plugin", plugin: "@earendil-works/p3-people" };
+		const adopted = await store.createPerson({ name: "Badlogic", madeBy: people }, context);
+		await store.setOwner({ person: adopted, owner: true }, context);
+		const [first] = (await store.persons.owners.page({}, 10, context)).items.filter(({ name }) => name === "Ann");
 		await store.setOwner({ person: first!.person, owner: false }, context);
-		assert.equal((await store.ownerLink({}, context))?.person, f.kim);
+		await store.removePerson({ person: first!.person }, context);
+		for (let i = 0; (await store.persons.owners.page({}, 1, context)).items[0]!.person === adopted; i++) {
+			const other = await store.createPerson({ name: `Owner ${i}`, madeBy: ADMIN }, context);
+			await store.setOwner({ person: other, owner: true }, context);
+		}
+		const owners = (await store.persons.owners.page({}, 100, context)).items.map(({ person: id }) => id);
+		const copy = `${w.path}.copy`;
+		const database = new DatabaseSync(w.path);
+		database.prepare(`UPDATE "things.store:things.owner-adopted" SET person = ? WHERE bridge = 'owner'`).run(adopted);
+		database.prepare("VACUUM INTO ?").run(copy);
+		database.close();
+		const reopened = await openStore(sqliteBackend(new NodeSqliteDatabase(new DatabaseSync(copy))), context);
+		const host = createHost<P3Principal>({
+			address: Server(),
+			principal: { kind: "server" },
+			store: reopened,
+			onError: (error) => assert.fail(`host error ${error.kind}`),
+		});
+		try {
+			await host.load([THINGS, RUNTIME], context);
+			const again = await host.get(ThingsStore, {}, context);
+			assert.deepEqual(await again.machineOwner({}, context), { person: adopted, name: "Badlogic" });
+			// No second first start: the owners are as they were.
+			assert.deepEqual(
+				(await again.persons.owners.page({}, 100, context)).items.map(({ person: id }) => id),
+				owners,
+			);
+		} finally {
+			await host.close(context);
+			await reopened.close(context);
+		}
 	});
 
 	it("Me says who the caller is, live; an agent is itself; OwnerAccess follows the owner flag", async () => {
@@ -188,6 +239,52 @@ describe("persons and the owner", () => {
 		);
 		assert.deepEqual(signIns.revoked, [id]);
 		assert.deepEqual(w.rows("sign-outs"), []);
+	});
+});
+
+describe("the owners' admission (admitOwner)", () => {
+	/** An object for the owners only, as backup's, providers' and environments' are. */
+	const OwnersOnly = remote("test.owners-only", {
+		version: 1,
+		params: {},
+		hostAddress: () => Server(),
+		admission: OwnerAdmission,
+		state: { n: num() },
+	});
+	const ownersOnly = {
+		name: "test.owners-only",
+		facet: defineFacet((host) => host.serve(OwnersOnly, () => ({ n: constant(1) }), { admit: admitOwner })),
+	};
+
+	it("admits the new owner after a handover and lets the old one go, live (Opus S3)", async () => {
+		const at = await world(context, [ownersOnly]);
+		try {
+			const things = await at.host.get(ThingsStore, {}, context);
+			const [first] = (await things.persons.owners.page({}, 1, context)).items;
+			const kim = await things.createPerson({ name: "Kim", madeBy: ADMIN }, context);
+			await at.host.root(
+				async (ctx) => {
+					const held = await ctx.get(OwnersOnly, {});
+					assert.equal(held.n.value, 1);
+					await things.setOwner({ person: kim, owner: true }, context);
+					await things.setOwner({ person: first!.person, owner: false }, context);
+					await until(held.state, (state) => state.kind !== "live", within("the old owner let go", ctx));
+				},
+				context,
+				{ principal: principal(first!.person) },
+			);
+			const n = await at.host.root(async (ctx) => (await ctx.get(OwnersOnly, {})).n.value, context, {
+				principal: principal(kim),
+			});
+			assert.equal(n, 1);
+			await assert.rejects(
+				at.host.root((ctx) => ctx.get(OwnersOnly, {}, { readyTimeout: 1000 }), context, {
+					principal: principal(first!.person),
+				}),
+			);
+		} finally {
+			await at.close(context);
+		}
 	});
 });
 

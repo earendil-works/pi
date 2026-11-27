@@ -73,7 +73,7 @@ export class Cleanup {
 			if (owner === 0) made.push(person);
 		}
 		if (made.length === 0) return;
-		const left = await this.somethingLeftOf(tx, made, touched.retiring);
+		const left = await this.#somethingLeftOf(tx, made, touched.retiring);
 		// Nothing else names them: only their row and what hangs off it go (no read needed for the rest).
 		for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);
 	}
@@ -135,7 +135,7 @@ export class Cleanup {
 	 * things themselves). A transaction's reads see the committed rows, not its own deletes, so those are left out by
 	 * what they are. Seven reads for all of them (each an index search, IN).
 	 */
-	async somethingLeftOf(tx: Tx, persons: readonly string[], retiring: Retiring): Promise<ReadonlySet<string>> {
+	async #somethingLeftOf(tx: Tx, persons: readonly string[], retiring: Retiring): Promise<ReadonlySet<string>> {
 		const t = this.#t;
 		const parties = persons.map((person) => partyKey({ kind: "person", person }));
 		const owns = persons.map((person) => sourceKey({ kind: "person", person }));

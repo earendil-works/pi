@@ -1,10 +1,8 @@
 // The invite link's route end to end (`testServer`, with the tests' probe saying what a cookie signs in as): a link
 // from `Workspace.inviteLink` signs an anonymous browser in as the person it makes, as a member or a guest, once; a
-// browser signed in already is put in as itself and keeps its sign-in; removing the person ends their sign-ins. And
-// the owner's person: made at the first start, named after the machine's user, once also after a restart.
+// browser signed in already is put in as itself and keeps its sign-in; removing the person ends their sign-ins.
 
 import assert from "node:assert/strict";
-import { userInfo } from "node:os";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -116,30 +114,5 @@ describe("an invite link", () => {
 		await things((store, ctx) => store.removePerson({ person: ann.id }, ctx));
 		await until(me.state, (state) => state.kind !== "live", within("her link closed", context));
 		assert.equal(await principalOf(cookie), undefined);
-	});
-});
-
-describe("the owner's person", () => {
-	it("is made at the first start, named after the machine's user, once also after a restart; Me says so", async () => {
-		const first = await testServer({}, context);
-		let t = first;
-		try {
-			const owners = async () =>
-				(
-					await t.host.root(
-						async (ctx) => (await ctx.get(ThingsStore, {})).persons.owners.page({}, 10, ctx),
-						context,
-					)
-				).items;
-			const [before] = await owners();
-			const user = userInfo().username;
-			assert.equal(before?.name, `${user[0]!.toUpperCase()}${user.slice(1)}`);
-			const me = (await (await t.client(context)).get(Me, {}, context)).me.value;
-			assert.deepEqual(me, { kind: "person", id: before!.person, name: before!.name, owner: true });
-			t = await first.restart(context);
-			assert.deepEqual(await owners(), [before]);
-		} finally {
-			await t.close(context);
-		}
 	});
 });

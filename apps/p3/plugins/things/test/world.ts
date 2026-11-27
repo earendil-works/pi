@@ -31,20 +31,17 @@ import { BOARD } from "./kinds.ts";
 /** The things plugin as a host loads it. */
 export const THINGS: PluginFacet<P3Principal> = { name: "@earendil-works/p3-things", facet: thingsServer };
 
-/** The machine's user, as the tests' `ServerRuntime` says (it names the owner's person at the first start). */
-export const MACHINE_USER = "ann";
-
 /**
- * The base's `ServerRuntime` as far as the things plugin reads it (the machine's user), which a test host serves in
- * the base's place (as `p3.server`, the base's name: `world` loads it unless `more` brings a `p3.server` of its own);
- * loaded beside `THINGS`.
+ * The base's `ServerRuntime` as far as the things plugin reads it (the machine's user, "ann": it names the owner's
+ * person at the first start), which a test host serves in the base's place (as `p3.server`, the base's name: `world`
+ * loads it unless `more` brings a `p3.server` of its own); loaded beside `THINGS`.
  */
 export const RUNTIME: PluginFacet<P3Principal> = {
 	name: "p3.server",
 	facet: defineFacet((host) =>
 		host.serve(ServerRuntime, {
 			// The things plugin reads its machine only.
-			compose: () => ({ machine: { user: MACHINE_USER, hostname: "test" } }) as unknown as ServerRuntime,
+			compose: () => ({ machine: { user: "ann", hostname: "test" } }) as unknown as ServerRuntime,
 		}),
 	),
 };
@@ -146,9 +143,16 @@ export function signInsStub(): {
 	readonly revoked: string[];
 	/** While true, `revoke` throws (a sign-in plugin that fails). */
 	failing: boolean;
+	/** While true, `issue` throws before it issues anything (a signer that is down). */
+	failingIssue: boolean;
 } {
 	const revoked: string[] = [];
-	const stub = { plugin: undefined as unknown as PluginFacet<P3Principal>, revoked, failing: false };
+	const stub = {
+		plugin: undefined as unknown as PluginFacet<P3Principal>,
+		revoked,
+		failing: false,
+		failingIssue: false,
+	};
 	const plugin: PluginFacet<P3Principal> = {
 		name: "test.sign-in",
 		facet: defineFacet((host) =>
@@ -157,6 +161,7 @@ export function signInsStub(): {
 				return {
 					list: self.derive([list], ([value]) => value),
 					issue: async ({ principal, label }) => {
+						if (stub.failingIssue) throw new Error("the signer is down");
 						const id = crypto.randomUUID();
 						const signIn: SignIn = { id, label, kind: "browser", principal, created: 0, lastUsed: 0 };
 						list.set([...list.value, signIn]);

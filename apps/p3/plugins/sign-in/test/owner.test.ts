@@ -2,12 +2,14 @@
 // data directory's socket); single use, 10 minutes, the previous one dropped; its page reads the fragment; its post
 // refuses anything but the current token, malformed bodies included, and signs a browser in as the owner. The plugin
 // tier for what needs no listener, the real server (`testServer`) for the rest; the probe's route
-// (`GET /_probe/principal`) says what a cookie signs in as.
+// (`GET /_probe/principal`) says what a cookie signs in as. And the owner's person: made at the first start, named after
+// the machine's user, once also after a restart.
 
 import assert from "node:assert/strict";
+import { userInfo } from "node:os";
 import { afterEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, type P3Principal } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, Me, type P3Principal } from "@earendil-works/p3/v1";
 import { ServerCommands, ThingsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
 import { SignIns } from "../contract.ts";
@@ -136,6 +138,31 @@ describe("the owner link", () => {
 		try {
 			const command = (await t.host.registry(ServerCommands, context)).value.get("owner-link");
 			await assert.rejects(command!.run(context), /does not listen/);
+		} finally {
+			await t.close(context);
+		}
+	});
+});
+
+describe("the owner's person", () => {
+	it("is made at the first start, named after the machine's user, once also after a restart; Me says so", async () => {
+		const first = await testServer({}, context);
+		let t = first;
+		try {
+			const owners = async () =>
+				(
+					await t.host.root(
+						async (ctx) => (await ctx.get(ThingsStore, {})).persons.owners.page({}, 10, ctx),
+						context,
+					)
+				).items;
+			const [before] = await owners();
+			const user = userInfo().username;
+			assert.equal(before?.name, `${user[0]!.toUpperCase()}${user.slice(1)}`);
+			const me = (await (await t.client(context)).get(Me, {}, context)).me.value;
+			assert.deepEqual(me, { kind: "person", id: before!.person, name: before!.name, owner: true });
+			t = await first.restart(context);
+			assert.deepEqual(await owners(), [before]);
 		} finally {
 			await t.close(context);
 		}

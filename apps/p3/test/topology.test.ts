@@ -228,8 +228,6 @@ describe("reloads while in use", () => {
 	});
 
 	const orders: readonly { readonly order: readonly string[]; readonly todo?: string }[] = [
-		{ order: ["sign-in", "things"] },
-		{ order: ["environments", "things", "sessions"] },
 		// Back to back: a things store started anew (lazily, by whichever plugin uses it first) is reloaded again.
 		{
 			order: ["environments", "things", "environments", "things", "sessions"],

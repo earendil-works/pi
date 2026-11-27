@@ -24,9 +24,8 @@ export function serveMe(host: FacetHost<P3Principal>): void {
 		return { me };
 	});
 	host.serve(OwnerAccess, ({ caller }, principal, self) => {
-		// The server and workers ask about anyone, anyone else about themselves only.
-		const asker = callerKey(principal);
-		if (asker !== "server" && !asker.startsWith("worker:") && asker !== caller) {
+		// The server and workers ask about anyone, a person about themself only.
+		if (principal.kind === "person" && callerKey(principal) !== caller) {
 			throw forbidden("things: an answer about the caller only");
 		}
 		const who = callerOfKey(caller);

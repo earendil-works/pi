@@ -51,7 +51,7 @@ import {
 	type Source,
 	sourceKey,
 } from "./contract.ts";
-import { anyExpired, InviteWrites } from "./invites.ts";
+import { anyExpired, InviteWrites, type Redeemer } from "./invites.ts";
 import { type DefaultGrants, type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
@@ -506,12 +506,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
-			ownerLink: async (_args, ctx) => {
+			machineOwner: async (_args, ctx) => {
 				const marked = (await t.marks.get({ bridge: "owner" }, ctx))?.person;
-				const [mine] = marked === undefined ? [] : (await q.persons.one.page({ person: marked }, 1, ctx)).items;
-				// A handover took the flag from the machine's owner (or they went): the first person with it.
-				const owner = mine?.owner === true ? mine : (await q.persons.owners.page({}, 1, ctx)).items[0];
-				return owner === undefined ? null : { person: owner.person, name: owner.name };
+				const [owner] = marked === undefined ? [] : (await q.persons.one.page({ person: marked }, 1, ctx)).items;
+				if (owner === undefined) throw invalid("args", "things: the machine's owner is gone");
+				return { person: owner.person, name: owner.name };
 			},
 			picker: async ({ workspace, caller, query: text }, ctx) => {
 				const at = workspace === undefined ? {} : { workspace };
@@ -523,13 +522,21 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return offers(q, (...args) => index!.offered(...args), { ...at, caller, party }, ctx);
 			},
 			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
-			redeemInvite: ({ secret, person }, ctx) =>
+			invitation: async ({ secret }, ctx) => invites.invitation(secret, ctx),
+			redeemInvite: ({ secret, person, newPerson }, ctx) => {
+				if (person !== undefined && newPerson !== undefined)
+					throw invalid("args", "things: a link is redeemed for a person or a new one, not both");
+				const redeemer: Redeemer =
+					person !== undefined
+						? { kind: "person", person }
+						: { kind: "new", ...(newPerson === undefined ? {} : { person: newPerson }) };
 				// The link's maker still has Manage people where it points (checked with the write; the group's own tick
 				// is checked in it).
-				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx, {
+				return write((tx, touched) => invites.redeem(tx, touched, secret, redeemer), ctx, {
 					allowed: (asks) => invites.makerMay(secret, asks, ctx),
 					refused: () => null,
-				}),
+				});
+			},
 			deleteEverythingFrom: ({ source }, ctx) =>
 				write((tx, touched) => cleanup.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
 		};
