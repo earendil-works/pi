@@ -10,8 +10,9 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, syml
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-// Left out as equivalent (no test can see it): a removed group's members not told. Every entry and grant naming the
-// group goes in the same commit, so a person's stale membership in it names a party present nowhere.
+// Left out as equivalent (no test can see it): a removed group's members not told (every entry and grant naming the
+// group goes in the same commit, so a person's stale membership in it names a party present nowhere); and
+// `ensureOwner`'s own check (the store's start reads the owners first and opens a transaction only without one).
 
 /** One bug: in `file` (of the plugin), the text to find (exactly once) and what to put there instead. */
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
@@ -906,12 +907,6 @@ const MUTATIONS: readonly Mutation[] = [
 		name: "the start does not end the sign-outs left over",
 		file: "store.ts",
 		find: "if (left.length > 0) void signOut(left, ctx);",
-		put: "",
-	},
-	{
-		name: "every start makes another owner",
-		file: "people.ts",
-		find: "if (owners.items.length > 0) return null;",
 		put: "",
 	},
 ];

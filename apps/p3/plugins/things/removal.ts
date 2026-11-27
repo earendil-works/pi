@@ -90,14 +90,14 @@ export class Removal {
 		const ctx =
 			this.#serving ?? (await Promise.race([this.#live.promise, untilAborted(routine).then(() => undefined)]));
 		if (ctx === undefined) return;
-		const { removing, gone } = await this.#store.read(async (tx) => {
-			const removing = [];
-			const gone = [];
-			// Whole tables: the removals and tellings due are few rows, read at the start and when the hooks change.
-			for await (const row of tx.rows(this.#store.removing, query(Removing))) removing.push(row);
-			for await (const row of tx.rows(this.#store.gone, query(Gone))) gone.push(row);
-			return { removing, gone };
-		}, ctx);
+		const removing = [];
+		const gone = [];
+		// Whole tables, outside a transaction: a store started lazily and reloaded at once (its start cut short) leaves
+		// no transaction cancelled (back into one when Chord stops reporting a transaction its own object's end
+		// cancels: the main session's Chord issue, core2). The removals and tellings due are few rows, read at the start and when the hooks
+		// change.
+		for await (const row of this.#store.removing.rows(query(Removing), ctx)) removing.push(row);
+		for await (const row of this.#store.gone.rows(query(Gone), ctx)) gone.push(row);
 		for (const { workspace, pathText } of removing)
 			this.#start(`remove ${workspace}`, () => this.#clear(workspace, pathText));
 		for (const { workspace } of gone) this.tell(workspace);
