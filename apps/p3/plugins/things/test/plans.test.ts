@@ -4,11 +4,13 @@
 // index too. Some reads are whole-table scans on purpose: the pending deletes (`things.pending`), removals
 // (`things.removing`) and gone workspaces (`things.gone`), few rows each, read at the start and when the kinds' hooks
 // change, and the sign-outs still to end (`things.sign-outs`), read at the start. The test opens the store on a SQLite
-// database of its own and records the statements Chord prepares.
+// database of its own and records the statements Chord prepares. The cleanup of a share (test 8) reads as much for 50
+// guests as for 5, in one commit.
 
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it } from "node:test";
+import { withTelemetry } from "@earendil-works/chord/context";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
 	BACKGROUND_CONTEXT as context,
@@ -18,6 +20,7 @@ import {
 	Server,
 	sqliteBackend,
 } from "@earendil-works/p3/v1";
+import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
 import { eventually } from "../../../test/until.ts";
 import { ThingsStore } from "../contract.server.ts";
 import type { Source } from "../contract.ts";
@@ -27,31 +30,44 @@ import { THINGS } from "./world.ts";
 /** A query's pages, read once each. */
 type Read = () => Promise<unknown>;
 
+/**
+ * A SQLite database in memory whose reads of the things store's tables are recorded: the statements since the last
+ * `reads.clear()`, every one since the start (`ever`), and how many ran (`runs.count`).
+ */
+function recorded() {
+	const database = new DatabaseSync(":memory:");
+	const prepare = database.prepare.bind(database);
+	const reads = new Set<string>();
+	const ever = new Set<string>();
+	const runs = { count: 0 };
+	database.prepare = (sql) => {
+		const statement = prepare(sql);
+		if (!sql.startsWith("SELECT ") || !sql.includes("things.store:")) return statement;
+		const all = statement.all.bind(statement);
+		const iterate = statement.iterate.bind(statement);
+		const ran = () => {
+			reads.add(sql);
+			ever.add(sql);
+			runs.count++;
+		};
+		// Chord passes positional parameters only.
+		const listed = (...parameters: SQLInputValue[]) => {
+			ran();
+			return all(...parameters);
+		};
+		const iterated = (...parameters: SQLInputValue[]) => {
+			ran();
+			return iterate(...parameters);
+		};
+		return Object.assign(statement, { all: listed, iterate: iterated });
+	};
+	return { database, prepare, reads, ever, runs };
+}
+
 describe("the plans of the things store's queries", () => {
 	it("search their index or the key, and never sort", async () => {
-		const database = new DatabaseSync(":memory:");
-		const prepare = database.prepare.bind(database);
-		const reads = new Set<string>();
-		// Every statement read since the start, the pending deletes' scan among them.
-		const ever = new Set<string>();
-		database.prepare = (sql) => {
-			const statement = prepare(sql);
-			if (!sql.startsWith("SELECT ") || !sql.includes("things.store:")) return statement;
-			const all = statement.all.bind(statement);
-			const iterate = statement.iterate.bind(statement);
-			// Chord passes positional parameters only.
-			const recorded = (...parameters: SQLInputValue[]) => {
-				reads.add(sql);
-				ever.add(sql);
-				return all(...parameters);
-			};
-			const iterated = (...parameters: SQLInputValue[]) => {
-				reads.add(sql);
-				ever.add(sql);
-				return iterate(...parameters);
-			};
-			return Object.assign(statement, { all: recorded, iterate: iterated });
-		};
+		// Every statement read since the start (`ever`), the pending deletes' scan among them.
+		const { database, prepare, reads, ever } = recorded();
 		const store = await openStore(sqliteBackend(new NodeSqliteDatabase(database)), context);
 		const host = createHost<P3Principal>({
 			address: Server(),
@@ -236,6 +252,57 @@ describe("the plans of the things store's queries", () => {
 				scans.length > 0 && scans.every((sql) => whole.some((table) => sql.includes(table))),
 				scans.join(" | "),
 			);
+		} finally {
+			await host.close(context);
+			await store.close(context);
+		}
+	});
+
+	it("the cleanup of a share reads as much for 50 guests as for 5, in one commit (test 8)", async () => {
+		const { database, runs } = recorded();
+		const store = await openStore(sqliteBackend(new NodeSqliteDatabase(database)), context);
+		const host = createHost<P3Principal>({
+			address: Server(),
+			principal: { kind: "server" },
+			store,
+			onError: (e) => assert.fail(e.kind),
+		});
+		try {
+			await host.load([THINGS, BOARD], context);
+			const things = await host.get(ThingsStore, {}, context);
+			const pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+			/** A share with `guests` guests in its group, put into Pi, removed: its reads, commits and statements. */
+			const cleanup = async (guests: number) => {
+				const share: Source = { kind: "thing", thing: `share-${guests}` };
+				const managedBy = { kind: "thing", thing: share.thing } as const;
+				const group = await things.makeGroup({ name: "guests", managedBy, outside: true }, context);
+				await things.putParty({ workspace: pi, party: { kind: "group", group }, source: share }, context);
+				for (let i = 0; i < guests; i++) {
+					const person = await things.createPerson({ name: `guest ${i}`, madeBy: share }, context);
+					await things.addToGroup({ group, person, source: share }, context);
+				}
+				const telemetry = new InMemoryTelemetryContext();
+				const counted = (name: string) =>
+					telemetry
+						.getMetrics()
+						.filter((metric) => metric.name === name)
+						.reduce((sum, metric) => sum + metric.value, 0);
+				const before = runs.count;
+				await telemetry.startSpan({ name: "test.cleanup" }, (span) =>
+					things.deleteEverythingFrom({ source: share }, withTelemetry(span, context)),
+				);
+				return {
+					reads: runs.count - before,
+					commits: counted("chord.store.commits"),
+					statements: counted("chord.store.statements"),
+				};
+			};
+			const few = await cleanup(5);
+			const many = await cleanup(50);
+			assert.equal(many.reads, few.reads, "reads per guest");
+			assert.deepEqual([few.commits, many.commits], [1, 1]);
+			// Four writes per guest that goes (their row, their sign-out, the switches and the links naming them), no read.
+			assert.ok(many.statements - few.statements <= 45 * 4, `${few.statements} and ${many.statements} statements`);
 		} finally {
 			await host.close(context);
 			await store.close(context);

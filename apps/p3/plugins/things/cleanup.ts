@@ -1,7 +1,8 @@
 // The cleanup when a source goes (one policy, people.md §7), in the commit of the write that removes it: what the
 // source wrote, the groups it manages with all that names them, and the persons it made of whom nothing is left
-// (their sign-ins end right after the commit); a person's and a group's removal. A transaction reads the committed
-// rows, never its own deletes: what the cleanup leaves of a person is read with that in mind (`somethingLeftOf`).
+// (their sign-ins end right after the commit); a person's, a group's and a removed workspace's own. A transaction
+// reads the committed rows, never its own deletes: which persons go is decided once at the write's end (`settle`),
+// with everything the write retires (`Retiring`: sources, things, groups, workspaces) counted as gone.
 
 import {
 	type ColumnRefs,
@@ -18,9 +19,9 @@ import {
 	type Tx,
 } from "@earendil-works/p3/v1";
 import type { Touched } from "./access.ts";
-import { partyKey, sourceKey } from "./contract.ts";
+import { managedByKey, partyKey, sourceKey } from "./contract.ts";
 import { GroupManagers, GroupMembers, Groups, Persons } from "./people.ts";
-import { type Changes, Grants, Switches, type Tables, Things, WorkspaceMembers } from "./tables.ts";
+import { type Changes, Grants, type Retiring, Switches, type Tables, Things, WorkspaceMembers } from "./tables.ts";
 
 /** The cleanup's writes inside a store transaction: each says what it touched; none checks a caller. */
 export class Cleanup {
@@ -33,7 +34,8 @@ export class Cleanup {
 	/**
 	 * The cleanup when a source goes (one policy, one commit): (1) what the source with key `key` wrote (grants, group
 	 * members, workspace members); (2) the groups it manages, with all that names them, whoever wrote it; (3) the
-	 * persons it made of whom nothing is left after that (their sign-ins end after the commit).
+	 * persons it made of whom nothing is left, decided at the write's end (`settle`: their sign-ins end after the
+	 * commit).
 	 */
 	async deleteEverythingFrom(tx: Tx, touched: Changes, key: string): Promise<null> {
 		const t = this.#t;
@@ -49,33 +51,60 @@ export class Cleanup {
 		);
 		// The source's invite links go with it: none may make a person for a source that is gone.
 		tx.deleteWhere(t.invites, (r) => eq(r.byKey, key));
+		await this.#removeManaged(tx, touched, key);
+		// Members and groups went: who is where may have changed in every workspace it touched.
+		for (const workspace of touched.workspaces) touched.presence.add(workspace);
+		touched.retiring.sources.add(key);
+		return null;
+	}
+
+	/**
+	 * Step 3 of the cleanup, once at the end of a write: of the persons the sources it retired made, those of whom
+	 * nothing is left once it commits go (their sign-ins end after the commit). Decided last, so what the write retires
+	 * after a source (a second thing of a cleared workspace, its Guests group) counts as gone too.
+	 */
+	async settle(tx: Tx, touched: Changes): Promise<void> {
+		const { sources } = touched.retiring;
+		if (sources.size === 0) return;
+		const made = [];
+		for await (const { person, owner } of rowsNaming(tx, this.#t.persons, Persons, (p) => p.madeByKey, [
+			...sources,
+		])) {
+			if (owner === 0) made.push(person);
+		}
+		if (made.length === 0) return;
+		const left = await this.somethingLeftOf(tx, made, touched.retiring);
+		// Nothing else names them: only their row and what hangs off it go (no read needed for the rest).
+		for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);
+	}
+
+	/**
+	 * What goes with removed workspace `workspace` of what it manages: its own groups (its Guests group, with their
+	 * memberships and every row naming them) and its invite links; what is written there counts as gone for the
+	 * write's cleanup.
+	 */
+	async retireWorkspace(tx: Tx, touched: Changes, workspace: string): Promise<void> {
+		tx.deleteWhere(this.#t.invites, (r) => eq(r.workspace, workspace));
+		await this.#removeManaged(tx, touched, managedByKey({ kind: "workspace", workspace }));
+		touched.retiring.workspaces.add(workspace);
+	}
+
+	/** Removes every group the source or workspace with key `key` manages (index `by_manager`). */
+	async #removeManaged(tx: Tx, touched: Changes, key: string): Promise<void> {
 		const managed = [];
 		for await (const { group } of tx.rows(
-			t.groups,
+			this.#t.groups,
 			query(Groups).where((g) => eq(g.managedByKey, key)),
 		)) {
 			managed.push(group);
 		}
 		for (const group of managed) await this.removeGroup(tx, touched, group);
-		// Members and groups went: who is where may have changed in every workspace it touched.
-		for (const workspace of touched.workspaces) touched.presence.add(workspace);
-		const made = [];
-		for await (const { person, owner } of tx.rows(
-			t.persons,
-			query(Persons).where((p) => eq(p.madeByKey, key)),
-		)) {
-			if (owner === 0) made.push(person);
-		}
-		if (made.length === 0) return null;
-		const left = await this.somethingLeftOf(tx, made, key, new Set(managed));
-		// Nothing else names them: only their row and what hangs off it go (no read needed for the rest).
-		for (const person of made) if (!left.has(person)) this.#forget(tx, touched, person);
-		return null;
 	}
 
 	/** Removes `group`: its members, its managers, every workspace entry and grant naming it, its row. */
-	async removeGroup(tx: Tx, touched: Touched, group: string): Promise<null> {
+	async removeGroup(tx: Tx, touched: Changes, group: string): Promise<null> {
 		const t = this.#t;
+		touched.retiring.groups.add(group);
 		await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.group, group), touched.persons, "person");
 		await this.#unname(tx, touched, partyKey({ kind: "group", group }));
 		// Its own managers, and its rows as a manager of other groups; links that would put people into it.
@@ -100,27 +129,32 @@ export class Cleanup {
 	}
 
 	/**
-	 * Of `persons`, those of whom something is left once this cleanup of the source with key `key` commits: a
-	 * membership, entry, grant or manager row naming them or theirs, but the rows the cleanup deletes (the source's own,
-	 * and those of the groups it removes, `removed`). A transaction's reads see the committed rows, not its own deletes,
-	 * so those are left out by what they are. Seven reads for all of them (each an index search, IN).
+	 * Of `persons`, those of whom something is left once the write commits: a membership, entry, grant or manager row
+	 * naming them or theirs, or a person or thing they made, but the rows the write deletes (`retiring`: the rows of
+	 * the sources it retired, of the groups it removes, on the things it removes, in the workspaces it clears, and those
+	 * things themselves). A transaction's reads see the committed rows, not its own deletes, so those are left out by
+	 * what they are. Seven reads for all of them (each an index search, IN).
 	 */
-	async somethingLeftOf(
-		tx: Tx,
-		persons: readonly string[],
-		key: string,
-		removed: ReadonlySet<string>,
-	): Promise<ReadonlySet<string>> {
+	async somethingLeftOf(tx: Tx, persons: readonly string[], retiring: Retiring): Promise<ReadonlySet<string>> {
 		const t = this.#t;
 		const parties = persons.map((person) => partyKey({ kind: "person", person }));
 		const owns = persons.map((person) => sourceKey({ kind: "person", person }));
 		// Party and source keys of a person are the same text (`person/<id>`): one map back to the person.
 		const personOf = new Map(persons.map((person) => [partyKey({ kind: "person", person }), person]));
+		const { sources, things: retired, groups: removed, workspaces } = retiring;
 		const groups = new Set([...removed].map((group) => partyKey({ kind: "group", group })));
-		const gone = (row: { sourceKey: string; group?: string; partyKey?: string }) =>
-			row.sourceKey === key ||
+		const gone = (row: {
+			sourceKey: string;
+			group?: string;
+			partyKey?: string;
+			thing?: string;
+			workspace?: string;
+		}) =>
+			sources.has(row.sourceKey) ||
 			(row.group !== undefined && removed.has(row.group)) ||
-			(row.partyKey !== undefined && groups.has(row.partyKey));
+			(row.partyKey !== undefined && groups.has(row.partyKey)) ||
+			(row.thing !== undefined && retired.has(row.thing)) ||
+			(row.workspace !== undefined && workspaces.has(row.workspace));
 		const left = new Set<string>();
 		for await (const row of rowsNaming(tx, t.groupMembers, GroupMembers, (r) => r.person, persons)) {
 			if (!gone(row)) left.add(row.person);
@@ -139,14 +173,17 @@ export class Cleanup {
 		for await (const row of rowsNaming(tx, t.groupManagers, GroupManagers, (r) => r.partyKey, parties)) {
 			if (!removed.has(row.group)) left.add(personOf.get(row.partyKey)!);
 		}
-		// A person or thing they made names them as its maker: they stay (none of those goes in this commit).
-		// Index `by_maker` of things is (madeByKey, kind): the order follows it, so nothing sorts.
+		// A person or thing they made names them as its maker: they stay, unless the thing goes in this write (a person
+		// they made does not: they would be a source retired, and so not among these). Index `by_maker` of things is
+		// (madeByKey, kind): the order follows it, so nothing sorts.
 		const things = query(Things)
 			.where((r) => inArray(r.madeByKey, owns))
 			.orderBy((r) => r.madeByKey, "asc")
 			.orderBy((r) => r.kind, "asc");
-		const makers = [rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns), tx.rows(t.things, things)];
-		for (const rows of makers) for await (const row of rows) left.add(personOf.get(row.madeByKey)!);
+		for await (const row of rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns))
+			left.add(personOf.get(row.madeByKey)!);
+		for await (const row of tx.rows(t.things, things))
+			if (!retired.has(row.thing)) left.add(personOf.get(row.madeByKey)!);
 		return left;
 	}
 

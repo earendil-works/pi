@@ -20,6 +20,7 @@ import {
 	type Reference,
 	type Watchable,
 } from "@earendil-works/p3/v1";
+import { callerOf } from "./admission.ts";
 import { Gives, ThingsStore, type WorkspaceRow } from "./contract.server.ts";
 import type { Source } from "./contract.ts";
 import { ThingKinds, WORKSPACE_TICKS, type WorkspaceTick } from "./kind.ts";
@@ -106,9 +107,9 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 					await store.configure({ thing: configured, name, view, settings }, ctx);
 					return null;
 				},
-				// Manage people (ERNDL-1144): the picker, invite links, groups; a person names only whom it offers them.
-				picker: async ({ query }, ctx) =>
-					principal.kind === "person" ? store.picker({ workspace, person: principal.id, query }, ctx) : [],
+				// Manage people (ERNDL-1144): the picker, invite links, groups; a caller but the owner and server code names
+				// only whom the picker offers them (checked with the write, in the store).
+				picker: async ({ query }, ctx) => store.picker({ workspace, caller: callerOf(principal), query }, ctx),
 				inviteLink: async (args, ctx) => {
 					const secret = await store.createInvite({ ...args, workspace, by }, ctx);
 					// Its page is the base's invite route (the people plugin's until ERNDL-1144 push B moves it here).
@@ -124,18 +125,7 @@ export function serveWorkspace(host: FacetHost<P3Principal>): void {
 					return group;
 				},
 				putParty: async ({ party }, ctx) => {
-					// A person or group a person puts in must be one the picker offers them.
-					const named = party.kind === "person" || party.kind === "group";
-					if (
-						named &&
-						principal.kind === "person" &&
-						!(await store.offers({ workspace, person: principal.id, party }, ctx))
-					) {
-						throw invalid("args", "things: this party is not present where you are", {
-							message: messages.message("notOffered"),
-						});
-					}
-					await store.putParty({ workspace, party, source: by }, ctx);
+					await store.putParty({ workspace, party, source: by, caller: callerOf(principal) }, ctx);
 					return null;
 				},
 				removeParty: async ({ party }, ctx) => {

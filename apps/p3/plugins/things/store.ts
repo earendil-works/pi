@@ -31,6 +31,7 @@ import { callerOfKey } from "./admission.ts";
 import { Cleanup, deleteTold } from "./cleanup.ts";
 import { AccessHandles, type CreateAnswer, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
 import {
+	type Caller,
 	type Item,
 	itemKey,
 	kindOfMakeTick,
@@ -42,7 +43,7 @@ import {
 	type Source,
 	sourceKey,
 } from "./contract.ts";
-import { InviteWrites } from "./invites.ts";
+import { anyExpired, InviteWrites } from "./invites.ts";
 import { type DefaultGrants, type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
@@ -59,7 +60,7 @@ import {
 	Persons,
 	SignOuts,
 } from "./people.ts";
-import { namesOf, offeredTo } from "./picker.ts";
+import { namesOf, offeredTo, offers } from "./picker.ts";
 import { type Kinds, lookupOf, readerOf } from "./reader.ts";
 import { Gone, Removal, Removing } from "./removal.ts";
 import { audienceOf, isFor, makeTickFor } from "./rules.ts";
@@ -68,6 +69,7 @@ import {
 	Grants,
 	Links,
 	type Retired,
+	type Retiring,
 	Switches,
 	type Tables,
 	ThingColumns,
@@ -78,6 +80,17 @@ import {
 } from "./tables.ts";
 import type { DefaultsChoice } from "./workspace.ts";
 import { THINGS_PLUGIN, WorkspaceKind } from "./workspaces.ts";
+
+/** A write the picker checks first, in the same operation (R18): whom it names, for whom, where. */
+type Checked = {
+	readonly args: { readonly workspace?: string; readonly caller: Caller; readonly party: Party };
+};
+
+/** The check of a write naming `party` for `caller` (none: server code, or no caller given, checks nothing). */
+function checkOf(caller: Caller | undefined, workspace: string | undefined, party: Party): Checked | undefined {
+	if (caller === undefined || caller.kind === "server") return undefined;
+	return { args: { ...(workspace === undefined ? {} : { workspace }), caller, party } };
+}
 
 /** Serves `ThingsStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
@@ -158,13 +171,40 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		 * follows it before the write answers; the things it removed then have their kind's delete hook run, and a
 		 * removed seeded thing is made again at once.
 		 */
-		const write = async <R>(fn: (tx: Tx, changes: Changes) => Promise<R>, ctx: Context): Promise<R> => {
+		const write = async <R>(
+			fn: (tx: Tx, changes: Changes) => Promise<R>,
+			ctx: Context,
+			checked?: Checked,
+		): Promise<R> => {
 			const retired: Retired[] = [];
 			const signedOut: string[] = [];
-			// The store is live while it writes, so its index opened.
-			const result = await index!.commit((touched) =>
-				self.tx((tx) => fn(tx, { ...touched, retired, signedOut }), ctx),
-			);
+			const transaction = (touched: Touched) =>
+				self.tx(async (tx) => {
+					const retiring: Retiring = {
+						sources: new Set(),
+						things: new Set(),
+						groups: new Set(),
+						workspaces: new Set(),
+					};
+					const changes = { ...touched, retired, signedOut, retiring };
+					const result = await fn(tx, changes);
+					// The cleanup's last step, once all the write retires is known: the persons its sources made.
+					await cleanup.settle(tx, changes);
+					return result;
+				}, ctx);
+			// The store is live while it writes, so its index opened. A checked write is asked in the same operation.
+			const result =
+				checked === undefined
+					? await index!.commit(transaction)
+					: await index!.commitIf(
+							(offered) => offers(q, offered, checked.args, ctx),
+							transaction,
+							() => {
+								throw invalid("args", "things: this party is not present where you are", {
+									message: messages.message("notOffered"),
+								});
+							},
+						);
 			if (signedOut.length > 0 && live !== undefined) void signOut(signedOut, live);
 			for (const { thing, kind } of retired) {
 				lifecycle.retire(thing, kind);
@@ -308,14 +348,17 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx), startPeople(ctx)]);
 		});
 		/**
-		 * What the store does about people at its start: the sign-outs still to end are ended. Read outside a
-		 * transaction: a store that ends meanwhile leaves no transaction to drain.
+		 * What the store does about people at its start: the sign-outs still to end are ended, expired invite links
+		 * swept. Read outside a transaction, a transaction only if there is something to do: a store that ends meanwhile
+		 * leaves no transaction to drain (ERNDL-1190).
 		 */
 		const startPeople = async (ctx: Ctx<P3Principal>): Promise<void> => {
 			// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
 			const left: string[] = [];
 			for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);
 			if (left.length > 0) void signOut(left, ctx);
+			const now = Date.now();
+			if (await anyExpired(t.invites, now, ctx)) await self.tx((tx) => invites.sweep(tx, now), ctx);
 		};
 		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
 		// migrate anew, every loaded workspace is read again; a kind's hooks back, its waiting deletes run.
@@ -398,7 +441,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			setSwitch: (args, ctx) => write((tx, touched) => writes.setSwitch(tx, touched, args), ctx),
 			setDefaults: (args, ctx) => write((tx, touched) => writes.setDefaults(tx, touched, args), ctx),
 			setGrants: (args, ctx) => write((tx, touched) => writes.setGrants(tx, touched, args), ctx),
-			putParty: (args, ctx) => write((tx, touched) => writes.putParty(tx, touched, args), ctx),
+			putParty: ({ caller, ...args }, ctx) =>
+				write(
+					(tx, touched) => writes.putParty(tx, touched, args),
+					ctx,
+					checkOf(caller, args.workspace, args.party),
+				),
 			removeParty: ({ workspace, party }, ctx) =>
 				write(async (tx, touched) => {
 					tx.delete(t.workspaceMembers, { workspace, partyKey: partyKey(party) });
@@ -415,7 +463,12 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			renameGroup: ({ group, name }, ctx) => write((tx) => people.renameGroup(tx, group, name), ctx),
 			setGroupManagers: ({ group, parties }, ctx) => write((tx) => people.setGroupManagers(tx, group, parties), ctx),
 			removeGroup: ({ group }, ctx) => write((tx, touched) => cleanup.removeGroup(tx, touched, group), ctx),
-			addToGroup: (args, ctx) => write((tx, touched) => people.addToGroup(tx, touched, args), ctx),
+			addToGroup: ({ caller, ...args }, ctx) =>
+				write(
+					(tx, touched) => people.addToGroup(tx, touched, args),
+					ctx,
+					checkOf(caller, undefined, { kind: "person", person: args.person }),
+				),
 			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
 			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
 			adoptOwner: async (seed, ctx) => {
@@ -424,17 +477,20 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return write(
 					(tx, touched) =>
 						people.adoptOwner(tx, touched, seed, (persons) =>
-							cleanup.somethingLeftOf(tx, persons, "", new Set()),
+							cleanup.somethingLeftOf(tx, persons, touched.retiring),
 						),
 					ctx,
 				);
 			},
-			picker: async ({ workspace, person, query: text }, ctx) => {
-				const offered = await offeredTo(q, index!, { workspace, person }, ctx);
+			picker: async ({ workspace, caller, query: text }, ctx) => {
+				const at = workspace === undefined ? {} : { workspace };
+				const offered = await offeredTo(q, (...args) => index!.offered(...args), { ...at, caller }, ctx);
 				return namesOf(q, offered, text, ctx);
 			},
-			offers: async ({ workspace, person, party }, ctx) =>
-				(await offeredTo(q, index!, { workspace, person }, ctx)).has(partyKey(party)),
+			offers: async ({ workspace, caller, party }, ctx) => {
+				const at = workspace === undefined ? {} : { workspace };
+				return offers(q, (...args) => index!.offered(...args), { ...at, caller, party }, ctx);
+			},
 			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
 			redeemInvite: ({ secret, person }, ctx) =>
 				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx),
@@ -829,9 +885,10 @@ class Writes {
 	}
 
 	/**
-	 * Clears workspace `workspace` (cut, or below a cut line): its links (a thing linked nowhere else goes, with its
-	 * delete hook), every grant, switch and member written there, the entries naming a leaf's agent elsewhere, its line
-	 * and its thing (its kind's delete hook pending); its `Gone` row put (its kinds are told). Safe to repeat.
+	 * Clears workspace `workspace` (cut, or below a cut line): its own groups and invite links, its links (a thing
+	 * linked nowhere else goes, with its delete hook), every grant, switch and member written there, the entries naming
+	 * a leaf's agent elsewhere, its line and its thing (a source too: its kind's delete hook pending); its `Gone` row put
+	 * (its kinds are told). Safe to repeat.
 	 */
 	async clear(tx: Tx, touched: Changes, workspace: string): Promise<void> {
 		const t = this.#t;
@@ -844,6 +901,8 @@ class Writes {
 		)) {
 			if (await this.#linkedOnlyIn(tx, workspace, link.thing)) going.push(link);
 		}
+		// Its own groups and invite links; the cleanup's last step counts what is written here as gone.
+		await this.#cleanup.retireWorkspace(tx, touched, workspace);
 		for (const { thing, of } of going) await this.removeThing(tx, touched, thing, of);
 		tx.deleteWhere(t.links, (l) => eq(l.workspace, workspace));
 		tx.deleteWhere(t.grants, (g) => eq(g.workspace, workspace));
@@ -860,23 +919,17 @@ class Writes {
 		if (agentIn.size > 0) touched.members.add(agent);
 		await deleteTold(tx, t.grants, Grants, (g) => eq(g.partyKey, agent), touched.workspaces, "workspace");
 		// What other workspaces wrote about it: rows withholding its own thing below it are gone with the subtree, but
-		// switches on it or its agent elsewhere (index `by_item`) and rows naming it as a thing (`by_thing`) are not.
-		for (const item of [itemKey({ kind: "thing", thing: workspace }), agent]) {
-			const switched = new Set<string>();
-			await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), switched, "workspace");
-			for (const other of switched) {
-				touched.workspaces.add(other);
-				// A switch on its agent was about who is present there.
-				if (item === agent) touched.presence.add(other);
-			}
+		// switches on its agent elsewhere (index `by_item`) are not, nor those on it and rows naming it as a thing
+		// (`by_thing`: its removal as a thing below).
+		const switched = new Set<string>();
+		await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, agent), switched, "workspace");
+		for (const other of switched) {
+			touched.workspaces.add(other);
+			// A switch on its agent was about who is present there.
+			touched.presence.add(other);
 		}
-		await deleteTold(tx, t.grants, Grants, (g) => eq(g.thing, workspace), touched.workspaces, "workspace");
 		tx.delete(t.workspaces, { workspace });
-		if (row !== undefined) {
-			tx.delete(t.things, { thing: workspace });
-			tx.put(t.pending, { thing: workspace, kind: row.kind });
-			touched.retired.push({ thing: workspace, kind: row.kind });
-		}
+		if (row !== undefined) await this.removeThing(tx, touched, workspace, row.kind);
 		tx.put(t.gone, { workspace });
 		touched.workspaces.add(workspace);
 		touched.presence.add(workspace);
@@ -962,7 +1015,8 @@ class Writes {
 		await deleteTold(tx, t.grants, Grants, (g) => eq(g.thing, thing), touched.workspaces, "workspace");
 		await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), touched.workspaces, "workspace");
 		// A thing is a source (a share, a bot): what it wrote, the groups it manages and the persons it made go with it,
-		// in this commit (the cleanup, people.md §7).
+		// in this commit (the cleanup, people.md §7); its rows deleted above count as gone.
+		touched.retiring.things.add(thing);
 		await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));
 		tx.delete(this.#t.things, { thing });
 		tx.put(this.#t.pending, { thing, kind });

@@ -107,10 +107,26 @@ export const Grants = defineTable("things.grants", {
 });
 
 /**
- * What a write tells besides what it touched: the things it removed (their delete hooks run after the commit) and the
- * persons it removed (their sign-ins end after it).
+ * What a write tells besides what it touched: the things it removed (their delete hooks run after the commit), the
+ * persons it removed (their sign-ins end after it), and what it retires for its cleanup (`Retiring`).
  */
-export type Changes = Touched & { readonly retired: Retired[]; readonly signedOut: string[] };
+export type Changes = Touched & {
+	readonly retired: Retired[];
+	readonly signedOut: string[];
+	readonly retiring: Retiring;
+};
+
+/**
+ * What one write retires, for its cleanup's last step (`Cleanup.settle`): the sources that went (the persons they made
+ * are decided then), and the things, groups and cleared workspaces whose rows go too. The write's own reads still see
+ * those rows: the survival check counts them as gone.
+ */
+export type Retiring = {
+	readonly sources: Set<string>;
+	readonly things: Set<string>;
+	readonly groups: Set<string>;
+	readonly workspaces: Set<string>;
+};
 
 /** A thing removed, and its kind. */
 export type Retired = { readonly thing: string; readonly kind: string };

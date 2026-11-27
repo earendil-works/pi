@@ -109,7 +109,8 @@ export const GroupManagers = defineTable("things.group-managers", {
 
 /**
  * An invite link (R39), kept hashed: whose secret it is, into which workspace as what, until when, how often, into
- * which group too, and who made it (the persons it makes are theirs). By expiry: swept at each new link.
+ * which group too, and who made it (the persons it makes are theirs). By expiry: swept at the start and at each new
+ * link; by maker, group and workspace: it goes with them.
  */
 export const Invites = defineTable("things.invites", {
 	version: 1,
@@ -126,7 +127,7 @@ export const Invites = defineTable("things.invites", {
 		byKey: str(),
 	},
 	key: ["invite"],
-	indexes: { by_expiry: ["expires"], by_maker: ["byKey"], by_group: ["group"] },
+	indexes: { by_expiry: ["expires"], by_maker: ["byKey"], by_group: ["group"], by_workspace: ["workspace"] },
 });
 
 /** A removed person whose sign-ins have not ended yet: written in the commit that removed them, ended after it. */
@@ -137,8 +138,9 @@ export const SignOuts = defineTable("things.sign-outs", {
 });
 
 /**
- * Whether the people plugin's owner was adopted (the bridge, ERNDL-1144 push B removes it): once, durably, so a
- * handover of the owner flag here or a new name there never sets the flag back.
+ * The owner bridge's marks (ERNDL-1144 push B removes it): `placeholder`, the person the first start made the owner
+ * (only that one may go at the adoption); `owner`, the people plugin's owner adopted, once, durably, so a handover of
+ * the owner flag here or a new name there never sets the flag back.
  */
 export const Adopted = defineTable("things.owner-adopted", {
 	version: 1,
@@ -187,21 +189,22 @@ export class PeopleWrites {
 
 	/**
 	 * The owner's person, made once, at the store's first start, named "Owner" (people rename it; the people plugin's
-	 * owner replaces it meanwhile: `adoptOwner`).
+	 * owner replaces it meanwhile: `adoptOwner`), its id marked as the placeholder.
 	 */
 	async ensureOwner(tx: Tx): Promise<null> {
 		const owners = await this.#owners(tx, 1);
 		if (owners.items.length > 0) return null;
 		const person = crypto.randomUUID();
 		tx.put(this.#t.persons, { person, name: "Owner", owner: 1, madeBy: THINGS, madeByKey: sourceKey(THINGS) });
+		tx.put(this.#t.adopted, { bridge: "placeholder", person });
 		return null;
 	}
 
 	/**
 	 * The people plugin's owner made the owner here, with the same id, once (a bridge, ERNDL-1144 push B removes it):
-	 * their person is made or given the flag; the placeholder the first start made goes only while nothing names it
-	 * (`empty`: of the persons given, those of whom something is left). Never again once done: a later handover of the
-	 * flag stands.
+	 * their person is made or given the flag; the placeholder the first start made (its marked id, no other person)
+	 * goes only while nothing names it (`somethingLeft`: of the persons given, those of whom something is left). Never
+	 * again once done: a later handover of the flag stands.
 	 */
 	async adoptOwner(
 		tx: Tx,
@@ -216,21 +219,12 @@ export class PeopleWrites {
 		if (row === undefined) tx.put(this.#t.persons, { person, name, owner: 1, madeBy: by, madeByKey: sourceKey(by) });
 		else if (row.owner === 0) tx.update(this.#t.persons, { person }, { owner: 1 });
 		touched.persons.add(person);
-		const own = sourceKey(THINGS);
-		const placeholders = [];
-		for await (const owner of tx.rows(
-			this.#t.persons,
-			query(Persons).where((p) => eq(p.owner, 1)),
-		)) {
-			if (owner.person !== person && owner.madeByKey === own && owner.name === "Owner")
-				placeholders.push(owner.person);
-		}
-		const used = await somethingLeft(placeholders);
-		for (const placeholder of placeholders) {
-			if (used.has(placeholder)) continue;
-			tx.delete(this.#t.persons, { person: placeholder });
-			touched.persons.add(placeholder);
-		}
+		const placeholder = (await tx.get(this.#t.adopted, { bridge: "placeholder" }))?.person;
+		if (placeholder === undefined || placeholder === person) return null;
+		if ((await tx.get(this.#t.persons, { person: placeholder })) === undefined) return null;
+		if ((await somethingLeft([placeholder])).has(placeholder)) return null;
+		tx.delete(this.#t.persons, { person: placeholder });
+		touched.persons.add(placeholder);
 		return null;
 	}
 
