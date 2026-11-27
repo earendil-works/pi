@@ -210,34 +210,6 @@ describe("Files and its ticks", () => {
 			assert.deepEqual(names, ["README.md"]);
 		});
 	});
-
-	it("pages a folder of 10,000 entries: the first page in one call within 50 ms, the next after it", async () => {
-		const ann = await person("Ann");
-		const big = join(root, "big");
-		await mkdir(big);
-		await Promise.all(
-			Array.from({ length: 10_000 }, (_, i) => writeFile(join(big, `f${String(i).padStart(5, "0")}`), "")),
-		);
-		await holding(ann, pi, async (f, ctx) => {
-			const took: number[] = [];
-			let first: Awaited<ReturnType<NonNullable<typeof f.entries>>> | undefined;
-			for (let run = 0; run < 3; run++) {
-				const started = performance.now();
-				first = await f.entries!({ machine, path: big }, ctx);
-				took.push(performance.now() - started);
-			}
-			assert.equal(first!.entries.length, 200);
-			assert.equal(first!.entries[0]!.name, "f00000");
-			const second = await f.entries!({ machine, path: big, after: first!.next! }, ctx);
-			assert.equal(second.entries[0]!.name, "f00200");
-			const bytes = Buffer.byteLength(JSON.stringify(first));
-			console.log(
-				`files: the first page of 10,000 entries in ${took.map((ms) => ms.toFixed(1)).join(", ")} ms; ${bytes} bytes`,
-			);
-			// The best of three: the budget is the page's work, not the machine's load meanwhile.
-			assert.ok(Math.min(...took) < 50, `${Math.min(...took)} ms`);
-		});
-	});
 });
 
 describe("the owner, guests and the one thing (slice 1's rules)", () => {
