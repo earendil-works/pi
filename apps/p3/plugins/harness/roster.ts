@@ -46,10 +46,11 @@ export type Subagent = {
 };
 
 /**
- * The session's subagents by name, and whether Use is withheld from the agent (`withheld`: the harness writes it before
- * it withdraws the queued messages, and a reporter checks it in the commit that admits its message).
+ * The session's subagents by name; whether Use is withheld from the agent (`withheld`: the harness writes it before it
+ * withdraws the queued messages, and a reporter checks it in the commit that admits its message); and how often it was
+ * withheld (`withholds`: a message sent before a withhold is never delivered, also after a regrant).
  */
-export const Subagents = defineDoc<{ agents: Record<string, Subagent>; withheld?: true }>({
+export const Subagents = defineDoc<{ agents: Record<string, Subagent>; withheld?: true; withholds?: number }>({
 	checkpointWhen: () => false,
 	kind: "harness.subagents",
 	// 2: the session's (1 was each conversation's).
@@ -162,11 +163,15 @@ export async function finishStop(owner: Stopping, name: string, context: Context
 		}
 		return false;
 	}, context);
-	if (older) await child?.abort(context);
-	await owner.commit(async (tx) => {
-		const agent = subagentOf((await tx.doc(Subagents)).agents, name);
-		if (agent !== undefined) delete agent.stopping;
-	}, context);
+	try {
+		if (older) await child?.abort(context);
+	} finally {
+		// Also after a failed abort: the messages held back for the stop go on (only a restart leaves a mark).
+		await owner.commit(async (tx) => {
+			const agent = subagentOf((await tx.doc(Subagents)).agents, name);
+			if (agent !== undefined) delete agent.stopping;
+		}, context);
+	}
 }
 
 /** Finishes every stop a restart cut (see `finishStop`). */

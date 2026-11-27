@@ -129,6 +129,7 @@ async function spawn(call: Call, api: ToolExecutionApi, context: Context): Promi
 	const thinkingLevel = call.thinkingLevel ?? own.thinkingLevel;
 	await api.commit(async (tx) => {
 		const roster = await tx.doc(Subagents);
+		const withholds = roster.withholds ?? 0;
 		// Spawned meanwhile by a call running beside this one.
 		if (Object.hasOwn(roster.agents, name)) throw exists(name);
 		const anchor = await tx.createTask(Anchor, null, BACKGROUND);
@@ -147,7 +148,7 @@ async function spawn(call: Call, api: ToolExecutionApi, context: Context): Promi
 		roster.agents[name] = agent;
 		const instructions = instructionsOf(name);
 		await configure(tx, child.id, { ...levelOf(agent, api.models), ...toolsOf(agent, own), instructions });
-		const input = { name, conversationId: child.id, generation: 0, message, followUp: false };
+		const input = { name, conversationId: child.id, generation: 0, withholds, message, followUp: false };
 		await tx.createTask(Reporter, input, BACKGROUND);
 	}, context);
 	return { name, done: "started" };
@@ -177,15 +178,14 @@ async function send(call: Call, api: ToolExecutionApi, context: Context): Promis
 	const name = nameOf(call);
 	const message = messageOf(call);
 	await api.commit(async (tx) => {
-		const agent = subagentNamed((await tx.doc(Subagents)).agents, name);
+		const roster = await tx.doc(Subagents);
+		const agent = subagentNamed(roster.agents, name);
 		delete agent.archived;
 		const { conversationId, generation } = agent;
 		const followUp = call.followUp === true;
-		const reporter = await tx.createTask(
-			Reporter,
-			{ name, conversationId, generation, message, followUp },
-			BACKGROUND,
-		);
+		const withholds = roster.withholds ?? 0;
+		const input = { name, conversationId, generation, withholds, message, followUp };
+		const reporter = await tx.createTask(Reporter, input, BACKGROUND);
 		// Follow-ups go in the order sent.
 		if (followUp) agent.followUps.push(reporter);
 	}, context);

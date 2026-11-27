@@ -131,6 +131,20 @@ describe("the subagents' part", () => {
 		);
 	}
 
+	/**
+	 * Waits until a message of generation 1 is held back by a pending stop (its reporter sleeps) or admitted to the
+	 * subagent (queued or placed).
+	 */
+	async function heldOrQueued(durable: Awaited<ReturnType<Harnessed["harness"]>>["durable"]): Promise<void> {
+		await eventually(
+			() => durable.inspect(context),
+			({ tasks, submissions }) =>
+				tasks.some(
+					({ record, state }) => record.kind === "harness.subagent-reporter" && state.kind === "sleeping",
+				) || submissions.some((each) => each.requestId?.endsWith(":1") === true),
+		);
+	}
+
 	/** Waits until the bash call of a subagent's first step started. */
 	async function started(): Promise<void> {
 		await eventually(() => existsSync(join(folder, "started")), Boolean);
@@ -744,12 +758,14 @@ describe("the subagents' part", () => {
 		try {
 			await paused.promise;
 			await ask("@new");
-			await started();
+			// Held back while the archive's stop is pending (Astra, round 3 of the port), or admitted without the hold.
+			await heldOrQueued(durable);
 		} finally {
 			resume.resolve();
 			await archiving;
-			await writeFile(join(folder, "gate"), "");
 		}
+		await started();
+		await writeFile(join(folder, "gate"), "");
 		await eventually(
 			() => durable.inspect(context),
 			(info) => info.tasks.length === 0 && info.submissions.length === 0,
@@ -805,5 +821,90 @@ describe("the subagents' part", () => {
 			[offers("@one"), offers("@two"), offers("first follow up"), offers("second follow up")],
 			[["alpha_label"], ["beta_label"], ["alpha_label"], ["beta_label"]],
 		);
+	});
+
+	it("holds a steer sent during an archive's stop back from the stop's abort (Astra, round 3 of the port)", async () => {
+		const script = [
+			spawn("@spawn", "old run"),
+			runs("old run", "touch started; until [ -e gate ]; do sleep 0.02; done; echo released"),
+			on("@new", "send", { message: "new steer" }),
+			says("new steer", "restored answer"),
+			says("", "ok"),
+		];
+		const { ask, harness } = await start([login("a", "faux", script), coding(), subagents()]);
+		await ask("@spawn");
+		await started();
+		const { durable } = await harness();
+		const root = await durable.root(context);
+		const paused = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const tool = subagentsPart.part([subagents().held], SESSION).extension!.tools![0]!;
+		const api = {
+			conversationId: root.id,
+			commit: durable.commit.bind(durable),
+			conversation: async (id: typeof root.id) => {
+				paused.resolve();
+				await release.promise;
+				return durable.conversation(id, context);
+			},
+		};
+		const archiving = tool.execute({ action: "archive", name: "reader" } as never, api as never, context);
+		try {
+			await paused.promise;
+			await ask("@new");
+			// Held back while the archive's stop is pending (the fix), or admitted to the subagent (without it).
+			await heldOrQueued(durable);
+		} finally {
+			release.resolve();
+			await archiving;
+			await writeFile(join(folder, "gate"), "");
+		}
+		await eventually(
+			() => durable.inspect(context),
+			(i) => i.tasks.length === 0 && i.submissions.length === 0,
+		);
+		assert.deepEqual(
+			requests()
+				.filter((r) => r.last.startsWith("[subagent reader"))
+				.map((r) => r.last),
+			["[subagent reader answered] restored answer"],
+		);
+	});
+
+	it("never delivers a follow-up withdrawn by a withhold, also after a regrant (Astra, round 3 of the port)", async () => {
+		const script = [
+			spawn("@spawn", "busy"),
+			runs("busy", "touch started; until [ -e gate ]; do sleep 0.02; done; echo released"),
+			on("@queue", "send", { message: "queued follow up", followUp: true }),
+			says("queued follow up", "revived"),
+			says("", "ok"),
+		];
+		const held = [login("a", "faux", script), coding(), subagents()];
+		const { ask, harness, control } = await start(held);
+		const { durable } = await harness();
+		await ask("@spawn");
+		await started();
+		await ask("@queue");
+		await waiting(1);
+		control.hold([held[0]!, held[1]!, subagents(false)]);
+		await eventually(
+			() => durable.snapshot(Subagents, context),
+			(v) => v?.withheld === true,
+		);
+		control.hold(held);
+		await eventually(
+			() => durable.snapshot(Subagents, context),
+			(v) => v?.withheld === undefined,
+		);
+		await writeFile(join(folder, "gate"), "");
+		await eventually(
+			() => durable.inspect(context),
+			(v) => v.tasks.length === 0 && v.submissions.length === 0,
+		);
+		assert.equal(
+			requests().some((r) => r.last === "queued follow up"),
+			false,
+		);
+		assert.ok(requests().some((r) => r.last.startsWith("[subagent reader failed: the message was withdrawn")));
 	});
 });

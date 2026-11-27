@@ -93,7 +93,7 @@ async function until(done: () => boolean): Promise<void> {
 
 /** A reporter with id `id` sending `message` to `reader` in generation 0. */
 function reporterOf(id: number, message: string, followUp = false) {
-	return { id, input: { name: "reader", conversationId: 2, generation: 0, message, followUp } };
+	return { id, input: { name: "reader", conversationId: 2, generation: 0, withholds: 0, message, followUp } };
 }
 
 describe("a subagent's reporter", () => {

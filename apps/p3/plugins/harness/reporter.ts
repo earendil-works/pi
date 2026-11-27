@@ -24,12 +24,13 @@ import { Anchor, REQUEST, requestOf, Subagents, subagentOf, toolsOf } from "./ro
 
 /**
  * What a reporter delivers: to which subagent (its name and conversation, and its generation when the message was
- * sent), the message, and whether it waits for the current answer.
+ * sent), how often Use was withheld by then (`withholds`), the message, and whether it waits for the current answer.
  */
 export type ReporterInput = {
 	name: string;
 	conversationId: ConversationId;
 	generation: number;
+	withholds: number;
 	message: string;
 	followUp: boolean;
 };
@@ -111,16 +112,20 @@ function draftOf({ id, input }: Reporting) {
 	return { type: "input", content: input.message, whenBusy, requestId: requestOf(id, input.generation) } as const;
 }
 
-/** What one admission commit decided: admitted (now, or before a restart), refused (the report decided), or to wait. */
+/**
+ * What one admission commit decided: admitted (now, or before a restart), refused (the report decided), to wait, or
+ * held back for a stop (the reporter sleeps).
+ */
 type Admission =
 	| { readonly kind: "admitted" }
 	| { readonly kind: "refused" }
 	| { readonly kind: "busy" }
-	| { readonly kind: "behind"; readonly earlier: TaskId };
+	| { readonly kind: "behind"; readonly earlier: TaskId }
+	| { readonly kind: "stopping" };
 
 /**
  * Admits the message, waiting first for a follow-up's turn: true once admitted (now, or before a restart); false when
- * refused, the report decided.
+ * refused (the report decided) or held back for a stop (the reporter sleeps, then delivers again).
  */
 async function admit(
 	reporter: Reporting,
@@ -142,6 +147,8 @@ async function admit(
 				// The earlier follow-up ends after its answer is reported: then this one's turn may come.
 				await runtime.waitForTask(admission.earlier, context);
 				break;
+			case "stopping":
+				return false;
 		}
 	}
 }
@@ -166,10 +173,17 @@ async function admitOnce(
 		const agent = subagentOf(roster.agents, reporter.input.name);
 		const sent = agent?.conversationId === reporter.input.conversationId ? agent : undefined;
 		const current = sent?.generation === reporter.input.generation ? sent : undefined;
-		if (current === undefined || roster.withheld === true) {
+		const withdrawn = roster.withheld === true || (roster.withholds ?? 0) !== reporter.input.withholds;
+		if (current === undefined || withdrawn) {
 			admission = { kind: "refused" };
 			if (sent !== undefined) sent.followUps = sent.followUps.filter((id) => id !== reporter.id);
 			return reportOf(current === undefined ? undefined : failed(reporter.input, WITHDRAWN));
+		}
+		// A stop is aborting the older generation's work: nothing new joins it meanwhile, so the abort cannot take it
+		// (Astra, round 3 of the port). The reporter sleeps and looks again.
+		if (current.stopping !== undefined) {
+			admission = { kind: "stopping" };
+			return { status: "sleeping", until: runtime.now() + STOP_POLL_MS, checkpoint: { phase: "deliver" } } as const;
 		}
 		if (reporter.input.followUp) {
 			const earlier = current.followUps[0];
@@ -191,6 +205,9 @@ async function admitOnce(
 	}, context);
 	return admission;
 }
+
+/** How long a message held back for a stop sleeps before it looks again whether the stop finished. */
+const STOP_POLL_MS = 50;
 
 /** The next state: the report phase, with `report` or nothing to report. */
 function reportOf(report?: string) {
@@ -271,7 +288,10 @@ export async function recordUse(durable: Harness, offered: boolean, context: Con
 	await durable.commit(async (tx) => {
 		const roster = await tx.doc(Subagents);
 		if (offered) delete roster.withheld;
-		else roster.withheld = true;
+		else if (roster.withheld === undefined) {
+			roster.withheld = true;
+			roster.withholds = (roster.withholds ?? 0) + 1;
+		}
 	}, context);
 	if (offered) return;
 	const { submissions } = await durable.inspect(context);
