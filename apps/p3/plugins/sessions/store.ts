@@ -1,13 +1,16 @@
 // The sessions store (`SessionsStore`): one row per session (its address, where it works, its state, its model, when
 // it was archived), its named query, and every write. A session's row is keyed by its address, so a session's export,
 // import and delete carry it. Who may do what is the things plugin's (the session's workspace); this store checks no
-// caller and holds no members.
+// caller and holds no members. Rows older code wrote naming this device as `this-device` are rewritten once per Pi
+// to its machine's id (decision 125).
 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	and,
+	bool,
 	type Ctx,
+	defineState,
 	defineTable,
 	eq,
 	type FacetHost,
@@ -16,6 +19,7 @@ import {
 	invalid,
 	json,
 	nul,
+	obj,
 	type P3Principal,
 	query,
 	type RowOf,
@@ -55,14 +59,47 @@ const Rows = defineTable("sessions.sessions", {
 	indexes: { working: ["state", "archivedAt"] },
 });
 
+/**
+ * The id a session's location named this device by before the machine was a thing (p3-base's data from 7093618af,
+ * decision 125): rewritten once per Pi to the machine's id (`OLD_DEVICE` rows, the `Rewrites` marker).
+ */
+const OLD_DEVICE = "this-device";
+
+/** Which one-time rewrites of the rows this Pi has run: the old device id's (decision 125). */
+const Rewrites = defineState("sessions.rewrites", {
+	schema: obj({ thisDevice: bool() }),
+	version: 1,
+	initial: () => ({ thisDevice: false }),
+	persist: true,
+	// One small value written once: a checkpoint keeps it a single row.
+	checkpointWhen: () => true,
+});
+
 /** Serves `SessionsStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(SessionsStore, (_params, self) => {
 		const rows = self.table(Rows);
+		const rewrites = self.state(Rewrites);
 		const things = self.get(ThingsStore, {});
 		// This device's machine: where a session works unless it says otherwise.
 		const device = self.get(OneThing, { kind: MACHINE_KIND });
 		const runtime = self.registry(ServerRuntime);
+		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now (one
+		// read of every row, no index on `environment`: it runs once, the marker says so after).
+		self.onLive(async (ctx) => {
+			if (rewrites.value.thisDevice) return;
+			const machine = await until(device.thing, (id) => id !== "", ctx);
+			await self.tx(async (tx) => {
+				const old = query(Rows).where((s) => eq(s.environment, OLD_DEVICE));
+				const ids: RowOf<typeof ROW>["id"][] = [];
+				for await (const row of tx.rows(rows, old)) ids.push(row.id);
+				for (const id of ids) tx.update(rows, { id }, { environment: machine });
+				return null;
+			}, ctx);
+			await rewrites.change((draft) => {
+				draft.thisDevice = true;
+			}, ctx);
+		});
 		/** Sets `change` on session `id`'s row: an `update`, so only the reads that depend on those columns run. */
 		const update = (id: string, change: SetOf<typeof ROW, readonly ["id"]>, ctx: Ctx<P3Principal>) =>
 			self.tx(async (tx) => {
