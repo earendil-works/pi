@@ -1,13 +1,13 @@
 // The people plugin on the server: the persons and groups (`PeopleStore`, three tables), who the caller is (`Me`),
 // the owner's persons (`People`, `PeopleList`) and the invite links that make a person and sign their first browser in
-// (`invites.ts`). Removing a person removes them from every group and every session (the things they brought into
-// sessions with them) and ends their sign-ins at once.
+// (`invites.ts`). Removing a person removes them from every group and ends their sign-ins at once.
 
 import {
 	and,
 	type Ctx,
 	callerKey,
 	constant,
+	contribute,
 	defineColumns,
 	defineFacet,
 	defineTable,
@@ -21,8 +21,8 @@ import {
 	type Tx,
 } from "@earendil-works/p3/v1";
 import { ServerRuntime } from "@earendil-works/p3/v1/server";
-import { SessionsStore } from "../sessions/contract.server.ts";
 import { SignIns } from "../sign-in/contract.ts";
+import { type OwnerSeed, OwnerSeeds } from "../things/contract.server.ts";
 import { PeopleStore } from "./contract.server.ts";
 import { admitOwner, Me, OwnerAccess, People, PeopleList } from "./contract.ts";
 import { Invites, serveInviteRoutes } from "./invites.ts";
@@ -83,14 +83,28 @@ export default defineFacet((host) => {
 		};
 		const runtime = self.registry(ServerRuntime);
 		// Opened before the store goes live: from the first start on, the owner's person exists, once.
+		// The owner's person handed to the things plugin, which makes the same person its owner: a bridge until this
+		// plugin goes (ERNDL-1144 push B removes it, and this). Contributed by this object itself, so a reload ends it
+		// with the object, never as a failure.
+		const seed = self.writable<OwnerSeed>(null);
+		self.contribute(OwnerSeeds, seed);
 		self.open(
-			(ctx) =>
-				self.tx(async (tx) => {
-					const owner = query(Persons).where((p) => eq(p.owner, 1));
-					if ((await tx.page(persons, owner, 1)).items.length > 0) return null;
-					tx.put(persons, { id: crypto.randomUUID(), name: ownerName(runtime.value.machine.user), owner: 1 });
-					return null;
-				}, ctx),
+			async (ctx) => {
+				const owner = query(Persons).where((p) => eq(p.owner, 1));
+				// Read outside a transaction first: from the second start on, the store opens with none a reload could
+				// cancel (this store starts with the plugin: the owner bridge holds it).
+				const found =
+					(await persons.page(owner, 1, ctx)).items[0] ??
+					(await self.tx(async (tx) => {
+						const [row] = (await tx.page(persons, owner, 1)).items;
+						if (row !== undefined) return row;
+						const made = { id: crypto.randomUUID(), name: ownerName(runtime.value.machine.user), owner: 1 };
+						tx.put(persons, made);
+						return made;
+					}, ctx));
+				seed.set({ person: found.id, name: found.name });
+				return null;
+			},
 			() => {},
 		);
 		const removePerson = ({ person }: { readonly person: string }, ctx: Ctx) =>
@@ -195,8 +209,6 @@ export default defineFacet((host) => {
 			removePerson: async (args, ctx) => {
 				await removePerson(args, ctx);
 				invites.drop(args.person);
-				// Out of every session too: their memberships, the options set for them, the things they brought.
-				await (await ctx.get(SessionsStore, {})).removePerson(args, ctx);
 				// Their sign-ins end with them: each one's open links close at once.
 				const signIns = await ctx.get(SignIns, {});
 				for (const signIn of signIns.list.value) {
@@ -307,6 +319,9 @@ export default defineFacet((host) => {
 	);
 
 	serveInviteRoutes(host, invites);
+	// Holds the store from the start, so its owner reaches the things plugin before anyone asks for a person (the
+	// bridge, ERNDL-1144 push B removes it).
+	contribute(host, "people.owner-seed", (self) => void self.get(PeopleStore, {}));
 });
 
 /** The owner's person's first name: their OS user's (`user`), capitalised (the owner renames it later). */

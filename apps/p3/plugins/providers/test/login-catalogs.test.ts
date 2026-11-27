@@ -105,7 +105,12 @@ async function cutLogin(world: World) {
 			async (ctx) => {
 				const login = await ctx.get(Login, { workspace, thing });
 				const ids = (now: readonly unknown[]) => now.map((found) => (found as { id: string }).id).sort();
-				return ids(await until(login.catalog!, (now) => done(ids(now)), within("the catalog", ctx)));
+				const shown = await until(
+					login.login,
+					(now) => now !== null && done(ids(now.models)),
+					within("the login's models", ctx),
+				);
+				return ids(shown!.models);
 			},
 			context,
 			{ principal: agent },

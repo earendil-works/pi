@@ -18,12 +18,14 @@ const SESSION = {
 	workspace: "w",
 	call: () => Promise.reject(new Error("no call")),
 	location: async () => undefined,
+	moveLocation: () => Promise.reject(new Error("no move")),
 };
 
 /** A held coding tools thing whose reference has the flags `granted`. */
 function held(thing: string, ...granted: string[]): HeldThing {
 	// A stand-in for the holding's reference until `kindServer.giving` is on main: the part reads only `granted`.
-	return { thing, workspace: "w", ref: { granted: new Set(granted) } as unknown as HeldThing["ref"] };
+	const flags = new Set(granted);
+	return { thing, workspace: "w", depth: 0, ref: { granted: flags } as unknown as HeldThing["ref"], granted: flags };
 }
 
 describe("the coding tools' harness part", () => {

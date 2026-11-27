@@ -1,10 +1,14 @@
 // Invite links: one per person at a time, single use, valid 10 minutes, kept only hashed and in memory (as the owner
 // link). The link's page (`GET /_p3/invite`) posts the token from the URL's fragment, never sent to a server; its post
-// (`POST /_p3/invite`) consumes it and signs the browser in as the person (a sign-in of the sign-in plugin).
+// (`POST /_p3/invite`) consumes it and signs the browser in as the person (a sign-in of the sign-in plugin). A token
+// that is none of these is a things invite link (`Workspace.inviteLink`), redeemed by the things store for the person
+// the browser is signed in as (who keeps the sign-in) or else a new person signed in (a bridge until ERNDL-1144 push B
+// moves the route to the things plugin).
 
-import { contribute, type FacetHost, type P3Principal } from "@earendil-works/p3/v1";
+import { type Ctx, contribute, type FacetHost, type P3Principal } from "@earendil-works/p3/v1";
 import { Http, hashToken, matchesHash, newToken } from "@earendil-works/p3/v1/server";
 import { SignIns } from "../sign-in/contract.ts";
+import { ThingsStore } from "../things/contract.server.ts";
 import { PeopleStore } from "./contract.server.ts";
 
 /** How long an invite link is valid: 10 minutes. */
@@ -55,13 +59,13 @@ export function serveInviteRoutes(host: FacetHost<P3Principal>, invites: Invites
 					handler: async (request, ctx) => {
 						const body = (await request.json()) as { readonly token?: unknown } | null;
 						// A trust boundary: anyone may post here.
-						const person = typeof body?.token === "string" ? invites.consume(body.token) : undefined;
-						if (person === undefined) return { kind: "error", status: 403 };
-						const found = await (await ctx.get(PeopleStore, {})).persons.one.page({ id: person }, 1, ctx);
-						const name = found.items[0]?.name;
-						if (name === undefined) return { kind: "error", status: 403 };
+						if (typeof body?.token !== "string") return { kind: "error", status: 403 };
+						const invited = await invitedBy(body.token, invites, ctx);
+						if (invited === undefined) return { kind: "error", status: 403 };
+						// Signed in already: the browser keeps its sign-in.
+						if (invited.kind === "signedIn") return { kind: "json", value: "signed in" };
 						const secure = request.provenance.kind !== "local";
-						const principal = { kind: "person", id: person, name } as const;
+						const principal = { kind: "person", id: invited.person, name: invited.name } as const;
 						const signIns = await ctx.get(SignIns, {});
 						const issued = await signIns.issue({ principal, label: "invite", kind: "browser", secure }, ctx);
 						return { kind: "json", value: "signed in", headers: { "Set-Cookie": issued.cookie } };
@@ -70,6 +74,38 @@ export function serveInviteRoutes(host: FacetHost<P3Principal>, invites: Invites
 			},
 		});
 	});
+}
+
+/** Whom an invite signs in: a person to sign the browser in as, or the person it is signed in as already. */
+type Invited =
+	| { readonly kind: "signIn"; readonly person: string; readonly name: string }
+	| { readonly kind: "signedIn" };
+
+/**
+ * Whom `token` signs in: the person of this plugin's invite it is (used up), else a things invite link's: a browser
+ * signed in as a person puts that person in (`ThingsStore.redeemInvite` with them), an anonymous one the new person
+ * the link makes; `undefined` for neither.
+ */
+async function invitedBy(token: string, invites: Invites, ctx: Ctx): Promise<Invited | undefined> {
+	const person = invites.consume(token);
+	if (person === undefined) return thingsInvite(token, ctx);
+	const found = await (await ctx.get(PeopleStore, {})).persons.one.page({ id: person }, 1, ctx);
+	const name = found.items[0]?.name;
+	return name === undefined ? undefined : { kind: "signIn", person, name };
+}
+
+/** A things invite link `token` redeemed for the request's person (`ctx.principal`), or for a new one without. */
+async function thingsInvite(token: string, ctx: Ctx): Promise<Invited | undefined> {
+	const me = ctx.principal;
+	// The request's sign-in, authenticated by the server: a P3 principal, a person's with its id.
+	const signedIn = me?.kind === "person" && typeof me.id === "string" ? me.id : undefined;
+	const things = await ctx.get(ThingsStore, {});
+	const redeemed = await things.redeemInvite(
+		{ secret: token, ...(signedIn === undefined ? {} : { person: signedIn }) },
+		ctx,
+	);
+	if (redeemed === null) return undefined;
+	return signedIn === undefined ? { kind: "signIn", ...redeemed } : { kind: "signedIn" };
 }
 
 /** The invite link's page: its script (the response's nonce) posts the fragment's token, then opens p3. */

@@ -18,6 +18,7 @@ export const SESSION: HarnessSession = {
 	workspace: "w",
 	call: () => Promise.reject(new Error("no call")),
 	location: async () => undefined,
+	moveLocation: () => Promise.reject(new Error("no move")),
 };
 
 /** `Kind`'s harness part, as the tested worker facet `t` contributed it. */
@@ -32,7 +33,13 @@ export function partOf(t: TestedPlugin<P3Principal>, Kind: { readonly name: stri
  * `{ value }`): a stand-in for the holding's reference, with nothing of a reference's lifecycle.
  */
 export function held(thing: string, granted: readonly string[], members: object = {}): HeldThing {
-	return { thing, workspace: "w", ref: { ...members, granted: new Set(granted) } as unknown as HeldThing["ref"] };
+	return {
+		thing,
+		workspace: "w",
+		depth: 0,
+		ref: { ...members, granted: new Set(granted) } as unknown as HeldThing["ref"],
+		granted: new Set(granted),
+	};
 }
 
 /** Runs tool `name` of `extension` with `args` (a tool that uses nothing of Durable's execution API); its text. */

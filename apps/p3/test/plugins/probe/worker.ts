@@ -6,6 +6,13 @@ import { WorkerBusy, WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { Probe } from "./contract.ts";
 
 export default defineFacet((host) => {
+	// A worker's reports go to its stderr through `console.error`, which no test reads: kept here as well.
+	const reported: string[] = [];
+	const write = console.error;
+	console.error = (...args: unknown[]) => {
+		reported.push(args.map(String).join(" "));
+		write(...args);
+	};
 	let busy: Writable<number> | undefined;
 	contribute(host, "probe.busy", (self) => {
 		busy = self.writable(0);
@@ -31,6 +38,7 @@ export default defineFacet((host) => {
 					await runtime.value.store.setOutbox(on, ctx);
 					return null;
 				},
+				reported: async () => [...reported],
 			};
 		},
 		{ admit: admitOwner },

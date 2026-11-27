@@ -9,6 +9,8 @@ export const messages = defineMessages("notes", {
 	en: {
 		tickWrite: "Write",
 		untitled: "Notes",
+		view: "Notes",
+		plugin: "Notes",
 		readOnly: "Read only",
 		denied: "You may not read these notes.",
 		unavailable: "These notes cannot be shown now.",

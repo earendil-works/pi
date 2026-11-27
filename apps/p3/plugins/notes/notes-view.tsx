@@ -1,4 +1,4 @@
-// The notes kind's view of one notebook (`ThingViews`): its name, its notes in the notebook's order, with more of them
+// The notes kind's view of one notebook (`Views`): its name, its notes in the notebook's order, with more of them
 // on demand. A writer (granted Write) adds notes and edits and removes any of them; anyone else let in reads. The view
 // follows the admission live: Write taken back turns it into the reader's at once, on the same hold.
 
@@ -14,8 +14,11 @@ import {
 	type With,
 	withGranted,
 } from "@earendil-works/p3/v1";
-import { type ThingViewProps, useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
+import { useHold, useLive, useMessages, useRefState, useWatch } from "@earendil-works/p3/v1/web";
 import { useState } from "react";
+// Other plugins' web contracts by path, never through `/v1/web`: a plugin applied to a running server meets the base
+// its page started with, whose `/v1/web` may not have a newer contract yet.
+import type { ThingViewProps } from "../things/contract.web.tsx";
 import { type Author, NOTES_WRITES, type Note, Notes } from "./kind.ts";
 import { messages } from "./messages.ts";
 import styles from "./notes-view.module.css";
@@ -28,8 +31,7 @@ type Texts = Translator<"notes", MessagesOf<typeof messages>>;
 
 /** Notebook `thing`, as the viewer's admission allows. */
 export function NotesView(props: ThingViewProps) {
-	// Until sessions are workspaces (slice 5) a notebook is held in the workspace named by the session's id.
-	const ref = useHold(Notes, { workspace: props.session, thing: props.thing });
+	const ref = useHold(Notes, { workspace: props.workspace, thing: props.thing });
 	const live = useLive(ref);
 	const writer = withGranted(live, ...NOTES_WRITES);
 	const state = useRefState(ref);
@@ -89,7 +91,7 @@ type Action = {
 
 /**
  * The view's change state and its `run`: a failure is kept as the text a person reads (`failureText`). Local until
- * the web API has the shared hook and `refusalText`.
+ * the web API has the shared hook (the text itself: the things plugin's `useErrorText`).
  */
 function useAction(): Action {
 	const { t } = useMessages(messages);

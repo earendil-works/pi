@@ -1,0 +1,14 @@
+/* A session's panes fill the main area; a thing's pane scrolls itself. */
+
+.panes {
+	display: flex;
+	min-block-size: 0;
+	flex: 1 1 auto;
+}
+
+.paneScroll {
+	min-block-size: 0;
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: var(--semantic-dimension-space-padding-small);
+}

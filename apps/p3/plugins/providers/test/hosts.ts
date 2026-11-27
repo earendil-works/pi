@@ -3,6 +3,8 @@
 // answering for `owners` (the people plugin's, stubbed) and the server's runtime as far as the providers plugin reads
 // it (its host and catalog base: the base's, stubbed).
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	type Context,
 	constant,
@@ -12,7 +14,7 @@ import {
 	type P3Principal,
 	type PluginFacet,
 } from "@earendil-works/p3/v1";
-import { ServerRuntime } from "@earendil-works/p3/v1/server";
+import { ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
 import fauxServer from "../../../test/plugins/faux-login/server.ts";
 import { type World, world } from "../../things/test/world.ts";
 import providersServer from "../server.ts";
@@ -40,18 +42,24 @@ export function providerFacets(
 		},
 		{
 			name: "p3-base",
-			facet: defineFacet((facetHost) =>
+			facet: defineFacet((facetHost) => {
+				// No runner: the plugin tier starts no worker, and a session's removal deletes no worker's data.
+				facetHost.serve(WorkerRunners, { compose: () => undefined });
 				facetHost.serve(ServerRuntime, {
-					// The providers plugin reads the runtime's host and catalog base only; the host is made after this facet loads.
+					// The providers plugin reads the runtime's host and catalog base only, the sessions plugin (a session's
+					// models' tests) its data directory, work root and machine; the host is made after this facet loads.
 					compose: () =>
 						({
 							get host() {
 								return host();
 							},
 							catalogBaseUrl,
+							dataDir: tmpdir(),
+							workRoot: join(tmpdir(), "p3-providers-test-work"),
+							machine: { user: "test", hostname: "test" },
 						}) as unknown as ServerRuntime,
-				}),
-			),
+				});
+			}),
 		},
 	];
 }
