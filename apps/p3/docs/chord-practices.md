@@ -76,7 +76,7 @@ session workers           one process per session: host at Session({ id }), its 
 | Module | What you get |
 | --- | --- |
 | `/v1` | everything of Chord's root (`remote`, `local`, `method`, the schema helpers, `defineTable`, `query`, `queries`, `defineState`, `defineRegistry`, `allow`, `deny`, `forbidden`, `invalid`, ...), `BACKGROUND_CONTEXT`, `Context`, `withAbortSignal`, `withCancel`, `JsonValue`, `defineFacet` typed with p3's principals, the host kinds `Server()` and `Session({ id })`, the helpers `forward`, `contribute`, `until(watchable, done, context)` (the first value for which `done` holds; the base, the plugins and the tests wait with it) and `reportError` (a failure nobody awaits: stderr now, telemetry with the telemetry package), `P3Principal`, and the contracts p3 promises to third-party plugins (the things plugin's: `defineThing`, `defineWorkspace`, `Workspace`, `Roots`, `WorkspaceChildren`, `MyAnswer`, ...; the sessions plugin's: `SessionKind`, `SessionObject`, `SessionDefaultsKind`, `SessionFacts`, `SessionWorker`, `SessionStart`, `SessionRow`, `SessionState`, `followSession`) |
-| `/v1/server` | the things store (`ThingsStore`, `Gives`) and `serveThing` (a kind's server side), the sessions store (`SessionsStore`), Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the machine's OS user and host name, the host, the store, the route to workers, apply, stop), `WorkerRunners` (the one runner) and `WorkerRunnerWraps` (how a plugin changes how session workers run), `LinkOpened` (hooks on accepted links), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types, Chord's `processLock` and `clearStaleLock` (a session's lock) |
+| `/v1/server` | the things store (`ThingsStore`, `Gives`) and `serveThing` (a kind's server side), the sessions store (`SessionsStore`), Chord's HTTP surface (`Http`, `Authenticators`, cookies), `ServerRuntime` (the data directory, the machine's OS user and host name, the host, the store, the route to workers, apply, stop), `WorkerRunners` (the one runner) and `WorkerRunnerWraps` (how a plugin changes how session workers run), `LinkOpened` (hooks on accepted links and plugin sockets: a sign-in that ends closes them), `ServerCommands` (what `p3` runs over the data directory's socket, for the owner's OS user: `stop`, `apply`, `owner-link`), `SessionRoute`, the worker control messages, the rollout types, Chord's `processLock` and `clearStaleLock` (a session's lock), pi-env's daemon for a machine type's terminals (`terminalDaemon`, `DaemonConnection`, `openTerminal`, `RemoteError`) |
 | `/v1/worker` | `WorkerRuntime` (the session, the host, the store, the directory, the idle time, `close`), `WorkerBusy` (counts that keep the worker alive) |
 | `/v1/testing` | for a plugin's `test/` folder only. `testPlugin(root, { kind: "server" } or { kind: "worker", session }, context)`: Chord's plugin tier with p3's API, kinds, modules and principals, and the base's own facet as the real host has it (`ServerRuntime` of a server that does not listen, starts no worker and applies nothing; or `WorkerRuntime` and `WorkerBusy`), each test with a temporary directory of its own, removed at `close`. `testServer({ plugins }, context)`: p3's real server on a temporary data directory with the built-in plugins and the plugins under test, workers as real processes, `client(ctx)` signed in as the owner (`testing.md`, tier 3); `ownerClient`, `ownerCookie` |
 
@@ -249,6 +249,18 @@ reference or a native.
   old runner (its workers exit) before the new one is contributed, so between the apply's answer and that
   contribution no runner exists (holds wait for it; the route continues with the next runner). A test waits for it
   with `until` on the `WorkerRunners` registry, never on the apply's answer.
+
+**HTTP: routes, sockets, assets** (model: the terminals plugin's attach socket, `plugins/terminals/socket.ts`)
+- A stream for a browser is held as the person: the request's (or socket's) scope gets the person's own reference to
+  the thing, checks the member, and ends the moment the hold loses it (`abortWhen`, `abortWhenLost` of the things
+  plugin), a read under way included.
+- A plugin socket (`Http`'s `sockets`, with a `maxPayload` of its own) is a `/chord` link's peer: it also ends with
+  the sign-in that opened it (call the composed `LinkOpened` hook with its request; no hook tracking it: refuse),
+  bounds what it buffers each way (frames before its checks, a window ahead of what the page says it drew, at most what
+  was sent, and the socket's own buffer), and checks each text frame against a schema (a trust boundary).
+- A web facet's asset by URL (`import url from "./x.wasm?url"`) is served under `/_chord/web/assets/`; a page that
+  compiles WebAssembly needs `Http`'s `csp: { "script-src": ["'wasm-unsafe-eval'"] }` from the plugin that brings it.
+- Plugins have no `import()`: a web facet's JavaScript is in every page's bundle; only an asset waits for its use.
 
 **Releases** (p3 runs from the checkout and as an installed release; both must work)
 - Plugins ship as source and are built at start; their tests live in their `test/` folder (the release leaves it

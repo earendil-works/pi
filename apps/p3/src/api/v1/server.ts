@@ -40,6 +40,9 @@ export {
 export type { BinaryReader, ExecutionEnv, Result } from "@earendil-works/pi-durable/env";
 export { FileError } from "@earendil-works/pi-durable/env";
 export { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+// pi-env's daemon and its terminals, for the machine types' (this device's). `Connection` is a name of Chord's HTTP
+// surface's too (an HTTP connection's info).
+export { Connection as DaemonConnection, openTerminal, RemoteError } from "@earendil-works/pi-env";
 // YAML, for the prompt plugin's server facet: a skill's front matter, read as pi reads it (its `yaml` pin). A built-in
 // plugin's own npm dependency would have to be installed in its folder; through the API it is the server's one copy.
 export { parse as parseYaml } from "yaml";
@@ -58,6 +61,7 @@ export {
 } from "../../../plugins/things/contract.server.ts";
 export { serveThing, type ThingCaller, type ThingImplementation } from "../../../plugins/things/serve.ts";
 export * from "./control.ts";
+export { terminalDaemon } from "./terminal-daemon.ts";
 
 /** The server's process values, for plugins: what only the base has. */
 export type ServerRuntime = {
@@ -169,8 +173,9 @@ export const WorkerRunnerWraps = defineRegistry<WorkerRunnerWrap, readonly Worke
 );
 
 /**
- * A hook on each `/chord` link the HTTP component accepts: `close` ends the link; the hook returns what to call once
- * the link closed (the sign-in plugin closes the links of a sign-in that ends).
+ * A hook on each `/chord` link the HTTP component accepts, and on each plugin socket whose handler calls it (the
+ * terminals' attach socket): `close` ends the link; the hook returns what to call once the link closed (the sign-in
+ * plugin closes the links of a sign-in that ends).
  */
 export type LinkOpenedHook = (request: HttpRequest, close: () => void) => (() => void) | undefined;
 

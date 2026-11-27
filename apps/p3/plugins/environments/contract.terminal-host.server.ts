@@ -20,6 +20,9 @@ export const TerminalList = local("environments.terminal-list", {
 	members: { terminals: arr(TerminalRow) },
 });
 
+/** A terminal's size in character cells. */
+export type TerminalSize = { readonly columns: number; readonly rows: number };
+
 /**
  * What `TerminalHost.open` starts: on `machine` in `folder`, at a size, for `owner`, at most `max` of the owner's
  * running.
@@ -52,9 +55,14 @@ export type TerminalHost = {
 	 */
 	open(request: TerminalRequest, context: Context): Promise<string>;
 	/** Types `data` into terminal `id`: whether its program got it (`false` once it ended, or with no such terminal). */
-	write(id: string, data: string): boolean;
+	write(id: string, data: string | Uint8Array): boolean;
 	/** Gives terminal `id` a new size. */
 	resize(id: string, columns: number, rows: number): void;
+	/**
+	 * Calls `listener` with terminal `id`'s size now and after each change of it (viewers follow the size another set),
+	 * until the answered stop or the terminal's close.
+	 */
+	followSize(id: string, listener: (size: TerminalSize) => void): () => void;
 	/** Ends terminal `id`'s program if it runs and forgets the terminal. */
 	close(id: string): void;
 	/** Closes every terminal of Terminals thing `thing`, in every workspace (the thing gone). */

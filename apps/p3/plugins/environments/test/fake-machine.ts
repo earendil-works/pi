@@ -65,7 +65,7 @@ function fakePty(options: PtyOptions): FakePty {
 		closed: false,
 		say: (text) => options.onData(new TextEncoder().encode(text)),
 		exit: (code) => exited(code),
-		write: (data) => void program.typed.push(data),
+		write: (data) => void program.typed.push(typeof data === "string" ? data : new TextDecoder().decode(data)),
 		resize: (columns, rows) => {
 			program.size = [columns, rows];
 		},
@@ -93,8 +93,6 @@ export function fakeType(connect: (settings: JsonValue) => MachineHost, type = "
 			type,
 			label: { namespace: "test", key: type, params: [] },
 			settings,
-			// Its programs are fakes: it opens terminals.
-			terminals: true,
 			connect: async (given) => connect(given as JsonValue),
 		});
 	});

@@ -351,7 +351,8 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		}
 	});
 
-	it("says a machine's refusal in the Terminals view as its message, not as the log's text (Fable, round 5)", async () => {
+	// Decision 133: this device's terminals run in pi-env's daemon, the page draws them with libghostty-vt.
+	it("runs a shell on this device in the Terminals view: drawn, typed into, sized, its queries answered only live", async () => {
 		await browser.wait(
 			`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Terminals")`,
 		);
@@ -360,16 +361,190 @@ describe("the page", { skip: BROWSER_SKIP }, () => {
 		);
 		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
 		await press("[data-terminals-open]");
-		// This device has no terminals yet: the environments plugin's message, rendered in the terminals plugin's view.
+		const screen = `document.querySelector("[data-terminal-screen] [role=log]")`;
+		/** Types `line` into the terminal, Enter after it, as a keyboard does (text, then the Enter key), once it takes input. */
+		const line = async (text: string) => {
+			await browser.wait(`document.querySelector('[data-terminal-input="ready"]') !== null`);
+			await browser.click("[data-terminal-screen]");
+			await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`, 5_000);
+			await browser.call("Input.insertText", { text });
+			await browser.enter();
+		};
+		/** Waits until the screen shows `text`. */
+		const shows = (text: string) => browser.wait(`${screen}?.textContent.includes(${JSON.stringify(text)})`);
+		await line("echo page-$((6*7))");
+		await shows("page-42");
+		await line("printf '\\033[31mred-text\\033[0m\\n'");
+		// Drawn in its colour: a span of its own (the typed command's text is one run of the default colour).
 		await browser.wait(
-			`document.querySelector("[data-terminals]")?.textContent.includes("Terminals on this machine are not there yet.")`,
+			`[...${screen}.querySelectorAll("span")].some((e) => e.textContent.startsWith("red-text") && e.style.color !== "")`,
 		);
+		// The screen sized the terminal to itself: not the size it opened with.
+		await line("echo size-$(stty size | tr ' ' x)");
+		await browser.wait(
+			`/size-\\d+x\\d+/.test(${screen}?.textContent) && !${screen}.textContent.includes("size-24x80")`,
+		);
+		// A query in the output replayed at attaching is not answered (it would be typed into the shell); a live one is.
+		await line("printf '\\033[c'; read -rs -t 1 -d c a; echo before-$((3*3))");
+		await shows("before-9");
+		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
+		await shows("before-9");
+		await line("read -rs -t 1 -n 1 x && echo stray-$((1*1)) || echo clean-$((5*5))");
+		await shows("clean-25");
+		await line("printf '\\033[c'; read -rs -t 2 -d c a; [ -n \"$a\" ] && echo live-$((40+2))");
+		await shows("live-42");
+		// A second page with Use on the same terminal: one query, one answer (Opus, Astra, round 1, S2).
+		const second = await Browser.start();
+		try {
+			await second.signIn(origin, await t.cookie(context));
+			await second.size(DESKTOP);
+			await second.open(`${origin}/w/${pi}/t/${terminals}`);
+			await second.wait(`${screen}?.textContent.includes("live-42")`);
+			await line(
+				"printf '\\033[c'; read -rs -t 2 -d c a; read -rs -t 1 -d c b; [ -n \"$b\" ] && echo replies-$((1+1)) || echo replies-$((0+1))",
+			);
+			await browser.wait(`/replies-[12]/.test(${screen}?.textContent)`);
+			assert.equal(await browser.evaluate(`/replies-[12]/.exec(${screen}.textContent)[0]`), "replies-1");
+			// Astra, rounds 2 and 3: the second page draws late (its frames held, its socket still reading), then becomes
+			// the one that answers by typing: the query it draws afterwards was the first page's, answered once.
+			await second.evaluate(`(() => {
+				const frame = window.requestAnimationFrame;
+				const held = [];
+				window.requestAnimationFrame = (fn) => { held.push(fn); return 1; };
+				window.drawAgain = () => { window.requestAnimationFrame = frame; for (const fn of held) frame(fn); };
+			})()`);
+			await line(
+				// 320,000 bytes first, more than the window: the second page's socket still has the query to send when it
+				// becomes the one that answers (Astra, round 3, M1): one point of the output decides for both.
+				'head -c 320000 /dev/zero; printf \'\\033[c\'; read -rs -t 2 -d c a; [ -n "$a" ] && echo first-$((5*5)); read -rs -t 4 -n1 key; echo next-$((4*4)); read -rs -t 2 -d c b; [ -n "$b" ] && echo handover-$((1+1)) || echo handover-$((0+1))',
+			);
+			await shows("first-25");
+			await second.evaluate(`document.querySelector('[data-terminal-input]').focus()`);
+			await second.call("Input.insertText", { text: "v" });
+			await shows("next-16");
+			await second.evaluate("window.drawAgain()");
+			await browser.wait(`/handover-[12]/.test(${screen}?.textContent)`);
+			assert.equal(await browser.evaluate(`/handover-[12]/.exec(${screen}.textContent)[0]`), "handover-1");
+		} finally {
+			await second.close();
+		}
+		await browser.size(PHONE);
+		await browser.wait(`document.querySelector('[data-terminal-input="ready"]') !== null`);
+		// A phone's keyboard composes a word, then corrects it: the field's change is what the shell gets (Opus, round
+		// 1, S4): "ehco" typed, corrected to "echo", sends three Backspaces and "cho".
+		// A finger's tap on the output focuses the field the keyboard types into (Astra, round 3: wait for the focus).
+		const output = await browser.box(`[data-terminal-screen] [role=log]`);
+		const finger = { x: output.x + output.width / 2, y: output.y + output.height / 3 };
+		await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [finger] });
+		await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`);
+		await browser.call("Input.imeSetComposition", { text: "ehco", selectionStart: 4, selectionEnd: 4 });
+		await browser.call("Input.insertText", { text: "echo" });
+		await browser.call("Input.insertText", { text: " typed-$((2*21))" });
+		await browser.enter();
+		await shows("typed-42");
+		await line("echo phone-$(stty size | tr ' ' x)");
+		await browser.wait(`/phone-\\d+x\\d+/.test(${screen}?.textContent)`);
+		const columns = await browser.evaluate<number>(`Number(/phone-\\d+x(\\d+)/.exec(${screen}.textContent)[1])`);
+		assert.ok(columns < 60, `the phone's ${columns} columns`);
+		await shots("terminals-phone");
+		await browser.size(DESKTOP);
+		await shots("terminals");
+		// Astra, round 4: a program redraws the row under the mouse between press and release, the browser sends no
+		// click; the release still focuses the field.
+		await line("for i in $(seq 1 100); do printf '\\0337\\033[5;1Hframe-%s\\0338' \"$i\"; sleep .05; done");
+		const row = `[...${screen}.querySelectorAll("span")].find((e) => /^frame-[0-9]/.test(e.textContent))`;
+		await browser.wait(`Boolean(${row})`);
+		const point = await browser.evaluate<{ x: number; y: number }>(
+			`(() => { const r = ${row}.getBoundingClientRect(); return { x: r.x + 4, y: r.y + r.height / 2 }; })()`,
+		);
+		await browser.evaluate(
+			`document.activeElement.blur(); document.addEventListener("mousedown", (event) => { window.pressed = event.target; }, { capture: true, once: true })`,
+		);
+		await browser.call("Input.dispatchMouseEvent", {
+			type: "mousePressed",
+			...point,
+			button: "left",
+			buttons: 1,
+			clickCount: 1,
+		});
+		await browser.wait("window.pressed !== undefined && !window.pressed.isConnected");
+		await browser.call("Input.dispatchMouseEvent", {
+			type: "mouseReleased",
+			...point,
+			button: "left",
+			buttons: 0,
+			clickCount: 1,
+		});
+		await browser.wait(`document.activeElement?.matches('[data-terminal-input="ready"]') === true`, 5_000);
+		await browser.call("Input.dispatchKeyEvent", {
+			type: "keyDown",
+			key: "c",
+			code: "KeyC",
+			windowsVirtualKeyCode: 67,
+			modifiers: 2,
+		});
+		await browser.call("Input.dispatchKeyEvent", {
+			type: "keyUp",
+			key: "c",
+			code: "KeyC",
+			windowsVirtualKeyCode: 67,
+			modifiers: 2,
+		});
+		// An ended terminal takes no input and says it ended, never "Connecting…" (Astra, round 3).
+		await line("exit 7");
+		await browser.wait(`document.querySelector("[data-terminals]")?.textContent.includes("Ended with code 7.")`);
+		await browser.wait(`document.querySelector('[data-terminal-input="closed"]') !== null`);
 		assert.equal(
 			await browser.evaluate<boolean>(
-				`document.querySelector("[data-terminals]").textContent.includes("environments:")`,
+				`document.querySelector("[data-terminals]").textContent.includes("Connecting…")`,
 			),
 			false,
 		);
+		await press("[data-terminal-close]");
+		await browser.wait(
+			`document.querySelector("[data-terminals]")?.textContent.includes("No terminals are open here.")`,
+		);
+		await browser.open(`${origin}/w/${pi}`);
+	});
+
+	// Astra, round 4: the screen alone (its socket's frames written by the test): a page whose connection skipped over the
+	// kept output's end answers the live queries it draws after it.
+	it("answers the live queries after a skip over the kept output's end, none before", async () => {
+		await browser.wait(
+			`[...document.querySelectorAll('[data-nav-thing]')].some((e) => e.textContent === "Terminals")`,
+		);
+		const terminals = await browser.evaluate<string>(
+			`[...document.querySelectorAll('[data-nav-thing]')].find((e) => e.textContent === "Terminals")?.dataset.navThing`,
+		);
+		await browser.open(`${origin}/w/${pi}/t/${terminals}`);
+		// Only this terminal's socket is the test's: everything else on the page is real.
+		await browser.evaluate(`(() => {
+			const Real = WebSocket;
+			window.writes = [];
+			window.WebSocket = new Proxy(Real, { construct(target, args) {
+				if (!String(args[0]).includes("/terminals/socket")) return Reflect.construct(target, args);
+				const socket = { readyState: 1, close() {}, send(data) { if (typeof data === "string") window.writes.push(JSON.parse(data)); } };
+				window.frame = (data) => socket.onmessage({ data: typeof data === "string" || data instanceof ArrayBuffer ? data : JSON.stringify(data) });
+				setTimeout(() => socket.onopen?.());
+				return socket;
+			} });
+		})()`);
+		await press("[data-terminals-open]");
+		await browser.wait("typeof window.frame === 'function'");
+		const drawn = "window.writes.filter((m) => m.kind === 'drawn').reduce((n, m) => n + m.bytes, 0)";
+		const replies = "window.writes.filter((m) => m.kind === 'reply').length";
+		await browser.evaluate(
+			"frame({ kind: 'kept', end: 262144 }); frame({ kind: 'size', columns: 80, rows: 24 }); frame({ kind: 'answer', yes: true, at: 262144 }); frame({ kind: 'from', offset: 0 }); for (let at = 0; at < 262016; at += 65536) frame(new Uint8Array(Math.min(65536, 262016 - at)).buffer)",
+		);
+		await browser.wait(`${drawn} === 262016`);
+		await browser.evaluate("frame({ kind: 'from', offset: 300000 }); frame(new Uint8Array([27, 91, 99]).buffer)");
+		await browser.wait(`${drawn} === 262019`);
+		assert.equal(await browser.evaluate<number>(replies), 1, "the first live query is answered");
+		await browser.evaluate("frame(new Uint8Array(200).buffer); frame(new Uint8Array([27, 91, 99]).buffer)");
+		await browser.wait(`${drawn} === 262222`);
+		assert.equal(await browser.evaluate<number>(replies), 2, "and the next");
+		await press("[data-terminal-close]");
 		await browser.open(`${origin}/w/${pi}`);
 	});
 

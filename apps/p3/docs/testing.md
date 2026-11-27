@@ -7,12 +7,18 @@ its cause is known.
 ## Setup and commands
 
 p3 needs Node 26.3.1 or newer, tests included. On slayer the default `node` is 24:
-`export PATH=/home/badlogic/node-v26.11.1-linux-x64/bin:$PATH`.
+`export PATH=/home/badlogic/node-v26.11.1-linux-x64/bin:$PATH`. This device's terminals run in pi-env's daemon, which a
+checkout builds with Rust (`cargo`, on the `PATH` or in rustup's `~/.cargo/bin`; https://rustup.rs): `npm run
+build:daemon`; `npm test` runs it first, a single test file run by hand needs it built once (and again after a change
+of `packages/env/daemon`). On slayer `cc` is a zig shim, whose linker warning ("ignoring deprecated linker optimization
+setting") each build prints: harmless. The daemon's own Rust tests (`cargo test` in `packages/env/daemon`) need a
+temporary directory outside a git repository, and slayer's `/tmp` has a `.git`: `TMPDIR=$(mktemp -d /var/tmp/x-XXXXXX)`.
 
 | Command (in `apps/p3`) | What |
 | --- | --- |
 | `npm run check` | Biome and TypeScript over p3 (the root check skips `apps/`); clean before every report |
-| `npm test` | every `test/*.test.ts` and `plugins/*/test/*.test.ts`, from source |
+| `npm run build:daemon` | builds pi-env's daemon from `packages/env/daemon` (`cargo build --release --locked`, about 1 s when nothing changed): this device's terminals in a checkout |
+| `npm test` | builds the daemon (`pretest`), then every `test/*.test.ts` and `plugins/*/test/*.test.ts`, from source |
 | `node --conditions=source --disable-warning=ExperimentalWarning --test <file>` | one test file |
 | `npm run release:p3:local -- --out /tmp/p3-release --force` (from the repository root) | builds and installs the release outside the repository and runs `test/release/*.test.ts` against it; `--bench` runs `bench/skeleton.ts` against it. The memory test is not ported yet: the old base's is in git at `753bc0bb2` (`apps/p3/old/test/release/`), ported with the harness core (ERNDL-855) |
 
@@ -220,6 +226,8 @@ not exist yet.
   page shows (`wait`), never sleep; before a screenshot of a dialog or a popup, `settled` waits until its animations
   ended and checks it is on top. The last case asserts that the server reported nothing and the page logged no error.
   Screenshots go to `/tmp/p3-base/shots/` (`P3_SHOTS` names another directory) for a person to look at.
+- **A quiet machine:** the page's waits give up after 20 s; at a load near 100 (others' suites on slayer) a real shell's
+  case can miss one. Rerun it before reading a failure as a bug.
 - **Run only when asked,** never in a plain `npm test`: `P3_BROWSER_TESTS=1` and `CHROMIUM_BIN` (on slayer
   `CHROMIUM_BIN=/home/badlogic/.local/bin/chromium-docker`, the Playwright image's Chromium), else the suite is
   skipped:
@@ -245,6 +253,8 @@ p3 runs on Android under Termux (Node 26.3.1). Known differences:
   Android 14 and later, Developer options, "Disable child process restrictions"; on Android 12 and 13, from a computer,
   `adb shell device_config set_sync_disabled_for_tests persistent` and
   `adb shell device_config put activity_manager max_phantom_processes 2147483647`;
-- everything is about ten times slower to start than on slayer.
+- everything is about ten times slower to start than on slayer;
+- the terminals' daemon is built with Rust in Termux (`pkg install rust`), the first build several minutes, then a few
+  seconds.
 
 A package that touches processes, files or the network runs its tests on the phone before sign-off.

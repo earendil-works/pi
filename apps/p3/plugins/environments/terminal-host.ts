@@ -25,6 +25,7 @@ import {
 	TerminalList,
 	type TerminalOwner,
 	type TerminalRequest,
+	type TerminalSize,
 } from "./contract.terminal-host.server.ts";
 import type { TerminalRow } from "./contract.ts";
 import { messages } from "./messages.ts";
@@ -82,15 +83,20 @@ export function serveTerminals(host: FacetHost<P3Principal>): void {
 /** How many terminals one host runs at most, over every owner (opens under way counted). */
 const MAX_HOSTED = 100;
 
-/** A running or ended terminal: its row, owner, program (none once it exited), output and who waits for more. */
+/**
+ * A running or ended terminal: its row, owner, program (none once it exited), size, output, who waits for more and who
+ * follows its size.
+ */
 type Hosted = {
 	row: TerminalRow;
 	readonly owner: TerminalOwner;
 	/** The owner's key in the host's maps. */
 	readonly key: string;
 	pty: Pty | undefined;
+	size: TerminalSize;
 	readonly ring: Ring;
 	readonly waiting: Set<() => void>;
+	readonly sized: Set<(size: TerminalSize) => void>;
 	closed: boolean;
 };
 
@@ -162,8 +168,10 @@ export class HostedTerminals implements TerminalHost {
 			owner,
 			key,
 			pty: undefined,
+			size: { columns, rows },
 			ring: new Ring(TERMINAL_BACKLOG),
 			waiting: new Set(),
+			sized: new Set(),
 			closed: false,
 		};
 		// Output can come before `openPty` resolves: it is kept from the first byte on.
@@ -202,14 +210,28 @@ export class HostedTerminals implements TerminalHost {
 		return id;
 	}
 
-	write(id: string, data: string): boolean {
+	write(id: string, data: string | Uint8Array): boolean {
 		const pty = this.#terminals.get(id)?.pty;
 		pty?.write(data);
 		return pty !== undefined;
 	}
 
 	resize(id: string, columns: number, rows: number): void {
-		this.#terminals.get(id)?.pty?.resize(columns, rows);
+		const hosted = this.#terminals.get(id);
+		if (hosted?.pty === undefined) return;
+		if (hosted.size.columns === columns && hosted.size.rows === rows) return;
+		hosted.pty.resize(columns, rows);
+		const size = { columns, rows };
+		hosted.size = size;
+		for (const listener of [...hosted.sized]) listener(size);
+	}
+
+	followSize(id: string, listener: (size: TerminalSize) => void): () => void {
+		const hosted = this.#terminals.get(id);
+		if (hosted === undefined) return () => {};
+		hosted.sized.add(listener);
+		listener(hosted.size);
+		return () => hosted.sized.delete(listener);
 	}
 
 	close(id: string): void {
@@ -218,6 +240,7 @@ export class HostedTerminals implements TerminalHost {
 		hosted.closed = true;
 		hosted.pty?.close();
 		hosted.pty = undefined;
+		hosted.sized.clear();
 		this.#terminals.delete(id);
 		this.#publish(
 			hosted.owner,

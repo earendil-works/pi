@@ -5,7 +5,7 @@
 use crate::errors::Failure;
 use crate::exec::{Control, Groups, running};
 #[cfg(unix)]
-use crate::exec::{Message, kill_group, start_waiter};
+use crate::exec::{Ending, Message, kill_group, register, start_waiter};
 #[cfg(unix)]
 use crate::frame::{EVENT, Frame};
 #[cfg(unix)]
@@ -163,7 +163,7 @@ pub fn run(
         unix::spawn(&request).map_err(|error| Failure::new("spawn_error", error.to_string()))?;
     let master = Arc::new(master);
     let pid = child.id();
-    groups.lock().unwrap().insert(pid);
+    let registered = register(groups, pid);
     let (input, inputs) = mpsc::channel::<Vec<u8>>();
     terminals.lock().unwrap().insert(
         id,
@@ -184,9 +184,10 @@ pub fn run(
     let abandon = |mut child: std::process::Child, error: std::io::Error| {
         stop.store(true, Ordering::SeqCst);
         kill_group(pid);
+        // Forgotten before it is reaped: then its pid may name another program, which a shutdown must not reach.
+        registered.forget(groups);
         let _ = child.wait();
         terminals.lock().unwrap().remove(&id);
-        groups.lock().unwrap().remove(&pid);
         Failure::new("spawn_error", error.to_string())
     };
     // Like a full pipe: a program that writes faster than the link waits.
@@ -223,7 +224,18 @@ pub fn run(
     if let Err(error) = started {
         return Err(abandon(child, error));
     }
-    if let Err((child, error)) = start_waiter(child, None, sender.clone()) {
+    // When the shell exits, its session's jobs are killed before it is reaped (its pid, the session's id, names no
+    // other process until then), as the jobs of a terminal that closes are: a background job does not outlive it.
+    let group = match crate::sys::group(&child) {
+        Ok(group) => group,
+        Err(error) => return Err(abandon(child, error)),
+    };
+    let ending = Ending {
+        group,
+        groups: groups.clone(),
+        registered,
+    };
+    if let Err((child, error)) = start_waiter(child, Some(ending), sender.clone()) {
         return Err(abandon(child, error));
     }
     drop(sender);
@@ -236,7 +248,8 @@ pub fn run(
     let kill = |killed: &mut bool| {
         if !*killed {
             *killed = true;
-            kill_group(pid);
+            // Only while its registration stands: the waiter forgets it under the lock before reaping it.
+            registered.kill(groups);
         }
     };
     if control.killed.load(Ordering::SeqCst) {
@@ -293,7 +306,7 @@ pub fn run(
     stop.store(true, Ordering::SeqCst);
     // Ending the input channel ends the writer thread.
     terminals.lock().unwrap().remove(&id);
-    groups.lock().unwrap().remove(&pid);
+    registered.forget(groups);
     let _ = reader.join();
     if aborted {
         return Err(Failure::new("aborted", "aborted"));

@@ -2,17 +2,25 @@
 // target (`Views`: things of a kind, persons, groups; 0 to n each), what a kind has once (`ThingParts`: its title,
 // icon, create step and settings form), and the components the page places: `TargetView`, which draws a target in its
 // chosen view, the Settings view, the navigator, the add-thing picker and the invite dialog; the plugins' titles for
-// the picker's headings and the sections of `/me`; and four hooks every view plugin may use: `useScreenId` (the id
-// every list a page holds takes), `useMessageText` (a message of any plugin as text), `useErrorText` (what a failed
-// call says to the person: guide 4.2) and `useNames` (a kind and a thing as the page names them). Tokens, data and
-// hooks only: the base bundle carries this file, so no component lives here.
+// the picker's headings and the sections of `/me`; and the hooks every view plugin may use: `useScreenId` (the id
+// every list a page holds takes), `useMessageText` (a message of any plugin as text), `useErrorText` and `useAction`
+// (what a failed call says to the person: guide 4.2, and a view's call with it) and `useNames` (a kind and a thing as
+// the page names them). Tokens, data and hooks only: the base bundle carries this file, so no component lives here.
 // The hooks, and the things plugin's page messages they read, are part of that bundle: a live apply of the things
 // plugin does not change them for third-party plugins (built-in ones import this file by path and get the new code).
 // `/v1/web` re-exports it.
 
-import { defineRegistry, type JsonValue, type MessageData, type TableItem, Translations } from "@earendil-works/p3/v1";
+import {
+	BACKGROUND_CONTEXT,
+	type Context,
+	defineRegistry,
+	type JsonValue,
+	type MessageData,
+	type TableItem,
+	Translations,
+} from "@earendil-works/p3/v1";
 import { defineComponent, type Target, useMessages, usePageState, useRegistry } from "@earendil-works/p3/v1/web";
-import { type ComponentType, useState } from "react";
+import { type ComponentType, useCallback, useState } from "react";
 import { page } from "./page-messages.ts";
 
 export type { Target } from "@earendil-works/p3/v1/web";
@@ -200,6 +208,32 @@ export function useErrorText(): (error: unknown) => string {
 		if (message !== undefined) return text(message);
 		return error instanceof Error ? error.message : String(error);
 	};
+}
+
+/** A call a view makes: whether one runs and the text of the last failure, as the person reads it. */
+export type Action = {
+	readonly pending: boolean;
+	readonly error: string | undefined;
+	/** Runs `call`; its failure is kept as `error` (`useErrorText`), never thrown. */
+	run(call: (context: Context) => Promise<unknown>): void;
+};
+
+/** A view's call state and its `run`. */
+export function useAction(): Action {
+	const errorText = useErrorText();
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | undefined>(undefined);
+	const run = useCallback(
+		(call: (context: Context) => Promise<unknown>) => {
+			setPending(true);
+			setError(undefined);
+			call(BACKGROUND_CONTEXT)
+				.catch((failure: unknown) => setError(errorText(failure)))
+				.finally(() => setPending(false));
+		},
+		[errorText],
+	);
+	return { pending, error, run };
 }
 
 /**

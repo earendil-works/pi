@@ -41,7 +41,7 @@ import {
 	type ListenAddress,
 } from "@earendil-works/chord/http";
 import { createPlugins, type PluginsError, type PluginsState, type RolloutStep } from "@earendil-works/chord/plugins";
-import { type PageAssets, pageScripts, webSurface } from "@earendil-works/chord/surfaces";
+import { type PageAssets, pageScripts, WEB_PREFIX, webSurface } from "@earendil-works/chord/surfaces";
 import * as v1 from "@earendil-works/p3/v1";
 import { MyAnswer, reportError, Server, Session, SessionKind, until } from "@earendil-works/p3/v1";
 import * as v1server from "@earendil-works/p3/v1/server";
@@ -177,6 +177,8 @@ export async function startServer(options: ServerOptions, context: Context): Pro
 				roots: options.roots,
 				api: API,
 				kinds: KINDS,
+				// Where the page surface serves the plugins' web assets (a `?url` import, a stylesheet's `url()`).
+				publicPath: `${WEB_PREFIX}assets/`,
 				onError: (error) => options.onError({ kind: "plugins", error }),
 			},
 			context,
