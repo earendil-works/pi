@@ -1,175 +1,162 @@
-// The prompt plugin on the server (`testPlugin`, beside the things plugin's server facet). Instructions: the agents get
-// Use by the kind's default grants, a person let in with `@open` gets no flag (Use is for agents); no text before anyone
-// set one; Pi's seeded one with the default text; configure sets some settings and keeps the others, also when two run at once;
-// hidden in a workspace: denied there; the settings dropped with the thing, the clear safe to run twice. Skills: a set
-// lists its folder's skills and follows the folder live, one watcher per set, closed with its last holder; the agent
-// reads a skill's text and files, never another set's; a folder outside the Pi's skills root is refused with its
-// message; the setting dropped with the thing.
+// The prompt plugin on the server (`kindServer`: its server facet beside the things plugin's), for each of its kinds.
+// Instructions: registered by the plugin, made by people; the session's agent gets Use, the owner nothing (Use is the
+// agents'), a person put in is not let in, with `@open` let in with no flag; Pi's seeded one has the default text, a
+// new one no text; configure sets some settings and keeps the others, also when two run at once; hidden in a
+// workspace: denied there, live; the settings dropped with the thing, its delete safe to run again; a holder's text
+// followed across a reload of the plugin; a released hold collected. A set of skills: registered, made by people; the
+// agent gets `read` (Use); it lists its folder's skills and reads a skill's text and files, never another set's;
+// configure refuses a folder outside the skills root with its message and follows a new folder live; hidden: denied;
+// its setting dropped with the thing; one shared read however many hold it, released with its last holder; a new
+// skill seen across a reload; a released hold collected.
 
 import assert from "node:assert/strict";
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
-import {
-	type Contract,
-	type Ctx,
-	BACKGROUND_CONTEXT as context,
-	isChordError,
-	type P3Principal,
-	type Reference,
-	until,
-} from "@earendil-works/p3/v1";
-import { ServerRuntime } from "@earendil-works/p3/v1/server";
-import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import { eventually, within } from "../../../test/until.ts";
-import { OneThing, ThingHooks, ThingsStore } from "../../things/contract.server.ts";
-import { OPEN, type Source } from "../../things/contract.ts";
-import thingsServer from "../../things/server.ts";
-import { folderPath, skillsRoot } from "../folder.ts";
-import { Instructions, InstructionsKind } from "../instructions-kind.ts";
-import { SkillSet } from "../set.ts";
-import { Skills, SkillsKind } from "../skills-kind.ts";
+import { type Contract, BACKGROUND_CONTEXT as context, type P3Principal, until } from "@earendil-works/p3/v1";
+import { collected, eventually, within } from "../../../test/until.ts";
+import { OneThing, ThingHooks } from "../../things/contract.server.ts";
+import { OPEN } from "../../things/contract.ts";
+import { ThingKinds } from "../../things/kind.ts";
+import { BY, refused } from "../../things/test/kind-server.ts";
+import { type Instructions, InstructionsKind } from "../instructions-kind.ts";
+import { type Skills, SkillsKind } from "../skills-kind.ts";
 import { PromptStore } from "../store.ts";
+import { type PromptServer, promptKind } from "./prompt-server.ts";
 
-/** Who sets things up in the tests. */
-const BY: Source = { kind: "plugin", plugin: "test" };
+/** The session's agent of workspace `s1`. */
+const AGENT: P3Principal = { kind: "worker", session: "s1" };
 
-/** The session whose agent the tests hold as. */
-const SESSION = "s1";
-
-/** The session's worker: the agent. */
-const AGENT: P3Principal = { kind: "worker", session: SESSION };
-
-let t: TestedPlugin<P3Principal>;
-let things: Reference<typeof ThingsStore>;
-let store: Reference<typeof PromptStore>;
-let pi: string;
-let root: string;
-
-beforeEach(async () => {
-	t = await testPlugin(
-		fileURLToPath(new URL("../", import.meta.url)),
-		{ kind: "server", stubs: [{ name: "@earendil-works/p3-things", facet: thingsServer }] },
-		context,
-	);
-	things = await t.host.get(ThingsStore, {}, context);
-	store = await t.host.get(PromptStore, {}, context);
-	pi = (await things.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
-	await things.putParty({ workspace: pi, party: { kind: "agent", session: SESSION }, source: BY }, context);
-	root = skillsRoot((await t.host.registry(ServerRuntime, context)).value.dataDir);
-});
-
-afterEach(() => t.close(context));
-
-/** Runs `fn` with `principal`'s reference to thing `thing` of `Type` in `workspace`. */
-function holding<C extends Contract, T>(
-	Type: C,
-	thing: string,
-	fn: (ref: Reference<C>, ctx: Ctx<P3Principal>) => Promise<T>,
-	{ principal = AGENT, workspace = pi }: { principal?: P3Principal; workspace?: string } = {},
-) {
-	return t.root(
-		async (ctx) => fn(await ctx.get(Type, { workspace, thing } as never, { readyTimeout: 500 }), ctx),
-		context,
-		{ principal },
-	);
-}
-
-/** Whether `promise` rejects with a ChordError of `code`, carrying the message `key` when given. */
-async function refused(promise: Promise<unknown>, code: string, key?: string): Promise<void> {
-	await assert.rejects(
-		promise,
-		(error: unknown) =>
-			isChordError(error) &&
-			error.code === code &&
-			(key === undefined || JSON.stringify(error.details ?? null).includes(`"${key}"`)),
-	);
-}
-
-/** Kind `kind`'s configure hook, as `Workspace.configure` calls it. */
-async function configureOf(kind: string) {
-	const hook = (await t.host.registry(ThingHooks, context)).value.get(kind)?.value.configure;
+/** Kind `kind`'s configure hook on `n`, as `Workspace.configure` calls it. */
+async function configureOf<C extends Contract>(n: PromptServer<C>, kind: string) {
+	const hook = (await n.host.registry(ThingHooks, context)).value.get(kind)?.value.configure;
 	assert.ok(hook !== undefined);
-	return (thing: string, settings: Record<string, unknown>) => t.root((ctx) => hook(thing, settings, ctx), context);
+	return (thing: string, settings: Record<string, unknown>) =>
+		n.host.root((ctx) => hook(thing, settings, ctx), context);
+}
+
+/** Kind `kind`'s delete hook on `n`, as the things plugin runs it (again after a failure or a restart). */
+async function deleteOf<C extends Contract>(n: PromptServer<C>, kind: string) {
+	const hook = (await n.host.registry(ThingHooks, context)).value.get(kind)?.value.delete;
+	assert.ok(hook !== undefined);
+	return (thing: string) => n.host.root((ctx) => hook(thing, ctx), context);
 }
 
 describe("instructions", () => {
-	/** Makes instructions in Pi, by the test; linked with the kind's default grants. */
-	const make = () => things.create({ kind: InstructionsKind.name, name: "Coding", workspace: pi, by: BY }, context);
+	let n: PromptServer<typeof Instructions>;
+	let s1: string;
 
-	it("give the agent Use and no text before anyone set one; a person with @open gets no flag", async () => {
-		const thing = await make();
-		await holding(Instructions, thing, async (instructions) => {
-			assert.deepEqual([...instructions.granted], ["use"]);
-			assert.equal(instructions.language.value, "en");
-			assert.equal(instructions.text.value, "");
-		});
-		const person = await things.createPerson({ name: "Ann", madeBy: BY }, context);
-		const party = { kind: "person", person } as const;
-		await things.putParty({ workspace: pi, party, source: BY }, context);
-		await things.setGrants(
-			{ source: BY, grants: [{ workspace: pi, thing, party, tick: OPEN, gives: true }] },
-			context,
-		);
-		const ann: P3Principal = { kind: "person", id: person, name: "Ann" };
-		await holding(Instructions, thing, async (instructions) => assert.deepEqual([...instructions.granted], []), {
-			principal: ann,
-		});
+	beforeEach(async () => {
+		n = await promptKind(InstructionsKind, context);
+		s1 = await n.workspace("s1");
 	});
 
-	it("are seeded once in Pi with the default text, which only the seed gets", async () => {
-		const seeded = await t.host.get(OneThing, { kind: InstructionsKind.name }, context);
+	afterEach(() => n.close());
+
+	it("are registered by the prompt plugin, made by people", async () => {
+		const entry = (await n.host.registry(ThingKinds, context)).value.get(InstructionsKind.name);
+		assert.deepEqual([entry?.plugin, entry?.value.makers], ["@earendil-works/p3-prompt", "people"]);
+	});
+
+	it("give the agent Use and the owner nothing; a person put in is let in only with @open, with no flag", async () => {
+		const thing = await n.thingIn(n.pi);
+		assert.deepEqual(await n.granted(AGENT, s1, thing), ["use"]);
+		const owner = await n.things.createPerson({ name: "Olga", madeBy: BY }, context);
+		await n.things.setOwner({ person: owner, owner: true }, context);
+		assert.deepEqual(await n.granted({ kind: "person", id: owner, name: "Olga" }, n.pi, thing), []);
+		const ann = await n.person("Ann");
+		await refused(n.granted(ann, n.pi, thing));
+		await n.tick(n.pi, thing, { kind: "person", person: ann.id }, OPEN, true);
+		assert.deepEqual(await n.granted(ann, n.pi, thing), []);
+	});
+
+	it("are seeded once in Pi with the default text; new ones have no text, in English", async () => {
+		const seeded = await n.host.get(OneThing, { kind: InstructionsKind.name }, context);
 		const seed = await until(seeded.thing, (thing) => thing !== "", within("the seed", context));
-		await holding(Instructions, seed, async (instructions, ctx) => {
+		seeded.release();
+		await n.holding(AGENT, s1, seed, async (instructions, ctx) => {
 			await until(instructions.text, (text) => /concise/.test(text), within("the seed's text", ctx));
+		});
+		const made = await n.thingIn(n.pi);
+		await n.holding(AGENT, s1, made, async (instructions) => {
+			assert.deepEqual([instructions.text.value, instructions.language.value], ["", "en"]);
 		});
 	});
 
 	it("configure sets some settings and keeps the others, also when two run at once", async () => {
-		const thing = await make();
-		const configure = await configureOf(InstructionsKind.name);
+		const thing = await n.thingIn(n.pi);
+		const configure = await configureOf(n, InstructionsKind.name);
 		// Two Configures at once, each with one setting: both stay (one merging write each).
 		await Promise.all([configure(thing, { language: "de" }), configure(thing, { text: "Sei freundlich." })]);
-		await holding(Instructions, thing, async (instructions, ctx) => {
+		await n.holding(AGENT, s1, thing, async (instructions, ctx) => {
 			await until(instructions.text, (text) => text === "Sei freundlich.", within("the new text", ctx));
 			assert.equal(instructions.language.value, "de");
 		});
 	});
 
-	it("are denied in a workspace that hides them", async () => {
-		const thing = await make();
-		const team = await things.createWorkspace(
-			{ kind: "things.workspace", name: "team", parent: pi, by: BY },
-			context,
-		);
-		await things.putParty({ workspace: team, party: { kind: "agent", session: SESSION }, source: BY }, context);
-		await holding(Instructions, thing, async (instructions) => assert.ok(instructions.granted.has("use")), {
-			workspace: team,
+	it("are denied in a workspace that hides them, live, and still given where they are shown", async () => {
+		const thing = await n.thingIn(n.pi);
+		const s2 = await n.workspace("s2");
+		await n.holding(AGENT, s1, thing, async (instructions, ctx) => {
+			await n.things.setSwitch({ workspace: s1, item: { kind: "thing", thing }, shown: false }, context);
+			await until(
+				instructions.state,
+				(state) => state.kind === "failed" && state.cause.kind === "denied",
+				within("hidden in s1", ctx),
+			);
 		});
-		await things.setSwitch({ workspace: team, item: { kind: "thing", thing }, shown: false }, context);
-		await refused(
-			holding(Instructions, thing, async () => {}, { workspace: team }),
-			"forbidden",
-		);
+		assert.deepEqual(await n.granted({ kind: "worker", session: "s2" }, s2, thing), ["use"]);
 	});
 
-	it("drop their settings with the thing; the clear may run again", async () => {
-		const thing = await make();
+	it("drop their settings with the thing; the delete may run again", async () => {
+		const thing = await n.thingIn(n.pi);
+		const store = await n.host.get(PromptStore, {}, context);
 		await store.configureInstructions({ thing, text: "Gone soon." }, context);
-		await things.unlink({ workspace: pi, thing }, context);
+		await n.things.unlink({ workspace: n.pi, thing }, context);
 		await eventually(
 			async () => (await store.instructions.of.page({ thing }, 1, context)).items.length,
 			(count) => count === 0,
 		);
-		await store.clearInstructions({ thing }, context);
+		await (await deleteOf(n, InstructionsKind.name))(thing);
+		store.release();
+	});
+
+	it("keep a holder's text across a reload of the plugin, and follow a configure after it", async () => {
+		const thing = await n.thingIn(n.pi);
+		const configure = await configureOf(n, InstructionsKind.name);
+		await configure(thing, { text: "Before." });
+		await n.holding(AGENT, s1, thing, async (instructions, ctx) => {
+			await until(instructions.text, (text) => text === "Before.", within("the text", ctx));
+			await n.reload();
+			await (await configureOf(n, InstructionsKind.name))(thing, { text: "After." });
+			await until(instructions.text, (text) => text === "After.", within("the text after the reload", ctx));
+		});
+	});
+
+	it("are collected once released", async () => {
+		const thing = await n.thingIn(n.pi);
+		const refs: WeakRef<object>[] = [];
+		await n.holding(AGENT, s1, thing, async (instructions) => {
+			refs.push(new WeakRef(instructions), new WeakRef(instructions.text));
+		});
+		assert.ok(await collected(refs));
 	});
 });
 
 describe("a set of skills", () => {
+	let n: PromptServer<typeof Skills>;
+	let s1: string;
+
+	beforeEach(async () => {
+		n = await promptKind(SkillsKind, context);
+		s1 = await n.workspace("s1");
+	});
+
+	afterEach(() => n.close());
+
 	/** Writes skill `name` into `folder` under the root, with `description` and the extra `files`. */
 	async function writeSkill(folder: string, name: string, description: string, files: string[] = []): Promise<void> {
-		const at = join(root, folder, name);
+		const at = join(n.root, folder, name);
 		await mkdir(at, { recursive: true });
 		await writeFile(join(at, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n# ${name}\n`);
 		for (const file of files) {
@@ -178,21 +165,23 @@ describe("a set of skills", () => {
 		}
 	}
 
-	/** Makes a set in Pi with folder `folder` (as `configure` writes it); its id. */
+	/** Makes a set in Pi with folder `folder`, configured as Configure does; its id. */
 	async function setIn(folder: string): Promise<string> {
-		const thing = await things.create({ kind: SkillsKind.name, name: folder, workspace: pi, by: BY }, context);
-		await store.configureSkills({ thing, folder }, context);
+		const thing = await n.thingIn(n.pi, folder);
+		await (await configureOf(n, SkillsKind.name))(thing, { folder });
 		return thing;
 	}
 
-	/** The process's file watch handles (a set's watcher has one per folder it watches). */
-	const watchers = () => process.getActiveResourcesInfo().filter((kind) => kind === "FSEventWrap").length;
+	it("is registered by the prompt plugin, made by people", async () => {
+		const entry = (await n.host.registry(ThingKinds, context)).value.get(SkillsKind.name);
+		assert.deepEqual([entry?.plugin, entry?.value.makers], ["@earendil-works/p3-prompt", "people"]);
+	});
 
 	it("lists its folder's skills; the agent reads a skill's text and files, never another set's", async () => {
 		await writeSkill("coding", "release", "Cut a release", ["scripts/run.sh"]);
 		await writeSkill("other", "secret", "Not this set's");
 		const thing = await setIn("coding");
-		await holding(Skills, thing, async (skills, ctx) => {
+		await n.holding(AGENT, s1, thing, async (skills, ctx) => {
 			assert.deepEqual([...skills.granted], ["read"]);
 			await until(skills.skills, (list) => list.length === 1, within("the folder's skills", ctx));
 			assert.deepEqual(skills.skills.value, [{ name: "release", description: "Cut a release" }]);
@@ -204,122 +193,85 @@ describe("a set of skills", () => {
 		});
 	});
 
-	it("follows its folder: a skill added appears without a reload", async () => {
-		await writeSkill("coding", "release", "Cut a release");
+	it("refuses a folder outside the skills root with its message, and follows a new folder live", async () => {
+		await writeSkill("family", "recipes", "Cook");
 		const thing = await setIn("coding");
-		// The set's own object, held throughout: the watcher's, not a new object's first read.
-		const set = await t.host.get(SkillSet, { thing }, context);
-		await until(set.skills, (list) => list.length === 1, within("the folder's skills", context));
-		await writeSkill("coding", "review", "Review a change");
-		await until(set.skills, (list) => list.length === 2, within("the new skill", context));
-		set.release();
-	});
-
-	it("watches its folder once however many hold it, and stops with its last holder", async () => {
-		await writeSkill("coding", "release", "Cut a release");
-		const thing = await setIn("coding");
-		const before = watchers();
-		const first = await t.host.get(SkillSet, { thing }, context);
-		await until(first.skills, (list) => list.length === 1, within("the folder's skills", context));
-		// Node watches a folder tree with one handle per folder on Linux: count them for one holder, then for two.
-		const one = watchers();
-		assert.ok(one > before);
-		const second = await t.host.get(SkillSet, { thing }, context);
-		assert.equal(watchers(), one, "a second holder adds no watcher");
-		first.release();
-		second.release();
-		await eventually(watchers, (count) => count === before);
-	});
-
-	it("refuses a folder outside the skills root with its message, through configure too", async () => {
-		const thing = await setIn("coding");
-		const configure = await configureOf(SkillsKind.name);
+		const configure = await configureOf(n, SkillsKind.name);
 		await refused(configure(thing, { folder: "../elsewhere" }), "invalid", "outsideRoot");
-		await configure(thing, { folder: "family" });
-		await holding(Skills, thing, async (skills, ctx) => {
+		await n.holding(AGENT, s1, thing, async (skills, ctx) => {
+			await configure(thing, { folder: "family" });
 			await until(skills.folder, (folder) => folder === "family", within("the new folder", ctx));
+			await until(skills.skills, (list) => list[0]?.name === "recipes", within("its skills", ctx));
 		});
-		assert.equal(folderPath(root, "coding"), join(root, "coding"));
-		assert.equal(folderPath(root, ""), root);
-		for (const outside of ["/etc", "..", "../other", "coding/../../x"]) {
-			assert.throws(() => folderPath(root, outside), /outside the Pi's skills root/);
-		}
 	});
 
-	it("drops its setting with the thing; the clear may run again", async () => {
+	it("is denied in a workspace that hides it, live", async () => {
 		const thing = await setIn("coding");
-		await things.unlink({ workspace: pi, thing }, context);
+		await n.holding(AGENT, s1, thing, async (skills, ctx) => {
+			await n.things.setSwitch({ workspace: s1, item: { kind: "thing", thing }, shown: false }, context);
+			await until(
+				skills.state,
+				(state) => state.kind === "failed" && state.cause.kind === "denied",
+				within("hidden in s1", ctx),
+			);
+		});
+	});
+
+	it("drops its setting with the thing; the delete may run again", async () => {
+		const thing = await setIn("coding");
+		const store = await n.host.get(PromptStore, {}, context);
+		await n.things.unlink({ workspace: n.pi, thing }, context);
 		await eventually(
 			async () => (await store.skills.of.page({ thing }, 1, context)).items.length,
 			(count) => count === 0,
 		);
-		await store.clearSkills({ thing }, context);
+		await (await deleteOf(n, SkillsKind.name))(thing);
+		store.release();
 	});
 
-	it("follows a configured folder after its first creation (Astra, round 1)", async () => {
-		await writeSkill("existing", "old", "before");
-		const thing = await setIn("existing");
-		const set = await t.host.get(SkillSet, { thing }, context);
-		await until(set.skills, (list) => list.length === 1, within("loaded", context));
-		await store.configureSkills({ thing, folder: "later" }, context);
-		await until(set.skills, (list) => list.length === 0, within("new path initially empty", context));
-		await writeSkill("later", "new", "after");
-		await until(set.skills, (list) => list.length === 1, within("first skill in created folder", context));
-		set.release();
-	});
-
-	it("has no skills and no watcher without a folder (Opus, round 1)", async () => {
-		await writeSkill("", "root-level", "at the root");
-		const thing = await things.create({ kind: SkillsKind.name, name: "none", workspace: pi, by: BY }, context);
-		const before = watchers();
-		const set = await t.host.get(SkillSet, { thing }, context);
-		assert.deepEqual(set.skills.value, []);
-		assert.equal(watchers(), before);
-		await refused(set.read({ name: "root-level" }, context), "invalid");
-		set.release();
-	});
-
-	it("reads only files inside its own folder, links resolved (Astra, round 1)", async () => {
+	it("is one read however many hold it, released with its last holder", async () => {
 		await writeSkill("coding", "release", "Cut a release");
-		await writeSkill("other", "secret", "Another set's");
-		await mkdir(join(root, "..", "outside", "escape"), { recursive: true });
-		await writeFile(join(root, "..", "outside", "escape", "SKILL.md"), "---\ndescription: outside\n---\n");
-		// A skill folder linked to another set's skill, and one linked out of the root; a SKILL.md linked out.
-		await symlink(join(root, "other", "secret"), join(root, "coding", "borrowed"));
-		await symlink(join(root, "..", "outside", "escape"), join(root, "coding", "escaped"));
-		await mkdir(join(root, "coding", "linked"));
-		await symlink(join(root, "..", "outside", "escape", "SKILL.md"), join(root, "coding", "linked", "SKILL.md"));
 		const thing = await setIn("coding");
-		await holding(Skills, thing, async (skills, ctx) => {
-			await until(skills.skills, (list) => list.length > 0, within("the folder's skills", ctx));
-			assert.deepEqual(
-				skills.skills.value.map(({ name }) => name),
-				["release"],
-			);
-			for (const name of ["borrowed", "escaped", "linked"]) await refused(skills.read!({ name }, ctx), "invalid");
+		const [ann, ben, cy] = [await n.person("Ann"), await n.person("Ben"), await n.person("Cy")];
+		await n.tick(n.pi, thing, { kind: "everyone" }, OPEN, true);
+		const first = await n.holders([ann, ben], n.pi, thing);
+		await until(first.held[0]!.ref.skills, (list) => list.length === 1, within("the skills", context));
+		// Another holder joins the set's open read (one object per set, one watcher): it reads nothing.
+		const joined = n.count("chord.query.runs");
+		const third = await n.holders([cy], n.pi, thing);
+		assert.deepEqual(third.held[0]!.ref.skills.value, [{ name: "release", description: "Cut a release" }]);
+		assert.equal(n.count("chord.query.runs"), joined);
+		await third.release();
+		await first.release();
+		// With every holder gone the set closes (its watcher with it); a new holder opens it again.
+		await eventually(
+			async () => {
+				const before = n.count("chord.query.runs");
+				await n.holding(ann, n.pi, thing, async (skills) => skills.skills.value);
+				return n.count("chord.query.runs") - before;
+			},
+			(runs) => runs > 0,
+			5000,
+		);
+	});
+
+	it("shows a skill added after a reload of the plugin to a holder from before it", async () => {
+		await writeSkill("coding", "release", "Cut a release");
+		const thing = await setIn("coding");
+		await n.holding(AGENT, s1, thing, async (skills, ctx) => {
+			await until(skills.skills, (list) => list.length === 1, within("the skills", ctx));
+			await n.reload();
+			await writeSkill("coding", "review", "Review a change");
+			await until(skills.skills, (list) => list.length === 2, within("the new skill", ctx));
 		});
 	});
 
-	it("lists, reads and watches nothing of a folder linked out of the root (Astra, round 2)", async () => {
-		const outside = join(root, "..", "elsewhere");
-		await mkdir(join(outside, "secret"), { recursive: true });
-		await writeFile(join(outside, "secret", "SKILL.md"), "---\ndescription: outside\n---\n");
-		await mkdir(root, { recursive: true });
-		await symlink(outside, join(root, "linked"));
-		// A skill whose SKILL.md is a folder, not a regular file.
-		await mkdir(join(root, "coding", "odd", "SKILL.md"), { recursive: true });
-		const before = watchers();
-		const linked = await setIn("linked");
-		const set = await t.host.get(SkillSet, { thing: linked }, context);
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		assert.deepEqual(set.skills.value, []);
-		assert.equal(watchers(), before, "no watcher on a folder outside the root");
-		await refused(set.read({ name: "secret" }, context), "invalid");
-		set.release();
-		const coding = await setIn("coding");
-		await holding(Skills, coding, async (skills, ctx) => {
-			await refused(skills.read!({ name: "odd" }, ctx), "invalid");
-			assert.deepEqual(skills.skills.value, []);
+	it("is collected once released", async () => {
+		const thing = await setIn("coding");
+		const refs: WeakRef<object>[] = [];
+		await n.holding(AGENT, s1, thing, async (skills) => {
+			refs.push(new WeakRef(skills), new WeakRef(skills.skills));
 		});
+		assert.ok(await collected(refs));
 	});
 });

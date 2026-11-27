@@ -1,172 +1,227 @@
-// The prompt plugin on a session's worker (`testPlugin`): its two harness parts, taken from the facet. Instructions:
-// one prompt section per thing with Use, in the order held, each the base text of its language and the thing's text,
-// read at each prompt; a thing without Use, or with no text, gives no section. Skills: the list of every set the agent
-// may read, a name in two sets the closer set's (held last), read at each prompt; `skills_read` answers the text and
-// files as JSON from the set that owns the name, refuses an unknown name and a withheld Use; no usable set: nothing.
+// The prompt plugin's harness parts, as the worker facet contributes them to `ThingHarnessParts`, given the things an
+// agent holds (real references, held as the session's worker on a server with the things plugin, `kindServer`). The
+// facet's two parts are the two kinds'. Instructions: one prompt section per thing with Use, in the order held, each
+// the base text of its language and the thing's text, read at each prompt (a Configure reaches the next one); a
+// thing with Use withheld, or with no text, gives no section. Skills: the list of every set the agent may read, a
+// name in two sets the closer set's (held last), read at each prompt; `skills_read` answers the text and files as
+// JSON from the set that owns the name, refuses an unknown name and a set whose Use was withheld after the tool was
+// offered; a set with Use withheld lists nothing; an unchanged section reads no skill again.
 
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, isChordError, type P3Principal } from "@earendil-works/p3/v1";
-import { type TestedPlugin, testPlugin } from "@earendil-works/p3/v1/testing";
-import type { PromptSection } from "@earendil-works/p3/v1/worker";
-import {
-	type HarnessContribution,
-	type HarnessExtension,
-	type HeldThing,
-	ThingHarnessParts,
-} from "../../things/contract.worker.ts";
-import { InstructionsKind, type Language } from "../instructions-kind.ts";
-import { type Skill, SkillsKind } from "../skills-kind.ts";
+import { type Contract, BACKGROUND_CONTEXT as context, isChordError, until } from "@earendil-works/p3/v1";
+import { within } from "../../../test/until.ts";
+import { ThingHooks } from "../../things/contract.server.ts";
+import { type HarnessExtension, type HeldThing, ThingHarnessParts } from "../../things/contract.worker.ts";
+import { runTool } from "../../things/test/kind-server.ts";
+import { type Instructions, InstructionsKind } from "../instructions-kind.ts";
+import { type Skills, SkillsKind } from "../skills-kind.ts";
+import { type PromptServer, promptKind } from "./prompt-server.ts";
 
-const ROOT = fileURLToPath(new URL("../", import.meta.url));
+/** The session's agent as a party. */
+const AGENT_PARTY = { kind: "agent", session: "s1" } as const;
 
-/** The session, whose `call` and `location` the parts never use. */
-const SESSION = {
-	session: "s",
-	workspace: "w",
-	call: () => Promise.reject(new Error("no call")),
-	location: async () => undefined,
-	moveLocation: () => Promise.reject(new Error("no move")),
-};
+/** The first line of the skills section. */
+const HEADING = "Skills you can read with skills_read when a task matches one:";
 
-/** A value the case changes, as a reference's state member reads (`value`, the current one). */
-type Value<T> = { value: T };
-
-/** A held instructions thing: its text and language as values the case changes, and whether Use is granted. */
-function instructions(thing: string, text: Value<string>, language: Value<Language>, use = true): HeldThing {
-	// A stand-in for the holding's reference until `kindServer.giving` is on main: the members the part reads.
-	const granted = new Set(use ? ["use"] : []);
-	const ref = { text, language, granted } as unknown as HeldThing["ref"];
-	return { thing, workspace: "w", depth: 0, ref, granted };
-}
-
-/** A held set `thing` with `skills` (a list the case may change), `read` granted unless `use` is false. */
-function set(thing: string, skills: Value<Skill[]>, use = true): HeldThing {
-	const read = async ({ name }: { name: string }) => ({ text: `${thing}'s ${name}`, files: ["run.sh"] });
-	const granted = new Set(use ? ["read"] : []);
-	const ref = { skills, granted, ...(use ? { read } : {}) };
-	// A stand-in for the holding's reference until `kindServer.giving` is on main: the members the part reads.
-	return { thing, workspace: "w", depth: 0, ref: ref as unknown as HeldThing["ref"], granted };
-}
-
-/** A skill. */
-const skill = (name: string, description: string): Skill => ({ name, description });
-
-/** Renders `sections` as the prompt would show them (a section that renders nothing is left out). */
-async function rendered(sections: readonly PromptSection[]): Promise<[string, string | undefined][]> {
+/** The rendered text of `extension`'s sections, by key (a section that renders nothing: `undefined`). */
+async function rendered(extension: HarnessExtension): Promise<[string, string | undefined][]> {
 	// The sections read neither the prompt's input nor its context.
 	return Promise.all(
-		sections.map(async (s) => [s.key, await s.render({} as never, context)] as [string, string | undefined]),
+		(extension.sections ?? []).map(
+			async (section) => [section.key, await section.render({} as never, context)] as [string, string | undefined],
+		),
 	);
 }
 
-let t: TestedPlugin<P3Principal>;
-
-beforeEach(async () => {
-	t = await testPlugin(ROOT, { kind: "worker", session: "s" }, context);
-});
-
-afterEach(() => t.close(context));
-
-/** What the facet's part of kind `kind` gives `things`. */
-function given(kind: string, things: HeldThing[]): HarnessContribution {
-	const entry = t.contributions(ThingHarnessParts).find(({ value }) => value.kind.name === kind);
-	assert.ok(entry !== undefined, kind);
-	return entry.value.part(things, SESSION);
+/** Configures thing `thing` of kind `kind` on `n` with `settings`, as `Workspace.configure` does. */
+async function configure<C extends Contract>(
+	n: PromptServer<C>,
+	kind: string,
+	thing: string,
+	settings: Record<string, unknown>,
+): Promise<void> {
+	const hook = (await n.host.registry(ThingHooks, context)).value.get(kind)?.value.configure;
+	assert.ok(hook !== undefined);
+	await n.host.root((ctx) => hook(thing, settings, ctx), context);
 }
 
+describe("the facet's parts", () => {
+	it("are the two kinds'", async () => {
+		const n = await promptKind(InstructionsKind, context);
+		try {
+			assert.deepEqual(
+				(await n.worker("s1"))
+					.contributions(ThingHarnessParts)
+					.map(({ value }) => value.kind.name)
+					.toSorted(),
+				[InstructionsKind.name, SkillsKind.name],
+			);
+		} finally {
+			await n.close();
+		}
+	});
+});
+
 describe("the agent's instructions", () => {
+	let n: PromptServer<typeof Instructions>;
+	let s1: string;
+
+	beforeEach(async () => {
+		n = await promptKind(InstructionsKind, context);
+		s1 = await n.workspace("s1");
+	});
+
+	afterEach(() => n.close());
+
+	/** Makes instructions in s1 with `settings`; their id. */
+	async function made(settings: Record<string, unknown>): Promise<string> {
+		const thing = await n.thingIn(s1);
+		await configure(n, InstructionsKind.name, thing, settings);
+		return thing;
+	}
+
+	/** Runs `fn` with what s1's agent gets holding `things` there. */
+	const giving = <T>(
+		things: readonly string[],
+		fn: (extension: HarnessExtension, held: readonly HeldThing<typeof Instructions>[]) => Promise<T>,
+	) => n.giving({ session: "s1", workspace: s1 }, things, (extension, _ctx, held) => fn(extension, held));
+
 	it("give one section per thing with Use, in the order held, each its language's base text and its text", async () => {
-		const pi = instructions("pi", { value: "Work with code." }, { value: "en" });
-		const family = instructions("family", { value: "Sei freundlich." }, { value: "de" });
-		const hidden = instructions("other", { value: "Not for the agent." }, { value: "en" }, false);
-		const shown = await rendered(given(InstructionsKind.name, [pi, hidden, family]).extension?.sections ?? []);
-		assert.deepEqual(
-			shown.map(([key]) => key),
-			["instructions-pi", "instructions-family"],
-		);
-		assert.match(shown[0]?.[1] ?? "", /Follow them:\n\nWork with code\.$/);
-		assert.match(shown[1]?.[1] ?? "", /Halte dich daran:\n\nSei freundlich\.$/);
+		const pi = await made({ text: "Work with code.", language: "en" });
+		const family = await made({ text: "Sei freundlich.", language: "de" });
+		const hidden = await made({ text: "Not for the agent.", language: "en" });
+		await n.tick(s1, hidden, AGENT_PARTY, "use", false);
+		await giving([pi, hidden, family], async (extension) => {
+			const shown = await rendered(extension);
+			assert.deepEqual(
+				shown.map(([key]) => key),
+				[`instructions-${pi}`, `instructions-${family}`],
+			);
+			assert.match(shown[0]?.[1] ?? "", /Follow them:\n\nWork with code\.$/);
+			assert.match(shown[1]?.[1] ?? "", /Halte dich daran:\n\nSei freundlich\.$/);
+		});
 	});
 
 	it("read the text and the language at each prompt, and give nothing for an empty text", async () => {
-		const text = { value: "Old." };
-		const language: Value<Language> = { value: "en" };
-		const [section] = given(InstructionsKind.name, [instructions("pi", text, language)]).extension?.sections ?? [];
-		assert.ok(section !== undefined);
-		text.value = "New.";
-		language.value = "de";
-		assert.match((await rendered([section]))[0]?.[1] ?? "", /Halte dich daran:\n\nNew\.$/);
-		text.value = "";
-		assert.deepEqual(await rendered([section]), [["instructions-pi", undefined]]);
+		const thing = await made({ text: "Old.", language: "en" });
+		await giving([thing], async (extension, [held]) => {
+			await configure(n, InstructionsKind.name, thing, { text: "New.", language: "de" });
+			await until(held!.ref.text, (text) => text === "New.", within("the new text", context));
+			await until(held!.ref.language, (language) => language === "de", within("the new language", context));
+			assert.match((await rendered(extension))[0]?.[1] ?? "", /Halte dich daran:\n\nNew\.$/);
+			await configure(n, InstructionsKind.name, thing, { text: "" });
+			await until(held!.ref.text, (text) => text === "", within("no text", context));
+			assert.deepEqual(await rendered(extension), [[`instructions-${thing}`, undefined]]);
+		});
 	});
 });
 
 describe("the agent's skills", () => {
-	/** The extension the skills part gives `sets`. */
-	const skills = (...sets: HeldThing[]): HarnessExtension | undefined => given(SkillsKind.name, sets).extension;
+	let n: PromptServer<typeof Skills>;
+	let s1: string;
 
-	/** The section's text of `extension`. */
-	async function section(extension: HarnessExtension | undefined): Promise<string | undefined> {
-		// The section reads neither the prompt's input nor its context.
-		return extension?.sections?.[0]?.render({} as never, context);
-	}
-
-	/** Runs `skills_read` of `extension` for `name`; its answer, parsed. */
-	async function read(extension: HarnessExtension | undefined, name: string): Promise<unknown> {
-		const tool = extension?.tools?.find((each) => each.name === "skills_read");
-		assert.ok(tool !== undefined);
-		// `skills_read` uses neither Durable's execution API nor arguments beyond its schema's.
-		const result = await tool.execute({ name } as never, {} as never, context);
-		return JSON.parse((result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join(""));
-	}
-
-	it("lists the skills of two sets, a name in both the closer set's, and reads it from there", async () => {
-		const pi = set("pi", { value: [skill("release", "Cut a release"), skill("review", "Review a change")] });
-		const team = set("team", { value: [skill("review", "Review as Team does")] });
-		const extension = skills(pi, team);
-		assert.equal(
-			await section(extension),
-			"Skills you can read with skills_read when a task matches one:\n- review: Review as Team does\n- release: Cut a release",
-		);
-		assert.deepEqual(await read(extension, "review"), { text: "team's review", files: ["run.sh"] });
-		assert.deepEqual(await read(extension, "release"), { text: "pi's release", files: ["run.sh"] });
-		await assert.rejects(read(extension, "nothing"), (error) => isChordError(error) && error.code === "invalid");
+	beforeEach(async () => {
+		n = await promptKind(SkillsKind, context);
+		s1 = await n.workspace("s1");
 	});
 
-	it("reads the lists at each prompt; a set without Use lists nothing; none usable gives no extension", async () => {
-		const list = { value: [skill("release", "Cut a release")] };
-		const extension = skills(set("pi", list), set("hidden", { value: [skill("secret", "")] }, false));
-		list.value = [...list.value, skill("triage", "Sort the issues")];
-		assert.equal(
-			await section(extension),
-			"Skills you can read with skills_read when a task matches one:\n- release: Cut a release\n- triage: Sort the issues",
+	afterEach(() => n.close());
+
+	/** Writes skill `name` into `folder` under the root, with `description`. */
+	async function writeSkill(folder: string, name: string, description: string): Promise<void> {
+		await mkdir(join(n.root, folder, name), { recursive: true });
+		await writeFile(
+			join(n.root, folder, name, "SKILL.md"),
+			`---\ndescription: ${description}\n---\n${folder}'s ${name}\n`,
 		);
-		assert.equal(skills(set("hidden", { value: [skill("secret", "")] }, false)), undefined);
+	}
+
+	/** Makes a set in s1 over folder `folder`; its id. */
+	async function setOver(folder: string): Promise<string> {
+		const thing = await n.thingIn(s1, folder);
+		await configure(n, SkillsKind.name, thing, { folder });
+		return thing;
+	}
+
+	/**
+	 * Runs `fn` with what s1's agent gets holding the sets `things` there, once each held set lists its `counts` skills
+	 * (a set's first read of its folder comes after the hold).
+	 */
+	const giving = <T>(
+		things: readonly string[],
+		counts: readonly number[],
+		fn: (extension: HarnessExtension, held: readonly HeldThing<typeof Skills>[]) => Promise<T>,
+	) =>
+		n.giving({ session: "s1", workspace: s1 }, things, async (extension, ctx, held) => {
+			for (const [at, { ref }] of held.entries()) {
+				await until(ref.skills, (list) => list.length === counts[at], within("a set's skills", ctx));
+			}
+			return fn(extension, held);
+		});
+
+	/** The skills section's text of `extension`. */
+	const section = async (extension: HarnessExtension) => (await rendered(extension))[0]?.[1];
+
+	/** `skills_read` of `extension` for `name`, its answer parsed. */
+	const read = async (extension: HarnessExtension, name: string) =>
+		JSON.parse(await runTool(extension, "skills_read", { name }, context)) as unknown;
+
+	it("lists the skills of two sets, a name in both the closer set's, and reads it from there", async () => {
+		await writeSkill("pi", "release", "Cut a release");
+		await writeSkill("pi", "review", "Review a change");
+		await writeSkill("team", "review", "Review as Team does");
+		const [pi, team] = [await setOver("pi"), await setOver("team")];
+		await giving([pi, team], [2, 1], async (extension) => {
+			assert.equal(await section(extension), `${HEADING}\n- review: Review as Team does\n- release: Cut a release`);
+			assert.deepEqual(await read(extension, "review"), {
+				text: "---\ndescription: Review as Team does\n---\nteam's review\n",
+				files: [],
+			});
+			assert.match(((await read(extension, "release")) as { text: string }).text, /pi's release/);
+			await assert.rejects(read(extension, "nothing"), (error) => isChordError(error) && error.code === "invalid");
+		});
+	});
+
+	it("reads the lists at each prompt; a set with Use withheld lists nothing", async () => {
+		await writeSkill("pi", "release", "Cut a release");
+		await writeSkill("hidden", "secret", "Not for the agent");
+		const [pi, hidden] = [await setOver("pi"), await setOver("hidden")];
+		await n.tick(s1, hidden, AGENT_PARTY, "use", false);
+		await giving([pi, hidden], [1, 1], async (extension, [held]) => {
+			await writeSkill("pi", "triage", "Sort the issues");
+			await until(held!.ref.skills, (list) => list.length === 2, within("the new skill", context));
+			assert.equal(await section(extension), `${HEADING}\n- release: Cut a release\n- triage: Sort the issues`);
+		});
+		await assert.rejects(
+			giving([hidden], [1], async () => {}),
+			/gave no extension/,
+		);
 	});
 
 	it("refuses a skill whose set's Use was withheld after the tool was offered", async () => {
-		const pi = set("pi", { value: [skill("release", "Cut a release")] });
-		const extension = skills(pi);
-		// Withheld since: the held reference's `read` is gone.
-		delete (pi.ref as { read?: unknown }).read;
-		await assert.rejects(read(extension, "release"), (error) => isChordError(error) && error.code === "forbidden");
+		await writeSkill("pi", "release", "Cut a release");
+		const pi = await setOver("pi");
+		await giving([pi], [1], async (extension, [held]) => {
+			await n.tick(s1, pi, AGENT_PARTY, "use", false);
+			await until(held!.ref.state, () => held!.ref.read === undefined, within("Use withheld", context));
+			// The reference rebuilt without `read` lists its set's skills again: the tool finds the name, not the member.
+			await until(held!.ref.skills, (list) => list.length === 1, within("listed again", context));
+			await assert.rejects(read(extension, "release"), (error) => isChordError(error) && error.code === "forbidden");
+		});
 	});
 
-	it("reuses an unchanged 100-skill section, reading no skill again (Astra, round 1)", async () => {
-		let descriptions = 0;
-		const many = Array.from({ length: 100 }, (_, i) => ({
-			name: `skill${i}`,
-			get description() {
-				descriptions++;
-				return "example";
-			},
-		}));
-		const extension = skills(set("pi", { value: many }));
-		const text = await section(extension);
-		descriptions = 0;
-		assert.equal(await section(extension), text);
-		assert.equal(descriptions, 0);
+	it("reuses an unchanged section, reading no skill again (Astra, round 1)", async () => {
+		for (let i = 0; i < 100; i++) await writeSkill("pi", `skill${i}`, "example");
+		const pi = await setOver("pi");
+		await giving([pi], [100], async (extension, [held]) => {
+			const list = held!.ref.skills.value;
+			const text = await section(extension);
+			assert.equal(await section(extension), text);
+			// The section is rebuilt only for a list of another identity: an unchanged list keeps its own.
+			assert.equal(held!.ref.skills.value, list);
+		});
 	});
 });

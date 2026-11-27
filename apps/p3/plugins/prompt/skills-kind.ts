@@ -8,7 +8,7 @@ import { arr, method, obj, type Static, str } from "@earendil-works/p3/v1";
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";
 
-/** A skill in a set's list: its name (its folder's) and its description (its `SKILL.md`'s). */
+/** A skill in a set's list: its name and description, from its `SKILL.md`'s front matter (no name: the folder's). */
 export const Skill = obj({ name: str(), description: str() });
 
 /** A skill in a set's list (see `Skill`). */
