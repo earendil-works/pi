@@ -14,7 +14,9 @@ import { join, resolve } from "node:path";
 // group goes in the same commit, so a person's stale membership in it names a party present nowhere); and
 // `ensureOwner`'s own check (the store's start reads the owners first and opens a transaction only without one); and
 // either of the two "adopted once" checks alone (`adoptOwner`'s read outside a transaction and the one inside it: both
-// removed, the bridge test fails, checked by hand).
+// removed, the bridge test fails, checked by hand). Not pinned: the start's reads outside a transaction (a store ended
+// during its start then cancels none; a gated read did not reproduce the 30 s drain on close, and the reads go back
+// into transactions with ERNDL-1190).
 
 /** One bug: in `file` (of the plugin), the text to find (exactly once) and what to put there instead. */
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
@@ -34,10 +36,10 @@ const MUTATIONS: readonly Mutation[] = [
 		put: "",
 	},
 	{
-		name: "a group hidden where the caller is present is present for them",
+		name: "a group not present where the caller is present counts",
 		file: "group.ts",
-		find: "if (present && access.present.has(target) && !access.hidden.has(target)) return true;",
-		put: "if (present && access.present.has(target)) return true;",
+		find: "if (present && access.present.has(target)) return true;",
+		put: "if (present) return true;",
 	},
 	{
 		name: "a checked write is not checked",
@@ -116,12 +118,6 @@ const MUTATIONS: readonly Mutation[] = [
 		file: "store.ts",
 		find: "if ((await tx.get(this.#t.persons, { person: by.person }))?.owner === 1) return true;",
 		put: "",
-	},
-	{
-		name: "the start reads the sign-outs in a transaction",
-		file: "store.ts",
-		find: "for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);",
-		put: "await self.tx(async (tx) => {\n\t\t\t\tfor await (const { person } of tx.rows(t.signOuts, query(SignOuts))) left.push(person);\n\t\t\t\treturn null;\n\t\t\t}, ctx);",
 	},
 	// ---- workspaces, round 2 ----
 	{

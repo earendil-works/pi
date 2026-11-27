@@ -10,13 +10,9 @@
 // a provider's refresh (scenario 13); and a person's removal.
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import type { SqliteDatabase, SqliteExecutor } from "@earendil-works/chord/sqlite";
-import { NodeSqliteDatabase, openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
@@ -139,34 +135,6 @@ describe("persons and the owner", () => {
 		} finally {
 			await host.close(context);
 			await reopened.close(context);
-		}
-	});
-
-	it("a store closed while its start reads the sign-outs still to end closes at once (Opus M1)", async () => {
-		// The start's read held until 2 s after the close began: read in a transaction, the close would wait for its
-		// drain (30 s, ERNDL-1190); read outside one, it ends with the read.
-		const dir = await mkdtemp(join(tmpdir(), "p3-things-"));
-		const gate = gated(await openNodeSqliteDatabase(join(dir, "store.sqlite")), "sign-outs");
-		const opened = await openStore(sqliteBackend(gate.db), context);
-		const errors: string[] = [];
-		const host = createHost<P3Principal>({
-			address: Server(),
-			principal: { kind: "server" },
-			store: opened,
-			onError: (error) => errors.push(error.kind),
-		});
-		try {
-			void host.load([THINGS], context);
-			await gate.reached;
-			const closing = performance.now();
-			const closed = host.close(context);
-			setTimeout(gate.release, 2000);
-			await closed;
-			assert.ok(performance.now() - closing < 5000, "the close took too long");
-		} finally {
-			gate.release();
-			await opened.close(context);
-			await rm(dir, { recursive: true, force: true });
 		}
 	});
 
@@ -623,10 +591,10 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 	});
 
 	it("an unused placeholder goes at the adoption; only the people plugin's contribution counts", async () => {
-		// The other plugin loads first: its contribution comes first too, and is ignored.
+		// The other plugin comes first, by load and by name: its contribution is ignored.
 		const at = await world(context, [
 			{
-				name: "a-other",
+				name: "@earendil-works/a-other",
 				facet: defineFacet((host) =>
 					contribute(host, "test.other-seed", (self) =>
 						self.contribute(OwnerSeeds, { person: "impostor", name: "Eve" }),
@@ -684,10 +652,12 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 	it("the owner's picker offers everyone (decision 78)", async () => {
 		const stranger = await store.createPerson({ name: "Stranger", madeBy: ADMIN }, context);
 		await store.setOwner({ person: f.kim, owner: true }, context);
-		assert.equal(
-			await store.offers({ caller: { kind: "person", person: f.kim }, party: person(stranger) }, context),
-			true,
+		const kim = { kind: "person", person: f.kim } as const;
+		assert.equal(await store.offers({ caller: kim, party: person(stranger) }, context), true);
+		const names = (await store.picker({ workspace: f.session, caller: kim, query: "stran" }, context)).map(
+			({ name }) => name,
 		);
+		assert.deepEqual(names, ["Stranger"]);
 	});
 
 	it("a person who made someone still present stays with the source's cleanup (Astra must 4)", async () => {
@@ -1050,41 +1020,3 @@ describe("round 2's reproductions (Opus, Astra)", () => {
 		);
 	});
 });
-
-/**
- * A database whose first read of the things store's table `table` waits until `release`d; `reached` resolves when it
- * starts waiting.
- */
-function gated(db: SqliteDatabase, table: string): { db: SqliteDatabase; reached: Promise<void>; release: () => void } {
-	const reached = Promise.withResolvers<void>();
-	const opened = Promise.withResolvers<void>();
-	let first = true;
-	const hold = async (sql: string) => {
-		if (!first || !sql.includes(`"things.store:things.${table}"`)) return;
-		first = false;
-		reached.resolve();
-		await opened.promise;
-	};
-	const wrap = (on: SqliteExecutor): SqliteExecutor => ({
-		exec: (sql) => on.exec(sql),
-		run: (sql, ...params) => on.run(sql, ...params),
-		runCounted: (sql, ...params) => on.runCounted(sql, ...params),
-		get: async (sql, ...params) => {
-			await hold(sql);
-			return on.get(sql, ...params);
-		},
-		all: async (sql, ...params) => {
-			await hold(sql);
-			return on.all(sql, ...params);
-		},
-	});
-	return {
-		db: {
-			...wrap(db),
-			transaction: (callback) => db.transaction((tx) => callback(wrap(tx))),
-			close: () => db.close(),
-		},
-		reached: reached.promise,
-		release: () => opened.resolve(),
-	};
-}

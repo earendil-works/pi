@@ -113,7 +113,8 @@ function presenceProbe(store: Reference<typeof ThingsStore>, group: string, pers
 				await load.workspace(at);
 				const access = look.access(at);
 				const present = personCounts(access, partyKey(caller), entries) !== NOBODY;
-				if (present && access.present.has(target) && !access.hidden.has(target)) return true;
+				// A switch hiding the group takes it out of `present` (only persons are hidden by every route).
+				if (present && access.present.has(target)) return true;
 			}
 			return false;
 		},
