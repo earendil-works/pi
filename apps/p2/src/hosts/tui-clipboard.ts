@@ -1,12 +1,13 @@
-// Launcher-only clipboard writer, copied from coding-agent utils/clipboard.ts (copyToClipboard), clipboard-command.ts
-// and wsl.ts. OSC 52 is written by the launcher itself (the worker's OSC is always filtered). Only called under a
-// grant (p2-tui-port.md section 3.1 rules 4-5).
+// Launcher-only clipboard writer, copied from coding-agent utils/clipboard.ts (copyToClipboard) and clipboard-command.ts.
+// OSC 52 is written by the launcher itself (the worker's OSC is always filtered). Only called under a grant
+// (p2-tui-port.md section 3.1 rules 4-5).
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { platform as osPlatform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { getNativeClipboard } from "@earendil-works/pi-tui";
+import { isWSL } from "./tui-wsl.ts";
 
 const MAX_OSC52_ENCODED_LENGTH = 100_000;
 
@@ -40,15 +41,6 @@ function runClipboardCommand(
 		child.stdin?.on("error", () => {});
 		child.stdin?.end(options?.input);
 	});
-}
-
-function isWSL(env: NodeJS.ProcessEnv): boolean {
-	if (env.WSL_DISTRO_NAME || env.WSLENV) return true;
-	try {
-		return /microsoft|wsl/i.test(readFileSync("/proc/version", "utf-8"));
-	} catch {
-		return false;
-	}
 }
 
 async function copyViaWindowsClipboard(text: string): Promise<boolean> {
@@ -113,7 +105,7 @@ export async function copyToClipboard(
 		}
 	}
 	let osc52Emitted = false;
-	if (!copied && platform === "linux" && isWSL(env)) {
+	if (!copied && isWSL(platform, env)) {
 		if (env.WT_SESSION) osc52Emitted = osc52();
 		copied = osc52Emitted || (await copyViaWindowsClipboard(text));
 	}

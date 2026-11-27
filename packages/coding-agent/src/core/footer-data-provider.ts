@@ -2,6 +2,7 @@ import { type ExecFileException, execFile, spawnSync } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, type Stats, statSync, unwatchFile, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
 import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.ts";
+import { isWSL } from "../utils/wsl.ts";
 
 export type GitPaths = {
 	repoDir: string;
@@ -80,16 +81,12 @@ function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
 	});
 }
 
-function isWslEnvironment(): boolean {
-	return process.platform === "linux" && !!(process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP);
-}
-
 function isWindowsMountedRepoPath(repoDir: string): boolean {
 	return /^\/mnt\/[a-z](?:\/|$)/i.test(repoDir);
 }
 
 function shouldPollGitHead(repoDir: string): boolean {
-	return isWslEnvironment() && isWindowsMountedRepoPath(repoDir);
+	return isWSL() && isWindowsMountedRepoPath(repoDir);
 }
 
 /**

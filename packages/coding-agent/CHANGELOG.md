@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed WSL detection in terminals that start the shell without the WSL environment variables (for example from a systemd user service): the Windows keybinding defaults (`alt+v` image paste, `ctrl+q` follow-up) and the footer's branch polling for repos under `/mnt/<drive>` now apply there too, because all WSL checks share one detection that falls back to `/proc/version`.
+
 ## [1.7.0] - 2026-11-27
 
 ### New Features

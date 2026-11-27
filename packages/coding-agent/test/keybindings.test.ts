@@ -1,14 +1,25 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KEYBINDINGS, useWindowsKeybindings } from "../src/core/keybindings.ts";
 
+// WSL detection itself is covered by wsl.test.ts; here it is stubbed so the results do not depend on the host.
+const mocks = vi.hoisted(() => ({ isWSL: vi.fn<(platform?: NodeJS.Platform, env?: NodeJS.ProcessEnv) => boolean>() }));
+vi.mock("../src/utils/wsl.ts", () => ({ isWSL: mocks.isWSL }));
+
 describe("Windows keybinding defaults", () => {
+	beforeEach(() => {
+		mocks.isWSL.mockReset();
+		mocks.isWSL.mockReturnValue(false);
+	});
+
 	it("uses Windows keybindings on native Windows", () => {
 		expect(useWindowsKeybindings("win32", {})).toBe(true);
 	});
 
-	it("uses Windows keybindings in WSL without relying on Windows Terminal detection", () => {
-		expect(useWindowsKeybindings("linux", { WSL_DISTRO_NAME: "Ubuntu" })).toBe(true);
-		expect(useWindowsKeybindings("linux", { WSL_INTEROP: "/run/WSL/123_interop" })).toBe(true);
+	it("uses Windows keybindings in WSL, detected by the shared WSL check", () => {
+		mocks.isWSL.mockReturnValue(true);
+		const env = { WSL_DISTRO_NAME: "Ubuntu" };
+		expect(useWindowsKeybindings("linux", env)).toBe(true);
+		expect(mocks.isWSL).toHaveBeenCalledWith("linux", env);
 	});
 
 	it("does not use Windows keybindings from WT_SESSION alone", () => {
@@ -22,13 +33,12 @@ describe("Windows keybinding defaults", () => {
 
 	it("keeps ctrl+v as a paste key on WSL", async () => {
 		if (process.platform !== "linux") return;
-		vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+		mocks.isWSL.mockReturnValue(true);
 		vi.resetModules();
 		try {
 			const { KEYBINDINGS: wslKeybindings } = await import("../src/core/keybindings.ts");
 			expect(wslKeybindings["app.clipboard.pasteImage"].defaultKeys).toEqual(["alt+v", "ctrl+v"]);
 		} finally {
-			vi.unstubAllEnvs();
 			vi.resetModules();
 		}
 	});
