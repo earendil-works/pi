@@ -84,9 +84,10 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		// This device's machine: where a session works unless it says otherwise.
 		const device = self.get(OneThing, { kind: MACHINE_KIND });
 		const runtime = self.registry(ServerRuntime);
-		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now, and
-		// a session's own folder moves to where new sessions get theirs (one read of every row, no index on `environment`:
-		// it runs once, the marker says so after). The folders move outside a transaction: a copy may take long.
+		// Once per Pi, once this device's machine was made: the rows that named this device by its old id name it now,
+		// and a session's own folder moves to where new sessions get theirs (one read of every row, no index on
+		// `environment`: it runs once, the marker says so after). The folders move outside a transaction: a copy may take
+		// long.
 		self.onLive(async (ctx) => {
 			if (rewrites.value.thisDevice) return;
 			const machine = await until(device.thing, (id) => id !== "", ctx);

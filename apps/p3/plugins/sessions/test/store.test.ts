@@ -1,8 +1,9 @@
 // The sessions store (`store.ts`) as server code calls it: a row written by the session kind's create hook (this
-// device's machine in a folder of its own under the work root, or a location on a machine there is), its writes
-// refused for a session there is not, an archived session's report of working refused, the waker's `working` without archived sessions, and rows older
-// code wrote rewritten on the update (decision 125: this device's machine, a session's own folder moved to the work
-// root; a two-version restart is not possible in-tree, so a stand-in of the older store writes them).
+// device's machine in a folder of its own under the work root, or a location on a machine there is), its writes refused
+// for a session there is not, an archived session's report of working refused, the waker's `working` without archived
+// sessions, and rows older code wrote rewritten on the update (decision 125: this device's machine, a session's own
+// folder moved to the work root; a two-version restart is not possible in-tree, so a stand-in of the older store writes
+// them).
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";

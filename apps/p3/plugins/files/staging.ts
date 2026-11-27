@@ -2,8 +2,8 @@
 // row is written once a staged file was made and deleted once it landed or was removed (a removal that failed keeps
 // it); a row older than this server process is a crash's leftover (this process's own are uploads under way, which a
 // reload of this plugin must not touch), and the next upload to its machine removes its file, only while it is still
-// that file, and then the row (`stale` before the process's start, then `forget`). A crash between making a staged file and
-// writing its row leaves one empty file only its owner can read (ERNDL-1173, Known).
+// that file, and then the row (`stale` before the process's start, then `forget`). A crash between making a staged file
+// and writing its row leaves one empty file only its owner can read (ERNDL-1173, Known).
 
 import {
 	and,
@@ -62,11 +62,13 @@ export function serveStaging(host: FacetHost<P3Principal>): void {
 					tx.delete(staged, { id });
 					return null;
 				}, ctx),
-			// Index `by_machine`: `machine` fixed, `at` below `before`.
+			// Index `by_machine`: `machine` fixed, `at` below `before`, in the index's order (by id, SQLite would sort them).
 			stale: ({ machine, before }, ctx) =>
 				self.tx(async (tx) => {
 					const found: { id: string; path: string; identity: string }[] = [];
-					const left = query(Staged).where((row) => and(eq(row.machine, machine), lt(row.at, before)));
+					const left = query(Staged)
+						.where((row) => and(eq(row.machine, machine), lt(row.at, before)))
+						.orderBy((row) => row.at, "asc");
 					for await (const { id, path, identity } of tx.rows(staged, left)) found.push({ id, path, identity });
 					return found;
 				}, ctx),

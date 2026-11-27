@@ -1,10 +1,10 @@
 // The machines on the server, whatever their type (decision 117): the registries of their types (`MachineTypes`, the
-// first by plugin name winning a type's name) and hosts (`MachineHosts`); `MachineKeeper`, held while the plugin is loaded,
-// connects a machine from its type and settings when it is first asked for (`MachineHosts`, which it contributes),
-// keeps the connection until the settings change, the machine goes or the plugin unloads, and writes a new machine's
-// type and settings once checked (`make`, the kind's create hook); `MachineInfoHere` is one machine's info, one object
-// per machine however many hold it. Every machine has a row, this device's seeded one too (its `one` input). A machine
-// whose type is not installed stays and is unavailable.
+// first by plugin name winning a type's name) and hosts (`MachineHosts`); `MachineKeeper`, held while the plugin is
+// loaded, connects a machine from its type and settings when it is first asked for (`MachineHosts`, which it
+// contributes), keeps the connection until the settings change, the machine goes or the plugin unloads, and writes a
+// new machine's type and settings once checked (`make`, the kind's create hook); `MachineInfoHere` is one machine's
+// info, one object per machine however many hold it. Every machine has a row, this device's seeded one too (its `one`
+// input). A machine whose type is not installed stays and is unavailable.
 
 import {
 	BACKGROUND_CONTEXT,
@@ -48,7 +48,7 @@ export const MachineInfoHere = local("environments.machine-info", {
 /** A machine's connection: the type and settings revision it was made from, and its host. */
 type Connection = { readonly type: MachineType; readonly revision: number; readonly host: Promise<MachineHost> };
 
-/** Serves the machines' registries, `MachineKeeper` (held while the plugin is loaded) and `MachineInfoHere` on `host`. */
+/** Serves on `host` the machines' registries, `MachineKeeper` (held while the plugin is loaded), `MachineInfoHere`. */
 export function serveMachines(host: FacetHost<P3Principal>): void {
 	host.serve(MachineHosts, { compose: (table) => table[0]?.value ?? (async () => undefined) });
 	host.serve(MachineTypes, {

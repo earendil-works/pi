@@ -52,7 +52,7 @@ export const TerminalsKind = defineThing("terminals.pane", {
 			obj({ machine: MachineId, folder: str({ min: 1, max: 4096 }), columns: Columns, rows: Rows }),
 			str(),
 		),
-		/** Types `bytes` into a terminal (keys as the terminal reads them: `\r` is Enter); refused once its program ended. */
+		/** Types `bytes` into a terminal (keys as the terminal reads them: `\r` is Enter); refused once its program ends. */
 		type: method(obj({ terminal: TerminalId, bytes: str({ max: 64 * 1024 }) })),
 		/** Gives a terminal a new size. */
 		resize: method(obj({ terminal: TerminalId, columns: Columns, rows: Rows })),

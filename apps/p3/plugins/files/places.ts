@@ -1,9 +1,9 @@
 // Where a path is on a machine, as Files acts on it: absolute, never in a folder the machine hides (Pi's own data
 // folder), resolved through symbolic links for reading (`placed`), with the last component kept as it is for a change
-// of the entry itself (`placedEntry`: removing or moving a link acts on the link), and in a folder that exists for a new
-// entry (`placedNew`). A path is checked when it is placed; what acts on it right after opens it without following its
-// last component, or acts on the entry. A concurrent change of an earlier component between the check and the act is
-// a known residual race (ERNDL-1173): whoever can change the machine's files meanwhile has a shell on it already.
+// of the entry itself (`placedEntry`: removing or moving a link acts on the link), and in a folder that exists for a
+// new entry (`placedNew`). A path is checked when it is placed; what acts on it right after opens it without following
+// its last component, or acts on the entry. A concurrent change of an earlier component between the check and the act
+// is a known residual race (ERNDL-1173): whoever can change the machine's files meanwhile has a shell on it already.
 
 import { type Context, invalid } from "@earendil-works/p3/v1";
 import type { FileError, Result } from "@earendil-works/p3/v1/server";

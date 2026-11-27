@@ -1,7 +1,7 @@
-// The machine kind's harness part, called as the harness calls it (stand-in references with their grants and info):
-// a location on a held machine of this device's type with Work here gets a Node environment in its folder; a machine
-// held without Work here, not held, of another type or unavailable gets none; the prompt line names the machine of the conversation's location (not the first one
-// held) and the folder, or says no machine is available.
+// The machine kind's harness part, called as the harness calls it (stand-in references with their grants and info): a
+// location on a held machine of this device's type with Work here gets a Node environment in its folder; a machine held
+// without Work here, not held, of another type or unavailable gets none; the prompt line names the machine of the
+// conversation's location (not the first one held) and the folder, or says no machine is available.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

@@ -1,8 +1,8 @@
 // The environments plugin's contract: the machines sessions work on, as other plugins name them. A machine is a thing
 // of one family kind (kind.ts; its types: `MachineTypes`); a session's location names a machine's thing id and a
 // folder on it. This device's machine is the kind's one thing in Pi (`OneThing` with `MACHINE_KIND`). A terminal as
-// the machines' terminal host lists it (`TerminalRow`) is here too, so the terminals plugin's contract, which its pane
-// bundles, shows the same row. `/v1` re-exports this file.
+// the machines' terminal host lists it (`TerminalRow`) is here too, so the terminal kind's state (terminals/kind.ts)
+// shows the same row. `/v1` re-exports this file.
 
 import { arr, int, nul, obj, remote, Server, type Static, str, union } from "@earendil-works/p3/v1";
 
@@ -32,8 +32,8 @@ export const Environments = remote("environments.environments", {
 });
 
 /**
- * This device's machine id, for every signed-in caller and every session's worker: the default of a new session's
- * location, and the machine a worker runs tools on, until the machine's harness part replaces that (ERNDL-704).
+ * This device's machine id, for every signed-in caller and every session's worker: where the views open outside a
+ * session (`useWorkLocation`).
  */
 export const ThisDevice = remote("environments.this-device", {
 	version: 1,
