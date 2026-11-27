@@ -928,7 +928,7 @@ const gateway = createProvider({
 - Some models accept image input, others are text-to-image only. Check `model.input`.
 - Like the streaming APIs, image generation supports options such as `apiKey`, `signal`, `headers`, `onPayload`, and `onResponse`, and results may include `stopReason`, `responseId`, and `usage`.
 - If you want a model to analyze images in a conversation or call tools, use the regular chat APIs with a model that supports image input.
-- At the moment, image generation is available through only one provider, OpenRouter.
+- Built-in image generation is available through OpenRouter and dynamically through Radius (via `pi-image`); custom providers can also register `pi-image` or custom image APIs.
 
 ## Classification
 
@@ -944,7 +944,7 @@ Decision models (model type `"classifier"`) consume structured JSON state, and o
 | `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
 | `github-copilot` | `gpt-6-luna-decisions`, `microsoft-decision-1` | `COPILOT_GITHUB_TOKEN` or GitHub Copilot OAuth |
 
-GitHub Copilot OAuth credentials record the decision models in the account's Copilot model catalog, and `getAvailableOfType('classifier')` lists only those. Microsoft-Decision-1 is limited to Business and Enterprise plans. `gpt-6-luna-decisions` uses the `openai-decisions` API at the account's `/v1/decisions` endpoint.
+GitHub Copilot OAuth credentials record the decision models in the account's Copilot model catalog, and `getAvailableOfType('classifier')` lists only those. Microsoft-Decision-1 is limited to Business and Enterprise plans. `gpt-6-luna-decisions` uses the `openai-decisions` API at the account's `/v1/decisions` endpoint. The `radius` provider also loads decision models dynamically from `/v1/config` via the `pi-decision` API.
 
 ```typescript
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
