@@ -6,7 +6,7 @@
 // and attaches to them; Use (people and agents) does that too, and opens terminals, types in them, reads their kept
 // output, resizes and closes them. By default only the agents get Use; people get a tick through Who may.
 
-import { arr, int, method, obj, opt, str } from "@earendil-works/p3/v1";
+import { arr, bool, int, method, obj, opt, str } from "@earendil-works/p3/v1";
 import { TerminalRow } from "../environments/contract.ts";
 import { defineThing } from "../things/kind.ts";
 import { messages } from "./messages.ts";
@@ -36,6 +36,11 @@ export const TerminalsKind = defineThing("terminals.pane", {
 	state: {
 		/** The terminals open in this workspace on machines the caller may use here, oldest first. */
 		terminals: arr(TerminalRow),
+		/**
+		 * Whether a machine type installed opens terminals (this device's does not yet): the agent's tool is offered only
+		 * then. Per machine with the SSH type (ERNDL-1174, carry-over).
+		 */
+		opens: bool(),
 	},
 	methods: {
 		/**

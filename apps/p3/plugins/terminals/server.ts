@@ -8,7 +8,7 @@
 // takes the terminals opened there (`workspaceGone`, ERNDL-1143).
 
 import { defineFacet, forbidden, invalid } from "@earendil-works/p3/v1";
-import { checkMachine, machineAvailable } from "../environments/contract.server.ts";
+import { checkMachine, MachineTypes, machineAvailable } from "../environments/contract.server.ts";
 import {
 	TERMINAL_BACKLOG,
 	type TerminalHost,
@@ -30,6 +30,7 @@ export default defineFacet((host) => {
 	serveThing(host, TerminalsKind, {
 		implement: ({ workspace, thing }, { caller }, self) => {
 			const terminals = self.registry(TerminalHosts);
+			const types = self.registry(MachineTypes);
 			const answers = givesTo(self, workspace, caller);
 			const owner: TerminalOwner = { thing, workspace };
 			const list = self.get(TerminalList, owner).terminals;
@@ -58,6 +59,7 @@ export default defineFacet((host) => {
 					self.derive([list, answers], ([rows, given]) =>
 						rows.filter((row) => machineAvailable(caller, given[row.machine])),
 					),
+				opens: self.derive([types], ([installed]) => [...installed.values()].some((type) => type.value.terminals)),
 				attach: async ({ terminal }) => ({
 					url: `${ATTACH_PATH}?${new URLSearchParams({ workspace, thing, terminal: usable(terminal) })}`,
 				}),

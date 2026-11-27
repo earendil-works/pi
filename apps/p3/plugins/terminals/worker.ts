@@ -35,7 +35,8 @@ const MAX_WAIT = 30_000;
 const terminalsPart = thingHarnessPart(TerminalsKind, (things, session) => {
 	// Never called with none; the nearest is last (stacking "nearest").
 	const nearest = things[things.length - 1];
-	if (nearest === undefined || !nearest.ref.granted.has("open")) return {};
+	// No type installed opens terminals (this device's does not yet): a tool that only fails costs every request.
+	if (nearest === undefined || !nearest.ref.granted.has("open") || !nearest.ref.opens.value) return {};
 	return { extension: defineExtension({ name: TerminalsKind.name, tools: [terminalTool(nearest, session)] }) };
 });
 

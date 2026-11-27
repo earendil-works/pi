@@ -3,8 +3,9 @@
 // plugins and a stand-in machine whose programs are fakes, `kindServer`): no tool without Use; with it, one tool
 // `terminal` whose tagged action lists the terminals (JSON), opens one at the conversation's location, types a line
 // (Enter after it) or keys, reads the output as plain text and closes; Use withheld after the part was built refuses
-// the next call (forbidden), a conversation on no machine refuses to open (invalid). Holding Terminals costs no query
-// run per holder: the list is the terminal host's, in memory.
+// the next call (forbidden), a conversation on no machine refuses to open (invalid); no tool while no machine type
+// installed opens terminals. Holding Terminals costs no query run per holder: the list is the terminal host's, in
+// memory.
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -12,7 +13,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { type Ctx, BACKGROUND_CONTEXT as context, defineFacet, type P3Principal, until } from "@earendil-works/p3/v1";
+import {
+	type Ctx,
+	BACKGROUND_CONTEXT as context,
+	defineFacet,
+	type P3Principal,
+	type PluginFacet,
+	until,
+} from "@earendil-works/p3/v1";
 import { type ServerRuntime, ServerRuntime as ServerRuntimeRegistry } from "@earendil-works/p3/v1/server";
 import { within } from "../../../test/until.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
@@ -41,14 +49,19 @@ let s1: string;
 beforeEach(async () => {
 	device = fakeMachine();
 	dataDir = await mkdtemp(join(tmpdir(), "p3-terminals-part-"));
+	// This device's type, its plugin name sorting first: programs are fakes.
+	await started([{ name: "@earendil-works/p3-a-fake", facet: fakeType(() => device.host) }]);
+});
+
+/** Starts the terminals plugin beside the environments plugin and `types` (machine types), with s1's workspace. */
+async function started(types: readonly PluginFacet<P3Principal>[]): Promise<void> {
 	const runtime = { dataDir, workRoot: join(dataDir, "work"), machine: { user: "test", hostname: "test" } };
 	const beside = [
 		{
 			name: "p3.server",
 			facet: defineFacet((host) => host.serve(ServerRuntimeRegistry, { compose: () => runtime as ServerRuntime })),
 		},
-		// This device's type, its plugin name sorting first: programs are fakes.
-		{ name: "@earendil-works/p3-a-fake", facet: fakeType(() => device.host) },
+		...types,
 		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 	];
 	const plugin = { name: "@earendil-works/p3-terminals", root: ROOT, server: terminalsServer };
@@ -56,7 +69,7 @@ beforeEach(async () => {
 	terminals = await seeded(await k.host.get(OneThing, { kind: TerminalsKind.name }, context), context);
 	machine = await seeded(await k.host.get(OneThing, { kind: MACHINE_KIND }, context), context);
 	s1 = await k.workspace("s1");
-});
+}
 
 afterEach(async () => {
 	await k.close();
@@ -80,6 +93,16 @@ describe("the terminals' harness part", () => {
 	it("gives no tool without Use", async () => {
 		await k.tick(k.pi, terminals, AGENT, "use", false);
 		// A part that gives nothing gives no extension.
+		await assert.rejects(
+			giving(async () => null),
+			/gave no extension/,
+		);
+	});
+
+	// deck2: the tool's `open` always failed on this device, and its description costs every request.
+	it("gives no tool while no machine type installed opens terminals (this device's alone)", async () => {
+		await k.close();
+		await started([]);
 		await assert.rejects(
 			giving(async () => null),
 			/gave no extension/,
