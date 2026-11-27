@@ -17,6 +17,7 @@ import {
 	createHost,
 	isChordError,
 	type P3Principal,
+	Roots,
 	until,
 	webSocketLink,
 } from "@earendil-works/p3/v1";
@@ -30,8 +31,8 @@ import {
 	PeopleStore,
 } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
+import { newSession, TMP } from "../../../test/support.ts";
 import { collected, eventually, within } from "../../../test/until.ts";
-import { Sessions } from "../../sessions/contract.ts";
 import { SignIns } from "../contract.ts";
 
 const DAY = 24 * 60 * 60_000;
@@ -46,11 +47,6 @@ async function ownerOf(host: TestServer["host"]): Promise<P3Principal> {
 	return { kind: "person", id: found!.id, name: found!.name };
 }
 const MAX: P3Principal = { kind: "person", id: "max", name: "Max" };
-
-/** A new coding session titled `title`, as the owner makes it (on this device, in its own folder). */
-function coding(title: string) {
-	return { app: "coding", title };
-}
 
 /** The sign-in plugin's directory. */
 const PLUGIN = fileURLToPath(new URL("../", import.meta.url));
@@ -497,12 +493,10 @@ describe("a sign-in's `/chord` links on the server", () => {
 		const revoked = await device(t.port, carrying(laptop, "bearer"));
 		const kept = await device(t.port, carrying(phone, "cookie"));
 		try {
-			const sessions = await revoked.host.get(Sessions, {}, context);
-			const others = await kept.host.get(Sessions, {}, context);
-			await sessions.create(coding("before"), context);
+			await newSession(revoked.host, "before", context, TMP);
 			await revokeClosing(t.host, laptop.id, revoked.state);
-			await assert.rejects(sessions.create(coding("by a revoked device"), context));
-			await others.create(coding("after"), context);
+			await assert.rejects(newSession(revoked.host, "by a revoked device", context, TMP));
+			await newSession(kept.host, "after", context, TMP);
 			assert.equal(kept.state.closed, false);
 		} finally {
 			await revoked.host.close(context);
@@ -534,7 +528,7 @@ describe("a reload of the sign-in plugin", () => {
 				await device(t.port, carrying(phone, "cookie")),
 			];
 			devices.push(...pair);
-			await Promise.all(pair.map(({ host: client }) => client.get(Sessions, {}, context)));
+			await Promise.all(pair.map(({ host: client }) => client.get(Roots, { view: "device" }, context)));
 			return pair;
 		};
 		try {
@@ -555,7 +549,7 @@ describe("a reload of the sign-in plugin", () => {
 			// The sign-ins stay: both devices sign in again, and a revoke reaches the new object's links.
 			const [revoked, kept] = await connect();
 			await revokeClosing(host, laptop.id, revoked!.state);
-			await (await kept!.host.get(Sessions, {}, context)).create(coding("after"), context);
+			await newSession(kept!.host, "after", context, TMP);
 			assert.equal(kept!.state.closed, false);
 			assert.deepEqual(t.errors, []);
 		} finally {

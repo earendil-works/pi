@@ -26,8 +26,6 @@ import { type P3Principal, Server, Session } from "@earendil-works/p3/v1";
 import { PeopleStore, type ServerRuntime } from "@earendil-works/p3/v1/server";
 import type { WorkerRuntime } from "@earendil-works/p3/v1/worker";
 import { InMemoryTelemetryContext } from "@earendil-works/pi-telemetry";
-import appsServer from "../plugins/apps/server.ts";
-import codingServer from "../plugins/coding/server.ts";
 import controlServer from "../plugins/control/server.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import environmentsWorker from "../plugins/environments/worker.ts";
@@ -54,8 +52,6 @@ type Plugin = { readonly name: string; readonly facet: Facet<P3Principal> };
 
 /** The server's plugins, by name. */
 const SERVER_PLUGINS: readonly Plugin[] = [
-	{ name: "@earendil-works/p3-apps", facet: appsServer },
-	{ name: "@earendil-works/p3-coding", facet: codingServer },
 	{ name: "@earendil-works/p3-control", facet: controlServer },
 	{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 	{ name: "@earendil-works/p3-files", facet: filesServer },
@@ -64,6 +60,7 @@ const SERVER_PLUGINS: readonly Plugin[] = [
 	{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	{ name: "@earendil-works/p3-sign-in", facet: signInServer },
 	{ name: "@earendil-works/p3-terminals", facet: terminalsServer },
+	// The things plugin: it serves the registry the people plugin hands its owner to (ERNDL-1144's bridge).
 	{ name: "@earendil-works/p3-things", facet: thingsServer },
 ];
 

@@ -18,7 +18,6 @@ import {
 	defineFacet,
 	type P3Principal,
 	Session,
-	Sessions,
 	SessionWorker,
 	until,
 	WebScripts,
@@ -46,7 +45,7 @@ import {
 	startWorker,
 	usedRunner,
 } from "../src/server.ts";
-import { coding } from "./support.ts";
+import { makeSession, TMP } from "./support.ts";
 import { eventually } from "./until.ts";
 
 /** A host with the base's facet and one plugin per entry of `plugins`, each contributing what its facet does. */
@@ -175,8 +174,7 @@ async function startOne(running: RunningServer): Promise<string> {
 	).items;
 	return host.root(
 		async (ctx) => {
-			const sessions = await ctx.get(Sessions, {});
-			const id = await sessions.create(coding("one"), ctx);
+			const id = await makeSession(ctx, "one", TMP);
 			await ctx.get(SessionWorker, { session: id });
 			return id;
 		},

@@ -1,9 +1,9 @@
 // Stand-ins for the plugin tier of the harness (and the transcript) on a session's worker: on a stand-in server, its
-// `SessionFacts` (a row the test changes, and the reports it records) and `SessionAccess` (each caller's access, as
-// the test sets it); on the worker, this device's machine (`test.device`, a part that gives the environment of a
-// location on machine `this-device`, held always), the holding (`HeldThings`: what the test says the agent holds, an unchanged kind's list kept by
+// `SessionFacts` (a row the test changes, and the reports it records) and `MyAnswer` (each caller's ticks on the
+// session, as the test sets them); on the worker, this device's machine (`test.device`, a part that gives the
+// environment of a location on machine `this-device`, held always), the holding (`HeldThings`: what the test says the agent holds, an unchanged kind's list kept by
 // identity) and a scripted login's kind (`test.login`: a pi-ai faux provider per thing answering from its script,
-// each request recorded, and with `tool` the tool `test_session`, which reads the session's title through the
+// each request recorded, and with `tool` the tool `test_session`, which reads the session's folder through the
 // session's `call`). The real things plugin's worker facet (the registries) and the tools plugin's (the coding tools'
 // part) load beside them, imported as modules.
 
@@ -15,11 +15,12 @@ import {
 	defineFacet,
 	defineMessages,
 	lit,
+	MyAnswer,
 	obj,
 	type P3Principal,
 	type PluginFacet,
-	SessionAccess,
 	SessionFacts,
+	SessionKind,
 	type SessionRow,
 	type SessionState,
 	type Static,
@@ -101,8 +102,8 @@ export type Server = {
 	 * order keeps its list.
 	 */
 	hold(things: readonly Holding[]): void;
-	/** Sets the access of callers by key (`owner`, `person:<id>`); unset: `none`. */
-	access(caller: string, access: "none" | "read" | "write"): void;
+	/** Sets a caller's ticks on the session by key (`person:<id>`); `null` (and unset): given nothing. */
+	ticks(caller: string, ticks: readonly string[] | null, kind?: string): void;
 	/** Makes the next reports wait until `release` resolves (a slow server). */
 	slow(release: Promise<void>): void;
 };
@@ -117,14 +118,12 @@ const DEVICE: Holding = { kind: DeviceKind.name, held: heldThing("this-device", 
 export function sessionRow(id: string, folder: string): SessionRow {
 	return {
 		id,
-		app: "test",
-		title: "Test session",
 		location: { environment: "this-device", folder },
 		createdAt: 1,
 		state: "settled",
 		lastTouch: 1,
 		archivedAt: null,
-		follows: null,
+		model: null,
 	};
 }
 
@@ -172,8 +171,13 @@ export function standIns(
 	let release: Promise<void> = Promise.resolve();
 	const rows = new Set<Writable<SessionRow>>();
 	const holdings = new Set<Writable<Held | undefined>>();
-	const accesses = new Map<string, "none" | "read" | "write">([["person:owner", "write"]]);
-	const answers = new Set<{ caller: string; access: Writable<"none" | "read" | "write"> }>();
+	const given = new Map<string, readonly string[]>([["person:owner", ["read", "send", "stop", "manage"]]]);
+	const answers = new Set<{ caller: string; answer: Writable<{ kind: string; ticks: string[] } | null> }>();
+	const kinds = new Map<string, string>();
+	const answerOf = (caller: string) => {
+		const ticks = given.get(caller);
+		return ticks === undefined ? null : { kind: kinds.get(caller) ?? SessionKind.name, ticks: [...ticks] };
+	};
 	const control: Server = {
 		reports: [],
 		requests: [],
@@ -187,9 +191,12 @@ export function standIns(
 			heldValue = grouped;
 			for (const writable of holdings) writable.set(heldValue);
 		},
-		access: (caller, access) => {
-			accesses.set(caller, access);
-			for (const answer of answers) if (answer.caller === caller) answer.access.set(access);
+		ticks: (caller, ticks, kind) => {
+			if (ticks === null) given.delete(caller);
+			else given.set(caller, ticks);
+			if (kind === undefined) kinds.delete(caller);
+			else kinds.set(caller, kind);
+			for (const each of answers) if (each.caller === caller) each.answer.set(answerOf(caller));
 		},
 		slow: (next) => {
 			release = next;
@@ -210,10 +217,10 @@ export function standIns(
 				},
 			};
 		});
-		host.serve(SessionAccess, ({ caller }, _principal, self) => {
-			const access = self.writable(accesses.get(caller) ?? "none");
-			answers.add({ caller, access });
-			return { access: self.derive([access], ([value]) => value) };
+		host.serve(MyAnswer, ({ caller }, _principal, self) => {
+			const answer = self.writable(answerOf(caller));
+			answers.add({ caller, answer });
+			return { answer: self.derive([answer], ([value]) => value) };
 		});
 	});
 	// This device's machine, as the machine kind's part gives it: its environment in the location's folder.
@@ -246,14 +253,14 @@ export function standIns(
 				if (!all.some(({ ref }) => ref.tool.value)) return { providers };
 				const tool = defineTool({
 					name: "test_session",
-					description: "The session's title",
+					description: "The session's folder",
 					parameters: obj({}),
 					execute: async (_args, _api, context) => {
-						const title = await session.call(
-							async (ctx) => (await ctx.get(SessionFacts, {})).session.value?.title ?? "",
+						const folder = await session.call(
+							async (ctx) => (await ctx.get(SessionFacts, {})).session.value?.location.folder ?? "",
 							context,
 						);
-						return { output: [{ type: "text", text: `title: ${title}` }] };
+						return { output: [{ type: "text", text: `folder: ${folder}` }] };
 					},
 				});
 				return { providers, extension: { tools: [tool] } };

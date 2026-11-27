@@ -84,7 +84,16 @@ describe("the tree", () => {
 		);
 		const team = await store.createWorkspace({ kind: "things.workspace", name: "Team", parent: pi, by: BY }, context);
 		const [row] = (await store.workspaces.one.page({ workspace: team }, 1, context)).items;
-		assert.deepEqual(row, { workspace: team, parent: pi, showsThings: true, showsPeople: true });
+		assert.deepEqual(row, {
+			workspace: team,
+			kind: "things.workspace",
+			name: "Team",
+			parent: pi,
+			showsThings: true,
+			showsPeople: true,
+			path: [pi, team],
+			pathText: `${pi}/${team}/`,
+		});
 		assert.deepEqual(
 			(await store.workspaces.children.page({ parent: pi }, 10, context)).items.map(({ workspace }) => workspace),
 			[team],
@@ -229,7 +238,7 @@ describe("a plugin's one thing", () => {
 		const facet = defineFacet((host) =>
 			serveThing(host, Machine, {
 				implement: () => ({ folder: constant("/"), use: async () => null }),
-				create: async (thing) => {
+				create: async ({ thing }) => {
 					calls.push(`create ${thing}`);
 					await create?.();
 				},
@@ -289,7 +298,7 @@ describe("a plugin's one thing", () => {
 				facet: defineFacet((host) =>
 					serveThing(host, Inbox, {
 						implement: () => ({}),
-						create: async (_thing, input) => {
+						create: async ({ input }) => {
 							// Typed by the kind's schema.
 							const signIn: string = input.signIn;
 							inputs.push(signIn);
@@ -722,10 +731,10 @@ describe("races, failures and restarts", () => {
 			const release = Promise.withResolvers<void>();
 			const create =
 				mode === "throws at once"
-					? (): Promise<void> => {
+					? (): Promise<undefined> => {
 							throw new Error("bad input");
 						}
-					: async () => {
+					: async (): Promise<undefined> => {
 							entered.resolve();
 							await release.promise;
 							throw new Error("create failed");
@@ -751,7 +760,7 @@ describe("races, failures and restarts", () => {
 	it("the create hook is told who makes the thing, and may refuse them", async (t) => {
 		const told: Source[] = [];
 		const at = await markerWorld({
-			create: async (_thing, _input, by) => {
+			create: async ({ by }) => {
 				told.push(by);
 				// As a login refuses a sign-in that is not its maker's.
 				if (by.kind === "person" && by.person === "bob") throw new Error("not your sign-in");
@@ -779,7 +788,7 @@ describe("races, failures and restarts", () => {
 		const release = Promise.withResolvers<void>();
 		const deleted = Promise.withResolvers<boolean>();
 		const at = await markerWorld({
-			create: async (thing) => {
+			create: async ({ thing }) => {
 				entered.resolve(thing);
 				await release.promise;
 			},
@@ -804,7 +813,7 @@ describe("races, failures and restarts", () => {
 		const deleted = Promise.withResolvers<void>();
 		const contents = new Set<string>();
 		const at = await markerWorld({
-			create: async (id) => {
+			create: async ({ thing: id }) => {
 				entered.resolve(id);
 				await resume.promise;
 				contents.add(id);
@@ -897,7 +906,7 @@ describe("races, failures and restarts", () => {
 		const release = Promise.withResolvers<void>();
 		const content = new Set<string>();
 		const at = await markerWorld({
-			create: async (id) => {
+			create: async ({ thing: id }) => {
 				content.add(id);
 				entered.resolve(id);
 				await release.promise;
@@ -1093,7 +1102,12 @@ describe("races, failures and restarts", () => {
 		const first = gives.answers.value;
 		await update;
 		try {
-			assert.deepEqual(first[a], first[b], "the two boards changed in one transaction");
+			// One in the root, one in the leaf: alike but for how far above each is linked.
+			assert.deepEqual(
+				{ ...first[a], depth: 0 },
+				{ ...first[b], depth: 0 },
+				"the two boards changed in one transaction",
+			);
 			assert.deepEqual(gives.answers.value[a]?.ticks, ["read", "write"]);
 			assert.deepEqual(gives.answers.value[b]?.ticks, ["read", "write"]);
 		} finally {

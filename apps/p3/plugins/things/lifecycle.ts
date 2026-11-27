@@ -49,6 +49,8 @@ const LONGEST = 60_000;
 export class Lifecycle {
 	readonly #store: LifecycleStore;
 	readonly #live = Promise.withResolvers<Ctx<P3Principal>>();
+	/** The store's own context once it serves. */
+	#serving: Ctx<P3Principal> | undefined;
 	/** The things whose delete is being tried, so one is never tried twice at once, and their tries. */
 	readonly #retiring = new Map<string, Promise<void>>();
 
@@ -61,8 +63,9 @@ export class Lifecycle {
 	 * attempt ends, it ends after the delete hooks it started (the next attempt's `resume` never overlaps them).
 	 */
 	async serve(ctx: Ctx<P3Principal>): Promise<void> {
+		this.#serving = ctx;
 		this.#live.resolve(ctx);
-		await this.resume();
+		await this.resume(ctx);
 		await untilAborted(ctx);
 		await Promise.all(this.#retiring.values());
 	}
@@ -76,10 +79,15 @@ export class Lifecycle {
 		this.#retiring.set(thing, trying);
 	}
 
-	/** Every pending delete, tried again: at the start, and whenever the kinds' hooks change (a missing plugin back). */
-	async resume(): Promise<void> {
-		const ctx = await this.#live.promise;
-		for (const { thing, kind } of await this.#store.pending(ctx)) this.retire(thing, kind);
+	/**
+	 * Every pending delete, tried again: at the start, and whenever the kinds' hooks change (a missing plugin back). It
+	 * ends with `ctx` (the routine's) when the store never got to serve (its `onLive` failed first, a close or a reload
+	 * during it), so a close never waits for it (ERNDL-1187).
+	 */
+	async resume(ctx: Ctx<P3Principal>): Promise<void> {
+		const own = await this.#served(ctx);
+		if (own === undefined) return;
+		for (const { thing, kind } of await this.#store.pending(own)) this.retire(thing, kind);
 	}
 
 	/**
@@ -89,7 +97,15 @@ export class Lifecycle {
 	 * again). A storage failure is reported: what is left is the accepted crash case, content under an id nobody knows.
 	 */
 	async undo(thing: string, kind: string, ctx: Ctx<P3Principal>): Promise<void> {
-		const own = await this.#live.promise;
+		const own = await this.#served(ctx);
+		if (own === undefined) {
+			reportError(
+				`things: the cleanup of ${kind}'s ${thing}, never made, could not be kept (the store closed)`,
+				undefined,
+				ctx,
+			);
+			return;
+		}
 		try {
 			await this.#store.write(async (tx) => {
 				tx.put(this.#store.table, { thing, kind });
@@ -100,6 +116,15 @@ export class Lifecycle {
 			return;
 		}
 		this.retire(thing, kind);
+	}
+
+	/**
+	 * The store's own context once it serves; `undefined` if `ctx` aborts first (the store never served). Once served
+	 * it is answered at once (no listener on `ctx`).
+	 */
+	async #served(ctx: Ctx<P3Principal>): Promise<Ctx<P3Principal> | undefined> {
+		if (this.#serving !== undefined) return this.#serving;
+		return Promise.race([this.#live.promise, untilAborted(ctx).then(() => undefined)]);
 	}
 
 	async #retire(thing: string, kind: string): Promise<void> {

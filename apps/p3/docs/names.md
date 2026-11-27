@@ -10,17 +10,15 @@ meaning from `packages/chord/docs/design.md` §2.
 | Pi | one installation of p3, with one owner | instance |
 | owner | the person who owns the Pi and installs its plugins: a person with the owner flag | admin |
 | person | anyone who signs in, the owner among them (an invite link makes the others) | user, guest |
-| group | persons an app made for one of its roles (coaches, players) | role, team |
-| member | a person or a group in a session, who reads or writes there | share, participant |
-| app | a plugin that owns the page below the top bar, and its sessions; coding is the built-in app | |
-| session | one agent in one folder of one environment, with its members and things, its own worker and store; belongs to exactly one app. The page may say workspace | chat, thread |
-| party | a person or a group | |
-| thing | one record of a kind a plugin brings (a canvas, a notebook, a login, the coding tools), with one id, a name and an owner: a person, a group, the Pi, or nobody. Sessions use things | resource, feature |
-| content | a thing nobody owns: made in a session by a writer or the agent, gone when no session uses it | artifact, document |
-| options | what a thing allows in one session: one whole object per party there (everyone, the agent, a member) | settings |
-| everywhere | an owned thing's switch: every session that follows its owner has it. The page says "in all my sessions" | global, default, shared |
-| follows | a session follows one party, or nobody: it has that party's `everywhere` things, live, while the party writes in it | inherits, template |
-| keep | a writer gives content an owner (themselves, a group of theirs, the Pi for the owner) | save, claim |
+| group | persons put together (a family, a team), managed by its own tick | role, team |
+| workspace | a thing that holds things and people (Pi, a project, Family); Pi is the root | folder, space |
+| session | a session workspace: a leaf with one agent, its own worker and store; its id is its workspace's | chat, thread |
+| party | whom a grant names: everyone here, the agents, a person, a group, one session's agent | |
+| thing | one record of a kind a plugin brings (a canvas, a notebook, a login, the coding tools, a session), with one id and a name, linked in one or more workspaces | resource, feature |
+| kind | a plugin's type of thing (`defineThing`, `defineWorkspace`): its members, ticks, default grants and makers | type |
+| tick | a right on a thing, granted to a party where it is linked (Read, Draw, Bash; the workspace ticks Link, Hide, Configure, Manage people, Manage access; Make) | permission, scope |
+| grant | one row giving (or withholding) one tick to one party on one thing in one workspace | |
+| answer | what a caller gets for a thing in a workspace: its ticks (perhaps none), from the things plugin's index | |
 | conversation | one line of talk in a session; branches and subagents are conversations | |
 | transcript | a conversation's entries, and the plugin and pane that own them | chat |
 | entry | one item in a transcript (a message, a tool call, a marker) | |
@@ -35,10 +33,10 @@ meaning from `packages/chord/docs/design.md` §2.
 | location | where a session works: an environment and a folder | place |
 | org | a company that manages its members' Pis | company |
 | view | one way to look at a target (a thing of a kind, a person, a group): an entry of the things plugin's `Views`; a kind has 0 to n | pane, panel, app |
-| component | a React component a plugin offers others to place (`defineComponent`, `Components`, `useComponent`): the pane layout, the session list | view |
-| layout | how an app arranges its views | |
+| component | a React component a plugin offers others to place (`defineComponent`, `Components`, `useComponent`): the pane layout, the navigator. Its token has no `View` suffix (`PaneLayout`, `Navigator`, `Settings`); `TargetView` is the decided name of the one that draws a target in its view | view |
+| layout | how a view arranges its panes: the layout plugin's pane layout (splits and tabs; chips on a phone) | |
 | slot | a place inside a view where other plugins add parts | |
-| chrome | the page's frame: the top bar (app switcher, person menu, connection) and the chosen app's page | workbench |
+| chrome | the page's frame: the top bar (crumbs, person menu, connection), the navigator beside the main area, and the corner button over a view that takes the whole page | workbench |
 | question | something a person is asked: an ask or an approval | |
 | artifact | something a session made to be shown | |
 | identity provider | how a person proves who they are (Radius, this device) | |

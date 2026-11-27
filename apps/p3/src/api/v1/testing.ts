@@ -54,7 +54,7 @@ export type TestedFacet =
 			/**
 			 * The facets of a stand-in server the worker's host is linked to, as a real worker is to its server (the
 			 * worker's principal on that link): what serves the server contracts the facet holds (`SessionFacts`,
-			 * `SessionAccess` behind `admitSession`). Without it the worker has no server.
+			 * `MyAnswer` behind `followSession`). Without it the worker has no server.
 			 */
 			readonly server?: readonly PluginFacet<P3Principal>[];
 	  };

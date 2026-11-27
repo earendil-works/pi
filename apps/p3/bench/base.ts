@@ -24,19 +24,17 @@ import {
 	BACKGROUND_CONTEXT as context,
 	type Host,
 	type P3Principal,
+	SessionObject,
 	type SessionState,
-	SessionsList,
-	ThisDevice,
-	TRANSCRIPT_WRITES,
 	Transcript,
 	until,
+	withGranted,
 } from "@earendil-works/p3/v1";
 import { ownerClient, ownerCookie } from "@earendil-works/p3/v1/testing";
-import { Sessions, SessionWorker } from "../plugins/sessions/contract.ts";
+import { SessionWorker } from "../plugins/sessions/contract.ts";
 import { COMMAND } from "../src/install.ts";
-import { assertGranted } from "../test/granted.ts";
 import { FauxRequests, type Step } from "../test/plugins/faux-login/contract.ts";
-import { childrenOf, scriptFaux } from "../test/support.ts";
+import { childrenOf, newSession, scriptFauxAs } from "../test/support.ts";
 import { within } from "../test/until.ts";
 import { launchTracked, withServer } from "./launched.ts";
 
@@ -92,25 +90,20 @@ try {
 		}
 
 		const client = await ownerClient(server.dataDir, server.port, context, 30_000);
-		const sessions = await client.get(Sessions, {}, context);
 		const workerStarts: number[] = [];
 		const starts: number[] = [];
 		const ids: string[] = [];
 		const held: { release(): void }[] = [];
-		const machine = (await client.get(ThisDevice, {}, context)).machine.value;
 		for (let i = 0; i <= RUNS; i++) {
 			const folder = join(root, `folder-${i}`);
 			await mkdir(folder);
-			// The session follows the owner, so it has the Pi's coding tools and faux login ("in all my sessions").
-			const id = await sessions.create(
-				{ app: "coding", title: `s${i}`, location: { environment: machine, folder } },
-				context,
-			);
-			await scriptFaux(client, id, SCRIPT, context);
+			// The session is made in Pi, so Pi's coding tools reach it; its faux login is made in it.
+			const id = await newSession(client, `s${i}`, context, { folder });
+			await scriptFauxAs(client, id, SCRIPT, context);
 			const started = performance.now();
 			held.push(await client.get(SessionWorker, { session: id }, context));
 			workerStarts.push(performance.now() - started);
-			const transcript = await client.get(Transcript, { session: id }, context);
+			const transcript = withGranted(await client.get(Transcript, { session: id }, context), "view")!;
 			await until(transcript.view, (view) => view !== null, within("the transcript", context, 30_000));
 			starts.push(performance.now() - started);
 			ids.push(id);
@@ -179,8 +172,7 @@ function files(html: string): [string, string][] {
 /** Sends `text` to `session`'s transcript as the owner. */
 async function send(client: Host<P3Principal>, session: string, text: string): Promise<void> {
 	await client.root(async (ctx) => {
-		const transcript = await ctx.get(Transcript, { session });
-		assertGranted(transcript, ...TRANSCRIPT_WRITES);
+		const transcript = withGranted(await ctx.get(Transcript, { session }), "send")!;
 		await transcript.send({ text, requestId: text }, ctx);
 	}, context);
 }
@@ -197,15 +189,11 @@ async function ranTheTool(client: Host<P3Principal>, session: string): Promise<v
 	}
 }
 
-/** Waits until `session`'s row in the owner's list is in `state`. */
+/** Waits until `session`'s row (as the owner holds the session) is in `state`. */
 async function reaches(client: Host<P3Principal>, session: string, state: SessionState): Promise<void> {
 	await client.root(async (ctx) => {
-		const list = await ctx.get(SessionsList, { app: "coding", set: "active", view: `state-${state}` });
-		await until(
-			list.list,
-			(value) => value.rows.find((row) => row.id === session)?.state === state,
-			within(`the row ${state}`, ctx, 30_000),
-		);
+		const held = await ctx.get(SessionObject, { workspace: session, thing: session });
+		await until(held.row, (row) => row.state === state, within(`the row ${state}`, ctx, 30_000));
 	}, context);
 }
 

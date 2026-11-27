@@ -25,6 +25,8 @@ import type { ThingKind } from "./kind.ts";
 export type HeldThing<C extends Contract = Contract> = {
 	readonly thing: string;
 	readonly workspace: string;
+	/** How far above the session's workspace the thing is linked: 0 in it, 1 in its parent (a kind's list: nearest last). */
+	readonly depth: number;
 	readonly ref: Reference<C>;
 };
 
@@ -69,7 +71,7 @@ export type HarnessContribution = {
 
 /**
  * A kind's harness part: the kind, and what every thing of it the agent holds gives. `part` is called with the
- * held things in a stable order (nearest last once the holding knows depth; open), again whenever that list changes
+ * held things nearest last (by depth, then id), again whenever that list changes
  * (a reference added, removed or granted anew), and never with none. State a part reads at use (a setting in a
  * prompt section) is read there, live.
  */
@@ -105,7 +107,7 @@ export function thingHarnessPart<C extends Contract>(
 
 /**
  * What the session's worker holds as its agent, by kind name: one entry per thing available to the agent, in a stable
- * order (nearest last once the holding knows depth; open), only of kinds with a part in `ThingHarnessParts` here. A
+ * order (each kind's nearest last: by depth, then id), only of kinds with a part in `ThingHarnessParts` here. A
  * new map whenever a list changes; a kind whose list did not change keeps the same array, so the harness gives only
  * kinds whose array is new (a reference granted anew makes its kind's array new). `undefined`: not ready yet (no
  * contribution, or the holding still waits for a wanted reference to be live or failed once); the harness keeps what

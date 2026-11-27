@@ -9,15 +9,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import {
-	type Ctx,
-	BACKGROUND_CONTEXT as context,
-	type P3Principal,
-	type Reference,
-	Sessions,
-} from "@earendil-works/p3/v1";
+import { type Ctx, BACKGROUND_CONTEXT as context, type P3Principal, type Reference } from "@earendil-works/p3/v1";
 import { PeopleStore, SessionsStore } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
+import { newSession } from "../../../test/support.ts";
 import { eventually } from "../../../test/until.ts";
 import { MachineHosts } from "../../environments/contract.server.ts";
 import { MACHINE_KIND } from "../../environments/contract.ts";
@@ -190,7 +185,7 @@ describe("the upload route", () => {
 describe("a new session's folder", () => {
 	it("is outside the data folder, so Files lists it (astra repro)", async () => {
 		const client = await t.client(context);
-		const id = await (await client.get(Sessions, {}, context)).create({ app: "coding", title: "new" }, context);
+		const id = await newSession(client, "new", context);
 		const rows = await t.host.root(
 			async (ctx) => (await ctx.get(SessionsStore, {})).sessions.one.page({ id }, 1, ctx),
 			context,

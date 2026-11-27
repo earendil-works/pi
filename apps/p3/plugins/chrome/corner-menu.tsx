@@ -1,62 +1,78 @@
-// The chrome of an app that shows no bar (`chrome: "button"`, an app for a child): one button in the corner over the
-// app's page, opening a menu with what the bar holds (the apps, who is signed in, the connection, My things, the
-// invite).
+// The corner button of a view that takes the whole page (decision 64): the one thing the chrome guarantees there, which
+// no view can cover. It opens the navigator in a drawer and the target's Settings view (the gear).
 
-import { IconButton, Menu } from "@earendil-works/elanor-react";
-import { FolderIcon, MenuIcon, navigate, PersonAddIcon } from "@earendil-works/p3/v1/web";
-import { CONNECTION_LABELS } from "./connection.tsx";
+import { Drawer, IconButton, Menu } from "@earendil-works/elanor-react";
+import {
+	MenuIcon,
+	navigate,
+	SettingsIcon,
+	type Target,
+	targetPath,
+	useComponent,
+	useMessages,
+} from "@earendil-works/p3/v1/web";
+import { useState } from "react";
+// Other plugins' web contracts by path, never through `/v1/web` (see `frame.tsx`).
+import { Navigator } from "../things/contract.web.tsx";
 import styles from "./frame.module.css";
-import type { ChromeProps } from "./frame.tsx";
-import { callerName } from "./top-bar.tsx";
+import { messages } from "./messages.ts";
 
-/** The corner button and its menu, as `TopBar` takes them. */
-export function CornerMenu(props: ChromeProps) {
+/** The corner button: the navigator (in a drawer) and the gear of `target`, which keeps the chosen `view`. */
+export function CornerMenu(props: { readonly target: Target | undefined; readonly view: string | undefined }) {
+	const { t } = useMessages(messages);
+	const NavigatorView = useComponent(Navigator);
+	const [open, setOpen] = useState(false);
+	const { target } = props;
 	return (
-		<Menu.Root>
-			<Menu.Trigger
-				className={styles.corner}
-				data-corner-menu=""
-				data-connection={props.connection}
-				render={<IconButton aria-label="Menu" />}
-			>
-				<MenuIcon />
-			</Menu.Trigger>
-			<Menu.Portal>
-				<Menu.Positioner align="end" sideOffset={4}>
-					<Menu.Popup data-corner-popup="">
-						<Menu.Group>
-							<Menu.GroupLabel>Apps</Menu.GroupLabel>
-							{props.apps.map((app) => (
+		<>
+			<Menu.Root>
+				<Menu.Trigger
+					aria-label={t("menu")}
+					className={styles.corner}
+					data-corner-menu=""
+					render={<IconButton aria-label={t("menu")} />}
+				>
+					<MenuIcon />
+				</Menu.Trigger>
+				<Menu.Portal>
+					<Menu.Positioner align="end" sideOffset={4}>
+						<Menu.Popup data-corner-popup="">
+							<Menu.Item data-corner-navigator="" icon={<MenuIcon />} onClick={() => setOpen(true)}>
+								{t("navigator")}
+							</Menu.Item>
+							{target === undefined ? null : (
 								<Menu.Item
-									data-app={app.id}
-									disabled={app.id === props.current?.id}
-									key={app.id}
-									onClick={() => navigate(`/${app.id}`)}
+									data-corner-settings=""
+									icon={<SettingsIcon />}
+									onClick={() => navigate(targetPath(target, { settings: true, view: props.view }))}
 								>
-									{app.title}
+									{t("settings")}
 								</Menu.Item>
-							))}
-						</Menu.Group>
-						<Menu.Separator />
-						<Menu.Group>
-							<Menu.GroupLabel>
-								{props.caller === undefined ? "" : `Signed in as ${callerName(props.caller)}. `}
-								{CONNECTION_LABELS[props.connection]}
-							</Menu.GroupLabel>
-							{props.caller?.kind === "person" ? (
-								<Menu.Item data-my-things-open="" icon={<FolderIcon />} onClick={props.onMyThings}>
-									My things
-								</Menu.Item>
-							) : null}
-							{props.caller?.kind === "person" && props.caller.owner ? (
-								<Menu.Item data-invite-open="" icon={<PersonAddIcon />} onClick={props.onInvite}>
-									Invite a person
-								</Menu.Item>
-							) : null}
-						</Menu.Group>
-					</Menu.Popup>
-				</Menu.Positioner>
-			</Menu.Portal>
-		</Menu.Root>
+							)}
+						</Menu.Popup>
+					</Menu.Positioner>
+				</Menu.Portal>
+			</Menu.Root>
+			<Drawer.Root onOpenChange={setOpen} open={open}>
+				<Drawer.Portal>
+					<Drawer.Backdrop />
+					<Drawer.Viewport>
+						<Drawer.Popup className={styles.drawer} data-corner-drawer="">
+							<Drawer.Title>{t("navigator")}</Drawer.Title>
+							{NavigatorView === undefined || !open ? null : (
+								<NavigatorView
+									onMe={() => navigate("/me")}
+									onOpen={(next) => {
+										setOpen(false);
+										navigate(targetPath(next));
+									}}
+									target={target}
+								/>
+							)}
+						</Drawer.Popup>
+					</Drawer.Viewport>
+				</Drawer.Portal>
+			</Drawer.Root>
+		</>
 	);
 }

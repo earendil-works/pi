@@ -49,7 +49,7 @@ function held(granted: readonly string[], calls: Calls, output = ""): HeldThing<
 		};
 	}
 	// A stand-in for the holding's reference: the part reads only `granted` and the members.
-	return { thing: "terms", workspace: "w", ref: ref as unknown as HeldThing<typeof Terminals>["ref"] };
+	return { thing: "terms", workspace: "w", depth: 0, ref: ref as unknown as HeldThing<typeof Terminals>["ref"] };
 }
 
 /** What Use grants. */

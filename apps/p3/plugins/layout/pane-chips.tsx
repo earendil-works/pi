@@ -4,15 +4,17 @@
 // in (unless the person asked for reduced motion). No splits and no dragging here, but the same tree: a pane opened
 // here shows in its group on a wider screen.
 
-import { CloseIcon } from "@earendil-works/p3/v1/web";
+import { CloseIcon, useMessages } from "@earendil-works/p3/v1/web";
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import type { Pane, PaneLayoutProps } from "./contract.web.tsx";
+import { messages } from "./messages.ts";
 import styles from "./pane-chips.module.css";
 import { closeShownPane, showPane } from "./pane-layout.tsx";
 import { groupsOf, panesOf } from "./tree.ts";
 
 /** The phone's form of the layout. */
 export function PaneChips(props: PaneLayoutProps) {
+	const { t } = useMessages(messages);
 	const byId = new Map(props.panes.map((pane) => [pane.id, pane]));
 	const open = panesOf(props.tree).flatMap((id) => byId.get(id) ?? []);
 	const firstActive = groupsOf(props.tree).find((group) => group.active !== null)?.active;
@@ -59,7 +61,7 @@ export function PaneChips(props: PaneLayoutProps) {
 						</button>
 						{pane.closable ? (
 							<button
-								aria-label={`Close ${pane.title}`}
+								aria-label={t("close", pane.title)}
 								className={styles.close}
 								data-pane-close={pane.id}
 								onClick={() => closeShownPane(props, pane.id)}

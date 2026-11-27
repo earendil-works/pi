@@ -10,10 +10,11 @@ import {
 	type FacetHost,
 	type P3Principal,
 	reportError,
-	SessionStart,
 	untilAborted,
 } from "@earendil-works/p3/v1";
-import { ServerRuntime, SessionsStore, WorkerRunners } from "@earendil-works/p3/v1/server";
+import { ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
+import { SessionsStore } from "./contract.server.ts";
+import { SessionStart } from "./contract.ts";
 
 /** How many workers the waker starts at once. */
 const AT_ONCE = 4;

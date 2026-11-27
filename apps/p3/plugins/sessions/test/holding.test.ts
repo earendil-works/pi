@@ -600,27 +600,25 @@ describe("the holding's calls under way", () => {
 		assert.equal(await collected([oldArray]), true);
 	});
 
-	// Astra, round 1 (carry to depth): nearest last needs the index's depth (slice 2 follow-up).
-	it(
-		"lists a nearer link last, whatever the ids",
-		{ todo: "Gives answers carry no depth yet (slice 2)" },
-		async () => {
-			const pi = (await store.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
-			await reloadWorker(partFacet(Board).name, null);
-			const [near, far] = (
-				await Promise.all(
-					[0, 1].map((i) =>
-						store.create({ workspace: pi, kind: Board.name, name: `board ${i}`, by: BY }, context),
-					),
-				)
-			).sort();
-			await store.link({ workspace: session, thing: near! }, context);
-			await store.unlink({ workspace: pi, thing: near! }, context);
-			await reloadWorker(partFacet(Board).name, partFacet(Board).facet);
-			const value = await held((v) => ids(v, Board.name).length === 2, "two boards");
-			assert.deepEqual(ids(value, Board.name), [far, near]);
-		},
-	);
+	// Astra, round 1 (carry to depth): each kind's list is nearest last, whatever the ids; a link moved nearer is a change.
+	it("lists a nearer link last, whatever the ids, and gives its kind a new array when a link moves", async () => {
+		const pi = (await store.workspaces.children.page({ parent: "" }, 1, context)).items[0]!.workspace;
+		const [near, far] = (
+			await Promise.all(
+				[0, 1].map((i) => store.create({ workspace: pi, kind: Board.name, name: `board ${i}`, by: BY }, context)),
+			)
+		).sort();
+		const both = await held((v) => ids(v, Board.name).length === 2, "two boards from Pi");
+		assert.deepEqual(ids(both, Board.name), [near, far]);
+		await store.link({ workspace: session, thing: near! }, context);
+		await store.unlink({ workspace: pi, thing: near! }, context);
+		const moved = await held((v) => ids(v, Board.name)[1] === near, "the nearer link last");
+		assert.deepEqual(ids(moved, Board.name), [far, near]);
+		assert.deepEqual(
+			moved.get(Board.name)!.map(({ depth }) => depth),
+			[1, 0],
+		);
+	});
 });
 
 describe("AgentThings", () => {

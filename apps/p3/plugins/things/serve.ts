@@ -13,8 +13,8 @@ import {
 	type Self,
 } from "@earendil-works/p3/v1";
 import { admitThing } from "./admission.ts";
-import { type ThingHook, ThingHooks } from "./contract.server.ts";
-import type { Caller, Source } from "./contract.ts";
+import { type CreateAnswer, type Made, type ThingHook, ThingHooks } from "./contract.server.ts";
+import type { Caller } from "./contract.ts";
 import { type ThingKind, ThingKinds } from "./kind.ts";
 
 /** What `implement` gets about its caller: who calls, and the members and flags granted. */
@@ -34,13 +34,19 @@ export type ThingImplementation<C extends Contract, St extends string = string, 
 		admitted: ThingCaller<C>,
 		self: Self<P3Principal>,
 	) => Implementation<C, Ctx<P3Principal>>;
-	readonly create?: (thing: string, input: I, by: Source, ctx: Ctx<P3Principal>) => Promise<void>;
+	/**
+	 * Prepares what is in a new thing (its id, its input, who makes it, where: `Made`) before the commit that makes it;
+	 * may answer its own default view and, for a workspace kind, its default grants and people default (`CreateAnswer`).
+	 */
+	readonly create?: (made: Made<I>, ctx: Ctx<P3Principal>) => Promise<CreateAnswer | undefined>;
 	readonly configure?: (
 		thing: string,
 		settings: { readonly [K in St]?: unknown },
 		ctx: Ctx<P3Principal>,
 	) => Promise<void>;
 	readonly delete?: ThingHook["delete"];
+	/** Clears what the kind keeps for a workspace that is gone (removed); see `ThingHook`. */
+	readonly workspaceGone?: ThingHook["workspaceGone"];
 	/**
 	 * The plugin's one thing of the kind, seeded in Pi once the kind is registered (any kind: `makers` says only who
 	 * else makes more); server code reads its id through `OneThing`.

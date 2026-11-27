@@ -15,7 +15,7 @@ Pi uses extended-key protocols so terminals can distinguish combinations such as
 | Inline images or colors are not detected | [Override detected capabilities](#override-detected-capabilities) |
 | An IME candidate window appears in the wrong place | [WezTerm](#wezterm) or [IntelliJ IDEA](#intellij-idea-integrated-terminal) |
 | Modified keys fail only inside tmux | [Run Pi in tmux](tmux.md) |
-| After Pi exits, moving the mouse types text such as `[<35;12;5M` into the shell prompt | [Recover the terminal after Pi was killed](#recover-the-terminal-after-pi-was-killed) |
+| After Pi exits, moving the mouse or typing puts text such as `[<35;12;5M` or `[;;;129:3u` into the shell prompt | [Recover the terminal after Pi was killed](#recover-the-terminal-after-pi-was-killed) |
 
 Use `/hotkeys` to inspect Pi's active shortcuts. See [Keybindings](keybindings.md) to change them.
 
@@ -223,15 +223,27 @@ Only force a capability supported by the complete terminal path. Unsupported esc
 
 ## Recover the terminal after Pi was killed
 
-While it runs, Pi switches the terminal to the alternate screen, turns on mouse and focus reporting, and enables extended-key protocols. Pi turns them off when it exits, but it cannot do so when it is killed, for example with `kill -9`, from Task Manager, or when it runs out of memory. The terminal then keeps sending mouse reports and the shell types them into the prompt.
+Pi turns on key, mouse, and paste reporting while it runs, and the alternate screen in fullscreen mode. It turns them off when it exits. If Pi is killed (`kill -9`, Task Manager, out of memory), they stay on and the shell types the reports into the prompt.
 
-To recover, run `pi` again and quit it with `Ctrl+D` or `/quit`. A clean exit turns all of these modes off and leaves the alternate screen.
+The real fix is to find what kills Pi and stop it. Look for `JavaScript heap out of memory` in the terminal, or a script or IDE that ends the process, and [open an issue](https://github.com/earendil-works/pi/issues) with what you find.
 
-Keyboard input still reaches the shell, even if you cannot see what you type:
+To reset the terminal, run this in the affected pane. Starting and quitting Pi again is not enough.
 
-1. Keep the mouse pointer off the terminal pane.
-2. Press `Ctrl+C` to clear the current line.
-3. Type `pi`, press `Enter`, then quit Pi.
+bash or zsh:
+
+```bash
+printf '\e[<16u\e[=0;1u\e[>4;0m\e[?2004;1000;1002;1003;1004;1006l\e[?7;25h'
+```
+
+PowerShell:
+
+```powershell
+$e = [char]27; [Console]::Write("$e[<16u$e[=0;1u$e[>4;0m$e[?2004;1000;1002;1003;1004;1006l$e[?7;25h")
+```
+
+If the prompt still shows Pi's last screen, also run `printf '\e[?1049l'` or `[Console]::Write("$([char]27)[?1049l")`. Only in that case: otherwise it confuses the shell's line editor.
+
+If you cannot type in the pane, start Pi in another tab and ask it: "Reset my other terminal tab with the reset sequence from Pi's terminal-setup docs." Then press `Ctrl+C` in the fixed tab to clear the line.
 
 ## Program status
 
@@ -251,6 +263,26 @@ Reports never contain prompts or model output. Pi sends them only after the term
 
 Pi tells the terminal how to bring the session back after the terminal restarts, with the [Program Resume Protocol (OSC 7577)](https://www.superlogical.com/rex/docs/build/program-resume). Terminals that support it set `OSC7577_TOKEN` in the environment; Pi reports only when it is set.
 
-The command is the one Pi prints when you quit, such as `pi --session <id>`, to run in the session's directory. Pi updates it when you start, resume, or fork a session, and once a new session has its first message. A new session without messages has nothing to resume, so Pi removes the command until then. Quitting with `Ctrl+D`, `Ctrl+C` twice, or `/quit` removes it too; when the terminal itself closes or restarts, Pi keeps it.
+The command contains everything needed to resume the session, because the terminal runs it without Pi's environment: the session ID, `--agent-dir` and `--session-dir` when those folders are not the default, and the restriction and resource flags Pi was started with, as typed (tools, extensions, skills, prompt templates, themes, context files, system prompts, project trust, `--models`). For example, `pi --session <id> -t read,grep`. The terminal runs it in the session's directory. Other flags are left out, because the session keeps its model, thinking level, and name. The command Pi prints when you quit is the same without the repeated flags.
+
+Pi updates the command when you start, resume, or fork a session, and once a new session has its first message. It removes the command while a new session has no messages, when you quit (`Ctrl+D`, `Ctrl+C` twice, `/quit`), and, if Pi was started with flags, when you open a session from another directory, because relative paths in the flags would point elsewhere. When the terminal closes or restarts and ends Pi, Pi leaves the command in place, so the terminal can resume it.
+
+The terminal resumes a command only if a rule trusts it. Rex rules with a `flags` table do not work for Pi yet (Node overwrites the command line Rex checks them against), so add one rule per flag combination you use, with the flags in the order you type them. In Rex's `init.lua`:
+
+```lua
+-- One rule per command: the words after `pi`, as Pi reports them.
+local function trust_pi(name, ...)
+	rex.set("resume.trust.pi_" .. name, { command = { "pi", ... } })
+end
+
+local id = rex.match.uuid
+trust_pi("plain", "--session", id)
+trust_pi("readonly", "--session", id, "-t", "read,grep,find,ls")
+trust_pi("readonly_noext", "--session", id, "-t", "read,grep,find,ls", "--no-extensions")
+-- A separate profile set with PI_CODING_AGENT_DIR and PI_CODING_AGENT_SESSION_DIR: absolute paths, before --session
+trust_pi("work", "--agent-dir", "/home/you/.pi/work/agent", "--session-dir", "/home/you/.pi/work/agent/sessions", "--session", id)
+```
+
+A Pi started with a combination no rule lists comes back as a plain shell, not without its flags.
 
 Pi removes `OSC7577_TOKEN` from its own environment at startup, so shells, editors, and extension processes it starts cannot replace its command or register commands of their own. Whether and when the terminal resumes a command is up to the terminal.

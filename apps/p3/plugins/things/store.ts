@@ -4,190 +4,93 @@
 // is one transaction, run one at a time with the index's loads, and followed by the index before the write answers,
 // so a caller's next admission sees it; the index and the writes see the kinds as one snapshot, installed in the
 // index's queue. A kind's seeded thing (`serveThing`'s `one`) is made here, in Pi, at the start and again whenever it
-// is deleted. The kinds' delete hooks around a thing's life are `lifecycle.ts`'s.
+// is deleted. The kinds' delete hooks around a thing's life are `lifecycle.ts`'s; the writes on persons and groups
+// `people.ts`'s, invite links `invites.ts`'s, the picker `picker.ts`'s, the cleanup when a source goes `cleanup.ts`'s,
+// the tables `tables.ts`'s. The sign-ins of the persons a cleanup took end right after its commit, retried at the
+// next start (here).
 
 import {
 	and,
-	bool,
-	type ColumnRefs,
-	type Columns,
-	type Condition,
 	type Context,
 	type Ctx,
 	checkValue,
-	defineColumns,
-	defineTable,
 	eq,
 	type FacetHost,
 	inArray,
-	int,
 	invalid,
-	json,
 	type P3Principal,
+	prefix,
 	query,
-	type RowOf,
 	reportError,
 	type StoreSelf,
-	str,
-	type Table,
-	type TableDefinition,
 	type TableItem,
-	type TableOf,
 	type Tx,
 } from "@earendil-works/p3/v1";
 import { AccessIndex, type Touched } from "./access.ts";
-import { AccessHandles, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
+import { callerOfKey } from "./admission.ts";
+import { Cleanup, deleteTold } from "./cleanup.ts";
+import { AccessHandles, type CreateAnswer, type GrantInput, ThingHooks, ThingsStore } from "./contract.server.ts";
 import {
-	Item,
+	type Caller,
+	type Item,
 	itemKey,
-	ManagedBy,
-	managedByKey,
+	kindOfMakeTick,
+	MAKE_ANY,
 	OPEN,
-	Party,
+	type Party,
 	partyKey,
 	RESERVED,
 	type Source,
-	Source as SourceSchema,
 	sourceKey,
 } from "./contract.ts";
-import { type KindInfo, ThingKinds } from "./kind.ts";
+import { anyExpired, InviteWrites } from "./invites.ts";
+import { type DefaultGrants, type KindInfo, ThingKinds, type TickFor } from "./kind.ts";
 import { Lifecycle, Pending } from "./lifecycle.ts";
 import { messages } from "./messages.ts";
 import { ticksNow } from "./migration.ts";
+import {
+	endSignIns,
+	GroupColumns,
+	GroupManagers,
+	GroupMembers,
+	Groups,
+	openPeopleTables,
+	PeopleWrites,
+	PersonColumns,
+	Persons,
+	SignOuts,
+} from "./people.ts";
+import { namesOf, offeredTo, offers } from "./picker.ts";
 import { type Kinds, lookupOf, readerOf } from "./reader.ts";
-import { audienceOf, isFor } from "./rules.ts";
+import { Gone, Removal, Removing } from "./removal.ts";
+import { audienceOf, isFor, makeTickFor } from "./rules.ts";
+import {
+	type Changes,
+	Grants,
+	Links,
+	type Retired,
+	type Retiring,
+	Switches,
+	type Tables,
+	ThingColumns,
+	Things,
+	WorkspaceMembers,
+	Workspaces,
+	type WriteTables,
+} from "./tables.ts";
+import type { DefaultsChoice } from "./workspace.ts";
+import { THINGS_PLUGIN, WorkspaceKind } from "./workspaces.ts";
 
-/** The kind of Pi until the workspace kinds come (ERNDL-1143). */
-const WORKSPACE_KIND = "things.workspace";
+/** A write the picker checks first, in the same operation (R18): whom it names, for whom, where. */
+type Checked = {
+	readonly args: { readonly workspace?: string; readonly caller: Caller; readonly party: Party };
+};
 
-/** A thing's id and kind, joined to its grants (the kind their ticks are of). */
-const ThingColumns = defineColumns("things.thing-columns", { columns: { thing: str(), kind: str() }, key: ["thing"] });
-
-/** Every thing, a workspace too: its kind, name, who made it and when. */
-const Things = defineTable("things.things", {
-	version: 1,
-	columns: {
-		thing: str(),
-		kind: str(),
-		name: str(),
-		madeBy: json(SourceSchema, { version: 1 }),
-		madeByKey: str(),
-		madeAt: int(),
-	},
-	key: ["thing"],
-	// A plugin's one thing of a kind (`ensure`).
-	indexes: { by_maker: ["madeByKey", "kind"] },
-	exposes: ThingColumns,
-});
-
-/**
- * The tree: each workspace's parent (`""`: Pi, the root) and its two defaults. Children by parent.
- */
-const Workspaces = defineTable("things.workspaces", {
-	version: 1,
-	columns: {
-		workspace: str(),
-		parent: str(),
-		showsThings: bool(),
-		showsPeople: bool(),
-	},
-	key: ["workspace"],
-	indexes: { children: ["parent", "workspace"] },
-});
-
-/** A thing linked into a workspace, with its kind (no second read for it). By thing: where it is linked. */
-const Links = defineTable("things.links", {
-	version: 1,
-	columns: { workspace: str(), thing: str(), of: str() },
-	key: ["workspace", "thing"],
-	indexes: { by_thing: ["thing"] },
-});
-
-/** A party put into a workspace, and who did it. By party; by source (its cleanup). */
-const WorkspaceMembers = defineTable("things.workspace-members", {
-	version: 1,
-	columns: {
-		workspace: str(),
-		partyKey: str(),
-		party: json(Party, { version: 1 }),
-		source: json(SourceSchema, { version: 1 }),
-		sourceKey: str(),
-	},
-	key: ["workspace", "partyKey"],
-	indexes: { by_party: ["partyKey"], by_source: ["sourceKey"] },
-});
-
-/** A thing or party from above, shown or hidden in a workspace by hand. By item: a deleted thing's switches. */
-const Switches = defineTable("things.switches", {
-	version: 1,
-	columns: { workspace: str(), itemKey: str(), item: json(Item, { version: 1 }), shown: bool() },
-	key: ["workspace", "itemKey"],
-	indexes: { by_item: ["itemKey"] },
-});
-
-/**
- * One row of a grant (item 112): one source's tick on a thing for a party, written in a workspace, given or withheld,
- * at the kind's ticks version it was written at (item 105). By source (its cleanup), by party (a deleted group's), by
- * thing (a deleted thing's, wherever written).
- */
-const Grants = defineTable("things.grants", {
-	version: 1,
-	columns: {
-		workspace: str(),
-		thing: str(),
-		partyKey: str(),
-		party: json(Party, { version: 1 }),
-		tick: str(),
-		gives: bool(),
-		ticksVersion: int(),
-		source: json(SourceSchema, { version: 1 }),
-		sourceKey: str(),
-	},
-	key: ["workspace", "thing", "partyKey", "tick", "sourceKey"],
-	indexes: { by_source: ["sourceKey"], by_party: ["partyKey"], by_thing: ["thing"] },
-});
-
-/** Every person: name, the owner flag (1: an owner; an index column, so an int), who made them. */
-const Persons = defineTable("things.persons", {
-	version: 1,
-	columns: {
-		person: str(),
-		name: str(),
-		owner: int(),
-		madeBy: json(SourceSchema, { version: 1 }),
-	},
-	key: ["person"],
-	indexes: { by_owner: ["owner"] },
-});
-
-/** A group's id and whether it is outside, joined to its members' rows. */
-const GroupColumns = defineColumns("things.group-columns", {
-	columns: { group: str(), outside: bool() },
-	key: ["group"],
-});
-
-/** Every group: name, who changes its members, whether it is outside. By manager (its cleanup). */
-const Groups = defineTable("things.groups", {
-	version: 1,
-	columns: {
-		group: str(),
-		name: str(),
-		managedBy: json(ManagedBy, { version: 1 }),
-		managedByKey: str(),
-		outside: bool(),
-	},
-	key: ["group"],
-	indexes: { by_manager: ["managedByKey"] },
-	exposes: GroupColumns,
-});
-
-/** A person in a group, as one source put them there (two sources: two rows). By person; by source. */
-const GroupMembers = defineTable("things.group-members", {
-	version: 1,
-	columns: { group: str(), person: str(), source: json(SourceSchema, { version: 1 }), sourceKey: str() },
-	key: ["group", "person", "sourceKey"],
-	indexes: { by_person: ["person"], by_source: ["sourceKey"] },
-});
+/** The check of a write naming `party` for `caller` (none: server code, or no caller given, checks nothing). */
+function checkOf(caller: Caller | undefined, workspace: string | undefined, party: Party): Checked | undefined {
+	if (caller === undefined || caller.kind === "server") return undefined;
+	return { args: { ...(workspace === undefined ? {} : { workspace }), caller, party } };
+}
 
 /** Serves `ThingsStore` on `host`. */
 export function serveStore(host: FacetHost<P3Principal>): void {
@@ -199,14 +102,15 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			workspaceMembers: self.table(WorkspaceMembers),
 			switches: self.table(Switches),
 			grants: self.table(Grants),
-			persons: self.table(Persons),
-			groups: self.table(Groups),
-			groupMembers: self.table(GroupMembers),
+			...openPeopleTables(self),
 		};
 		const pending = self.table(Pending);
+		const removing = self.table(Removing);
+		const gone = self.table(Gone);
 		const kinds = self.registry(ThingKinds);
 		const hooks = self.registry(ThingHooks);
 		const q = namedQueries(self, t);
+		const people = new PeopleWrites(t);
 		// The kinds as the store's index and writes see them: one snapshot, installed inside the index's queue when the
 		// registry changes (`kindsChanged`), so an operation never mixes two generations of a kind.
 		let installed: ReadonlyMap<string, TableItem<KindInfo>> | undefined;
@@ -226,7 +130,28 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		// attempt's own context. Closed with the attempt: its watchers attach to the next attempt's index.
 		self.open(
 			async (ctx) => {
-				await self.tx((tx) => ensurePi(tx, t), ctx);
+				// Pi and the owner's person exist from the first start on: read first, outside a transaction, so a start
+				// after the first (a reload, maybe right after another) opens with no transaction a reload could cancel.
+				const pi = (
+					await t.workspaces.page(
+						query(Workspaces).where((w) => eq(w.parent, "")),
+						1,
+						ctx,
+					)
+				).items[0];
+				const owner = (
+					await t.persons.page(
+						query(Persons).where((p) => eq(p.owner, 1)),
+						1,
+						ctx,
+					)
+				).items[0];
+				if (pi === undefined || owner === undefined) {
+					await self.tx(async (tx) => {
+						await people.ensureOwner(tx);
+						return ensurePi(tx, t);
+					}, ctx);
+				}
 				index = new AccessIndex(readerOf(q, kindsNow, reported), kindsNow, ctx);
 				return index;
 			},
@@ -238,16 +163,49 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 				return index?.open === true;
 			},
 			attach: async (workspace, caller, observer, ctx) => index?.attach(workspace, caller, observer, ctx),
+			answer: async (workspace, thing, caller, ctx) => index?.answer(workspace, thing, caller, ctx),
+			probe: async (probe, observer, ctx) => index?.probe(probe, observer, ctx),
 		});
 		/**
 		 * One write: its transaction under `ctx`, one at a time with the index's work (`AccessIndex.commit`), which
 		 * follows it before the write answers; the things it removed then have their kind's delete hook run, and a
 		 * removed seeded thing is made again at once.
 		 */
-		const write = async <R>(fn: (tx: Tx, changes: Changes) => Promise<R>, ctx: Context): Promise<R> => {
+		const write = async <R>(
+			fn: (tx: Tx, changes: Changes) => Promise<R>,
+			ctx: Context,
+			checked?: Checked,
+		): Promise<R> => {
 			const retired: Retired[] = [];
-			// The store is live while it writes, so its index opened.
-			const result = await index!.commit((touched) => self.tx((tx) => fn(tx, { ...touched, retired }), ctx));
+			const signedOut: string[] = [];
+			const transaction = (touched: Touched) =>
+				self.tx(async (tx) => {
+					const retiring: Retiring = {
+						sources: new Set(),
+						things: new Set(),
+						groups: new Set(),
+						workspaces: new Set(),
+					};
+					const changes = { ...touched, retired, signedOut, retiring };
+					const result = await fn(tx, changes);
+					// The cleanup's last step, once all the write retires is known: the persons its sources made.
+					await cleanup.settle(tx, changes);
+					return result;
+				}, ctx);
+			// The store is live while it writes, so its index opened. A checked write is asked in the same operation.
+			const result =
+				checked === undefined
+					? await index!.commit(transaction)
+					: await index!.commitIf(
+							(offered) => offers(q, offered, checked.args, ctx),
+							transaction,
+							() => {
+								throw invalid("args", "things: this party is not present where you are", {
+									message: messages.message("notOffered"),
+								});
+							},
+						);
+			if (signedOut.length > 0 && live !== undefined) void signOut(signedOut, live);
 			for (const { thing, kind } of retired) {
 				lifecycle.retire(thing, kind);
 				if (hooks.value.get(kind)?.value.one !== undefined && live !== undefined) {
@@ -260,18 +218,35 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			}
 			return result;
 		};
-		const writes = new Writes({ ...t, pending }, kindTable);
+		const cleanup = new Cleanup(t);
+		const writes = new Writes({ ...t, pending, removing, gone }, kindTable, cleanup);
+		const removal = new Removal({
+			removing,
+			gone,
+			read: (fn, ctx) => self.tx(fn, ctx),
+			under: async (pathPrefix, ctx) => (await q.workspaces.under.page({ pathPrefix }, 1, ctx)).items[0]?.workspace,
+			clear: async (workspace, removed, ctx) => {
+				await write(async (tx, changes) => {
+					await writes.clear(tx, changes, workspace);
+					if (removed) tx.delete(removing, { workspace });
+					return null;
+				}, ctx);
+			},
+			hooks: () => hooks.value,
+		});
+		const invites = new InviteWrites(t, people, writes);
 		const lifecycle = new Lifecycle({
 			table: pending,
 			write: (fn, ctx) => write((tx) => fn(tx), ctx),
-			pending: (ctx) =>
-				self.tx(async (tx) => {
-					const rows = [];
-					// The whole table: what waits for a delete hook is few rows, read at the start and when the hooks
-					// change.
-					for await (const row of tx.rows(pending, query(Pending))) rows.push(row);
-					return rows;
-				}, ctx),
+			pending: async (ctx) => {
+				const rows = [];
+				// The whole table, outside a transaction: a store started lazily and reloaded at once (its start cut short)
+				// leaves no transaction cancelled (back into one when Chord stops reporting a transaction its own object's
+				// end cancels: the main session's Chord issue, core2). What waits for a delete hook is few rows, read at the start and when the
+				// hooks change.
+				for await (const row of pending.rows(query(Pending), ctx)) rows.push(row);
+				return rows;
+			},
 			hooks: () => hooks.value,
 		});
 		/**
@@ -281,7 +256,7 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		 */
 		const make = async (
 			args: { kind: string; name: string; workspace: string; by: Source; input?: unknown },
-			commit: (tx: Tx, changes: Changes, thing: string) => Promise<string>,
+			commit: (tx: Tx, changes: Changes, thing: string, answer: CreateAnswer | undefined) => Promise<string>,
 			ctx: Ctx<P3Principal>,
 		): Promise<string> => {
 			// A trust boundary of the kind's: its input, given or not, is checked against the schema it declared, read
@@ -297,10 +272,11 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			// A hook that throws leaves nothing, as no row names the thing yet. A crash between the hook and the commit
 			// leaves the kind's content under an id nobody knows (accepted: nothing can reach it).
 			const create = hooks.value.get(args.kind)?.value.create;
-			await create?.(thing, args.input, args.by, ctx);
+			const answer =
+				(await create?.({ thing, input: args.input, by: args.by, workspace: args.workspace }, ctx)) ?? undefined;
 			let made: string;
 			try {
-				made = await write((tx, changes) => commit(tx, changes, thing), ctx);
+				made = await write((tx, changes) => commit(tx, changes, thing, answer), ctx);
 			} catch (error) {
 				// Only a hook that ran prepared anything to clear.
 				if (create !== undefined) await lifecycle.undo(thing, args.kind, ctx);
@@ -351,11 +327,39 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 		};
 		// The store's own context while it is live: what seeding after a registry change runs under.
 		let live: Ctx<P3Principal> | undefined;
-		// The lifecycle serves first: a seed that must undo a hook's work needs it (an undo waits for it to serve).
+		/**
+		 * Ends the sign-ins of the removed persons `persons` (their rows in `things.sign-outs`, written in the commit
+		 * that removed them), then drops the rows; a failure is reported, and the next start tries again.
+		 */
+		const signOut = async (persons: readonly string[], ctx: Ctx<P3Principal>): Promise<void> => {
+			try {
+				await endSignIns(persons, ctx);
+				await self.tx(async (tx) => {
+					for (const person of persons) tx.delete(t.signOuts, { person });
+					return null;
+				}, ctx);
+			} catch (error) {
+				reportError("things: the sign-ins of removed persons; tried again at the next start", error, ctx);
+			}
+		};
 		self.onLive(async (ctx) => {
 			live = ctx;
-			await Promise.all([lifecycle.serve(ctx), seed(ctx)]);
+			// The people side starts beside the rest, never before it (it would hold the start of the others).
+			await Promise.all([lifecycle.serve(ctx), removal.serve(ctx), seed(ctx), startPeople(ctx)]);
 		});
+		/**
+		 * What the store does about people at its start: the sign-outs still to end are ended, expired invite links
+		 * swept. Read outside a transaction, a transaction only if there is something to do: a store that ends meanwhile
+		 * leaves no transaction to drain (ERNDL-1190).
+		 */
+		const startPeople = async (ctx: Ctx<P3Principal>): Promise<void> => {
+			// The whole table: removed persons whose sign-ins are still to end are few, read at the start only.
+			const left: string[] = [];
+			for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);
+			if (left.length > 0) void signOut(left, ctx);
+			const now = Date.now();
+			if (await anyExpired(t.invites, now, ctx)) await self.tx((tx) => invites.sweep(tx, now), ctx);
+		};
 		// A plugin loaded, reloaded or removed: the new kinds are installed in the index's queue, ticks expand and
 		// migrate anew, every loaded workspace is read again; a kind's hooks back, its waiting deletes run.
 		self.on(kinds, async () => {
@@ -368,95 +372,147 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			else await index.kindsChanged(install);
 			if (live !== undefined) await seed(live);
 		});
-		self.on(hooks, async () => {
-			await lifecycle.resume();
+		self.on(hooks, async (_value, ctx) => {
+			await lifecycle.resume(ctx);
+			await removal.resume(ctx);
 			if (live !== undefined) await seed(live);
 		});
 		return {
 			...q,
-			create: async (args, ctx) =>
+			create: async ({ defaults, ...args }, ctx) =>
 				make(
 					args,
-					async (tx, changes, thing) => {
-						await writes.make(tx, changes, { ...args, thing });
+					async (tx, changes, thing, answer) => {
+						await writes.make(tx, changes, {
+							...args,
+							thing,
+							view: answer?.view ?? "",
+							...(defaults === undefined ? {} : { defaults }),
+						});
 						return thing;
 					},
 					ctx,
 				),
+			createWorkspace: async ({ parent, defaults, showsPeople, ...args }, ctx) =>
+				make(
+					{ ...args, workspace: parent },
+					async (tx, changes, thing, answer) => {
+						await writes.workspace(tx, changes, {
+							...args,
+							thing,
+							parent,
+							// Private wins (main session, round 1): the maker's private choice or the hook's.
+							showsPeople: showsPeople !== false && answer?.showsPeople !== false,
+							view: answer?.view ?? "",
+							defaultGrants: answer?.defaultGrants,
+							defaults,
+						});
+						return thing;
+					},
+					ctx,
+				),
+			configure: async ({ thing, name, view, settings }, ctx) => {
+				const row = (await q.things.one.page({ thing }, 1, ctx)).items[0];
+				if (row === undefined) throw invalid("args", `things: no thing ${thing}`);
+				// A trust boundary of the kind's: settings named by its `settings`, each checked against its member's schema.
+				const checked = settings === undefined ? undefined : settingsOf(kinds.value.get(row.kind), settings);
+				const configure = hooks.value.get(row.kind)?.value.configure;
+				if (checked !== undefined && configure === undefined) {
+					throw invalid("args", `things: ${row.kind} has no settings to configure`);
+				}
+				if (name !== undefined || view !== undefined)
+					await write(async (tx, touched) => writes.configure(tx, touched, thing, name, view), ctx);
+				if (checked !== undefined) await configure!(thing, checked, ctx);
+				return null;
+			},
+			removeWorkspace: async ({ workspace }, ctx) => {
+				const pathText = await write((tx, touched) => writes.cut(tx, touched, workspace), ctx);
+				if (pathText !== undefined) removal.removed(workspace, pathText);
+				return null;
+			},
+			setTick: (args, ctx) => write((tx, touched) => writes.setTick(tx, touched, args), ctx),
+			answerOf: async ({ workspace, thing, caller }, ctx) =>
+				(await index!.answer(workspace, thing, callerOfKey(caller), ctx)) ?? null,
 			ensure: ({ kind }, ctx) => seedKind(kind, ctx),
 			link: (args, ctx) => write((tx, touched) => writes.link(tx, touched, args), ctx),
 			unlink: (args, ctx) => write((tx, touched) => writes.unlink(tx, touched, args), ctx),
-			rename: ({ thing, name }, ctx) => write(async (tx) => writes.rename(tx, thing, name), ctx),
-			createWorkspace: (args, ctx) => write((tx, touched) => writes.workspace(tx, touched, args), ctx),
+			rename: ({ thing, name }, ctx) =>
+				write(async (tx, touched) => writes.configure(tx, touched, thing, name, undefined), ctx),
 			setSwitch: (args, ctx) => write((tx, touched) => writes.setSwitch(tx, touched, args), ctx),
 			setDefaults: (args, ctx) => write((tx, touched) => writes.setDefaults(tx, touched, args), ctx),
 			setGrants: (args, ctx) => write((tx, touched) => writes.setGrants(tx, touched, args), ctx),
-			putParty: (args, ctx) => write((tx, touched) => writes.putParty(tx, touched, args), ctx),
+			putParty: ({ caller, ...args }, ctx) =>
+				write(
+					(tx, touched) => writes.putParty(tx, touched, args),
+					ctx,
+					checkOf(caller, args.workspace, args.party),
+				),
 			removeParty: ({ workspace, party }, ctx) =>
 				write(async (tx, touched) => {
 					tx.delete(t.workspaceMembers, { workspace, partyKey: partyKey(party) });
 					touched.workspaces.add(workspace);
+					touched.presence.add(workspace);
+					touched.members.add(partyKey(party));
 					return null;
 				}, ctx),
-			createPerson: ({ name, madeBy }, ctx) =>
-				write(async (tx) => {
-					const person = crypto.randomUUID();
-					tx.put(t.persons, { person, name, owner: 0, madeBy });
-					return person;
-				}, ctx),
-			setOwner: (args, ctx) => write((tx, touched) => writes.setOwner(tx, touched, args), ctx),
-			makeGroup: ({ name, managedBy, outside }, ctx) =>
-				write(async (tx) => {
-					const group = crypto.randomUUID();
-					tx.put(t.groups, { group, name, managedBy, managedByKey: managedByKey(managedBy), outside });
-					return group;
-				}, ctx),
-			addToGroup: ({ group, person, source }, ctx) =>
-				write(async (tx, touched) => {
-					tx.put(t.groupMembers, { group, person, source, sourceKey: sourceKey(source) });
-					touched.persons.add(person);
-					return null;
-				}, ctx),
-			removeFromGroup: ({ group, person, source }, ctx) =>
-				write(async (tx, touched) => {
-					tx.delete(t.groupMembers, { group, person, sourceKey: sourceKey(source) });
-					touched.persons.add(person);
-					return null;
-				}, ctx),
+			createPerson: (args, ctx) => write((tx) => people.createPerson(tx, args), ctx),
+			renamePerson: ({ person, name }, ctx) => write((tx) => people.renamePerson(tx, person, name), ctx),
+			setOwner: (args, ctx) => write((tx, touched) => people.setOwner(tx, touched, args), ctx),
+			removePerson: ({ person }, ctx) => write((tx, touched) => cleanup.removePerson(tx, touched, person), ctx),
+			makeGroup: (args, ctx) => write((tx) => people.makeGroup(tx, args), ctx),
+			renameGroup: ({ group, name }, ctx) => write((tx) => people.renameGroup(tx, group, name), ctx),
+			setGroupManagers: ({ group, parties }, ctx) => write((tx) => people.setGroupManagers(tx, group, parties), ctx),
+			removeGroup: ({ group }, ctx) => write((tx, touched) => cleanup.removeGroup(tx, touched, group), ctx),
+			addToGroup: ({ caller, ...args }, ctx) =>
+				write(
+					(tx, touched) => people.addToGroup(tx, touched, args),
+					ctx,
+					checkOf(caller, undefined, { kind: "person", person: args.person }),
+				),
+			removeFromGroup: (args, ctx) => write((tx, touched) => people.removeFromGroup(tx, touched, args), ctx),
+			removeMember: (args, ctx) => write((tx, touched) => people.removeMember(tx, touched, args), ctx),
+			adoptOwner: async (seed, ctx) => {
+				// Adopted already (every start but the first, every reload): no write, so nothing a reload could cancel.
+				if ((await t.adopted.get({ bridge: "owner" }, ctx)) !== undefined) return null;
+				return write(
+					(tx, touched) =>
+						people.adoptOwner(tx, touched, seed, (persons) =>
+							cleanup.somethingLeftOf(tx, persons, touched.retiring),
+						),
+					ctx,
+				);
+			},
+			picker: async ({ workspace, caller, query: text }, ctx) => {
+				const at = workspace === undefined ? {} : { workspace };
+				const offered = await offeredTo(q, (...args) => index!.offered(...args), { ...at, caller }, ctx);
+				return namesOf(q, offered, text, ctx);
+			},
+			offers: async ({ workspace, caller, party }, ctx) => {
+				const at = workspace === undefined ? {} : { workspace };
+				return offers(q, (...args) => index!.offered(...args), { ...at, caller, party }, ctx);
+			},
+			createInvite: (args, ctx) => write((tx) => invites.create(tx, args), ctx),
+			redeemInvite: ({ secret, person }, ctx) =>
+				write((tx, touched) => invites.redeem(tx, touched, secret, person), ctx),
 			deleteEverythingFrom: ({ source }, ctx) =>
-				write((tx, touched) => writes.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
+				write((tx, touched) => cleanup.deleteEverythingFrom(tx, touched, sourceKey(source)), ctx),
 		};
 	});
 }
-
-/** What a write tells besides what it touched: the things it removed (their delete hooks run after the commit). */
-type Changes = Touched & { readonly retired: Retired[] };
-
-/** A thing removed, and its kind. */
-type Retired = { readonly thing: string; readonly kind: string };
-
-/** The store's tables, as its factory declared them. */
-type Tables = {
-	readonly things: TableOf<typeof Things>;
-	readonly workspaces: TableOf<typeof Workspaces>;
-	readonly links: TableOf<typeof Links>;
-	readonly workspaceMembers: TableOf<typeof WorkspaceMembers>;
-	readonly switches: TableOf<typeof Switches>;
-	readonly grants: TableOf<typeof Grants>;
-	readonly persons: TableOf<typeof Persons>;
-	readonly groups: TableOf<typeof Groups>;
-	readonly groupMembers: TableOf<typeof GroupMembers>;
-};
 
 /** Every named query of the store, each with the index its condition and order search. */
 function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 	return {
 		things: self.queries(
 			t.things,
-			{ map: ({ thing, kind, name, madeBy, madeAt }) => ({ thing, kind, name, madeBy, madeAt }) },
+			{
+				map: ({ thing, kind, name, view, madeBy, madeAt }) => ({ thing, kind, name, view, madeBy, madeAt }),
+			},
 			{
 				// The key.
 				one: ({ thing }: { thing: string }) => query(Things).where((r) => eq(r.thing, thing)),
+				// The key, IN: the things of a list (their kinds and names).
+				ofIds: ({ things }: { things: string[] }) => query(Things).where((r) => inArray(r.thing, things)),
 				// Index `by_maker`: what a source made of a kind (a seeded thing: `OneThing`).
 				ofMaker: ({ sourceKey, kind }: { sourceKey: string; kind: string }) =>
 					query(Things).where((r) => and(eq(r.madeByKey, sourceKey), eq(r.kind, kind))),
@@ -465,16 +521,36 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 		workspaces: self.queries(
 			t.workspaces,
 			{
-				map: ({ workspace, parent, showsThings, showsPeople }) => ({ workspace, parent, showsThings, showsPeople }),
+				// The joined set is `ThingColumns`: its `kind` and `name` are strings (a line whose thing is gone: "").
+				map: ({ workspace, parent, showsThings, showsPeople, path, pathText }, partner) => ({
+					workspace,
+					kind: (partner.kind as string | undefined) ?? "",
+					name: (partner.name as string | undefined) ?? "",
+					parent,
+					showsThings,
+					showsPeople,
+					path,
+					pathText,
+				}),
 			},
 			{
-				// The key.
-				one: ({ workspace }: { workspace: string }) => query(Workspaces).where((w) => eq(w.workspace, workspace)),
+				// The key; joined with its thing by key (its kind and name).
+				one: ({ workspace }: { workspace: string }) =>
+					query(Workspaces)
+						.where((w) => eq(w.workspace, workspace))
+						.join(ThingColumns, (w) => ({ thing: w.workspace })),
 				// Index `children`: `parent` fixed, in the order of the key.
 				children: ({ parent }: { parent: string }) =>
 					query(Workspaces)
 						.where((w) => eq(w.parent, parent))
-						.orderBy((w) => w.workspace, "asc"),
+						.orderBy((w) => w.workspace, "asc")
+						.join(ThingColumns, (w) => ({ thing: w.workspace })),
+				// Index `under`: the workspaces whose path text starts with `pathPrefix` (a subtree), in its order.
+				under: ({ pathPrefix }: { pathPrefix: string }) =>
+					query(Workspaces)
+						.where((w) => prefix(w.pathText, pathPrefix))
+						.orderBy((w) => w.pathText, "asc")
+						.join(ThingColumns, (w) => ({ thing: w.workspace })),
 			},
 		),
 		links: self.queries(
@@ -483,6 +559,8 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 			{
 				// The key's prefix.
 				here: ({ workspace }: { workspace: string }) => query(Links).where((l) => eq(l.workspace, workspace)),
+				// Index `by_thing`: where a thing is linked.
+				where: ({ thing }: { thing: string }) => query(Links).where((l) => eq(l.thing, thing)),
 			},
 		),
 		workspaceMembers: self.queries(
@@ -492,6 +570,9 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				// The key's prefix.
 				here: ({ workspace }: { workspace: string }) =>
 					query(WorkspaceMembers).where((m) => eq(m.workspace, workspace)),
+				// Index `by_party`: where a party is put in (a caller's roots).
+				where: ({ partyKey }: { partyKey: string }) =>
+					query(WorkspaceMembers).where((m) => eq(m.partyKey, partyKey)),
 			},
 		),
 		switches: self.queries(
@@ -533,6 +614,49 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 				one: ({ person }: { person: string }) => query(Persons).where((p) => eq(p.person, person)),
 				// The key, IN: the persons of a list (the notes plugin reads its notes' authors' names with it).
 				ofIds: ({ persons }: { persons: string[] }) => query(Persons).where((p) => inArray(p.person, persons)),
+				// Index `by_owner`: the persons with the owner flag (the owner link signs in as the first).
+				owners: (_args: Record<never, never>) => query(Persons).where((p) => eq(p.owner, 1)),
+				// The key: every person (the owner's picker).
+				all: (_args: Record<never, never>) => query(Persons),
+			},
+		),
+		groups: self.queries(
+			t.groups,
+			{ map: ({ group, name, managedBy, outside }) => ({ group, name, managedBy, outside }) },
+			{
+				// The key.
+				one: ({ group }: { group: string }) => query(Groups).where((g) => eq(g.group, group)),
+				// The key, IN: the groups of a list (their names: the picker's, a caller's roots').
+				ofIds: ({ groups }: { groups: string[] }) => query(Groups).where((g) => inArray(g.group, groups)),
+				// The key: every group (the owner's picker).
+				all: (_args: Record<never, never>) => query(Groups),
+			},
+		),
+		groupManagers: self.queries(
+			t.groupManagers,
+			{ map: ({ group, party }) => ({ group, party }) },
+			{
+				// The key's prefix.
+				of: ({ group }: { group: string }) => query(GroupManagers).where((m) => eq(m.group, group)),
+				// The key, IN: which of `partyKeys` (a caller's person and groups) have the group's own tick.
+				among: ({ group, partyKeys }: { group: string; partyKeys: string[] }) =>
+					query(GroupManagers)
+						.where((m) => and(eq(m.group, group), inArray(m.partyKey, partyKeys)))
+						.orderBy((m) => m.partyKey, "asc"),
+			},
+		),
+		groupMembersNamed: self.queries(
+			t.groupMembers,
+			{
+				// The joined set is `PersonColumns`: its `name` is a string.
+				map: ({ group, person, source }, partner) => ({ group, person, source, name: partner.name as string }),
+			},
+			{
+				// The key's prefix; each joined with its person by key.
+				ofGroup: ({ group }: { group: string }) =>
+					query(GroupMembers)
+						.where((m) => eq(m.group, group))
+						.join(PersonColumns, (m) => ({ person: m.person })),
 			},
 		),
 		groupMembers: self.queries(
@@ -547,6 +671,11 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 					query(GroupMembers)
 						.where((m) => eq(m.person, person))
 						.join(GroupColumns, (m) => ({ group: m.group })),
+				// The key's prefix: one person's rows in one group (whether they are in it).
+				of: ({ group, person }: { group: string; person: string }) =>
+					query(GroupMembers)
+						.where((m) => and(eq(m.group, group), eq(m.person, person)))
+						.join(GroupColumns, (m) => ({ group: m.group })),
 			},
 		),
 	};
@@ -555,8 +684,13 @@ function namedQueries(self: StoreSelf<P3Principal>, t: Tables) {
 /** Makes Pi, the root workspace, unless it exists. */
 async function ensurePi(tx: Tx, t: Tables): Promise<null> {
 	if ((await rootOf(tx, t)) !== undefined) return null;
-	const by: Source = { kind: "plugin", plugin: "@earendil-works/p3-things" };
-	putWorkspace(tx, t, { kind: WORKSPACE_KIND, name: "Pi", by, showsPeople: true }, "");
+	const by: Source = { kind: "plugin", plugin: THINGS_PLUGIN };
+	putWorkspace(
+		tx,
+		t,
+		{ workspace: crypto.randomUUID(), kind: WorkspaceKind.name, name: "Pi", by, showsPeople: true, view: "" },
+		undefined,
+	);
 	return null;
 }
 
@@ -566,22 +700,61 @@ async function rootOf(tx: Tx, t: Tables): Promise<string | undefined> {
 	return (await tx.page(t.workspaces, roots, 1)).items[0]?.workspace;
 }
 
-/** Puts a new workspace's thing row and line under `parent` (`""`: the root); answers its id. */
+/** Puts a new workspace's thing row and line under `parent` (`undefined`: the root), its path the parent's and itself. */
 function putWorkspace(
 	tx: Tx,
 	t: Tables,
-	{ kind, name, by, showsPeople }: { kind: string; name: string; by: Source; showsPeople: boolean },
-	parent: string,
-): string {
-	const workspace = crypto.randomUUID();
-	tx.put(t.things, { thing: workspace, kind, name, madeBy: by, madeByKey: sourceKey(by), madeAt: Date.now() });
+	{
+		workspace,
+		kind,
+		name,
+		by,
+		showsPeople,
+		view,
+	}: { workspace: string; kind: string; name: string; by: Source; showsPeople: boolean; view: string },
+	parent: { readonly workspace: string; readonly path: readonly string[] } | undefined,
+): void {
+	tx.put(t.things, {
+		thing: workspace,
+		kind,
+		name,
+		view,
+		madeBy: by,
+		madeByKey: sourceKey(by),
+		madeAt: Date.now(),
+	});
+	const path = [...(parent?.path ?? []), workspace];
 	tx.put(t.workspaces, {
 		workspace,
-		parent,
+		parent: parent?.workspace ?? "",
 		showsThings: true,
 		showsPeople,
+		path,
+		pathText: pathTextOf(path),
 	});
-	return workspace;
+}
+
+/** A path as text: each id followed by `/`, so a subtree's texts start with its root's (no id holds a `/`). */
+function pathTextOf(path: readonly string[]): string {
+	return path.map((id) => `${id}/`).join("");
+}
+
+/**
+ * The settings `settings` (wire input) of kind `item` as its `configure` hook gets them: an object of its `settings`
+ * members, each value checked against the member's schema; `invalid` for anything else.
+ */
+function settingsOf(item: TableItem<KindInfo> | undefined, settings: unknown): Readonly<Record<string, unknown>> {
+	if (item === undefined) throw invalid("args", "things: the thing's kind is not registered");
+	const { name, settingsSchemas } = item.value;
+	if (typeof settings !== "object" || settings === null || Array.isArray(settings))
+		throw invalid("args", `things: settings of ${name} are an object`);
+	for (const [member, value] of Object.entries(settings)) {
+		const schema = settingsSchemas[member];
+		if (schema === undefined) throw invalid("args", `things: ${member} is no setting of ${name}`);
+		const failed = checkValue(schema, value);
+		if (failed !== undefined) throw invalid("args", `things: ${member} of ${name}: ${failed}`);
+	}
+	return settings as Record<string, unknown>;
 }
 
 /**
@@ -598,33 +771,16 @@ function makerParty(by: Source): Party | undefined {
 	}
 }
 
-/**
- * Deletes `table`'s rows matching `where`, each one's `column` (its workspace, its person: a text) added to `told`
- * first.
- */
-async function deleteTold<C extends Columns, K extends readonly string[]>(
-	tx: Tx,
-	table: Table<C, K>,
-	definition: TableDefinition<C, K>,
-	where: (row: ColumnRefs<C>) => Condition,
-	told: Set<string>,
-	column: keyof RowOf<C>,
-): Promise<void> {
-	for await (const row of tx.rows(table, query(definition).where(where))) told.add(String(row[column]));
-	tx.deleteWhere(table, where);
-}
-
 /** The store's writes inside a transaction: each says what it touched; none checks a caller (server code). */
 class Writes {
-	readonly #t: Tables & { readonly pending: TableOf<typeof Pending> };
+	readonly #t: WriteTables;
 	readonly #kinds: () => ReadonlyMap<string, TableItem<KindInfo>>;
+	readonly #cleanup: Cleanup;
 
-	constructor(
-		t: Tables & { readonly pending: TableOf<typeof Pending> },
-		kinds: () => ReadonlyMap<string, TableItem<KindInfo>>,
-	) {
+	constructor(t: WriteTables, kinds: () => ReadonlyMap<string, TableItem<KindInfo>>, cleanup: Cleanup) {
 		this.#t = t;
 		this.#kinds = kinds;
+		this.#cleanup = cleanup;
 	}
 
 	/**
@@ -640,21 +796,143 @@ class Writes {
 			name,
 			workspace,
 			by,
-		}: { thing: string; kind: string; name: string; workspace: string; by: Source },
+			defaults,
+			view = "",
+		}: {
+			thing: string;
+			kind: string;
+			name: string;
+			workspace: string;
+			by: Source;
+			defaults?: DefaultsChoice;
+			view?: string;
+		},
 	): Promise<null> {
 		const item = this.#kind(kind);
-		await this.#mustBeWorkspace(tx, workspace);
-		tx.put(this.#t.things, { thing, kind, name, madeBy: by, madeByKey: sourceKey(by), madeAt: Date.now() });
-		this.#linked(tx, workspace, thing, item);
-		const maker = makerParty(by);
-		if (maker !== undefined) {
-			const ticks = item.value.ticks
-				.filter((tick) => isFor(tick.for, audienceOf(maker.kind)))
-				.map((tick) => tick.name);
-			this.#give(tx, workspace, thing, maker, by, ticks, item.value.ticksVersion);
-		}
+		if (item.value.workspace !== "no") throw invalid("args", `things: a ${kind} is made with createWorkspace`);
+		await this.mustBeWorkspace(tx, workspace);
+		tx.put(this.#t.things, { thing, kind, name, view, madeBy: by, madeByKey: sourceKey(by), madeAt: Date.now() });
+		this.#linked(tx, workspace, thing, item, item.value.defaultGrants, defaults);
+		this.#giveMaker(tx, workspace, thing, item, by, []);
 		touched.workspaces.add(workspace);
 		return null;
+	}
+
+	/**
+	 * Workspace `thing` of workspace kind `kind` under `parent` (never a leaf), its kind's `create` hook already run:
+	 * its thing row and line (its path the parent's and itself); its maker's every tick and `MAKE_ANY` at itself and
+	 * its maker put in (items 88, 90, 115); a leaf's agent put in (`agent/<id>`: its session's agent is present there);
+	 * its default grants at itself (the hook's answer's, else the kind's; without those `defaults` removes).
+	 */
+	async workspace(
+		tx: Tx,
+		touched: Touched,
+		args: {
+			thing: string;
+			kind: string;
+			name: string;
+			parent: string;
+			by: Source;
+			showsPeople: boolean;
+			view: string;
+			defaultGrants: DefaultGrants | undefined;
+			defaults: DefaultsChoice | undefined;
+		},
+	): Promise<null> {
+		const { thing, kind, name, parent, by, showsPeople } = args;
+		const item = this.#kind(kind);
+		if (item.value.workspace === "no") throw invalid("args", `things: a ${kind} is no workspace kind`);
+		const above = await tx.get(this.#t.workspaces, { workspace: parent });
+		if (above === undefined) throw invalid("args", `things: no workspace ${parent}`);
+		// Only a plain workspace holds workspaces; one whose kind no plugin registers now (a session's while its plugin
+		// reloads) may be a leaf, so it holds none either.
+		const aboveKind = (await tx.get(this.#t.things, { thing: parent }))?.kind;
+		if (aboveKind === undefined || this.#kinds().get(aboveKind)?.value.workspace !== "plain") {
+			throw invalid("args", `things: ${parent} holds no workspaces (a leaf, or of a kind not registered)`, {
+				message: messages.message("leafHoldsNoWorkspaces"),
+			});
+		}
+		putWorkspace(tx, this.#t, { workspace: thing, kind, name, by, showsPeople, view: args.view }, above);
+		const maker = makerParty(by);
+		if (maker !== undefined) {
+			this.#member(tx, touched, thing, maker, by);
+			this.#giveMaker(tx, thing, thing, item, by, [MAKE_ANY]);
+		}
+		if (item.value.workspace === "leaf") {
+			this.#member(tx, touched, thing, { kind: "agent", session: thing }, { kind: "plugin", plugin: THINGS_PLUGIN });
+		}
+		this.#defaults(tx, thing, thing, item, args.defaultGrants ?? item.value.defaultGrants, args.defaults);
+		touched.workspaces.add(thing);
+		touched.presence.add(thing);
+		touched.lines.add(parent);
+		return null;
+	}
+
+	/**
+	 * Cuts workspace `workspace`'s line (not Pi's) and keeps its removal due (`Removing`): from this commit on its
+	 * subtree gives nothing; the rest is `clear`ed in the background. Answers its path text (`undefined`: no such line).
+	 */
+	async cut(tx: Tx, touched: Touched, workspace: string): Promise<string | undefined> {
+		const line = await tx.get(this.#t.workspaces, { workspace });
+		if (line === undefined) return undefined;
+		if (line.parent === "") throw invalid("args", "things: Pi is never removed");
+		tx.delete(this.#t.workspaces, { workspace });
+		tx.put(this.#t.removing, { workspace, pathText: line.pathText });
+		touched.workspaces.add(workspace);
+		touched.presence.add(workspace);
+		touched.lines.add(line.parent);
+		return line.pathText;
+	}
+
+	/**
+	 * Clears workspace `workspace` (cut, or below a cut line): its own groups and invite links, its links (a thing
+	 * linked nowhere else goes, with its delete hook), every grant, switch and member written there, the entries naming
+	 * a leaf's agent elsewhere, its line and its thing (a source too: its kind's delete hook pending); its `Gone` row put
+	 * (its kinds are told). Safe to repeat.
+	 */
+	async clear(tx: Tx, touched: Changes, workspace: string): Promise<void> {
+		const t = this.#t;
+		// Reads first: Chord refuses a `get` on a table after a `deleteWhere` on it in the same transaction.
+		const row = await tx.get(t.things, { thing: workspace });
+		const going = [];
+		for await (const link of tx.rows(
+			t.links,
+			query(Links).where((l) => eq(l.workspace, workspace)),
+		)) {
+			if (await this.#linkedOnlyIn(tx, workspace, link.thing)) going.push(link);
+		}
+		// Its own groups and invite links; the cleanup's last step counts what is written here as gone.
+		await this.#cleanup.retireWorkspace(tx, touched, workspace);
+		for (const { thing, of } of going) await this.removeThing(tx, touched, thing, of);
+		tx.deleteWhere(t.links, (l) => eq(l.workspace, workspace));
+		tx.deleteWhere(t.grants, (g) => eq(g.workspace, workspace));
+		tx.deleteWhere(t.switches, (w) => eq(w.workspace, workspace));
+		tx.deleteWhere(t.workspaceMembers, (m) => eq(m.workspace, workspace));
+		const agent = partyKey({ kind: "agent", session: workspace });
+		// Its agent put in elsewhere goes too: who is present there changed (an open People list there follows).
+		const agentIn = new Set<string>();
+		await deleteTold(tx, t.workspaceMembers, WorkspaceMembers, (m) => eq(m.partyKey, agent), agentIn, "workspace");
+		for (const other of agentIn) {
+			touched.workspaces.add(other);
+			touched.presence.add(other);
+		}
+		if (agentIn.size > 0) touched.members.add(agent);
+		await deleteTold(tx, t.grants, Grants, (g) => eq(g.partyKey, agent), touched.workspaces, "workspace");
+		// What other workspaces wrote about it: rows withholding its own thing below it are gone with the subtree, but
+		// switches on its agent elsewhere (index `by_item`) are not, nor those on it and rows naming it as a thing
+		// (`by_thing`: its removal as a thing below).
+		const switched = new Set<string>();
+		await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, agent), switched, "workspace");
+		for (const other of switched) {
+			touched.workspaces.add(other);
+			// A switch on its agent was about who is present there.
+			touched.presence.add(other);
+		}
+		tx.delete(t.workspaces, { workspace });
+		if (row !== undefined) await this.removeThing(tx, touched, workspace, row.kind);
+		tx.put(t.gone, { workspace });
+		touched.workspaces.add(workspace);
+		touched.presence.add(workspace);
 	}
 
 	/** The thing of `kind` that `by` made, if any (a plugin's one thing: `ensure`). */
@@ -677,13 +955,20 @@ class Writes {
 	}
 
 	/**
-	 * Links `thing` into `workspace` with its kind's default grants (once; a kind of `workspaces: "one"` once at all).
+	 * Links `thing` into `workspace` with its kind's default grants (once; a kind of `workspaces: "one"` once at all),
+	 * without those `defaults` removes (item 93). A workspace is placed by its parent, never linked.
 	 */
-	async link(tx: Tx, touched: Touched, { workspace, thing }: { workspace: string; thing: string }): Promise<null> {
+	async link(
+		tx: Tx,
+		touched: Touched,
+		{ workspace, thing, defaults }: { workspace: string; thing: string; defaults?: DefaultsChoice },
+	): Promise<null> {
 		const row = await tx.get(this.#t.things, { thing });
 		if (row === undefined) throw invalid("args", `things: no thing ${thing}`);
 		const item = this.#kind(row.kind);
-		await this.#mustBeWorkspace(tx, workspace);
+		if (item.value.workspace !== "no")
+			throw invalid("args", "things: a workspace is placed by its parent, never linked");
+		await this.mustBeWorkspace(tx, workspace);
 		if ((await tx.get(this.#t.links, { workspace, thing })) !== undefined) return null;
 		const elsewhere = await tx.page(
 			this.#t.links,
@@ -693,7 +978,7 @@ class Writes {
 		if (item.value.workspaces === "one" && elsewhere.items.length > 0) {
 			throw invalid("args", `things: a ${row.kind} is linked in one workspace only`);
 		}
-		this.#linked(tx, workspace, thing, item);
+		this.#linked(tx, workspace, thing, item, item.value.defaultGrants, defaults);
 		touched.workspaces.add(workspace);
 		return null;
 	}
@@ -705,14 +990,18 @@ class Writes {
 		tx.deleteWhere(this.#t.grants, (g) => and(eq(g.workspace, workspace), eq(g.thing, thing)));
 		tx.delete(this.#t.links, { workspace, thing });
 		touched.workspaces.add(workspace);
+		if (await this.#linkedOnlyIn(tx, workspace, thing)) await this.removeThing(tx, touched, thing, link.of);
+		return null;
+	}
+
+	/** Whether `thing` is linked nowhere but in `workspace` (index `by_thing`): with that link it goes. */
+	async #linkedOnlyIn(tx: Tx, workspace: string, thing: string): Promise<boolean> {
 		const links = await tx.page(
 			this.#t.links,
 			query(Links).where((l) => eq(l.thing, thing)),
 			2,
 		);
-		if (links.items.every((other) => other.workspace === workspace))
-			await this.removeThing(tx, touched, thing, link.of);
-		return null;
+		return links.items.every((other) => other.workspace === workspace);
 	}
 
 	/**
@@ -725,29 +1014,37 @@ class Writes {
 		await deleteTold(tx, t.links, Links, (l) => eq(l.thing, thing), touched.workspaces, "workspace");
 		await deleteTold(tx, t.grants, Grants, (g) => eq(g.thing, thing), touched.workspaces, "workspace");
 		await deleteTold(tx, t.switches, Switches, (w) => eq(w.itemKey, item), touched.workspaces, "workspace");
+		// A thing is a source (a share, a bot): what it wrote, the groups it manages and the persons it made go with it,
+		// in this commit (the cleanup, people.md §7); its rows deleted above count as gone.
+		touched.retiring.things.add(thing);
+		await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));
 		tx.delete(this.#t.things, { thing });
 		tx.put(this.#t.pending, { thing, kind });
 		touched.retired.push({ thing, kind });
 		return null;
 	}
 
-	/** Changes a thing's name (no access changes: nothing touched). */
-	async rename(tx: Tx, thing: string, name: string): Promise<null> {
-		if ((await tx.get(this.#t.things, { thing })) === undefined) throw invalid("args", `things: no thing ${thing}`);
-		tx.update(this.#t.things, { thing }, { name });
-		return null;
-	}
-
-	/** A workspace of `kind` under `parent`: its thing row and its line. */
-	async workspace(
+	/**
+	 * Changes a thing's name and its own default view (`""`: the kind's); a workspace renamed is touched (the index
+	 * keeps its name for the lists), nothing else.
+	 */
+	async configure(
 		tx: Tx,
 		touched: Touched,
-		args: { kind: string; name: string; parent: string; by: Source; showsPeople?: boolean },
-	): Promise<string> {
-		await this.#mustBeWorkspace(tx, args.parent);
-		const workspace = putWorkspace(tx, this.#t, { ...args, showsPeople: args.showsPeople ?? true }, args.parent);
-		touched.workspaces.add(workspace);
-		return workspace;
+		thing: string,
+		name: string | undefined,
+		view: string | undefined,
+	): Promise<null> {
+		if ((await tx.get(this.#t.things, { thing })) === undefined) throw invalid("args", `things: no thing ${thing}`);
+		if (name !== undefined) touched.things.add(thing);
+		if (name !== undefined && (await tx.get(this.#t.workspaces, { workspace: thing })) !== undefined)
+			touched.workspaces.add(thing);
+		tx.update(
+			this.#t.things,
+			{ thing },
+			{ ...(name === undefined ? {} : { name }), ...(view === undefined ? {} : { view }) },
+		);
+		return null;
 	}
 
 	/** Sets or removes (`shown` left out) the switch for `item` in `workspace`. */
@@ -756,10 +1053,11 @@ class Writes {
 		touched: Touched,
 		{ workspace, item, shown }: { workspace: string; item: Item; shown?: boolean },
 	): Promise<null> {
-		await this.#mustBeWorkspace(tx, workspace);
+		await this.mustBeWorkspace(tx, workspace);
 		if (shown === undefined) tx.delete(this.#t.switches, { workspace, itemKey: itemKey(item) });
 		else tx.put(this.#t.switches, { workspace, itemKey: itemKey(item), item, shown });
 		touched.workspaces.add(workspace);
+		if (item.kind === "party") touched.presence.add(workspace);
 		return null;
 	}
 
@@ -769,7 +1067,7 @@ class Writes {
 		touched: Touched,
 		{ workspace, showsThings, showsPeople }: { workspace: string; showsThings?: boolean; showsPeople?: boolean },
 	): Promise<null> {
-		await this.#mustBeWorkspace(tx, workspace);
+		await this.mustBeWorkspace(tx, workspace);
 		tx.update(
 			this.#t.workspaces,
 			{ workspace },
@@ -779,6 +1077,7 @@ class Writes {
 			},
 		);
 		touched.workspaces.add(workspace);
+		if (showsPeople !== undefined) touched.presence.add(workspace);
 		return null;
 	}
 
@@ -794,21 +1093,34 @@ class Writes {
 	): Promise<null> {
 		const upgraded = new Set<string>();
 		for (const { workspace, thing, party, tick, gives } of grants) {
+			// A row is written only in a workspace that stands (none in a removed one); removing one needs no line.
+			if (gives !== undefined) await this.mustBeWorkspace(tx, workspace);
 			const link = await tx.get(this.#t.links, { workspace, thing });
-			if (gives === true && link === undefined) {
+			// A workspace's own grants are written at itself (item 88): there it is as linked.
+			const own = thing === workspace;
+			if (gives === true && link === undefined && !own) {
 				throw invalid("args", `things: ${thing} is not linked in ${workspace}: ticks are given where it is`, {
-					message: messages.message("belowLink", workspace),
+					message: messages.message("belowLink"),
 				});
 			}
 			const kind = link?.of ?? (await tx.get(this.#t.things, { thing }))?.kind;
 			if (kind === undefined) throw invalid("args", `things: no thing ${thing}`);
 			const info = this.#kind(kind).value;
-			const declared = info.ticks.find(({ name }) => name === tick);
-			// A row is removed whatever its tick (one the kind lost too); written, its tick must be the kind's or `OPEN`.
-			if (gives !== undefined && tick !== OPEN && declared === undefined) {
+			const forWhom = this.#forOf(info, own, tick);
+			// A row is removed whatever its tick (one the kind lost too); written, its tick must be the kind's, `OPEN`, or
+			// on a workspace's own grants a Make tick; one naming a kind no plugin registers now is kept and ignored
+			// (decisions 82, 91, 114; main session, round 2).
+			if (gives !== undefined && tick !== OPEN && forWhom === undefined && !this.#unknownMake(info, own, tick)) {
 				throw invalid("args", `things: ${kind} has no tick ${tick}`);
 			}
-			if (gives === true && declared !== undefined && !isFor(declared.for, audienceOf(party.kind))) {
+			// "No access" on a workspace's own thing takes a person, a group or one agent out (round 1); everyone here
+			// and the agents leave a workspace through the people switches and defaults instead (round 2).
+			if (own && tick === OPEN && gives === false && (party.kind === "everyone" || party.kind === "agents")) {
+				throw invalid("args", `things: No access on ${workspace} is not for ${party.kind}`, {
+					message: messages.message("noAccessForAll"),
+				});
+			}
+			if (gives === true && forWhom !== undefined && !isFor(forWhom, audienceOf(party.kind))) {
 				throw invalid("args", `things: ${tick} of ${kind} cannot be given to ${partyKey(party)}`, {
 					message: messages.message("tickNotFor", tick, partyKey(party)),
 				});
@@ -824,6 +1136,8 @@ class Writes {
 			if (gives === undefined) tx.delete(this.#t.grants, key);
 			else this.#grant(tx, workspace, thing, party, source, tick, gives, info.ticksVersion);
 			touched.workspaces.add(workspace);
+			// "No access" on a workspace's own thing takes its party out of the workspace: a change of who is there.
+			if (own && tick === OPEN) touched.presence.add(workspace);
 		}
 		return null;
 	}
@@ -890,6 +1204,40 @@ class Writes {
 		}
 	}
 
+	/**
+	 * One checkbox (item 112): every row of `party`'s `tick` on `thing` written in `workspace`, whatever its source, goes;
+	 * then `source`'s one row, if `gives` says one (checked as `setGrants` checks it).
+	 */
+	async setTick(
+		tx: Tx,
+		touched: Touched,
+		args: { workspace: string; thing: string; party: Party; tick: string; gives?: boolean; source: Source },
+	): Promise<null> {
+		const { workspace, thing, party, tick, gives, source } = args;
+		const key = partyKey(party);
+		// Every source's rows of the party written back at the kind's ticks version first (item 105): a row written at
+		// an older version under another name (`draw`, read now as `paint`) is the same cell, and goes with it.
+		const kind =
+			(await tx.get(this.#t.links, { workspace, thing }))?.of ?? (await tx.get(this.#t.things, { thing }))?.kind;
+		const info = kind === undefined ? undefined : this.#kinds().get(kind)?.value;
+		if (info !== undefined) {
+			const theirs = query(Grants).where((g) =>
+				and(eq(g.workspace, workspace), eq(g.thing, thing), eq(g.partyKey, key)),
+			);
+			const sources = new Set<string>();
+			for await (const row of tx.rows(this.#t.grants, theirs))
+				if (row.ticksVersion !== info.ticksVersion) sources.add(row.sourceKey);
+			for (const sourceKey of sources) await this.#upgrade(tx, { workspace, thing, partyKey: key, sourceKey }, info);
+		}
+		tx.deleteWhere(this.#t.grants, (g) =>
+			and(eq(g.workspace, workspace), eq(g.thing, thing), eq(g.partyKey, key), eq(g.tick, tick)),
+		);
+		touched.workspaces.add(workspace);
+		if (thing === workspace && tick === OPEN) touched.presence.add(workspace);
+		if (gives === undefined) return null;
+		return this.setGrants(tx, touched, { source, grants: [{ workspace, thing, party, tick, gives }] });
+	}
+
 	/** Puts a person, a group or a session's agent into a workspace. */
 	async putParty(
 		tx: Tx,
@@ -899,7 +1247,109 @@ class Writes {
 		if (party.kind === "everyone" || party.kind === "agents") {
 			throw invalid("args", `things: ${party.kind} is no party one puts in`);
 		}
-		await this.#mustBeWorkspace(tx, workspace);
+		await this.mustBeWorkspace(tx, workspace);
+		this.#member(tx, touched, workspace, party, source);
+		return null;
+	}
+
+	/** The link of `thing` in `workspace`, with default grants `granted` (without those `defaults` removes). */
+	#linked(
+		tx: Tx,
+		workspace: string,
+		thing: string,
+		item: TableItem<KindInfo>,
+		granted: DefaultGrants,
+		defaults: DefaultsChoice | undefined,
+	): void {
+		tx.put(this.#t.links, { workspace, thing, of: item.value.name });
+		this.#defaults(tx, workspace, thing, item, granted, defaults);
+	}
+
+	/**
+	 * Default grants `granted` of `item`'s kind on `thing` in `workspace` (source: the kind's plugin, item 93), each
+	 * party's without the ticks `defaults` names (`OPEN` stands for a default of none); a removed tick the offer does
+	 * not have is ignored, so what the person saw (the kind's declared defaults) and what is offered (its create hook's
+	 * answer) may differ.
+	 */
+	#defaults(
+		tx: Tx,
+		workspace: string,
+		thing: string,
+		item: TableItem<KindInfo>,
+		granted: DefaultGrants,
+		defaults: DefaultsChoice | undefined,
+	): void {
+		const source: Source = { kind: "plugin", plugin: item.plugin };
+		const parties = [
+			[{ kind: "everyone" }, granted.everyone, defaults?.without.everyone],
+			[{ kind: "agents" }, granted.agents, defaults?.without.agents],
+		] as const;
+		for (const [party, ticks, removed] of parties) {
+			if (ticks === undefined) continue;
+			const offered = ticks.length === 0 ? [OPEN] : ticks;
+			const written = removed === undefined ? offered : offered.filter((tick) => !removed.includes(tick));
+			for (const tick of written) {
+				// What a workspace kind's defaults or its create hook's answer name is checked as a written grant is (93,
+				// 114): a tick of the kind for that party, `OPEN`, or on a workspace's own thing a Make tick of a
+				// registered kind its makers let that party make.
+				const own = thing === workspace;
+				const forWhom = this.#forOf(item.value, own, tick);
+				const known = forWhom !== undefined || !this.#unknownMake(item.value, own, tick);
+				if (tick !== OPEN && known && !isFor(forWhom, audienceOf(party.kind))) {
+					throw invalid("args", `things: ${item.value.name}'s default ${tick} cannot be given to ${party.kind}`);
+				}
+				this.#grant(tx, workspace, thing, party, source, tick, true, item.value.ticksVersion);
+			}
+		}
+	}
+
+	/**
+	 * Whether `tick` is a Make tick on a workspace's own thing that names a kind no plugin registers now: kept and
+	 * ignored, never refused (decisions 82, 91, 114).
+	 */
+	#unknownMake(info: KindInfo, own: boolean, tick: string): boolean {
+		const made = kindOfMakeTick(tick);
+		return own && info.workspace !== "no" && made !== undefined && made !== "*" && !this.#kinds().has(made);
+	}
+
+	/**
+	 * Whom `tick` is for on a thing of kind `info` (`own`: the workspace's own thing): a tick of the kind's, or on a
+	 * workspace's own thing a Make tick, for whom its kind's makers let make (item 114); `undefined`: no such tick.
+	 */
+	#forOf(info: KindInfo, own: boolean, tick: string): TickFor | undefined {
+		const made = kindOfMakeTick(tick);
+		if (made === undefined) return info.ticks.find(({ name }) => name === tick)?.for;
+		return own && info.workspace !== "no"
+			? makeTickFor(made, (kind) => this.#kinds().get(kind)?.value.makers)
+			: undefined;
+	}
+
+	/**
+	 * Its maker's grant on a new thing (item 90): every tick of the kind for the maker's audience and `extra` (a
+	 * workspace's `MAKE_ANY`), at `workspace`, the maker its source; none for a maker that is no party (a plugin).
+	 */
+	#giveMaker(
+		tx: Tx,
+		workspace: string,
+		thing: string,
+		item: TableItem<KindInfo>,
+		by: Source,
+		extra: readonly string[],
+	): void {
+		const maker = makerParty(by);
+		if (maker === undefined) return;
+		const ticks = item.value.ticks.filter((tick) => isFor(tick.for, audienceOf(maker.kind))).map((tick) => tick.name);
+		this.#give(tx, workspace, thing, maker, by, [...ticks, ...extra], item.value.ticksVersion);
+	}
+
+	/**
+	 * Puts `party` into `workspace` (`source` did), telling the index and the lists that read where the party is put in
+	 * (a held Roots learns of a workspace made for its person).
+	 */
+	#member(tx: Tx, touched: Touched, workspace: string, party: Party, source: Source): void {
+		touched.workspaces.add(workspace);
+		touched.presence.add(workspace);
+		touched.members.add(partyKey(party));
 		tx.put(this.#t.workspaceMembers, {
 			workspace,
 			partyKey: partyKey(party),
@@ -907,83 +1357,6 @@ class Writes {
 			source,
 			sourceKey: sourceKey(source),
 		});
-		touched.workspaces.add(workspace);
-		return null;
-	}
-
-	/** Gives or takes the owner flag; the last owner keeps it. */
-	async setOwner(tx: Tx, touched: Touched, { person, owner }: { person: string; owner: boolean }): Promise<null> {
-		const row = await tx.get(this.#t.persons, { person });
-		if (row === undefined) throw invalid("args", `things: no person ${person}`);
-		if (!owner && row.owner === 1) {
-			const owners = await tx.page(
-				this.#t.persons,
-				query(Persons).where((p) => eq(p.owner, 1)),
-				2,
-			);
-			if (owners.items.length < 2) {
-				throw invalid("args", "things: a Pi needs at least one owner", { message: messages.message("lastOwner") });
-			}
-		}
-		tx.update(this.#t.persons, { person }, { owner: owner ? 1 : 0 });
-		touched.persons.add(person);
-		return null;
-	}
-
-	/**
-	 * Removes what the source with key `key` wrote (grants, group members, workspace members) and the groups it manages,
-	 * with every member of them, every workspace entry and grant naming them, whoever wrote it.
-	 */
-	async deleteEverythingFrom(tx: Tx, touched: Touched, key: string): Promise<null> {
-		const t = this.#t;
-		await deleteTold(tx, t.grants, Grants, (r) => eq(r.sourceKey, key), touched.workspaces, "workspace");
-		await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.sourceKey, key), touched.persons, "person");
-		await deleteTold(
-			tx,
-			t.workspaceMembers,
-			WorkspaceMembers,
-			(r) => eq(r.sourceKey, key),
-			touched.workspaces,
-			"workspace",
-		);
-		for await (const { group } of tx.rows(
-			t.groups,
-			query(Groups).where((g) => eq(g.managedByKey, key)),
-		)) {
-			await this.#removeGroup(tx, touched, group);
-		}
-		return null;
-	}
-
-	/** Removes `group`: its members, every workspace entry and grant naming it, its row. */
-	async #removeGroup(tx: Tx, touched: Touched, group: string): Promise<void> {
-		const t = this.#t;
-		const party = partyKey({ kind: "group", group });
-		await deleteTold(tx, t.groupMembers, GroupMembers, (r) => eq(r.group, group), touched.persons, "person");
-		await deleteTold(
-			tx,
-			t.workspaceMembers,
-			WorkspaceMembers,
-			(r) => eq(r.partyKey, party),
-			touched.workspaces,
-			"workspace",
-		);
-		await deleteTold(tx, t.grants, Grants, (r) => eq(r.partyKey, party), touched.workspaces, "workspace");
-		tx.delete(t.groups, { group });
-	}
-
-	/** The link of `thing` in `workspace`, with its kind's default grants (source: the kind's plugin). */
-	#linked(tx: Tx, workspace: string, thing: string, item: TableItem<KindInfo>): void {
-		const { name, defaultGrants, ticksVersion } = item.value;
-		tx.put(this.#t.links, { workspace, thing, of: name });
-		const source: Source = { kind: "plugin", plugin: item.plugin };
-		const parties = [
-			[{ kind: "everyone" }, defaultGrants.everyone],
-			[{ kind: "agents" }, defaultGrants.agents],
-		] as const;
-		for (const [party, ticks] of parties) {
-			if (ticks !== undefined) this.#give(tx, workspace, thing, party, source, ticks, ticksVersion);
-		}
 	}
 
 	/** Gives `party` `ticks` (none: `OPEN`, item 113) on `thing` in `workspace`: one row each. */
@@ -1033,9 +1406,35 @@ class Writes {
 	}
 
 	/** Throws (`invalid`) unless `workspace` exists, as `tx` sees it. */
-	async #mustBeWorkspace(tx: Tx, workspace: string): Promise<void> {
-		if ((await tx.get(this.#t.workspaces, { workspace })) === undefined) {
-			throw invalid("args", `things: no workspace ${workspace}`);
-		}
+	async mustBeWorkspace(tx: Tx, workspace: string): Promise<void> {
+		if (!(await this.isWorkspace(tx, workspace))) throw invalid("args", `things: no workspace ${workspace}`);
+	}
+
+	/** Whether `workspace` exists, as `tx` sees it. */
+	async isWorkspace(tx: Tx, workspace: string): Promise<boolean> {
+		return (await tx.get(this.#t.workspaces, { workspace })) !== undefined;
+	}
+
+	/** Whether `party` has an entry of its own in `workspace`, of any source. */
+	async isPutIn(tx: Tx, workspace: string, party: Party): Promise<boolean> {
+		return (await tx.get(this.#t.workspaceMembers, { workspace, partyKey: partyKey(party) })) !== undefined;
+	}
+
+	/**
+	 * Whether `by` may change `group`'s members: server code (a plugin, a thing, a provider) always; a person with the
+	 * owner flag or the group's own tick (themself or a group of theirs named), on a group people manage only.
+	 */
+	async mayChange(tx: Tx, group: string, by: Source): Promise<boolean> {
+		if (by.kind !== "person" && by.kind !== "agent") return true;
+		const row = await tx.get(this.#t.groups, { group });
+		if (row?.managedBy.kind !== "people" || by.kind === "agent") return false;
+		if ((await tx.get(this.#t.persons, { person: by.person }))?.owner === 1) return true;
+		const keys = [partyKey({ kind: "person", person: by.person })];
+		const mine = query(GroupMembers).where((m) => eq(m.person, by.person));
+		for await (const { group: of } of tx.rows(this.#t.groupMembers, mine))
+			keys.push(partyKey({ kind: "group", group: of }));
+		for (const key of keys)
+			if ((await tx.get(this.#t.groupManagers, { group, partyKey: key })) !== undefined) return true;
+		return false;
 	}
 }

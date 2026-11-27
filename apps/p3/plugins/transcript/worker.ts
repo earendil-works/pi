@@ -1,12 +1,12 @@
-// The transcript plugin on a session's worker: `Transcript`, the session's root conversation as its members see it.
+// The transcript plugin on a session's worker: `Transcript`, the session's root conversation as the people in the session see it.
 // One local object per conversation follows Durable's view once (`self.follow` of `observeConversation`), however many
-// people read it; each member's `Transcript` reads that one. Readers get the view and page older entries; writers also
-// send (through the harness's `submit`, the one way to start work) and stop.
+// people read it; each holder's `Transcript` reads that one. Read gives the view and older entries, Send the send
+// (through the harness's `submit`, the one way to start work), Stop the stop: the caller's ticks on the session.
 
 import {
-	admitSession,
 	type Context,
 	defineFacet,
+	followSession,
 	forbidden,
 	invalid,
 	local,
@@ -22,7 +22,7 @@ import {
 	ROOT_CONVERSATION_ID,
 	SessionHarness,
 } from "@earendil-works/p3/v1/worker";
-import { TRANSCRIPT_WRITES, Transcript } from "./contract.ts";
+import { TRANSCRIPT_GRANTS, Transcript } from "./contract.ts";
 
 /** One conversation's view, followed once for every reader of it; `conversation` is its Durable id. */
 const Followed = local("transcript.followed", {
@@ -58,37 +58,39 @@ export default defineFacet((host) => {
 	host.serve(
 		Transcript,
 		(_params, _principal, _admitted, self) => {
-			const followed = self.get(Followed, { conversation: ROOT });
 			const harness = self.registry(SessionHarness);
 			const facts = self.get(SessionFacts, {});
-			const open = (): OpenHarness => {
-				const value = harness.value;
+			// The harness may still be opening when a call comes (a worker just started): the call waits for it, as long as
+			// its caller's context lets it, without following the conversation (Astra, round 2: Send alone holds no reader).
+			const open = async (ctx: Context): Promise<OpenHarness> => {
+				const value = await until(harness, (found) => found !== undefined, ctx);
 				if (value === undefined) throw invalid("args", "transcript: the session's harness is not open");
 				return value;
 			};
-			// `send` and `stop` are a writer's (`TRANSCRIPT_WRITES`): a reader's call is refused before it runs.
+			// Each member is granted by its tick (`TRANSCRIPT_GRANTS`): a call without it is refused before it runs.
 			return {
-				view: followed.view,
+				// Only a holder granted the view follows the conversation (Astra, round 1): Send alone opens no reader.
+				view: () => self.get(Followed, { conversation: ROOT }).view,
 				entries: async (
 					query: { minEntryId?: number; maxEntryId?: number; order?: string; limit: number },
 					ctx: Context,
-				) => entriesOf(open(), query, ctx),
+				) => entriesOf(await open(ctx), query, ctx),
 				// The admission carries no identity, so the request id is scoped by itself alone: two writers who pick the
 				// same id send once. Clients choose random ids.
 				send: async ({ text, requestId }, ctx) => {
-					await open().submit(undefined, { text, requestId: `transcript:${requestId}` }, ctx);
+					await (await open(ctx)).submit(undefined, { text, requestId: `transcript:${requestId}` }, ctx);
 					return null;
 				},
 				stop: async (ctx) => {
 					// An abort runs the aborted tasks' handlers: work, which an archived session's worker never does.
 					if (facts.session.value?.archivedAt !== null) throw forbidden("transcript: the session is archived");
-					const root = await open().durable.root(ctx);
+					const root = await (await open(ctx)).durable.root(ctx);
 					await root.abort(ctx);
 					return null;
 				},
 			};
 		},
-		{ admit: admitSession(TRANSCRIPT_WRITES) },
+		{ admit: followSession(TRANSCRIPT_GRANTS) },
 	);
 });
 

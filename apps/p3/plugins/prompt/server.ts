@@ -33,7 +33,7 @@ export default defineFacet((host) => {
 			};
 		},
 		// Pi's seed (made by this plugin, `one`) starts with the default text; a person's new instructions start empty.
-		create: async (thing, _input, by, ctx) => {
+		create: async ({ thing, by }, ctx) => {
 			if (by.kind !== "plugin" || by.plugin !== PLUGIN) return;
 			await (await ctx.get(PromptStore, {})).configureInstructions({ thing, ...SEED }, ctx);
 		},

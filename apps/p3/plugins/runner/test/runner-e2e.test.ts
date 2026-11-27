@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BACKGROUND_CONTEXT as context, Sessions, until } from "@earendil-works/p3/v1";
+import { BACKGROUND_CONTEXT as context, until } from "@earendil-works/p3/v1";
 import { type PluginScript, processLock, ServerRuntime, WorkerRunners } from "@earendil-works/p3/v1/server";
 import { type TestServer, testServer } from "@earendil-works/p3/v1/testing";
 import { Probe } from "../../../test/plugins/probe/contract.ts";
@@ -24,9 +24,11 @@ import {
 	constantPlugin,
 	FAUX,
 	gatedSession,
+	newSession,
 	openGate,
 	PROBE,
 	startRun,
+	TMP,
 } from "../../../test/support.ts";
 import { eventually, within } from "../../../test/until.ts";
 
@@ -66,10 +68,9 @@ async function editableServer(): Promise<EditableServer> {
 }
 
 /** A new session's id and an owner's client. */
-async function newSession(t: TestServer) {
+async function oneSession(t: TestServer) {
 	const client = await t.client(context);
-	const id = await (await client.get(Sessions, {}, context)).create({ app: "coding", title: "one" }, context);
-	return { client, id };
+	return { client, id: await newSession(client, "one", context, TMP) };
 }
 
 /**
@@ -118,28 +119,24 @@ async function reloadRunner(
 }
 
 describe("a reload of the runner plugin", () => {
-	it(
-		"stops the workers, and the waker starts the unheld working session's worker again on the new runner",
-		{ skip: "until sessions are workspaces, ERNDL-704 push 3" },
-		async () => {
-			const editable = await editableServer();
-			const { id, pid } = await workingSession(editable.t);
-			const runner = await reloadRunner(editable);
-			assert.ok(!alive(pid), "the old runner stopped its worker");
-			const workers = await eventually(
-				() => runner.state(),
-				(state) => state[id]?.status === "running",
-			);
-			const restarted = workers[id];
-			assert.ok(restarted?.status === "running" && restarted.pid !== pid);
-			assert.deepEqual(editable.t.errors, []);
-		},
-	);
+	it("stops the workers, and the waker starts the unheld working session's worker again on the new runner", async () => {
+		const editable = await editableServer();
+		const { id, pid } = await workingSession(editable.t);
+		const runner = await reloadRunner(editable);
+		assert.ok(!alive(pid), "the old runner stopped its worker");
+		const workers = await eventually(
+			() => runner.state(),
+			(state) => state[id]?.status === "running",
+		);
+		const restarted = workers[id];
+		assert.ok(restarted?.status === "running" && restarted.pid !== pid);
+		assert.deepEqual(editable.t.errors, []);
+	});
 
 	it("a held session comes back on a new worker, its holder's reference working again without a retry", async () => {
 		const editable = await editableServer();
 		const { t } = editable;
-		const { client, id } = await newSession(t);
+		const { client, id } = await oneSession(t);
 		const held = await client.get(Probe, { session: id }, context);
 		const pid = held.pid.value;
 		await reloadRunner(editable);
@@ -169,7 +166,7 @@ describe("a reload of the runner plugin", () => {
 			}
 			return current;
 		};
-		const { client, id } = await newSession(t);
+		const { client, id } = await oneSession(t);
 		const holding = client.get(Probe, { session: id }, context);
 		await read.promise;
 		try {
@@ -186,7 +183,7 @@ describe("a reload of the runner plugin", () => {
 	it("a hold whose worker the old runner stopped before its handshake comes back on the new runner", async () => {
 		const editable = await editableServer();
 		const { t } = editable;
-		const { client, id } = await newSession(t);
+		const { client, id } = await oneSession(t);
 		// The session's lock held (the runner names it): its worker forks and waits for it, before it greets the server.
 		const lock = await processLock(`p3-session:${join(t.dataDir, "workers", id)}`, context);
 		const holding = client.get(Probe, { session: id }, context);
@@ -209,29 +206,24 @@ describe("a reload of the runner plugin", () => {
 		await held.busy(0, context);
 	});
 
-	it(
-		"an apply that also changes a worker plugin leaves the new runner's worker on the new worker scripts",
-		// A working session needs its faux login, made in the session's workspace.
-		{ skip: "until sessions are workspaces, ERNDL-704 push 3" },
-		async () => {
-			const editable = await editableServer();
-			const { t } = editable;
-			await writeFile(join(t.userRoot, `${MARKED}.worker.ts`), constantPlugin(MARKED, "1"));
-			const { id } = await workingSession(t);
-			await writeFile(join(t.userRoot, `${MARKED}.worker.ts`), constantPlugin(MARKED, "2"));
-			// A plugin no discovery knew yet marks the set; one it knew, itself.
-			await reloadRunner(editable, ({ dirty, set }) => set || dirty.includes(MARKED));
-			const held = await (await t.client(context)).get(Marked, { session: id }, context);
-			await until(held.value, (value) => value === "2", within("the new worker script's value", context));
-		},
-	);
+	it("an apply that also changes a worker plugin leaves the new runner's worker on the new worker scripts", async () => {
+		const editable = await editableServer();
+		const { t } = editable;
+		await writeFile(join(t.userRoot, `${MARKED}.worker.ts`), constantPlugin(MARKED, "1"));
+		const { id } = await workingSession(t);
+		await writeFile(join(t.userRoot, `${MARKED}.worker.ts`), constantPlugin(MARKED, "2"));
+		// A plugin no discovery knew yet marks the set; one it knew, itself.
+		await reloadRunner(editable, ({ dirty, set }) => set || dirty.includes(MARKED));
+		const held = await (await t.client(context)).get(Marked, { session: id }, context);
+		await until(held.value, (value) => value === "2", within("the new worker script's value", context));
+	});
 });
 
 describe("a stop of a held session", () => {
 	it("keeps its worker stopped until retry; its holder's reference then reaches a new worker (Sol S6)", async () => {
 		const t = await testServer({ plugins: [PROBE] }, context);
 		running = t;
-		const { client, id } = await newSession(t);
+		const { client, id } = await oneSession(t);
 		const held = await client.get(Probe, { session: id }, context);
 		const pid = held.pid.value;
 		const runner = (await t.host.registry(WorkerRunners, context)).value;

@@ -1,9 +1,24 @@
 // The things plugin's contract data every kind imports: the typed values its tables hold (who wrote something, whom a
 // grant names, what a switch is about, who manages a group), the one function per value that makes its key column,
 // and who calls a thing's object, as its admission hands the factory. A thing's own contract comes from `defineThing`
-// (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`).
+// (`kind.ts`); the store and the admission's objects are server only (`contract.server.ts`). And a group's object
+// (`Group`): its members and the calls its own tick gives; and `MyAnswer`, a caller's answer for admissions off the
+// server (a session's objects on its worker, the route to a worker).
 
-import { lit, obj, type Static, str, union } from "@earendil-works/p3/v1";
+import {
+	arr,
+	bool,
+	grantable,
+	lit,
+	method,
+	nul,
+	obj,
+	remote,
+	Server,
+	type Static,
+	str,
+	union,
+} from "@earendil-works/p3/v1";
 
 /** The prefix of the reserved tick names (item 113): a kind's own tick names cannot start with it. */
 export const RESERVED = "@";
@@ -13,6 +28,27 @@ export const RESERVED = "@";
  * (withheld; item 113). Any giving row of a tick of the kind lets the party in too.
  */
 export const OPEN = "@open";
+
+/** The prefix of a Make tick (item 114): `@make:<kind name>` lets its party make things of that kind in a workspace. */
+const MAKE = "@make:";
+
+/** The Make tick for every kind, also kinds registered later (item 114): `@make:*`. */
+export const MAKE_ANY = `${MAKE}*`;
+
+/** The Make tick of kind `kind` (item 114): `@make:<kind name>`; built only here, never by hand. */
+export function makeTick(kind: { readonly name: string }): string {
+	return `${MAKE}${kind.name}`;
+}
+
+/** Whether `tick` is reserved (item 113): `OPEN` and the Make ticks; a kind's own tick names cannot be. */
+export function isReserved(tick: string): boolean {
+	return tick.startsWith(RESERVED);
+}
+
+/** The kind a Make tick names (`*` for `MAKE_ANY`), or `undefined` for any other tick. */
+export function kindOfMakeTick(tick: string): string | undefined {
+	return tick.startsWith(MAKE) ? tick.slice(MAKE.length) : undefined;
+}
 
 /**
  * Who wrote something: a person by hand, a session's agent (a thing it made), a thing (a share, a bot: it goes with
@@ -99,6 +135,21 @@ export function partyKey(party: Party): string {
 	}
 }
 
+/** The party whose key (`partyKey`) is `key`: its inverse, for what the index keeps by key. */
+export function partyOf(key: string): Party {
+	if (key === "everyone" || key === "agents") return { kind: key };
+	const at = key.indexOf("/");
+	const id = key.slice(at + 1);
+	switch (key.slice(0, at)) {
+		case "person":
+			return { kind: "person", person: id };
+		case "group":
+			return { kind: "group", group: id };
+		default:
+			return { kind: "agent", session: id };
+	}
+}
+
 /**
  * The key of `source`; a thing's, a provider's and a plugin's are the same texts as `managedByKey` makes (the cleanup
  * matches them).
@@ -134,3 +185,47 @@ export function managedByKey(by: ManagedBy): string {
 			return sourceKey(by);
 	}
 }
+
+/**
+ * A group as anyone it is present for holds it (1141 §7, decision 68): its info and members for all of them (its
+ * members, its managers, the owners, and whoever it is present for where they are present); its calls only with the
+ * group's own tick (a manager: a person named, or a person in a group named) or the owner flag, and only on a group
+ * people manage (a share's, a provider's, a plugin's or a workspace's group is changed by its manager alone). A member
+ * a person adds must be one the picker offers them (present where they are present; the owner: anyone).
+ */
+export const Group = remote("things.group", {
+	version: 1,
+	params: { group: str() },
+	hostAddress: () => Server(),
+	admission: obj({}),
+	state: {
+		info: obj({ group: str(), name: str(), outside: bool(), managedBy: ManagedBy }),
+		/** The members, a page at a time (`more`): a provider's company group may be large. */
+		members: obj({ rows: arr(obj({ person: str(), name: str(), source: Source })), moreAfter: bool() }),
+		managers: arr(Party),
+	},
+	methods: {
+		/** The next page of `members`. */
+		more: method(),
+		addMember: grantable(method(obj({ person: str() }))),
+		/** Takes the person out of the group: every row but a provider's and a share's (theirs to rewrite). */
+		removeMember: grantable(method(obj({ person: str() }))),
+		rename: grantable(method(obj({ name: str({ min: 1, max: 200 }) }))),
+		setManagers: grantable(method(obj({ parties: arr(Party) }))),
+		/** Removes the group (`ThingsStore.removeGroup`); the call ends with the object, denied once the group is gone. */
+		remove: grantable(method()),
+	},
+});
+
+/**
+ * Caller `caller`'s (a `callerKey`) answer for `thing` in `workspace`, live: the thing's kind and the ticks they have
+ * there (`null`: given nothing, so not let in). For admissions off the server (a session's objects on its worker, the route to a worker),
+ * which cannot read the index. Asked by the server about anyone, by a session's worker about anyone in its own
+ * session's workspace (its admissions ask as the worker), and by anyone else about themselves only.
+ */
+export const MyAnswer = remote("things.answer", {
+	version: 1,
+	params: { workspace: str(), thing: str(), caller: str() },
+	hostAddress: () => Server(),
+	state: { answer: union([obj({ kind: str(), ticks: arr(str()) }), nul()]) },
+});

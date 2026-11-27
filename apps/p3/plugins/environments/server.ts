@@ -30,9 +30,10 @@ export default defineFacet((host) => {
 		implement: ({ thing }, _admitted, self) => ({ info: self.get(MachineInfoHere, { machine: thing }).info }),
 		// The seeded machine (made by this plugin, with no input) is this device's, which stores nothing (machines.ts),
 		// until the things plugin's `one` takes an input (things2): then it is a `local` machine with a row like any.
-		create: async (thing, input, by, ctx) => {
-			if (input === undefined && by.kind === "plugin" && by.plugin === ENVIRONMENTS_PLUGIN) return;
+		create: async ({ thing, input, by }, ctx) => {
+			if (input === undefined && by.kind === "plugin" && by.plugin === ENVIRONMENTS_PLUGIN) return undefined;
 			await (await ctx.get(MachineKeeper, {})).make({ machine: thing, input }, ctx);
+			return undefined;
 		},
 		// A machine that went takes its connection and terminals with it: nobody could reach them after.
 		delete: async (thing, ctx) => {

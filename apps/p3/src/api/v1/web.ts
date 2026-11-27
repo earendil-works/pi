@@ -1,14 +1,14 @@
 // p3's API v1 for web facets (`@earendil-works/p3/v1/web`): Chord's React bindings, the page's one slot (`PageRoot`,
 // the chrome plugin's), the connection state, the components plugins offer each other as typed tokens
-// (`defineComponent`, `Components`, `useComponent`), the page's route (`useRoute`, `navigate`, `redirect`), and the
-// icons p3 offers, and `refusalText` (a refusal as the person reads it). The built-in plugins' web contracts p3 promises are re-exported here (the layout plugin's pane
-// layout among them). Browser only.
+// (`defineComponent`, `Components`, `useComponent`), the page's route (`Target`, `Route`, `useRoute`, `targetPath`,
+// `navigate`, `redirect`), the icons p3 offers, and `refusalText` (a refusal as the person reads it). The built-in plugins' web contracts p3 promises are re-exported
+// here (the layout plugin's pane layout and the things plugin's views among them). Browser only.
 
 /// <reference path="./css.d.ts" />
 
 import { type ConnectionState, defineRegistry, type TableItem } from "@earendil-works/chord";
 import { useRegistry } from "@earendil-works/chord/react";
-import { type ComponentType, useEffect, useSyncExternalStore } from "react";
+import { type ComponentType, useEffect, useMemo, useSyncExternalStore } from "react";
 import { BACKGROUND_CONTEXT, reportError } from "./index.ts";
 
 export * from "@earendil-works/chord/react";
@@ -62,15 +62,13 @@ export {
 // The shapes of a conversation as Durable and pi-ai give them, for views of a transcript (types only: nothing loads).
 export type { AssistantMessage, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 export type { ConversationView, EntryRecord, LiveState } from "@earendil-works/pi-durable";
-export * from "../../../plugins/apps/contract.web.ts";
 export * from "../../../plugins/layout/contract.web.tsx";
-export * from "../../../plugins/sessions/contract.web.tsx";
-export * from "../../../plugins/transcript/contract.web.ts";
+export * from "../../../plugins/things/contract.web.tsx";
 export { refusalText } from "./refusal.ts";
 
 /**
- * The page's root: the one component the base renders inside the page's host (the chrome plugin's: the top bar and
- * the chosen app's page). The first by plugin name is used; a second is reported.
+ * The page's root: the one component the base renders inside the page's host (the chrome plugin's: the top bar, the
+ * navigator and the route's view). The first by plugin name is used; a second is reported.
  */
 export const PageRoot = defineRegistry<ComponentType, ComponentType | undefined>("p3.page-root", { version: 1 });
 
@@ -125,16 +123,57 @@ export function useComponent<Props>(token: ComponentToken<Props>): ComponentType
 	return components?.get(token.name)?.value.component as ComponentType<Props> | undefined;
 }
 
-/** Where the page is: the app (the first segment of the path) and the rest of the path, split by `/`. */
-export type Route = { readonly app: string | undefined; readonly rest: readonly string[] };
+/**
+ * What is displayed (decision 70): a workspace, or a thing, a person or a group as seen from a workspace (a thing's
+ * ticks are per place, so a thing is always named with one). The things plugin's `TargetView` draws it.
+ */
+export type Target =
+	| { readonly kind: "workspace"; readonly workspace: string }
+	| { readonly kind: "thing"; readonly workspace: string; readonly thing: string }
+	| { readonly kind: "person"; readonly workspace: string; readonly person: string }
+	| { readonly kind: "group"; readonly workspace: string; readonly group: string };
+
+/**
+ * Where the page is (decision 74): the landing (`/`), the person's own page (`/me`), a target (`/w/<workspace>`, with
+ * `/t/<thing>`, `/p/<person>` or `/g/<group>`) in a view (`?view=`) or its Settings view (`/settings` right after
+ * it), with the rest of the path after the target, the view's own (which pane is focused); or a path that is none of
+ * these.
+ */
+export type Route =
+	| { readonly kind: "landing" }
+	| { readonly kind: "me" }
+	| {
+			readonly kind: "target";
+			readonly target: Target;
+			readonly view: string | undefined;
+			readonly settings: boolean;
+			readonly rest: readonly string[];
+	  }
+	| { readonly kind: "unknown" };
 
 /** The page's route, following the browser's history. */
 export function useRoute(): Route {
-	const path = useSyncExternalStore(subscribe, () => location.pathname);
-	return routeOf(path);
+	const at = useSyncExternalStore(subscribe, () => location.pathname + location.search);
+	return useMemo(() => routeOf(at), [at]);
 }
 
-/** Goes to `path` (`/<app>/...`) without reloading the page. */
+/** The link of `target`: in `view` (`?view=`), as its Settings view, or with the view's own `rest` after it. */
+export function targetPath(
+	target: Target,
+	options: {
+		readonly view?: string | undefined;
+		readonly settings?: boolean;
+		readonly rest?: readonly string[];
+	} = {},
+): string {
+	const segments = ["w", target.workspace, ...targetSegments(target)];
+	if (options.settings === true) segments.push("settings");
+	segments.push(...(options.rest ?? []));
+	const path = `/${segments.map(encodeURIComponent).join("/")}`;
+	return options.view === undefined ? path : `${path}?view=${encodeURIComponent(options.view)}`;
+}
+
+/** Goes to `path` without reloading the page. */
 export function navigate(path: string): void {
 	history.pushState(null, "", path);
 	dispatchEvent(new Event(NAVIGATED));
@@ -142,12 +181,26 @@ export function navigate(path: string): void {
 
 /**
  * Goes to `path` in place of where the page is (a redirect: going back skips the path it left). For a path the page
- * leaves at once, such as `/` going to the first app: with `navigate` there, going back would land on `/`, which goes
- * forward again, and the person could never go back past it.
+ * leaves at once, such as `/` going to the person's first workspace: with `navigate` there, going back would land on
+ * `/`, which goes forward again, and the person could never go back past it.
  */
 export function redirect(path: string): void {
 	history.replaceState(null, "", path);
 	dispatchEvent(new Event(NAVIGATED));
+}
+
+/** The segments after `/w/<workspace>` that name `target` inside its workspace. */
+function targetSegments(target: Target): string[] {
+	switch (target.kind) {
+		case "workspace":
+			return [];
+		case "thing":
+			return ["t", target.thing];
+		case "person":
+			return ["p", target.person];
+		case "group":
+			return ["g", target.group];
+	}
 }
 
 /** The event `navigate` dispatches; `popstate` covers back and forward. */
@@ -163,11 +216,36 @@ function subscribe(changed: () => void): () => void {
 	};
 }
 
-/** `path` as a route. */
-function routeOf(path: string): Route {
-	const [app, ...rest] = path
+/** `at` (a path and its query) as a route. */
+function routeOf(at: string): Route {
+	const url = new URL(at, "http://page");
+	const segments = url.pathname
 		.split("/")
 		.filter((segment) => segment !== "")
 		.map(decodeURIComponent);
-	return { app, rest };
+	if (segments.length === 0) return { kind: "landing" };
+	if (segments.length === 1 && segments[0] === "me") return { kind: "me" };
+	const [w, workspace, ...after] = segments;
+	if (w !== "w" || workspace === undefined) return { kind: "unknown" };
+	const [inner, id, ...rest] = after;
+	const target = innerTarget(workspace, inner, id);
+	const tail = target.kind === "workspace" ? after : rest;
+	const settings = tail[0] === "settings";
+	const view = url.searchParams.get("view") ?? undefined;
+	return { kind: "target", target, view, settings, rest: settings ? tail.slice(1) : tail };
+}
+
+/** The target `/w/<workspace>/<inner>/<id>` names: a thing, a person or a group in it, else the workspace itself. */
+function innerTarget(workspace: string, inner: string | undefined, id: string | undefined): Target {
+	if (id === undefined) return { kind: "workspace", workspace };
+	switch (inner) {
+		case "t":
+			return { kind: "thing", workspace, thing: id };
+		case "p":
+			return { kind: "person", workspace, person: id };
+		case "g":
+			return { kind: "group", workspace, group: id };
+		default:
+			return { kind: "workspace", workspace };
+	}
 }

@@ -1,5 +1,4 @@
-// The plans of the stores' named queries (sessions, people, notes, canvas, checklist, prompt), as SQLite runs
-// them: each read must search the index its comment names, with no sort (a temporary B-tree would read and sort every
+// The plans of the stores' named queries (sessions, people, notes, canvas, checklist, prompt), as SQLite runs them: each read must search the index its comment names, with no sort (a temporary B-tree would read and sort every
 // row of a tie, or of the list, for one page), except the joins ordered by a partner's column, which say in their
 // comment that SQLite sorts their few rows: for those the plan asserted is the one they get. The test opens the
 // server's store on a SQLite database of its own, records the statements Chord runs while each query reads its first
@@ -11,14 +10,12 @@ import { describe, it } from "node:test";
 import { createHost, openStore, sqliteBackend } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
-import { defineFacet, type P3Principal, Server, thingOf } from "@earendil-works/p3/v1";
-import { PeopleStore, type ServerRuntime, SessionsStore } from "@earendil-works/p3/v1/server";
-import appsServer from "../plugins/apps/server.ts";
+import { defineFacet, type P3Principal, Server } from "@earendil-works/p3/v1";
+import { OneThing, PeopleStore, type ServerRuntime, SessionsStore } from "@earendil-works/p3/v1/server";
 import canvasServer from "../plugins/canvas/server.ts";
 import { CanvasStore } from "../plugins/canvas/store.ts";
 import checklistServer from "../plugins/checklist/server.ts";
 import { ChecklistStore } from "../plugins/checklist/store.ts";
-import codingServer from "../plugins/coding/server.ts";
 import { MACHINE_KIND } from "../plugins/environments/contract.ts";
 import environmentsServer from "../plugins/environments/server.ts";
 import { seeded } from "../plugins/environments/test/seeded.ts";
@@ -26,9 +23,8 @@ import notesServer from "../plugins/notes/server.ts";
 import { NotesStore } from "../plugins/notes/store.ts";
 import peopleServer from "../plugins/people/server.ts";
 import { PromptStore, serveStore as servePrompt } from "../plugins/prompt/store.ts";
+import { DefaultsSettings } from "../plugins/sessions/defaults.ts";
 import sessionsServer from "../plugins/sessions/server.ts";
-import { Notes, STUBS } from "../plugins/sessions/test/stubs.ts";
-import { OneThing } from "../plugins/things/contract.server.ts";
 import thingsServer from "../plugins/things/server.ts";
 import { serverCoreFacet } from "../src/server.ts";
 
@@ -49,7 +45,8 @@ describe("the plans of the stores' queries", () => {
 		const reads = new Set<string>();
 		database.prepare = (sql) => {
 			const statement = prepare(sql);
-			if (!sql.startsWith("SELECT ") || !sql.includes(".store:")) return statement;
+			// The stores' tables, and the session defaults' own (a local of the sessions plugin besides its store).
+			if (!sql.startsWith("SELECT ") || !/\.store:|sessions\.defaults-settings:/.test(sql)) return statement;
 			const all = statement.all.bind(statement);
 			const iterate = statement.iterate.bind(statement);
 			// Chord passes positional parameters only.
@@ -76,16 +73,13 @@ describe("the plans of the stores' queries", () => {
 			await host.load(
 				[
 					{ name: "p3.server", facet: serverCoreFacet(runtime) },
-					{ name: "@earendil-works/p3-apps", facet: appsServer },
 					{ name: "@earendil-works/p3-canvas", facet: canvasServer },
 					{ name: "@earendil-works/p3-checklist", facet: checklistServer },
-					{ name: "@earendil-works/p3-coding", facet: codingServer },
 					{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 					{ name: "@earendil-works/p3-notes", facet: notesServer },
 					{ name: "@earendil-works/p3-people", facet: peopleServer },
 					{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 					{ name: "@earendil-works/p3-things", facet: thingsServer },
-					STUBS.find(({ name }) => name === "p3-test-kind")!,
 					// The kinds' store alone: its kinds need the things plugin, whose store has a plan test of its own.
 					{ name: "@earendil-works/p3-prompt", facet: defineFacet((h) => servePrompt(h)) },
 				],
@@ -111,40 +105,19 @@ describe("the plans of the stores' queries", () => {
 			const coaches = await people.group({ app: "coding", name: "coaches" }, context);
 			await people.group({ app: "coding", name: "players" }, context);
 			await people.addToGroup({ group: coaches, person: ann }, context);
-			const members = [`person:${ann}`, `group:${coaches}`];
+			// Sessions' rows as the session kind's create hook writes them (their workspaces are the things store's,
+			// which has a plan test of its own), half of them archived; and a defaults thing's settings.
 			let one = "";
 			for (let i = 0; i < 6; i++) {
-				one = await sessions.create(
-					{
-						app: "coding",
-						title: `s${i}`,
-						location: { environment: machine, folder: "/tmp" },
-						members: [
-							{ kind: "person", id: ann, access: "read" },
-							{ kind: "group", id: coaches, access: "write" },
-						],
-						things: [thingOf(Notes), thingOf(Notes)],
-					},
+				one = `s${i}`;
+				await sessions.insert(
+					{ id: one, location: { environment: machine, folder: "/tmp" }, model: null },
 					context,
 				);
 				if (i % 2 === 0) await sessions.archive({ session: one }, context);
 			}
-			const thing = (await sessions.links.of.page({ session: one }, 1, context)).items[0]!.thing;
-			// Ann's own things: two, one of them linked to a session.
-			const owner = { kind: "person", id: ann } as const;
-			await sessions.createThing({ kind: Notes.name, name: "a", owner }, context);
-			const owned = await sessions.createThing({ kind: Notes.name, name: "b", owner, session: one }, context);
-			// A session that follows Ann (she writes in it through the coaches), and the Pi's thing of a plugin.
-			const following = await sessions.create(
-				{
-					app: "coding",
-					location: { environment: machine, folder: "/tmp" },
-					members: [{ kind: "group", id: coaches, access: "write" }],
-					follows: { kind: "person", id: ann },
-				},
-				context,
-			);
-			await sessions.ensureThing({ kind: Notes.name, owner: { kind: "pi" } }, context);
+			const settings = await host.get(DefaultsSettings, {}, context);
+			await settings.set({ thing: "d1", defaults: { model: null, shared: false, opensWith: null } }, context);
 			const canvas = await host.get(CanvasStore, {}, context);
 			for (const board of ["b1", "b2"]) {
 				const rect = { kind: "rect", color: "#000000", x: 0, y: 0, w: 10, h: 10, fill: false } as const;
@@ -186,50 +159,9 @@ describe("the plans of the stores' queries", () => {
 			const C = "canvas.store:canvas";
 			const K = "checklist.store:checklist";
 			const cases: readonly (readonly [string, readonly Read[], Expected])[] = [
-				["sessions.active", pages(sessions.sessions.active, { app: "coding" }), { index: `${S}.rows:active` }],
-				[
-					"sessions.archived",
-					pages(sessions.sessions.archived, { app: "coding" }),
-					{ index: `${S}.rows:archived` },
-				],
 				["sessions.one", pages(sessions.sessions.one, { id: one }), {}],
-				["members.of", pages(sessions.members.of, { session: one }), { index: `${S}.members:by_position` }],
-				[
-					"memberships.active",
-					pages(sessions.memberships.active, { app: "coding", members }),
-					{ index: `${S}.members:by_member`, sorts: true },
-				],
-				[
-					"memberships.archived",
-					pages(sessions.memberships.archived, { app: "coding", members }),
-					{ index: `${S}.members:by_member`, sorts: true },
-				],
-				["links.of", pages(sessions.links.of, { session: one }), { index: `${S}.links:by_position` }],
-				["links.one", pages(sessions.links.one, { session: one, thing }), {}],
-				["links.ofThing", pages(sessions.links.ofThing, { thing: owned }), { index: `${S}.links:by_thing` }],
-				["things.one", pages(sessions.things.one, { id: thing }), {}],
-				[
-					"things.owned",
-					pages(sessions.things.owned, { owners: [`person:${ann}`, `group:${coaches}`], prefix: "" }),
-					{ index: `${S}.things:by_owner` },
-				],
-				[
-					"things.everywhere",
-					pages(sessions.things.everywhere, { owners: [`person:${ann}`, "pi"] }),
-					{ index: `${S}.things:by_everywhere` },
-				],
-				[
-					"things.ofKind",
-					pages(sessions.things.ofKind, { owner: "pi", kind: Notes.name }),
-					{ index: `${S}.things:of_kind` },
-				],
-				["options.of", pages(sessions.options.of, { session: one, thing }), {}],
-				["options.ofSession", pages(sessions.options.ofSession, { session: one, for: "everyone" }), {}],
-				["options.inSession", pages(sessions.options.inSession, { session: one }), {}],
-				["working", [() => sessions.working({}, context)], { index: `${S}.rows:working` }],
-				["persons.all", pages(people.persons.all, {}), { index: `${P}.persons:by_name` }],
-				["persons.one", pages(people.persons.one, { id: ann }), {}],
-				["persons.ofIds", pages(people.persons.ofIds, { ids: [ann, "none"] }), {}],
+				["settings.of", pages(settings.settings.of, { thing: "d1" }), {}],
+				["working", [() => sessions.working({}, context)], { index: `${S}.sessions:working` }],
 				["persons.owner", pages(people.persons.owner, {}), { index: `${P}.persons:by_owner` }],
 				["groups.ofApp", pages(people.groups.ofApp, { app: "coding" }), { index: `${P}.groups:of_app` }],
 				["groups.one", pages(people.groups.one, { id: coaches }), {}],
@@ -268,51 +200,6 @@ describe("the plans of the stores' queries", () => {
 					expected.sorts === true,
 					`${name}: ${plans.join(" | ")}`,
 				);
-			}
-			// Making a plugin's thing once: the first of its kind and owner by `of_kind`.
-			const ensured = await plansOf(() =>
-				sessions.ensureThing({ kind: Notes.name, owner: { kind: "pi" } }, context),
-			);
-			assert.ok(
-				ensured.some((step) => step.includes(`${S}.things:of_kind`)),
-				ensured.join(" | "),
-			);
-			// Stopping to follow, keeping what it had: the followed person's things "in all my sessions" by
-			// `by_everywhere`; no read walks a table or sorts.
-			const followed = await plansOf(() => sessions.follow({ session: following, follows: null }, context));
-			assert.ok(
-				followed.some((step) => step.includes(`${S}.things:by_everywhere`)),
-				followed.join(" | "),
-			);
-			// The owners come as a list (`inArray`): SQLite reads it from a JSON table, nothing of ours.
-			for (const step of followed.filter((each) => !/^(LIST SUBQUERY|SCAN json_each)/.test(each))) {
-				assert.ok(
-					/^SEARCH [tp] USING /.test(step) && !step.includes("TEMP B-TREE"),
-					`follow: ${followed.join(" | ")}`,
-				);
-			}
-			// A person leaving the Pi: their memberships by `by_member`, the things they own by `by_owner`, those things'
-			// links and options by `by_thing`, each link's rows by its key; no read walks a table or sorts.
-			const removal = await plansOf(() => sessions.removePerson({ person: ann }, context));
-			const shown = removal.join(" | ");
-			assert.ok(
-				removal.some((step) => step.includes(`${S}.members:by_member`)),
-				shown,
-			);
-			assert.ok(
-				removal.some((step) => step.includes(`${S}.things:by_owner`)),
-				shown,
-			);
-			assert.ok(
-				removal.some((step) => step.includes(`${S}.links:by_thing`)),
-				shown,
-			);
-			assert.ok(
-				removal.some((step) => step.includes(`${S}.options:by_thing`)),
-				shown,
-			);
-			for (const step of removal) {
-				assert.ok(/^SEARCH t USING /.test(step) && !step.includes("TEMP B-TREE"), `removePerson: ${shown}`);
 			}
 		} finally {
 			await host.close(context);

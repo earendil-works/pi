@@ -25,7 +25,7 @@ function session(machine = "m1"): HarnessSession {
 function held(thing: string, name: string, ...granted: string[]): HeldThing<typeof Machine> {
 	// A stand-in for the holding's reference: the part reads only `granted` and `info`.
 	const ref = { granted: new Set(granted), info: { value: { name, status: "ready" } } };
-	return { thing, workspace: "w", ref: ref as unknown as HeldThing<typeof Machine>["ref"] };
+	return { thing, workspace: "w", depth: 0, ref: ref as unknown as HeldThing<typeof Machine>["ref"] };
 }
 
 /** The part's contribution for `things`, as the harness gets it. */

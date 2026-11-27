@@ -119,7 +119,12 @@ describe("reading stored ticks", () => {
 		const thing = await store.create({ kind: Board.name, name: "b", workspace: pi, by: BY }, context);
 		await write(thing, ada.party, ["draw", "read"], true);
 		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
-		assert.deepEqual(gives.answers.value[thing], { kind: Board.name, ticksVersion: 1, ticks: ["draw", "read"] });
+		assert.deepEqual(gives.answers.value[thing], {
+			kind: Board.name,
+			ticksVersion: 1,
+			ticks: ["draw", "read"],
+			depth: 0,
+		});
 		const before = w.rows("grants");
 		// Contract version 2, ticks version 1: read as written; `draw` is no tick of it and is ignored.
 		await w.reload(BOARD_PLUGIN, context, facetOf(next(1)));
@@ -127,7 +132,12 @@ describe("reading stored ticks", () => {
 		// Ticks version 2: `draw` reads as `paint`, and nothing on disk changed.
 		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
 		await until(gives.answers, (answers) => answers[thing]?.ticksVersion === 2, within("the migration", context));
-		assert.deepEqual(gives.answers.value[thing], { kind: Board.name, ticksVersion: 2, ticks: ["paint", "read"] });
+		assert.deepEqual(gives.answers.value[thing], {
+			kind: Board.name,
+			ticksVersion: 2,
+			ticks: ["paint", "read"],
+			depth: 0,
+		});
 		assert.deepEqual(w.rows("grants"), before);
 		gives.release();
 	});
@@ -492,7 +502,28 @@ describe("a kind's new ticks version while it loads", () => {
 			(answers) => answers[a]?.ticks[0] === "blue" && answers[b]?.ticks[0] === "blue",
 			within("both blue", context),
 		);
-		assert.deepEqual(first[a], first[b]);
+		// One in the root, one in the leaf: alike but for how far above each is linked.
+		assert.deepEqual({ ...first[a], depth: 0 }, { ...first[b], depth: 0 });
+		gives.release();
+	});
+});
+
+describe("round 1: Astra's migration case", () => {
+	it("setTick resets all sources of a cell using its current migrated tick name", async () => {
+		const ada = await personIn("Ada");
+		const thing = await store.create({ kind: Board.name, workspace: pi, by: BY, name: "board" }, context);
+		await write(thing, ada.party, ["draw"], true);
+		const gives = await w.host.get(Gives, { workspace: pi, caller: `person:${ada.id}` }, context);
+		await w.reload(BOARD_PLUGIN, context, facetOf(next(2, rename)));
+		await until(gives.answers, (v) => v[thing]?.ticks.includes("paint") === true, within("v2", context));
+		await store.setTick(
+			{ workspace: pi, thing, party: ada.party, tick: "paint", source: { kind: "plugin", plugin: "editor" } },
+			context,
+		);
+		assert.equal(
+			(await store.answerOf({ workspace: pi, thing, caller: `person:${ada.id}` }, context))?.ticks.includes("paint"),
+			false,
+		);
 		gives.release();
 	});
 });
