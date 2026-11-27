@@ -1,8 +1,9 @@
-// A group's object (`Group`, decision 68): held by its managers, its members and the owners; its info, members and
-// managers live from the store; its calls granted by the group's own tick (`things.group-managers`: a person named,
-// or a person in a group named) and by the owner flag, on a group people manage only. Adding a member asks the picker:
-// only a person present where the caller is present can be added (scenario 18: Leo cannot add himself to a group
-// with Manage access elsewhere unless he has the group's own tick).
+// A group's object (`Group`, decision 68): held by its managers, its members, the owners, and anyone it is present for
+// (present where they are present, followed live: `GroupPresence`, 1141 §7); its info, members and managers live from
+// the store; its calls granted by the group's own tick (`things.group-managers`: a person named, or a person in a group
+// named) and by the owner flag, on a group people manage only. Adding a member asks the picker, in the write's own
+// operation: only a person present where the caller is present can be added (scenario 18: Leo cannot add himself to a
+// group with Manage access elsewhere unless he has the group's own tick).
 
 import {
 	type Admission,
@@ -12,7 +13,6 @@ import {
 	deny,
 	type FacetHost,
 	type GrantableName,
-	invalid,
 	type P3Principal,
 	type Reference,
 	type Watchable,

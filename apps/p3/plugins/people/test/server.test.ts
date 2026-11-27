@@ -1,6 +1,7 @@
 // The people plugin on the server: the persons and groups (`PeopleStore`), `Me`, the owner's `People` and
 // `PeopleList`, in the plugin tier; the invite link end to end (`testServer`, with the tests' probe saying what a
-// cookie signs in as): it signs a browser in as the person, once, and removing the person ends their sign-ins.
+// cookie signs in as): it signs a browser in as the person, once, and removing the person ends their sign-ins; a things
+// invite link (`Workspace.inviteLink`) is redeemed through the same route, as a member and as a guest.
 
 import assert from "node:assert/strict";
 import { userInfo } from "node:os";
@@ -20,11 +21,13 @@ import {
 } from "@earendil-works/p3/v1";
 import { PeopleStore } from "@earendil-works/p3/v1/server";
 import { type TestedPlugin, type TestServer, testPlugin, testServer } from "@earendil-works/p3/v1/testing";
-import { within } from "../../../test/until.ts";
+import { eventually, within } from "../../../test/until.ts";
 import appsServer from "../../apps/server.ts";
 import environmentsServer from "../../environments/server.ts";
 import sessionsServer from "../../sessions/server.ts";
 import signInServer from "../../sign-in/server.ts";
+import { ThingsStore } from "../../things/contract.server.ts";
+import { Workspace } from "../../things/workspace.ts";
 
 /** The tests' probe plugin, whose route says what a request signed in as. */
 const PROBE = fileURLToPath(new URL("../../../test/plugins/probe/", import.meta.url));
@@ -239,6 +242,38 @@ describe("an invite link", () => {
 		await people.remove({ person }, context);
 		assert.equal(await principalOf(cookie), undefined);
 		await until(me.state, (state) => state.kind !== "live", within("her link closed", context));
+	});
+
+	it("redeems a things invite link (Workspace.inviteLink) as a member and as a guest, once (ERNDL-1144 push A)", async () => {
+		const owner = await t.client(context);
+		const things = <T>(fn: (store: Reference<typeof ThingsStore>, ctx: Ctx<P3Principal>) => Promise<T>) =>
+			t.host.root(async (ctx) => fn(await ctx.get(ThingsStore, {}), ctx), context);
+		const pi = await things(
+			async (store, ctx) => (await store.workspaces.children.page({ parent: "" }, 1, ctx)).items[0]!.workspace,
+		);
+		// The owner is the things store's owner once the bridge adopted them (when it went live): every tick in Pi.
+		const workspace = await eventually(() => owner.get(Workspace, { workspace: pi }, context));
+		for (const as of ["member", "guest"] as const) {
+			const { url } = await workspace.inviteLink!({ name: `Ann the ${as}`, as }, context);
+			const signed = await post(url);
+			assert.equal(signed.status, 200);
+			assert.equal((await post(url)).status, 403, "used up");
+			const principal = await principalOf(signed.headers.get("set-cookie")!.split(";")[0]!);
+			assert.equal(principal?.kind === "person" && principal.name, `Ann the ${as}`);
+			const id = principal?.kind === "person" ? principal.id : "";
+			const entries = await things(
+				async (store, ctx) =>
+					(await store.workspaceMembers.where.page({ partyKey: `person/${id}` }, 10, ctx)).items,
+			);
+			const groups = await things(
+				async (store, ctx) => (await store.groupMembers.ofPerson.page({ person: id }, 10, ctx)).items,
+			);
+			// A member has an entry of their own in Pi; a guest only a membership in Pi's outside Guests group.
+			assert.deepEqual(
+				[entries.map(({ workspace: at }) => at), groups.map(({ outside }) => outside)],
+				as === "member" ? [[pi], []] : [[], [true]],
+			);
+		}
 	});
 
 	it("refuses a token that is not the person's current one", async () => {

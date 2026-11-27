@@ -10,9 +10,13 @@
 // a provider's refresh (scenario 13); and a person's removal.
 
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import type { SqliteDatabase, SqliteExecutor } from "@earendil-works/chord/sqlite";
+import { NodeSqliteDatabase, openNodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
 import {
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
@@ -28,7 +32,7 @@ import {
 } from "@earendil-works/p3/v1";
 import { eventually, within } from "../../../test/until.ts";
 import { SignIns } from "../../sign-in/contract.ts";
-import { Gives, OwnerSeeds, ThingsStore } from "../contract.server.ts";
+import { Gives, GroupPresence, OwnerSeeds, ThingsStore } from "../contract.server.ts";
 import { Group, type Party, type Source } from "../contract.ts";
 import { Workspace } from "../workspace.ts";
 import { BOARD_PLUGIN, Board } from "./kinds.ts";
@@ -133,11 +137,36 @@ describe("persons and the owner", () => {
 				owners.map(({ person: id }) => id),
 			);
 		} finally {
-			// A store closed right after its start leaves no transaction to drain (once held 30 s).
-			const closing = performance.now();
 			await host.close(context);
-			assert.ok(performance.now() - closing < 5000, "the close took too long");
 			await reopened.close(context);
+		}
+	});
+
+	it("a store closed while its start reads the sign-outs still to end closes at once (Opus M1)", async () => {
+		// The start's read held until 2 s after the close began: read in a transaction, the close would wait for its
+		// drain (30 s, ERNDL-1190); read outside one, it ends with the read.
+		const dir = await mkdtemp(join(tmpdir(), "p3-things-"));
+		const gate = gated(await openNodeSqliteDatabase(join(dir, "store.sqlite")), "sign-outs");
+		const opened = await openStore(sqliteBackend(gate.db), context);
+		const errors: string[] = [];
+		const host = createHost<P3Principal>({
+			address: Server(),
+			principal: { kind: "server" },
+			store: opened,
+			onError: (error) => errors.push(error.kind),
+		});
+		try {
+			void host.load([THINGS], context);
+			await gate.reached;
+			const closing = performance.now();
+			const closed = host.close(context);
+			setTimeout(gate.release, 2000);
+			await closed;
+			assert.ok(performance.now() - closing < 5000, "the close took too long");
+		} finally {
+			gate.release();
+			await opened.close(context);
+			await rm(dir, { recursive: true, force: true });
 		}
 	});
 
@@ -506,10 +535,14 @@ describe("the cleanup when a source goes (test 8)", () => {
 		}
 		// One of them was also put into Family by hand: she stays.
 		await store.putParty({ workspace: f.family, party: person(made[0]!), source: ADMIN }, context);
+		// A live hold in the session: the index has it loaded, and reads again what the commit touched there.
+		const gives = await w.host.get(Gives, { workspace: f.session, caller: `person:${f.anna}` }, context);
 		const reads = w.count("things.access.reads");
 		await store.deleteEverythingFrom({ source: share }, context);
-		// The index reads again only what the commit touched, however many guests went (the time: bench/things.ts).
+		// The index reads again only what the commit touched and it has loaded, however many guests went (the commit's
+		// own reads: plans.test.ts; the time: bench/things.ts).
 		const read = w.count("things.access.reads") - reads;
+		gives.release();
 		const persons = new Set(storedRows(w.path, "persons").map(({ person: id }) => id));
 		assert.ok(persons.has(made[0]!));
 		assert.equal(made.filter((id) => persons.has(id)).length, 1);
@@ -580,6 +613,9 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 			await at.reload("@earendil-works/p3-people", context, seedPlugin({ person: "seed", name: "Mario Z" }).facet);
 			await at.reload("@earendil-works/p3-things", context);
 			assert.deepEqual(await ownersOf(at), [other, placeholder!].sort());
+			// Asked again, as the bridge asks at every start: adopted once, the handover stands.
+			await (await at.host.get(ThingsStore, {}, context)).adoptOwner({ person: "seed", name: "Mario Z" }, context);
+			assert.deepEqual(await ownersOf(at), [other, placeholder!].sort());
 			assert.deepEqual(at.errors, []);
 		} finally {
 			await at.close(context);
@@ -587,16 +623,17 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 	});
 
 	it("an unused placeholder goes at the adoption; only the people plugin's contribution counts", async () => {
+		// The other plugin loads first: its contribution comes first too, and is ignored.
 		const at = await world(context, [
-			seedPlugin(null),
 			{
-				name: "z-other",
+				name: "a-other",
 				facet: defineFacet((host) =>
 					contribute(host, "test.other-seed", (self) =>
 						self.contribute(OwnerSeeds, { person: "impostor", name: "Eve" }),
 					),
 				),
 			},
+			seedPlugin(null),
 		]);
 		try {
 			const [placeholder] = await ownersOf(at);
@@ -745,6 +782,12 @@ describe("round 1's reproductions (Opus, Astra, Fable)", () => {
 			{ workspace: f.family, name: "x", as: "member", group: f.parents, by: { kind: "person", person: f.anna } },
 			context,
 		);
+		// An owner without the group's tick names it too.
+		await store.setOwner({ person: f.kim, owner: true }, context);
+		await store.createInvite(
+			{ workspace: f.family, name: "x", as: "member", group: f.parents, by: { kind: "person", person: f.kim } },
+			context,
+		);
 	});
 
 	it("a removed group leaves no manager rows of its own elsewhere, and no link naming it (Astra)", async () => {
@@ -811,3 +854,207 @@ describe("Manage people on a workspace (slice 2's Workspace, slice 3's calls)", 
 		});
 	});
 });
+
+describe("round 2's reproductions (Opus, Astra)", () => {
+	const notOffered = (error: Error & { details?: { message?: { key: string } } }) =>
+		error.details?.message?.key === "notOffered";
+
+	it("a held group presence follows: gained from above, lost to a hide, gained and lost in Family (Astra 1, Opus 2)", async () => {
+		const annex = await store.createPerson({ name: "Annex", madeBy: ADMIN }, context);
+		const held = await w.host.get(GroupPresence, { group: f.parents, person: annex }, context);
+		try {
+			assert.equal(held.present.value, false);
+			// Put into the session only: parents, put into Family, is present there from above.
+			await store.putParty({ workspace: f.session, party: person(annex), source: ADMIN }, context);
+			await until(held.present, (present) => present, within("present from above", context));
+			await store.setSwitch(
+				{ workspace: f.session, item: { kind: "party", party: group(f.parents) }, shown: false },
+				context,
+			);
+			await until(held.present, (present) => !present, within("hidden in the session", context));
+			// Astra's case: placed in Family, where parents is put in.
+			await store.putParty({ workspace: f.family, party: person(annex), source: ADMIN }, context);
+			await until(held.present, (present) => present, within("present in Family", context));
+			await store.removeParty({ workspace: f.family, party: group(f.parents) }, context);
+			await until(held.present, (present) => !present, within("parents out of Family", context));
+		} finally {
+			held.release();
+		}
+	});
+
+	it("Kim's open hold of a group present for her ends when it leaves Family; a new one is denied (Opus 2)", async () => {
+		await as(f.kim, async (ctx) => {
+			const held = await ctx.get(Group, { group: f.parents });
+			await store.removeParty({ workspace: f.family, party: group(f.parents) }, context);
+			await until(held.state, (state) => state.kind !== "live", within("her hold ended", ctx));
+			await assert.rejects(ctx.get(Group, { group: f.parents }, { readyTimeout: 1000 }));
+		});
+	});
+
+	it("an agent names only whom the picker offers it; a named agent is offered by its session's name (Opus 4)", async () => {
+		const agent = { kind: "agent", session: f.session } as const;
+		await store.putParty({ workspace: f.family, party: agent, source: ADMIN }, context);
+		const stranger = await store.createPerson({ name: "Stranger", madeBy: ADMIN }, context);
+		const names = (await store.picker({ workspace: f.session, caller: agent, query: "" }, context)).map(
+			({ name }) => name,
+		);
+		assert.deepEqual(names, ["Anna", "kids", "Kim", "parents", "Session"]);
+		const source: Source = { kind: "agent", session: f.session };
+		await assert.rejects(
+			store.putParty({ workspace: f.session, party: person(stranger), source, caller: agent }, context),
+			notOffered,
+		);
+		await assert.rejects(
+			store.addToGroup({ group: f.kids, person: stranger, source, caller: agent }, context),
+			notOffered,
+		);
+		await store.putParty({ workspace: f.session, party: person(f.kim), source, caller: agent }, context);
+		// Anna is offered the agent in Family, named as its session.
+		const anna = { kind: "person", person: f.anna } as const;
+		assert.ok(
+			(await store.picker({ workspace: f.family, caller: anna, query: "sess" }, context)).some(
+				({ party, name }) => party.kind === "agent" && name === "Session",
+			),
+		);
+	});
+
+	it("a thing's last unlink takes a person it made whose only other row is a grant on that thing (Astra 3)", async () => {
+		const made = await store.createPerson({ name: "Guest", madeBy: { kind: "thing", thing: f.sketch } }, context);
+		const { id } = await (await w.host.get(SignIns, {}, context)).issue(
+			{ principal: principal(made), label: "guest", kind: "browser" },
+			context,
+		);
+		await store.setGrants(
+			{
+				source: ADMIN,
+				grants: [{ workspace: f.session, thing: f.sketch, party: person(made), tick: "draw", gives: true }],
+			},
+			context,
+		);
+		await store.unlink({ workspace: f.session, thing: f.sketch }, context);
+		assert.equal(w.rows("grants").filter((row) => row.thing === f.sketch).length, 0);
+		assert.equal((await store.persons.one.page({ person: made }, 1, context)).items.length, 0);
+		await until(
+			(await w.host.get(SignIns, {}, context)).list,
+			(list) => list.length === 0,
+			within("the guest's sign-in ended", context),
+		);
+		assert.deepEqual(signIns.revoked, [id]);
+	});
+
+	it("a removed workspace takes its Guests group, its links, and the persons its things made with nothing else (Astra 4, Opus 1)", async () => {
+		const club = await store.createWorkspace(
+			{ kind: "things.workspace", name: "Club", parent: f.family, by: ADMIN },
+			context,
+		);
+		const share = await store.create({ kind: Board.name, name: "share", workspace: club, by: ADMIN }, context);
+		const link = await store.createInvite({ workspace: club, name: "Invitee", as: "guest", by: ADMIN }, context);
+		const { person: invitee } = (await store.redeemInvite({ secret: link }, context))!;
+		const guests = (await store.groupMembers.ofPerson.page({ person: invitee }, 1, context)).items[0]!.group;
+		// The share's persons: one put into Club, one into its Guests group, both by someone else.
+		const by: Source = { kind: "thing", thing: share };
+		const [inClub, inGuests] = await Promise.all(
+			["inClub", "inGuests"].map((name) => store.createPerson({ name, madeBy: by }, context)),
+		);
+		await store.putParty({ workspace: club, party: person(inClub!), source: ADMIN }, context);
+		await store.addToGroup({ group: guests, person: inGuests!, source: ADMIN }, context);
+		await store.createInvite({ workspace: club, name: "Later", as: "member", by: ADMIN }, context);
+		await store.removeWorkspace({ workspace: club }, context);
+		await eventually(
+			() => w.rows("things"),
+			(rows) => !rows.some((row) => row.thing === club),
+		);
+		assert.equal((await store.groups.one.page({ group: guests }, 1, context)).items.length, 0);
+		assert.ok(!w.rows("group-members").some((row) => row.group === guests));
+		assert.ok(!w.rows("invites").some((row) => row.workspace === club));
+		const ids = new Set(storedRows(w.path, "persons").map(({ person: id }) => String(id)));
+		// The invitee is the link maker's: they stay until their maker goes (people.md §7).
+		assert.deepEqual(
+			[invitee, inClub!, inGuests!].map((id) => ids.has(id)),
+			[true, false, false],
+		);
+	});
+
+	it("the adoption takes only the placeholder the first start made, never another owner named alike (Astra 5)", async () => {
+		const [placeholder] = (await store.persons.owners.page({}, 10, context)).items.map(({ person: id }) => id);
+		const other = await store.createPerson(
+			{ name: "Owner", madeBy: { kind: "plugin", plugin: "@earendil-works/p3-things" } },
+			context,
+		);
+		await store.setOwner({ person: other, owner: true }, context);
+		await store.adoptOwner({ person: "adopted", name: "Mario" }, context);
+		const ids = new Set(storedRows(w.path, "persons").map(({ person: id }) => String(id)));
+		assert.deepEqual(
+			[other, "adopted", placeholder!].map((id) => ids.has(id)),
+			[true, true, false],
+		);
+	});
+
+	it("a person who made a thing stays with their maker's cleanup (Astra must 4, things.madeByKey)", async () => {
+		const share: Source = { kind: "thing", thing: "share-4" };
+		const maker = await store.createPerson({ name: "Maker", madeBy: share }, context);
+		const by: Source = { kind: "person", person: maker };
+		await store.create({ kind: Board.name, name: "theirs", workspace: f.session, by }, context);
+		// Their own rows (the maker's grants) taken first: only the thing they made names them.
+		await store.deleteEverythingFrom({ source: by }, context);
+		await store.deleteEverythingFrom({ source: share }, context);
+		assert.ok(storedRows(w.path, "persons").some(({ person: id }) => id === maker));
+	});
+
+	it("expired links are swept at each new link and at the start (Opus o7)", async () => {
+		const expired = async () =>
+			(
+				await store.createInvite({ workspace: f.session, name: "x", as: "member", expires: 1, by: ADMIN }, context)
+			).split(".")[0]!;
+		const has = (invite: string) => w.rows("invites").some((row) => row.invite === invite);
+		const first = await expired();
+		await new Promise((done) => setTimeout(done, 5));
+		await store.createInvite({ workspace: f.session, name: "y", as: "member", by: ADMIN }, context);
+		assert.ok(!has(first));
+		const second = await expired();
+		await new Promise((done) => setTimeout(done, 5));
+		await w.reload("@earendil-works/p3-things", context);
+		await eventually(
+			() => has(second),
+			(there) => !there,
+		);
+	});
+});
+
+/**
+ * A database whose first read of the things store's table `table` waits until `release`d; `reached` resolves when it
+ * starts waiting.
+ */
+function gated(db: SqliteDatabase, table: string): { db: SqliteDatabase; reached: Promise<void>; release: () => void } {
+	const reached = Promise.withResolvers<void>();
+	const opened = Promise.withResolvers<void>();
+	let first = true;
+	const hold = async (sql: string) => {
+		if (!first || !sql.includes(`"things.store:things.${table}"`)) return;
+		first = false;
+		reached.resolve();
+		await opened.promise;
+	};
+	const wrap = (on: SqliteExecutor): SqliteExecutor => ({
+		exec: (sql) => on.exec(sql),
+		run: (sql, ...params) => on.run(sql, ...params),
+		runCounted: (sql, ...params) => on.runCounted(sql, ...params),
+		get: async (sql, ...params) => {
+			await hold(sql);
+			return on.get(sql, ...params);
+		},
+		all: async (sql, ...params) => {
+			await hold(sql);
+			return on.all(sql, ...params);
+		},
+	});
+	return {
+		db: {
+			...wrap(db),
+			transaction: (callback) => db.transaction((tx) => callback(wrap(tx))),
+			close: () => db.close(),
+		},
+		reached: reached.promise,
+		release: () => opened.resolve(),
+	};
+}

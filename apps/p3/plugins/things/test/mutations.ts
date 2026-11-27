@@ -12,12 +12,105 @@ import { join, resolve } from "node:path";
 
 // Left out as equivalent (no test can see it): a removed group's members not told (every entry and grant naming the
 // group goes in the same commit, so a person's stale membership in it names a party present nowhere); and
-// `ensureOwner`'s own check (the store's start reads the owners first and opens a transaction only without one).
+// `ensureOwner`'s own check (the store's start reads the owners first and opens a transaction only without one); and
+// either of the two "adopted once" checks alone (`adoptOwner`'s read outside a transaction and the one inside it: both
+// removed, the bridge test fails, checked by hand).
 
 /** One bug: in `file` (of the plugin), the text to find (exactly once) and what to put there instead. */
 type Mutation = { readonly name: string; readonly file: string; readonly find: string; readonly put: string };
 
 const MUTATIONS: readonly Mutation[] = [
+	// ---- people, round 2 ----
+	{
+		name: "a group hidden where the caller is present is present for them",
+		file: "group.ts",
+		find: "if (present && access.present.has(target) && !access.hidden.has(target)) return true;",
+		put: "if (present && access.present.has(target)) return true;",
+	},
+	{
+		name: "a checked write is not checked",
+		file: "access.ts",
+		find: "if (!(await allowed(offered))) refused();",
+		put: "",
+	},
+	{
+		name: "an agent skips the picker",
+		file: "store.ts",
+		find: 'if (caller === undefined || caller.kind === "server") return undefined;',
+		put: 'if (caller === undefined || caller.kind !== "person") return undefined;',
+	},
+	{
+		name: "the cleanup counts the rows on the thing it removes",
+		file: "cleanup.ts",
+		find: "(row.thing !== undefined && row.thing === going.thing) ||",
+		put: "",
+	},
+	{
+		name: "the cleanup counts the rows in the workspace it clears",
+		file: "cleanup.ts",
+		find: "||\n\t\t\t(row.workspace !== undefined && row.workspace === going.workspace);",
+		put: ";",
+	},
+	{
+		name: "the cleanup counts the memberships of a cleared workspace's groups",
+		file: "cleanup.ts",
+		find: "const groups = new Set([...managed, ...(also.groups ?? [])]);",
+		put: "const groups = new Set(managed);",
+	},
+	{
+		name: "a removed workspace keeps its own groups",
+		file: "store.ts",
+		find: "const also = { workspace, groups: await this.#cleanup.retireWorkspace(tx, touched, workspace) };",
+		put: "const also = { workspace };",
+	},
+	{
+		name: "a removed workspace keeps its invite links",
+		file: "cleanup.ts",
+		find: "tx.deleteWhere(this.#t.invites, (r) => eq(r.workspace, workspace));",
+		put: "",
+	},
+	{
+		name: "the placeholder's id is not marked",
+		file: "people.ts",
+		find: 'tx.put(this.#t.adopted, { bridge: "placeholder", person });',
+		put: "",
+	},
+	{
+		name: "a person who made a thing goes with the source's cleanup",
+		file: "cleanup.ts",
+		find: "const makers = [rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns), tx.rows(t.things, things)];",
+		put: "const makers = [rowsNaming(tx, t.persons, Persons, (r) => r.madeByKey, owns)];",
+	},
+	{
+		name: "expired links are not swept at a new link",
+		file: "invites.ts",
+		find: "\t\tawait this.sweep(tx, now);\n",
+		put: "",
+	},
+	{
+		name: "expired links are not swept at the start",
+		file: "store.ts",
+		find: "if (await anyExpired(t.invites, now, ctx)) await self.tx((tx) => invites.sweep(tx, now), ctx);",
+		put: "",
+	},
+	{
+		name: "any plugin's owner seed counts",
+		file: "server.ts",
+		find: 'compose: (table) => table.find(({ plugin }) => plugin === "@earendil-works/p3-people")?.value ?? null,',
+		put: "compose: (table) => table[0]?.value ?? null,",
+	},
+	{
+		name: "an owner may not name any group on a link",
+		file: "store.ts",
+		find: "if ((await tx.get(this.#t.persons, { person: by.person }))?.owner === 1) return true;",
+		put: "",
+	},
+	{
+		name: "the start reads the sign-outs in a transaction",
+		file: "store.ts",
+		find: "for await (const { person } of t.signOuts.rows(query(SignOuts), ctx)) left.push(person);",
+		put: "await self.tx(async (tx) => {\n\t\t\t\tfor await (const { person } of tx.rows(t.signOuts, query(SignOuts))) left.push(person);\n\t\t\t\treturn null;\n\t\t\t}, ctx);",
+	},
 	// ---- workspaces, round 2 ----
 	{
 		name: "a maker put in tells no held list",
@@ -442,8 +535,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a commit runs beside the index's loads, not in its queue",
 		file: "access.ts",
-		find: "\t\tconst queued = performance.now();\n\t\treturn this.#run(async () => {",
-		put: "\t\tconst queued = performance.now();\n\t\treturn (async (run: () => Promise<R>) => run())(async () => {",
+		find: "return this.#run(() => this.#committed(transaction, queued));",
+		put: "return this.#committed(transaction, queued);",
 	},
 	{
 		name: "an attach that loaded while the index closed registers anyway",
@@ -750,7 +843,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the picker offers only the workspace it is used in",
 		file: "picker.ts",
-		find: "for (const entry of await readAll(q.workspaceMembers.where, { partyKey: party }, context)) {",
+		find: "for (const entry of await readAll(q.workspaceMembers.where, { partyKey: key }, context)) {",
 		put: "for (const entry of [] as { workspace: string }[]) {",
 	},
 	{
@@ -780,8 +873,8 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "addMember skips the picker",
 		file: "group.ts",
-		find: "if (!(await store.offers({ person: principal.id, party }, ctx))) {",
-		put: "if (false) {",
+		find: "await store.addToGroup({ group, person, source: by, caller: callerOf(principal) }, ctx);",
+		put: "await store.addToGroup({ group, person, source: by }, ctx);",
 	},
 	{
 		name: "removeMember takes a provider's row too",
@@ -840,7 +933,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "a thing's last unlink leaves what it wrote and made",
 		file: "store.ts",
-		find: 'await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }));',
+		find: 'await this.#cleanup.deleteEverythingFrom(tx, touched, sourceKey({ kind: "thing", thing }), { ...also, thing });',
 		put: "",
 	},
 	{
@@ -858,7 +951,7 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the adoption takes a placeholder that got something",
 		file: "people.ts",
-		find: "if (used.has(placeholder)) continue;",
+		find: "if ((await somethingLeft([placeholder])).has(placeholder)) return null;",
 		put: "",
 	},
 	{
@@ -870,13 +963,13 @@ const MUTATIONS: readonly Mutation[] = [
 	{
 		name: "the picker offers what is present where the caller is hidden",
 		file: "access.ts",
-		find: "if (personCounts(access, key, entries) !== NOBODY) add(access);",
+		find: "if (this.#counted(access, caller) !== NOBODY) add(access);",
 		put: "add(access);",
 	},
 	{
 		name: "the owner's picker is the caller's presence only",
 		file: "picker.ts",
-		find: "if (me?.owner === true) return everyone(q, context);",
+		find: 'if (caller.kind === "person" && (await isOwner(q, caller.person, context))) return everyone(q, context);',
 		put: "",
 	},
 	{

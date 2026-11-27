@@ -4,7 +4,7 @@
 // up by its first use unless it is for several, and may put its redeemer into a group too. Its secret is kept hashed
 // in `things.invites`: the link is `<invite>.<secret>`, the secret never stored.
 
-import { and, eq, invalid, lte, query, type Tx } from "@earendil-works/p3/v1";
+import { and, type Context, eq, invalid, lte, query, type TableOf, type Tx } from "@earendil-works/p3/v1";
 import { hashToken, matchesHash, newToken } from "@earendil-works/p3/v1/server";
 import type { Touched } from "./access.ts";
 import type { Invited, InviteInput } from "./contract.server.ts";
@@ -26,8 +26,20 @@ export type Places = {
 	mayChange(tx: Tx, group: string, by: Source): Promise<boolean>;
 };
 
-/** How many expired links one sweep takes (at each new link): bounded, so a sweep never runs long. */
+/** How many expired links one sweep takes (at the start, at each new link): bounded, so a sweep never runs long. */
 const SWEEP = 100;
+
+/** The links expired by `now`, the oldest first (index `by_expiry`): what a sweep takes. */
+function expiredBy(now: number) {
+	return query(Invites)
+		.where((r) => lte(r.expires, now))
+		.orderBy((r) => r.expires, "asc");
+}
+
+/** Whether any link has expired by `now` (one row read, outside a transaction: the start's question). */
+export async function anyExpired(invites: TableOf<typeof Invites>, now: number, context: Context): Promise<boolean> {
+	return (await invites.page(expiredBy(now), 1, context)).items.length > 0;
+}
 
 /** The writes of invite links inside a store transaction; none checks a caller. */
 export class InviteWrites {
@@ -58,7 +70,7 @@ export class InviteWrites {
 			}
 		}
 		const now = Date.now();
-		await this.#sweep(tx, now);
+		await this.sweep(tx, now);
 		const invite = crypto.randomUUID();
 		const secret = newToken();
 		tx.put(this.#t.invites, {
@@ -113,13 +125,11 @@ export class InviteWrites {
 	}
 
 	/** Deletes up to `SWEEP` links expired by `now` (index `by_expiry`). */
-	async #sweep(tx: Tx, now: number): Promise<void> {
-		const expired = query(Invites)
-			.where((r) => lte(r.expires, now))
-			.orderBy((r) => r.expires, "asc");
-		for (const { invite } of (await tx.page(this.#t.invites, expired, SWEEP)).items) {
+	async sweep(tx: Tx, now: number): Promise<null> {
+		for (const { invite } of (await tx.page(this.#t.invites, expiredBy(now), SWEEP)).items) {
 			tx.delete(this.#t.invites, { invite });
 		}
+		return null;
 	}
 
 	/** The person a link is redeemed for: `person` (who exists), else a new one named `name`, made by `by`. */
