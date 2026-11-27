@@ -115,11 +115,11 @@ type Held<V> = { readonly ref: { release(): void }; value: V | undefined };
 
 /**
  * One login's entries as published, and what they were made from: its account and, per account model, the overrides
- * that name it (kept while all are the same objects).
+ * that apply to it (kept while all are the same objects).
  */
 type Made = {
 	readonly account: AccountModels;
-	readonly overrides: readonly (readonly ModelOverride[] | undefined)[];
+	readonly overrides: readonly (readonly ModelOverride[])[];
 	readonly slim: LoginModels;
 	readonly full: LoginDefinitions;
 };
@@ -127,8 +127,8 @@ type Made = {
 /**
  * The logins and model settings things that reach one session's agent, held as the server: it follows the agent's
  * answers (`sync`) and publishes the lists whenever a held value or the set changes. While a held thing has no value
- * yet, it publishes the last complete lists without the logins no longer given, marked incomplete: never a login
- * before its models, never a model before the overrides that reach it (round 1, Opus M1, Astra 2).
+ * yet, it publishes only the logins listed before, as they are now, marked incomplete: never a login before its
+ * models, never a model before the overrides that reach it (round 1, Opus M1, Astra 2), and what takes away at once.
  */
 class SessionHolding {
 	readonly #host: Host<P3Principal>;
@@ -228,7 +228,7 @@ class SessionHolding {
 	#publish(): void {
 		if (this.#ended) return;
 		const before = this.#out.value;
-		const next = this.#pending() ? this.#withoutGone(before) : this.#complete();
+		const next = this.#pending() ? this.#known(before) : this.#complete();
 		const same =
 			next.complete === before.complete &&
 			sameList(next.models, before.models) &&
@@ -244,14 +244,23 @@ class SessionHolding {
 		return false;
 	}
 
-	/** `last` without the logins no longer given (a grant taken back is not waited for), incomplete. */
-	#withoutGone(last: Published): Published {
-		const wanted = new Set(this.#logins);
-		return {
-			complete: false,
-			models: last.models.filter(({ login }) => wanted.has(login)),
-			catalog: last.catalog.filter(({ login }) => wanted.has(login)),
-		};
+	/**
+	 * While something is pending, incomplete: the logins `last` listed that are still given and have their models, each
+	 * with its account and the overrides there are now, so what only takes away (a grant, a credential, a hidden model)
+	 * applies at once; a login or settings thing not in yet adds nothing until the lists are complete (Astra, round 2).
+	 */
+	#known(last: Published): Published {
+		const listed = new Set(last.models.map(({ login }) => login));
+		const models: LoginModels[] = [];
+		const catalog: LoginDefinitions[] = [];
+		for (const login of this.#logins) {
+			const account = this.#accounts.get(login)?.value;
+			if (!listed.has(login) || account === undefined || account === null) continue;
+			const made = this.#entriesOf(login, account);
+			models.push(made.slim);
+			catalog.push(made.full);
+		}
+		return { complete: false, models, catalog };
 	}
 
 	/** Every login's entries now, complete. */
@@ -275,9 +284,16 @@ class SessionHolding {
 	#entriesOf(login: string, account: AccountModels): Made {
 		// Only `LoginAccount` makes the account's models, pi-ai's chat definitions.
 		const definitions = account.models as Model<Api>[];
-		const overrides = definitions.map(({ id }) => this.#merged.get(id));
+		// Per model, the overrides that apply to it: of its provider type or of every one (Astra, round 2: another
+		// type's override of the same model id changes nothing here).
+		const overrides = definitions.map(({ id }) => applicableTo(account.provider, this.#merged.get(id)));
 		const before = this.#made.get(login);
-		if (before !== undefined && before.account === account && sameList(before.overrides, overrides)) return before;
+		const same =
+			before !== undefined &&
+			before.account === account &&
+			before.overrides.length === overrides.length &&
+			before.overrides.every((list, i) => sameList(list, overrides[i]!));
+		if (same) return before;
 		const models = applied(account.provider, definitions, this.#merged);
 		const slim: LoginModels = {
 			login,
@@ -289,6 +305,12 @@ class SessionHolding {
 		this.#made.set(login, made);
 		return made;
 	}
+}
+
+/** The overrides of `overrides` (one model's, nearest first) that apply to provider type `provider`. */
+function applicableTo(provider: string, overrides: readonly ModelOverride[] | undefined): readonly ModelOverride[] {
+	if (overrides === undefined) return NONE;
+	return overrides.filter((override) => override.provider === undefined || override.provider === provider);
 }
 
 /** No overrides (a model settings thing gone before its first value). */

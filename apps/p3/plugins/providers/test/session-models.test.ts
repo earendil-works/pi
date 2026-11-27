@@ -9,14 +9,18 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
+	type Context,
 	type Ctx,
 	BACKGROUND_CONTEXT as context,
 	createHost,
+	defineFacet,
+	LoginProviders,
 	memoryLinkPair,
 	type P3Principal,
 	type Reference,
 	until,
 } from "@earendil-works/p3/v1";
+import { fauxProvider } from "@earendil-works/p3/v1/server";
 import { FAUX_MODEL, FAUX_PROVIDER, keyOf } from "../../../test/plugins/faux-login/contract.ts";
 import { collected, within } from "../../../test/until.ts";
 import environmentsServer from "../../environments/server.ts";
@@ -25,7 +29,7 @@ import { ThingsStore } from "../../things/contract.server.ts";
 import type { Source } from "../../things/contract.ts";
 import type { World } from "../../things/test/world.ts";
 import { Workspace } from "../../things/workspace.ts";
-import { LoginAccount } from "../contract.server.ts";
+import { LoginAccount, LoginStore } from "../contract.server.ts";
 import { type LoginDefinitions, type LoginModels, type ModelOverride, SessionModels } from "../contract.ts";
 import { makeLogin } from "../logins.ts";
 import { ModelSettings, ModelSettingsKind } from "../model-settings-kind.ts";
@@ -37,6 +41,14 @@ const BY: Source = { kind: "plugin", plugin: "test" };
 /** A faux login's credential. */
 const CREDENTIAL = { type: "api_key", key: keyOf([]) };
 
+/** A second faux provider type, with a model of the same id as the faux login's (Astra, round 2). */
+const OTHER_PROVIDER = "faux-other";
+const OTHER = defineFacet((_host, self) =>
+	self.contribute(LoginProviders, [
+		fauxProvider({ provider: OTHER_PROVIDER, api: "faux", models: [{ id: FAUX_MODEL }] }).provider,
+	]),
+);
+
 let w: World;
 let things: Reference<typeof ThingsStore>;
 let family: string;
@@ -46,6 +58,7 @@ let agent: P3Principal;
 
 beforeEach(async () => {
 	w = await providersWorld(context, new Set(), [
+		{ name: "p3-test-other-faux", facet: OTHER },
 		{ name: "@earendil-works/p3-environments", facet: environmentsServer },
 		{ name: "@earendil-works/p3-sessions", facet: sessionsServer },
 	]);
@@ -264,6 +277,73 @@ describe("a session's models while they load (round 1 of model settings)", () =>
 	});
 });
 
+/**
+ * Runs `fn` while a login newly linked in the session has its account not in yet: its `LoginAccount`'s first value
+ * waits until `fn` calls `release` (the only way to hold one value back on one host; everything else is real).
+ */
+async function withPending(fn: (release: () => void) => Promise<void>): Promise<void> {
+	const sibling = await things.createWorkspace(
+		{ kind: "things.workspace", name: "Sibling", parent: family, by: BY },
+		context,
+	);
+	const slow = await loginIn(sibling, "Slow");
+	const gate = Promise.withResolvers<void>();
+	const hold = w.host.hold.bind(w.host);
+	// The test's stand-in for a slow first read: the session's holding reads only `account` of a `LoginAccount`.
+	const delayed = ((contract: unknown, params: { thing?: string }, holding: Context) => {
+		const ref = hold(contract as typeof LoginAccount, params as { thing: string }, holding);
+		if (contract !== LoginAccount || params.thing !== slow) return ref;
+		const { account } = ref;
+		return {
+			release: () => ref.release(),
+			account: { watch: async (watching: Context) => (await gate.promise, account.watch(watching)) },
+		};
+	}) as unknown as typeof w.host.hold;
+	w.host.hold = delayed;
+	try {
+		await things.link({ workspace: session, thing: slow }, context);
+		await fn(() => gate.resolve());
+	} finally {
+		gate.resolve();
+		w.host.hold = hold;
+	}
+}
+
+describe("a session's models while another login loads (Astra, round 2)", () => {
+	for (const change of ["a hidden model", "a grant taken back", "a credential removed"] as const) {
+		it(`take ${change} of a login listed already away at once`, async () => {
+			const fast = await loginIn(family, "Fast");
+			const settings = await settingsIn(session, []);
+			await holding(agent, async (models, ctx) => {
+				await until(models.complete, (complete) => complete, within("complete", ctx));
+				await withPending(async (release) => {
+					await until(models.complete, (complete) => !complete, within("pending", ctx));
+					if (change === "a hidden model") {
+						await things.configure(
+							{ thing: settings, settings: { overrides: [{ model: FAUX_MODEL, hidden: true }] } },
+							context,
+						);
+					} else if (change === "a grant taken back") {
+						await things.setSwitch(
+							{ workspace: session, item: { kind: "thing", thing: fast }, shown: false },
+							context,
+						);
+					} else {
+						await (await w.host.get(LoginStore, {}, context)).remove({ thing: fast }, context);
+					}
+					const shown = (list: readonly { login: string; models: readonly unknown[] }[]) =>
+						list.find(({ login }) => login === fast)?.models.length ?? 0;
+					await until(models.models, (list) => shown(list) === 0, within("gone from the picker", ctx));
+					assert.equal(shown(models.catalog!.value), 0);
+					assert.equal(models.complete.value, false, "still loading the other login");
+					release();
+					await until(models.complete, (complete) => complete, within("complete again", ctx));
+				});
+			});
+		});
+	}
+});
+
 describe("a login's entries", () => {
 	it("keep their identity when another login comes, whatever overrides name other models (Astra 5)", async () => {
 		const a = await loginIn(family, "A");
@@ -276,6 +356,39 @@ describe("a login's entries", () => {
 			const both = await listed(models, (list) => list.length === 2, ctx);
 			assert.equal(
 				both.find(({ login }) => login === a),
+				slim,
+			);
+			assert.equal(
+				models.catalog!.value.find(({ login }) => login === a),
+				full,
+			);
+		});
+	});
+
+	it("keep their identity when an override of another provider type's model of the same id changes (Astra, round 2)", async () => {
+		const a = await loginIn(family);
+		const b = await w.host.root(
+			(ctx) =>
+				makeLogin(
+					{ name: "Other", workspace: family, by: BY, provider: OTHER_PROVIDER, credential: CREDENTIAL },
+					ctx,
+				),
+			context,
+		);
+		const settings = await settingsIn(session, []);
+		await holding(agent, async (models, ctx) => {
+			await until(models.complete, (complete) => complete, within("complete", ctx));
+			const slim = models.models.value.find(({ login }) => login === a);
+			const full = models.catalog!.value.find(({ login }) => login === a);
+			const overrides = [{ provider: OTHER_PROVIDER, model: FAUX_MODEL, name: "Changed" }];
+			await things.configure({ thing: settings, settings: { overrides } }, context);
+			const list = await listed(
+				models,
+				(now) => now.find(({ login }) => login === b)?.models[0]?.name === "Changed",
+				ctx,
+			);
+			assert.equal(
+				list.find(({ login }) => login === a),
 				slim,
 			);
 			assert.equal(
