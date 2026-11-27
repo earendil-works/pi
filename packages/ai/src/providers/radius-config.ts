@@ -1,5 +1,5 @@
 import type { OAuthCredential } from "../auth/types.ts";
-import type { ClassifierModel, Model, ThinkingLevelMap } from "../types.ts";
+import type { ClassifierModel, ImageModel, Model, ThinkingLevelMap } from "../types.ts";
 import { ownedSlice } from "../utils/text.ts";
 
 export const DEFAULT_RADIUS_GATEWAY = "https://radius.pi.dev";
@@ -23,10 +23,19 @@ export type RadiusGatewayClassifierModel = {
 	contextWindow: number;
 };
 
+export type RadiusGatewayImageModel = {
+	id: string;
+	name: string;
+	input: ("text" | "image")[];
+	output: ("text" | "image")[];
+	cost: ImageModel<"pi-image">["cost"];
+};
+
 export type RadiusGatewayConfig = {
 	baseUrl: string;
 	models: RadiusGatewayModel[];
 	classifiers?: RadiusGatewayClassifierModel[];
+	images?: RadiusGatewayImageModel[];
 };
 
 export type RadiusOAuthCredential = OAuthCredential & {
@@ -47,6 +56,25 @@ function isRadiusGatewayClassifierModel(value: unknown): value is RadiusGatewayC
 	);
 }
 
+function sanitizeModalities(values: readonly unknown[]): ("text" | "image")[] {
+	return values.filter((value): value is "text" | "image" => value === "text" || value === "image");
+}
+
+function isRadiusGatewayImageModel(value: unknown): value is RadiusGatewayImageModel {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const model = value as Partial<RadiusGatewayImageModel>;
+	return (
+		typeof model.id === "string" &&
+		typeof model.name === "string" &&
+		Array.isArray(model.input) &&
+		Array.isArray(model.output) &&
+		model.output.includes("image") &&
+		typeof model.cost === "object" &&
+		model.cost !== null &&
+		!Array.isArray(model.cost)
+	);
+}
+
 function isRadiusGatewayModel(value: unknown): value is RadiusGatewayModel {
 	if (!isRadiusGatewayClassifierModel(value)) return false;
 	const model = value as Partial<RadiusGatewayModel>;
@@ -55,13 +83,22 @@ function isRadiusGatewayModel(value: unknown): value is RadiusGatewayModel {
 
 function sanitizeRadiusGatewayConfig(config: unknown): RadiusGatewayConfig | undefined {
 	if (typeof config !== "object" || config === null || Array.isArray(config)) return undefined;
-	const { baseUrl, models, classifiers } = config as Partial<RadiusGatewayConfig>;
+	const { baseUrl, models, classifiers, images } = config as Partial<RadiusGatewayConfig>;
 	if (typeof baseUrl !== "string" || !Array.isArray(models)) return undefined;
 	return {
 		baseUrl,
 		models: models.filter(isRadiusGatewayModel).map((model) => ({ ...model })),
 		...(Array.isArray(classifiers)
 			? { classifiers: classifiers.filter(isRadiusGatewayClassifierModel).map((model) => ({ ...model })) }
+			: {}),
+		...(Array.isArray(images)
+			? {
+					images: images.filter(isRadiusGatewayImageModel).map((model) => ({
+						...model,
+						input: sanitizeModalities(model.input),
+						output: sanitizeModalities(model.output),
+					})),
+				}
 			: {}),
 	};
 }
@@ -87,7 +124,7 @@ export function getRadiusModelsFromConfig(providerId: string, config: RadiusGate
 export function getRadiusAllModelsFromConfig(
 	providerId: string,
 	config: RadiusGatewayConfig,
-): (Model<"pi-messages"> | ClassifierModel<"pi-decision">)[] {
+): (Model<"pi-messages"> | ClassifierModel<"pi-decision"> | ImageModel<"pi-image">)[] {
 	return [
 		...getRadiusModelsFromConfig(providerId, config),
 		...(config.classifiers ?? []).map(
@@ -95,6 +132,15 @@ export function getRadiusAllModelsFromConfig(
 				...model,
 				type: "classifier",
 				api: "pi-decision",
+				provider: providerId,
+				baseUrl: config.baseUrl,
+			}),
+		),
+		...(config.images ?? []).map(
+			(model): ImageModel<"pi-image"> => ({
+				...model,
+				type: "image",
+				api: "pi-image",
 				provider: providerId,
 				baseUrl: config.baseUrl,
 			}),
