@@ -40,5 +40,6 @@ export const messages = defineMessages("canvas", {
 		noShape: "This shape is not here any more.",
 		notYours: "Someone else drew this shape.",
 		gone: "This canvas does not exist any more.",
+		full: (max: number) => `This canvas is full: it holds ${max} shapes at most.`,
 	},
 });

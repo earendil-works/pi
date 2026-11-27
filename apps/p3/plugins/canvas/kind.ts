@@ -16,6 +16,9 @@ export const BOARD_WIDTH = 1200;
 /** The board's height in its own units. */
 export const BOARD_HEIGHT = 900;
 
+/** The most points one stroke holds: a longer one is cut into several as it is drawn. */
+export const MAX_POINTS = 2000;
+
 /** A coordinate on the board (a little outside it allowed: a stroke may leave the edge). */
 const Coordinate = num({ min: -BOARD_WIDTH, max: 2 * BOARD_WIDTH });
 
@@ -24,7 +27,8 @@ export const Color = str({ pattern: "^#[0-9a-fA-F]{6}$" });
 
 /**
  * A shape on the board, tagged by `kind`:
- * - `line`: a stroke or polyline through `points` (`[x0, y0, x1, y1, …]`, 2 to 2,000 points), `width` units wide;
+ * - `line`: a stroke or polyline through `points` (`[x0, y0, x1, y1, …]`, 2 to `MAX_POINTS` points), `width` units
+ *   wide;
  * - `rect`: a rectangle at `x`, `y` (its top left), `w` by `h`, outlined or `fill`ed;
  * - `text`: `text` with its baseline's start at `x`, `y`, `size` units high.
  */
@@ -33,7 +37,7 @@ export const Shape = union([
 		kind: lit("line"),
 		color: Color,
 		width: num({ min: 1, max: 64 }),
-		points: arr(Coordinate, { min: 4, max: 4000 }),
+		points: arr(Coordinate, { min: 4, max: 2 * MAX_POINTS }),
 	}),
 	obj({
 		kind: lit("rect"),
@@ -56,6 +60,9 @@ export const Shape = union([
 
 /** A shape on the board (see `Shape`). */
 export type Shape = Static<typeof Shape>;
+
+/** The most shapes a board holds: an add past it is refused, so a board's view loads it whole (20 pages). */
+export const MAX_SHAPES = 10_000;
 
 /** A committed shape: its id, who drew it, as their admission said, and the shape. */
 export const PlacedShape = obj({ id: str(), author: Caller, shape: Shape });

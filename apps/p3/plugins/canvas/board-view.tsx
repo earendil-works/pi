@@ -32,7 +32,8 @@ import {
 	sameCaller,
 } from "./kind.ts";
 import { messages } from "./messages.ts";
-import { type Other, useOthers } from "./motion-hooks.ts";
+import { useOthers } from "./motion-hooks.ts";
+import type { Other } from "./pointers.ts";
 import { COLORS, Toolbar } from "./toolbar.tsx";
 
 /** The view's texts in the viewer's language. */
@@ -56,7 +57,7 @@ export function BoardView(props: ThingViewProps) {
 		setFailure(undefined);
 		call(BACKGROUND_CONTEXT).catch((error: unknown) => setFailure({ error }));
 	};
-	// The whole board is shown: every page is loaded as it becomes known.
+	// The whole board is shown: every page is loaded as it becomes known (`MAX_SHAPES` bounds it: 20 pages).
 	useEffect(() => {
 		if (live === undefined || shapes?.moreAfter !== true) return;
 		live.more(BACKGROUND_CONTEXT).catch((error: unknown) => setFailure({ error }));
@@ -114,13 +115,14 @@ function Board(props: {
 	const [text, setText] = useState("");
 	const drawing = useDrawing({ ...props, tool, color, text });
 	const mine = me === undefined ? undefined : props.shapes.findLast((shape) => sameCaller(shape.author, me));
+	const clear = drawer?.clear;
 	return (
 		<>
 			{drawer === undefined ? null : (
 				<Toolbar
 					color={color}
 					empty={props.shapes.length === 0}
-					onClear={drawer.clear === undefined ? undefined : () => props.run((ctx) => drawer.clear!(ctx))}
+					onClear={clear === undefined ? undefined : () => props.run((ctx) => clear(ctx))}
 					onColor={setColor}
 					onText={setText}
 					onTool={setTool}
@@ -139,7 +141,6 @@ function Board(props: {
 					onPointerLeave={drawing.leave}
 					onPointerMove={drawing.move}
 					onPointerUp={drawing.up}
-					ref={drawing.surface}
 					role="img"
 					viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`}
 				>
@@ -183,6 +184,9 @@ function moverName(who: Mover, t: Texts): string {
 	}
 }
 
+/** How wide a rectangle's outline is drawn, in board units (a rectangle has no width of its own). */
+const OUTLINE = 4;
+
 /** One shape as SVG. */
 function ShapeSvg(props: { readonly shape: Shape; readonly [data: `data-${string}`]: string }) {
 	const { shape, ...data } = props;
@@ -210,7 +214,7 @@ function ShapeSvg(props: { readonly shape: Shape; readonly [data: `data-${string
 					fill={shape.fill ? shape.color : "none"}
 					height={shape.h}
 					stroke={shape.color}
-					strokeWidth={4}
+					strokeWidth={OUTLINE}
 					width={shape.w}
 					x={shape.x}
 					y={shape.y}

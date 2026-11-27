@@ -8,7 +8,10 @@ import styles from "./board-view.module.css";
 import type { Tool } from "./drawing.ts";
 import { messages } from "./messages.ts";
 
-/** The colours a drawer picks from, by the key of their name. */
+/**
+ * The colours a drawer picks from, by the key of their name. A shape's colour is data (stored as picked, drawn on
+ * white paper in every theme), so these are fixed values, not the app's variables.
+ */
 export const COLORS = [
 	{ name: "ink", value: "#1f2328" },
 	{ name: "red", value: "#cf222e" },

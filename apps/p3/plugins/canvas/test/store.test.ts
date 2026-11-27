@@ -1,8 +1,10 @@
 // The canvas store (`CanvasStore`) on its own: a board's shapes keep the order they were added in, also after a reload
 // of the plugin (a new store object) with the wall clock gone back; `drop` removes one board's shapes only and marks it
-// gone, so a later add is refused; and a store version 1 wrote (7093618af, authors as text keys) opened by this
+// gone, so a later add is refused; a board holds `MAX_SHAPES` at most, an add past it refused with its message, and
+// removing or clearing makes room again; and a store version 1 wrote (7093618af, authors as text keys) opened by this
 // version (decision 125): `person:<id>`, `agent:<session>` and `server` read as the things plugin's `Caller`, a key of
-// none of those forms as the Pi itself, and a shape drawn after the update stores its author as written. A two-version
+// none of those forms as the Pi itself, its shapes counted once by the first add, and a shape drawn after the update
+// stores its author as written. A two-version
 // restart is not possible in-tree: a stand-in of the older plugin writes the old rows.
 
 import assert from "node:assert/strict";
@@ -23,9 +25,9 @@ import {
 	obj,
 	str,
 } from "@earendil-works/p3/v1";
-import { kindServer } from "../../things/test/kind-server.ts";
+import { kindServer, refused } from "../../things/test/kind-server.ts";
 import { world } from "../../things/test/world.ts";
-import { CanvasKind, Shape } from "../kind.ts";
+import { CanvasKind, MAX_SHAPES, Shape } from "../kind.ts";
 import canvasServer from "../server.ts";
 import { CanvasStore } from "../store.ts";
 
@@ -77,6 +79,29 @@ describe("the canvas store", () => {
 			await store.clear({ canvas: "b" }, context);
 			await store.add({ canvas: "b", author: ANN, shapes: [BOX] }, context);
 			assert.equal((await store.shapes.of.page({ canvas: "b" }, 10, context)).items.length, 1);
+		} finally {
+			await n.close();
+		}
+	});
+
+	it("holds MAX_SHAPES at most: an add past it is refused; a removal or a clear makes room", async () => {
+		const root = fileURLToPath(new URL("../", import.meta.url));
+		const n = await kindServer({ name: PLUGIN, root, server: canvasServer }, CanvasKind, context);
+		try {
+			const store = await n.host.get(CanvasStore, {}, context);
+			const add = (count: number) =>
+				store.add({ canvas: "a", author: ANN, shapes: Array(count).fill(BOX) }, context);
+			for (let i = 0; i < MAX_SHAPES / 100 - 1; i++) await add(100);
+			await refused(add(101), "invalid", "full");
+			const [last] = await add(100);
+			await refused(add(1), "invalid", "full");
+			await store.remove({ canvas: "a", id: last! }, context);
+			await add(1);
+			await refused(add(1), "invalid", "full");
+			await store.clear({ canvas: "a" }, context);
+			assert.equal((await add(100)).length, 100);
+			// Another board's count is its own.
+			assert.equal((await store.add({ canvas: "b", author: ANN, shapes: [BOX] }, context)).length, 1);
 		} finally {
 			await n.close();
 		}
@@ -140,6 +165,12 @@ describe("a store version 1 wrote (decision 125)", () => {
 				);
 				await store.add({ canvas: "b1", author: { kind: "agent", session: "s2" }, shapes: [BOX] }, context);
 				assert.deepEqual((await read()).at(-1)?.author, { kind: "agent", session: "s2" });
+				// The old shapes were counted by that first add: four, and the one drawn now.
+				await refused(
+					store.add({ canvas: "b1", author: ANN, shapes: Array(MAX_SHAPES - 4).fill(BOX) }, context),
+					"invalid",
+					"full",
+				);
 				assert.deepEqual(now.errors, []);
 			} finally {
 				await now.close(context);

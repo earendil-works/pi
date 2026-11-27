@@ -14,7 +14,7 @@ import {
 	ThingHarnessParts,
 	thingHarnessPart,
 } from "../things/contract.worker.ts";
-import { BOARD_HEIGHT, BOARD_WIDTH, type Canvas, CanvasKind, Shape } from "./kind.ts";
+import { BOARD_HEIGHT, BOARD_WIDTH, type Canvas, CanvasKind, MAX_SHAPES, Shape } from "./kind.ts";
 
 export default defineFacet((_host, self) => {
 	self.contribute(
@@ -81,7 +81,8 @@ function drawTool(boards: readonly Board[]) {
 		description:
 			"Draws shapes on one of the session's shared canvases (`canvas`: its id from `canvas_list`, one you may draw " +
 			"on), which everyone in the session sees at once: lines (`points` is [x0, y0, x1, y1, ...]), rectangles and " +
-			`text, each with a colour \`#rrggbb\`. ${UNITS}`,
+			`text, each with a colour \`#rrggbb\`. Answers JSON: the new shapes' \`ids\`, in order. A canvas holds ` +
+			`${MAX_SHAPES} shapes at most. ${UNITS}`,
 		parameters: obj({ canvas: str(), shapes: arr(Shape, { min: 1, max: 100 }) }),
 		execute: async ({ canvas: id, shapes }, _api, context: Context) => {
 			const board = boardOf(boards, id);

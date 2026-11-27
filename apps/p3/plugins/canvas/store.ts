@@ -1,11 +1,13 @@
 // The canvas store on the server (`CanvasStore`): every board's committed shapes, keyed by the board's thing id (the
 // thing itself, its name and where it is linked are the things plugin's), their named query, and every write. A
 // board's shapes live as long as its thing: its kind's `delete` clears them and marks the board gone. Server code of
-// this plugin only: it checks no caller (`Canvas` admits them). The shapes table's version 2 stores authors as the
-// things plugin's `Caller`; version 1's text keys are migrated (decision 125).
+// this plugin only: it checks no caller (`Canvas` admits them). A board holds `MAX_SHAPES` at most, counted in its row
+// of `canvas.boards`, which also marks it gone. The shapes table's version 2 stores authors as the things plugin's
+// `Caller`; version 1's text keys are migrated (decision 125).
 
 import {
 	arr,
+	bool,
 	defineTable,
 	eq,
 	evolveTable,
@@ -21,10 +23,11 @@ import {
 	queries,
 	query,
 	str,
+	sub,
 	type Tx,
 } from "@earendil-works/p3/v1";
 import { Caller } from "../things/contract.ts";
-import { PlacedShape, Shape, sameCaller } from "./kind.ts";
+import { MAX_SHAPES, PlacedShape, Shape, sameCaller } from "./kind.ts";
 import { messages } from "./messages.ts";
 
 /** The boards' shapes, once per server: each board's shapes as a named query, oldest first, and the writes. */
@@ -36,7 +39,10 @@ export const CanvasStore = local("canvas.store", {
 			/** Board `canvas`'s shapes, the oldest first. */
 			of: obj({ canvas: str() }),
 		}),
-		/** Adds `shapes` to `canvas`, in order, drawn by `author`; answers their ids. Refused once the board is gone. */
+		/**
+		 * Adds `shapes` to `canvas`, in order, drawn by `author`; answers their ids. Refused past `MAX_SHAPES` and once the
+		 * board is gone.
+		 */
 		add: method(obj({ canvas: str(), shapes: arr(Shape), author: Caller }), arr(str())),
 		/** Removes shape `id` of `canvas`; with `author`, only a shape they drew. */
 		remove: method(obj({ canvas: str(), id: str(), author: opt(Caller) })),
@@ -82,12 +88,13 @@ function callerOfKey(key: string): Caller {
 }
 
 /**
- * The boards whose thing is gone (`drop`). Thing ids are never used again, so a mark stays: one row per deleted
- * board.
+ * Each board's count of shapes (what `MAX_SHAPES` bounds) and whether its thing is gone (`drop`). Thing ids are never
+ * used again, so a gone board's row stays. A board without a row (new, or drawn on before version 2 of the shapes
+ * table) is counted once through its index by its first add.
  */
-const Gone = defineTable("canvas.gone", {
+const Boards = defineTable("canvas.boards", {
 	version: 1,
-	columns: { canvas: str() },
+	columns: { canvas: str(), shapes: int(), gone: bool() },
 	key: ["canvas"],
 });
 
@@ -95,12 +102,24 @@ const Gone = defineTable("canvas.gone", {
 export function serveStore(host: FacetHost<P3Principal>): void {
 	host.serve(CanvasStore, (_params, self) => {
 		const shapes = self.table(Shapes);
-		const gone = self.table(Gone);
-		/** Refuses a write to `canvas` once it is gone, in the write's own transaction: `drop`'s is ordered with it. */
-		const present = async (tx: Tx, canvas: string) => {
-			if ((await tx.get(gone, { canvas })) !== undefined) {
+		const boards = self.table(Boards);
+		/**
+		 * Board `canvas`'s count of shapes, in a write's own transaction (`drop`'s is ordered with it): refused once it is
+		 * gone; counted through index `by_order` while it has no row.
+		 */
+		const counted = async (tx: Tx, canvas: string) => {
+			const board = await tx.get(boards, { canvas });
+			if (board?.gone === true) {
 				throw invalid("args", `canvas: ${canvas} is gone`, { message: messages.message("gone") });
 			}
+			if (board !== undefined) return board.shapes;
+			let count = 0;
+			for await (const _ of tx.rows(
+				shapes,
+				query(Shapes).where((shape) => eq(shape.canvas, canvas)),
+			))
+				count++;
+			return count;
 		};
 		return {
 			shapes: self.queries(
@@ -121,7 +140,13 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 			add: async ({ canvas, shapes: added, author }, ctx) => {
 				const ids = added.map(() => crypto.randomUUID());
 				await self.tx(async (tx) => {
-					await present(tx, canvas);
+					const count = await counted(tx, canvas);
+					if (count + added.length > MAX_SHAPES) {
+						throw invalid("args", `canvas: ${canvas} holds ${MAX_SHAPES} shapes at most`, {
+							message: messages.message("full", MAX_SHAPES),
+						});
+					}
+					tx.put(boards, { canvas, shapes: count + added.length, gone: false });
 					// After the board's last stored shape, whatever this process's clock or an earlier attempt gave: a
 					// reload or a clock gone back keeps the order shapes were added in. Index `by_order`, one row.
 					const newest = query(Shapes)
@@ -144,24 +169,28 @@ export function serveStore(host: FacetHost<P3Principal>): void {
 							message: messages.message("noShape"),
 						});
 					}
+					// Every row has an author (see the map above).
 					if (author !== undefined && !sameCaller(found.author!, author)) {
 						throw invalid("args", `canvas: shape ${id} was drawn by someone else`, {
 							message: messages.message("notYours"),
 						});
 					}
 					tx.delete(shapes, { canvas, id });
+					// A board without a row was never counted: its first add counts it, so nothing to change here.
+					tx.update(boards, { canvas }, (board) => ({ shapes: sub(board.shapes, 1) }));
 					return null;
 				}, ctx),
 			clear: ({ canvas }, ctx) =>
 				self.tx(async (tx) => {
 					// The key's prefix `canvas`: one statement.
 					tx.deleteWhere(shapes, (shape) => eq(shape.canvas, canvas));
+					tx.update(boards, { canvas }, { shapes: 0 });
 					return null;
 				}, ctx),
 			drop: ({ canvas }, ctx) =>
 				self.tx(async (tx) => {
 					tx.deleteWhere(shapes, (shape) => eq(shape.canvas, canvas));
-					tx.put(gone, { canvas });
+					tx.put(boards, { canvas, shapes: 0, gone: true });
 					return null;
 				}, ctx),
 		};
