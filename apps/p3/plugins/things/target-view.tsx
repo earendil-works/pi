@@ -1,16 +1,20 @@
 // `TargetView` (decision 70): a target in its view. Which view: `?view=` if it is one of the target's, then the thing's
 // own `view`, then the first by plugin name (an id no plugin has is skipped, 74; a kind's own default view is
 // carry-over of ERNDL-734); with none, the Settings view. A thing is read as it is available here (`ThingInfo`,
-// admitted by the caller's answer: its denial is the link's message); a workspace as `Workspace` says it.
+// admitted by the caller's answer: its denial is the link's message; a workspace below addressed as a thing goes to its
+// own address); a workspace as `Workspace` says it.
 
 import type { RefState } from "@earendil-works/p3/v1";
 import {
+	redirect,
 	type Target,
+	targetPath,
 	useComponent,
 	useHold,
 	useLive,
 	useRefState,
 	useRegistry,
+	useRoute,
 	useWatch,
 } from "@earendil-works/p3/v1/web";
 import { type ComponentType, useEffect } from "react";
@@ -75,11 +79,7 @@ function Held(
 	const { info, state } = props;
 	const unavailable = useUnavailable(state);
 	if (unavailable !== undefined) {
-		return (
-			<p className={styles.note} data-denied="">
-				{unavailable}
-			</p>
-		);
+		return <Unavailable settings={false} text={unavailable} thing={props.of.thing} workspace={props.of.workspace} />;
 	}
 	// Before its first value arrives a member holds its schema's empty one: a kind is never empty.
 	if (info === undefined || info.kind === "") return null;
@@ -116,4 +116,32 @@ function Chosen(
 	// a field of a field.
 	const View = entry.View as ComponentType<typeof props.of>;
 	return <View {...props.of} />;
+}
+
+/**
+ * Why a thing is not shown here, or, for a workspace below `workspace` addressed as one of its things
+ * (`/w/<parent>/t/<child>`), the workspace's own address, keeping the route's `?view=`: a workspace is placed by its
+ * parent, never linked, so no answer names it there. Its `Workspace` is held only after a denial, and is given only
+ * to whoever is present in it.
+ */
+export function Unavailable(props: {
+	readonly workspace: string;
+	readonly thing: string;
+	readonly settings: boolean;
+	readonly text: string;
+}) {
+	const { workspace, thing, settings } = props;
+	const route = useRoute();
+	const view = route.kind === "target" ? route.view : undefined;
+	const parent = useWatch(useLive(useHold(Workspace, { workspace: thing }))?.info)?.parent?.workspace;
+	const child = parent === workspace;
+	useEffect(() => {
+		if (child) redirect(targetPath({ kind: "workspace", workspace: thing }, { settings, view }));
+	}, [child, thing, settings, view]);
+	if (child) return null;
+	return (
+		<p className={styles.note} data-denied="">
+			{props.text}
+		</p>
+	);
 }

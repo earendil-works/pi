@@ -49,9 +49,9 @@ export type ThingImplementation<C extends Contract, St extends string = string, 
 	readonly workspaceGone?: ThingHook["workspaceGone"];
 	/**
 	 * The plugin's one thing of the kind, seeded in Pi once the kind is registered (any kind: `makers` says only who
-	 * else makes more); server code reads its id through `OneThing`.
+	 * else makes more), made with `input` (the kind's create input); server code reads its id through `OneThing`.
 	 */
-	readonly one?: ThingHook["one"];
+	readonly one?: { readonly name: string; readonly input?: I };
 };
 
 /** Serves kind `Kind` on `host`: registers it with its hooks and serves its object with the one admission. */
