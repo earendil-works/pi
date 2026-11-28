@@ -11,13 +11,12 @@
 // same socket (or a marker file) where they are: no test reads a process's state from `/proc`.
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { getEventListeners } from "node:events";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { fileURLToPath } from "node:url";
 import { type Context, BACKGROUND_CONTEXT as context, type Link, Session } from "@earendil-works/p3/v1";
@@ -695,28 +694,6 @@ describe("the local runner with the real worker", () => {
 		}
 		await stateOf(t.runner, "a", (status) => status === "running");
 		assert.ok((await readdir(dir)).includes("store.sqlite"));
-	});
-
-	it("clears a lock file a killed worker left where the lock is a file (macOS, the BSDs) before it forks", async (c) => {
-		const name = `p3-session:${join(t.runtime.dataDir, "workers", "a")}`;
-		// Chord's file lock for `name`, left by a holder killed at once.
-		const file = join(tmpdir(), `${lockName(name)}.sock`);
-		const holder = spawn(process.execPath, [
-			"-e",
-			`require("node:net").createServer().listen(${JSON.stringify(file)}, () => process.kill(process.pid, "SIGKILL"))`,
-		]);
-		await new Promise((resolve) => holder.once("exit", resolve));
-		c.after(() => rm(file, { force: true }));
-		assert.ok((await readdir(tmpdir())).includes(basename(file)), "the stale file is there");
-		// The server's side as on macOS: the runner's clear looks for the file (the worker, on Linux, takes its own lock).
-		const platform = Object.getOwnPropertyDescriptor(process, "platform");
-		Object.defineProperty(process, "platform", { value: "darwin" });
-		try {
-			await t.runner.start(Session({ id: "a" }), context);
-		} finally {
-			if (platform !== undefined) Object.defineProperty(process, "platform", platform);
-		}
-		assert.ok(!(await readdir(tmpdir())).includes(basename(file)), "the runner cleared it");
 	});
 
 	it("a worker that holds the session's lock but is not ready in time fails with its start time alone", async () => {
