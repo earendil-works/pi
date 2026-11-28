@@ -46,6 +46,9 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"admission ceiling",
 	"rate.?limit",
 	"too many requests",
+	// Bedrock ThrottlingException, formatted as "Throttling error: ..." (see BEDROCK_ERROR_PREFIXES). Its
+	// token variant, "Too many tokens, please wait before trying again.", matches none of the patterns above.
+	"throttling",
 	// OpenAI 429 `slow_down` (Codex) and Alibaba Qwen throttle wording (#12240, #2952).
 	"rate increased too quickly",
 	// Status codes must not be part of a longer word or number, e.g. a request id or byte count (#11057).
