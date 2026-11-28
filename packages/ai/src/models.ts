@@ -17,6 +17,7 @@ import type {
 	Credential,
 	CredentialStore,
 	LoginOptions,
+	OAuthAuth,
 	ProviderAuth,
 } from "./auth/types.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
@@ -289,7 +290,8 @@ export interface Models {
 	getAllModels(provider?: string): readonly AnyModel[];
 
 	/**
-	 * Refresh selected configured dynamic providers concurrently (all when `providers` is omitted).
+	 * Refresh selected configured dynamic providers concurrently (all when `providers` is omitted),
+	 * then the model access their OAuth credentials carry (`OAuthAuth.refreshModelAccess`).
 	 * Provider errors and cancellation are returned without rejecting; static, unknown, and
 	 * unconfigured providers are skipped.
 	 */
@@ -609,6 +611,7 @@ class ModelsImpl implements MutableModels {
 						generation,
 						signal,
 					);
+					await this.refreshModelAccess(provider, storedCredential, signal);
 				})();
 
 				try {
@@ -637,6 +640,25 @@ class ModelsImpl implements MutableModels {
 		}
 
 		return { aborted: callerSignal.aborted, errors: new Map(errors) };
+	}
+
+	/**
+	 * Update the model access a stored OAuth credential carries (#11006), after the catalog refresh so
+	 * a failure here never blocks it. Under the credential lock, an expired token is refreshed, which
+	 * updates the access too, and a valid token only fetches the access.
+	 */
+	private async refreshModelAccess(
+		provider: Provider,
+		stored: Credential | undefined,
+		signal: AbortSignal,
+	): Promise<void> {
+		const oauth = provider.auth.oauth;
+		if (stored?.type !== "oauth" || !oauth?.refreshModelAccess) return;
+		const refresh: OAuthAuth["refresh"] = (current, refreshSignal) =>
+			Date.now() >= current.expires
+				? oauth.refresh(current, refreshSignal)
+				: oauth.refreshModelAccess!(current, refreshSignal);
+		await refreshStoredOAuthCredential(this.credentials, provider.id, { ...oauth, refresh }, () => true, signal);
 	}
 
 	/** The credential for the network refresh phase, or undefined when the provider is not configured. */

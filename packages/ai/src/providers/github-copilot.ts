@@ -46,7 +46,12 @@ export function githubCopilotProvider(): Provider<GitHubCopilotApi> {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		auth: {
 			apiKey: envApiKeyAuth("GitHub Copilot token", ["COPILOT_GITHUB_TOKEN"]),
-			oauth: lazyOAuth({ name: "GitHub Copilot", isSubscription: true, load: loadGitHubCopilotOAuth }),
+			oauth: lazyOAuth({
+				name: "GitHub Copilot",
+				isSubscription: true,
+				refreshModelAccess: true,
+				load: loadGitHubCopilotOAuth,
+			}),
 		},
 		models: [...Object.values(GITHUB_COPILOT_MODELS), ...Object.values(GITHUB_COPILOT_CLASSIFIER_MODELS)],
 		filterModels: (models, credential) => {

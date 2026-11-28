@@ -354,18 +354,22 @@ async function refreshGitHubCopilotToken(
 	enterpriseDomain: string | undefined,
 	signal: AbortSignal,
 ): Promise<OAuthCredential> {
-	const credentials = await refreshGitHubCopilotAccessToken(refreshToken, enterpriseDomain, signal);
+	const credential = await refreshGitHubCopilotAccessToken(refreshToken, enterpriseDomain, signal);
+	return refreshGitHubCopilotModelAccess(credential, signal);
+}
+
+/** Fetch the account's available models with the credential's token. */
+async function refreshGitHubCopilotModelAccess(
+	credential: OAuthCredential,
+	signal: AbortSignal,
+): Promise<OAuthCredential> {
 	const { availableModelIds, classifierModelIds } = await fetchGitHubCopilotModels(
-		credentials.access,
-		enterpriseDomain,
+		credential.access,
+		copilotEnterpriseDomain(credential),
 		signal,
 		{ maxRetries: 0, maxElapsedMs: 0 },
 	);
-	return {
-		...credentials,
-		availableModelIds,
-		availableClassifierModelIds: classifierModelIds,
-	};
+	return { ...credential, availableModelIds, availableClassifierModelIds: classifierModelIds };
 }
 
 /**
@@ -499,6 +503,7 @@ export const githubCopilotOAuth: OAuthAuth = {
 	login: loginGitHubCopilot,
 	refresh: (credential, signal) =>
 		refreshGitHubCopilotToken(credential.refresh, copilotEnterpriseDomain(credential), signal),
+	refreshModelAccess: refreshGitHubCopilotModelAccess,
 
 	/** Derive the credential-specific proxy endpoint for each request. */
 	async toAuth(credential) {

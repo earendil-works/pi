@@ -241,6 +241,14 @@ export interface OAuthAuth {
 	refresh(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential>;
 
 	/**
+	 * Fetch the current model access for a credential (GitHub Copilot's available models) with its
+	 * valid token, without exchanging the token. `Models.refresh()` stores the result, so models an
+	 * account gains show without a token refresh; for an expired token it calls `refresh` instead,
+	 * which must update the access too. Network call; throws on failure.
+	 */
+	refreshModelAccess?(credential: OAuthCredential, signal: AbortSignal): Promise<OAuthCredential>;
+
+	/**
 	 * Side-effect-free derivation of request auth from a valid credential.
 	 * Covers per-credential baseUrl (GitHub Copilot). Async so lazy wrappers
 	 * can load the implementation on first use.
