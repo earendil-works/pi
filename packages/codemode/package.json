@@ -63,7 +63,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/djs": "file:../../vendor/earendil-works-djs-0.3.0-dev.1.tgz"
+		"@earendil-works/djs": "file:../../vendor/earendil-works-djs-0.3.0-dev.2.tgz"
 	},
 	"devDependencies": {
 		"vitest": "4.1.12"
