@@ -4166,11 +4166,29 @@ export class AgentSession {
 			throw new Error(`Entry ${targetId} not found`);
 		}
 
-		// Collect entries to summarize (from old leaf to common ancestor)
+		// Determine the new leaf position based on target type
+		let newLeafId: string | null;
+		let editorText: string | undefined;
+
+		if (targetEntry.type === "message" && targetEntry.message.role === "user") {
+			// User message: leaf = parent (null if root), text goes to editor
+			newLeafId = targetEntry.parentId;
+			editorText = contentText(targetEntry.message.content, "");
+		} else if (targetEntry.type === "custom_message") {
+			// Custom message: leaf = parent (null if root), text goes to editor
+			newLeafId = targetEntry.parentId;
+			editorText = contentText(targetEntry.content, "");
+		} else {
+			// Non-user message: leaf = selected node
+			newLeafId = targetId;
+		}
+
+		// Collect entries to summarize (from old leaf to the common ancestor with the new leaf). A selected
+		// user or custom message leaves the context too, so it is summarized with the rest of the branch.
 		const { entries: entriesToSummarize, commonAncestorId } = collectEntriesForBranchSummary(
 			this.sessionManager,
 			oldLeafId,
-			targetId,
+			newLeafId,
 		);
 
 		// Prepare event data - mutable so extensions can override
@@ -4259,23 +4277,6 @@ export class AgentSession {
 				summaryText = extensionSummary.summary;
 				summaryDetails = extensionSummary.details;
 				summaryUsage = extensionSummary.usage;
-			}
-
-			// Determine the new leaf position based on target type
-			let newLeafId: string | null;
-			let editorText: string | undefined;
-
-			if (targetEntry.type === "message" && targetEntry.message.role === "user") {
-				// User message: leaf = parent (null if root), text goes to editor
-				newLeafId = targetEntry.parentId;
-				editorText = contentText(targetEntry.message.content, "");
-			} else if (targetEntry.type === "custom_message") {
-				// Custom message: leaf = parent (null if root), text goes to editor
-				newLeafId = targetEntry.parentId;
-				editorText = contentText(targetEntry.content, "");
-			} else {
-				// Non-user message: leaf = selected node
-				newLeafId = targetId;
 			}
 
 			// Switch leaf (with or without summary)
