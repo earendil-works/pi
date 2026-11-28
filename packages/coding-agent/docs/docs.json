@@ -48,10 +48,6 @@
               "path": "llama-cpp.md"
             },
             {
-              "title": "Run Local Models on NVIDIA RTX",
-              "path": "nvidia-rtx-llama-cpp.md"
-            },
-            {
               "title": "Configure Your Terminal",
               "path": "terminal-setup.md"
             },
@@ -215,6 +211,10 @@
     {
       "from": "process-integration.md",
       "to": "cli-integration.md"
+    },
+    {
+      "from": "nvidia-rtx-llama-cpp.md",
+      "to": "llama-cpp.md"
     }
   ]
 }

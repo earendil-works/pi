@@ -49,7 +49,49 @@ A single-file model can sit directly in the model directory. Put multimodal and 
     └── large-model-Q4_K_M-00003-of-00003.gguf
 ```
 
-Restart the router after manually adding files. The router also supports cached models and preset files via `--models-preset`, as described in the [server guide](https://llama.app/docs/serve#serving-multiple-models-router-mode).
+Restart the router after manually adding files. The router also supports cached models and preset files via `--models-preset`; see [Use tuned settings with a preset](#use-tuned-settings-with-a-preset).
+
+## Use tuned settings with a preset
+
+A preset is an INI file with per-model settings. Each section name becomes the model ID shown in `/llama` and `/model`. Keys are `llama serve` options without the leading dashes; options without a value are written as `true`:
+
+```ini
+version = 1
+
+[qwen3.8-27b]
+hf-repo = unsloth/Qwen3.8-27B-GGUF
+hf-file = Qwen3.8-27B-UD-Q4_K_M.gguf
+ctx-size = 65536
+ngl = 999
+jinja = true
+```
+
+Start the router with it:
+
+```bash
+llama serve --models-preset qwen3.8-27b.ini --host 127.0.0.1
+```
+
+On first start, the router downloads the model files. Set `HF_TOKEN` in the router's environment if the repository is gated. See the [server guide](https://llama.app/docs/serve#serving-multiple-models-router-mode) for all preset keys, including `load-on-startup`.
+
+### NVIDIA recipes
+
+On NVIDIA hardware, we recommend starting from [NVIDIA Local AI Inference Recipes](https://nvidia.github.io/local-ai-inference-recipes/index.html). The recipes cover NVIDIA local GPUs, including RTX Spark, GeForce RTX, RTX PRO workstations, DGX Spark, and DGX Station, on Windows and Linux. Each recipe gives `llama-server` settings tuned for a specific GPU, operating system, and model, for example batch sizes, context size, and speculative decoding. Pick your hardware, operating system, and model, choose **llama.cpp**, and install llama.cpp as the recipe describes; its settings may need a specific build, such as CUDA support.
+
+A recipe is a single-model `llama-server` command. To use it with the router, turn each option into a preset line:
+
+| Recipe command | Preset line |
+|---|---|
+| `--ctx-size 65536` | `ctx-size = 65536` |
+| `--jinja` | `jinja = true` |
+| `-hf unsloth/Qwen3.8-27B-GGUF` | `hf-repo = unsloth/Qwen3.8-27B-GGUF` |
+| `-hff Qwen3.8-27B-UD-Q4_K_M.gguf` | `hf-file = Qwen3.8-27B-UD-Q4_K_M.gguf` |
+| `-hfrd z-lab/Qwen3.8-27B-DFlash2-GGUF` | `hf-repo-draft = z-lab/Qwen3.8-27B-DFlash2-GGUF` |
+| `--host`, `--port` | Leave out; pass them to `llama serve` |
+
+Drop quotes and shell line continuations (`\` or PowerShell backticks). Check that `llama serve --help` lists `--models-preset`; older builds cannot load presets.
+
+Recipe memory settings assume the recipe model is the only one on the GPU. If `/llama` shows other loaded models, unload them first.
 
 ## Configure Pi
 
@@ -125,5 +167,6 @@ curl http://127.0.0.1:9931/models
 - **Model missing from `/model` with `--no-models-autoload`:** Load it with `/llama` first.
 - **Load fails or uses too much memory:** Lower `-c` or unload another model.
 - **Server is not in router mode:** Start it without `--model`, `-m`, or `-hf`.
+- **Windows PowerShell:** Use `curl.exe`, not `curl`, which PowerShell maps to a different command.
 
 To remove the `llama.cpp` provider and `/llama`, disable `llama.cpp` under Built-in in `pi config`, or set `"extensions": ["-builtin:llama.cpp"]` in [settings](settings.md#resources).
