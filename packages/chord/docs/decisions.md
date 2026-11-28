@@ -2099,6 +2099,7 @@ validation and copies the v2 kernel added around Delta.
   is trusted (a plugin's own file). (2) The worker lock on macOS and the BSDs fails closed on a stale lock file, with an
   error naming it (no takeover; Linux and Android use abstract sockets and are unaffected). (3) A route's overhead:
   Opus's two trims, measured again after the `fetch` rework, and the numbers brought to the owner.
+  Point (2) is superseded by "Process locks are kernel locks on macOS and the BSDs" (2026-11-26).
 - **Stale lock files are cleared by the starter (owner, 2026-11-03: "do both"; refines point (2) of "Slice 10 fix
   round, three small points"):** on macOS and the BSDs a worker killed by a signal (the grace's SIGKILL, the start
   timer, a dev supervisor) runs no exit hooks and leaves its lock's socket file; every later start of that address then
@@ -2108,6 +2109,7 @@ validation and copies the v2 kernel added around Delta.
   address's queue, so never two clears of one name at once. A live holder (an older worker still exiting) accepts and
   is kept. One connect per start on macOS and the BSDs, nothing on Linux, Android and Windows. A taker also treats
   `ENOTSOCK` (a non-socket file at the path on macOS) as stale; before it retried until its context ended.
+  Superseded by "Process locks are kernel locks on macOS and the BSDs" (2026-11-26).
 - **A pause of the process is no silence (owner, 2026-11-03; refines "Slice 4a spec decisions"):** after a laptop
   slept, the host's heartbeat timer fires before any I/O is read and found every link silent past `close`: the server
   closed its worker links (and the worker its parent link) though both peers were fine, and p2's session workers
@@ -3933,6 +3935,17 @@ From `research/chord-on-durable-objects.md`, adopted for the Chord v2 kernel bec
   Fable's review): to `FollowSource` the form over a changing source is one attachment, so a plain follow pays nothing for
   it; its one new rule: a `failed` call fails the member until the next value, which replaces it whole (Durable
   never sends one: it ends its observer). `self.follow(attach)` keeps R4 otherwise.
+
+- **Process locks are kernel locks on macOS and the BSDs (Mario, 2026-11-26; replaces "Stale lock files are cleared
+  by the starter" and point (2) of "Slice 10 fix round, three small points"):** a lock was a socket file in `TMPDIR`:
+  a holder killed by a signal left it and every later take failed; clearing it by "nobody accepts" also removed live
+  holders' files (binding, paused or busy), and another `TMPDIR` was another lock. Now the holder takes an exclusive
+  flock (`O_EXLOCK`) on a directory per name, which the kernel frees with the process: on macOS in `chord-lock/` of
+  `getconf DARWIN_USER_TEMP_DIR`, on the BSDs in `/tmp/chord-lock-<uid>/`; the socket inside only wakes waiters. A
+  release removes the directory, so every take checks that the path still names the directory it locked (device and
+  inode). Nothing is cleared (`clearStaleLock` is gone); `processLockState` reads a lock without taking it. Keys stay
+  32 hex digits, and the lock on Linux, Android and Windows is unchanged; AIX and SunOS have no process locks. For
+  one release a taker also waits for a holder of the previous release on its old socket file.
 
 ## Still valid from `target-design.md`
 

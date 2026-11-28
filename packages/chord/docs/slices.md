@@ -397,6 +397,14 @@ deleted (the slice's spec and code are the record). Moved here from `carry-over.
 - **`useLive`'s snapshot** (the reference's `granted`, so two `live` states with different grants differ to React) is
   tested through the page (a grant change while mounted), not with a forced coalesced render.
 
+### Process locks
+
+- **Remove the legacy check** in the release after the one that ships kernel locks (decision "Process locks are
+  kernel locks on macOS and the BSDs"): in `src/node/workers/lock.ts` the `legacy` field of the flock address,
+  `legacySocket`, `LEGACY_NOBODY`, `legacyGone`, `releasing` and their call in `processLock`; in
+  `test/node/workers/lock.test.ts` the describe "the previous release's holders"; the fixture
+  `test/node/fixtures/workers/legacy-holder.ts`; the CHANGELOG's line on it stays.
+
 ### Later: reload (when a case needs it)
 
 - **`rebuild` of tables** (key and column-type changes): `evolveTable` has no edit for them; build one only when a

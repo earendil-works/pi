@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `clearStaleLock` is removed from `@earendil-works/chord/workers` and `/workers/child` (added in 1.7.0), as process locks no longer leave anything to clear; migration: delete the call.
+- `processLock` throws on AIX and SunOS, which have no kernel object a lock could end with (1.7.0 made a socket file there).
+
+### Added
+
+- `processLockState(name, ctx)` (`/workers`, `/workers/child`): whether a process lock is held, read without taking it.
+
+### Fixed
+
+- Process locks on macOS and the BSDs are an exclusive flock on a directory per name, freed by the kernel when its holder exits, so a holder killed by a signal no longer blocks every later take and the lock no longer depends on `TMPDIR` (Linux, Android and Windows are unchanged).
+- For one release, a take on macOS and the BSDs also waits while a process of 1.7.0 or earlier holds the lock's old socket file.
+
 ## [1.7.0] - 2026-11-27
 
 ### Breaking Changes

@@ -3011,9 +3011,9 @@ start timer covers fork, lock and connect only (Q4). `workers.state` (a JSON wat
 `stop`, `retry`, `step(name)`, `close`; `workerMain(fn, { hostPackages, redact, onError })` is the child's side
 (`fn({ address, start, parent, plugins, onClose }, ctx)`, `plugins` a `WorkerPlugins` evaluating the shipped scripts,
 closers in reverse order). One live worker per address (`processLock`: an abstract socket on Linux, a named pipe on
-Windows, a socket file elsewhere that fails closed when stale, the stale file cleared by the component before a start
-and after a child's exit by a signal, decision "Stale lock files are cleared by the starter"; a start waits for a
-draining old holder without polling).
+Windows, an exclusive flock on a directory per name on macOS and the BSDs, each freed by the kernel when its holder
+exits, decision "Process locks are kernel locks on macOS and the BSDs"; a start waits for a draining old holder
+without polling).
 
 - **The worker base** (decision "Workers start from the base code the server booted with"): `entry` and the base code it
   imports are bundled once by esbuild at `workers.build()` (the kit: right after the server listens, as it builds the
@@ -3038,7 +3038,8 @@ draining old holder without polling).
   that wants them mapped passes the flag in `execArgv`, at that cost. `execArgv` and `env` apply to every fork as before (modules an `--import` names load from disk at each fork).
   The files live in one private temporary directory (0700, written again into a new one when a cleaner removed one of
   them), removed at `close`. The worker's side alone is `@earendil-works/chord/workers/child` (`workerMain`,
-  `processLock`): a worker entry importing it loads no esbuild. Plugins are unaffected: workers evaluate the server's
+  `processLock`, `processLockState`): a worker entry importing it loads no esbuild. Plugins are unaffected: workers
+  evaluate the server's
   built scripts. Cost: a build at start (the kit's test worker 55-100 ms, p2's session worker 215-250 ms, 4.2 MB of
   code); a fork then loads the entry and its static chunks (the kit's test worker 60 ms instead of 360 ms from source,
   p2's 350 ms instead of 760 ms; on a phone, splitting and the child entry took p2's fork from 690 to 301 loaded

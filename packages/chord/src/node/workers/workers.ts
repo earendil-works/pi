@@ -24,7 +24,6 @@ import type { Plugins, RolloutHost, RolloutStep } from "../plugins/plugins.ts";
 import type { PluginScript } from "../plugins/runtime.ts";
 import { buildWorkerBase, type WorkerBase } from "./base.ts";
 import { type CrossedError, type CrossedReport, type FromWorker, uncrossed, uncrossedReport } from "./control.ts";
-import { clearStaleLock } from "./lock.ts";
 import { type Exit, WorkerProcess } from "./process.ts";
 
 /** What `createWorkers` takes. `kind`, `entry`, `execArgv` and `env` are bootstrap; the functions are called per use. */
@@ -244,8 +243,6 @@ type Child = {
 	ended: Ended | undefined;
 	/** The grace timer of a stop or of a lost link. */
 	grace: ReturnType<typeof setTimeout> | undefined;
-	/** The lock its start message named; cleared after its exit when it was killed holding it. */
-	lock: string | undefined;
 };
 
 /** One address: its operations in a queue, its child, its failure. Kept while it has any of them. */
@@ -406,7 +403,7 @@ class WorkersComponent implements Workers<HostKind> {
 		if (!this.#closing.signal.aborted) this.#closing.abort(closed());
 		clearInterval(this.#idleTimer);
 		this.#idleTimer = undefined;
-		// Each stop, then what its exit queued (the clear of a killed child's lock file).
+		// Each stop, then what its address queued behind it.
 		const stops = [...this.#addresses.values()].map((routed) =>
 			this.#enqueue(routed, () => this.#stop(routed)).then(() => routed.queue),
 		);
@@ -521,12 +518,6 @@ class WorkersComponent implements Workers<HostKind> {
 			const scripts = await this.#options.plugins.scripts(this.#options.kind, context);
 			child.shipped = keyOf(scripts);
 			const lock = this.#options.lock(address);
-			// A worker killed without its exit hooks (SIGKILL), maybe by an earlier server, left its socket file, which fails
-			// its successors closed. The component is the one clearer of its addresses' locks, in the address's queue: one
-			// clear at a time (decision "Stale lock files are cleared by the starter"). A live holder (an old worker still
-			// exiting) is kept and waited for.
-			await clearStaleLock(lock, context);
-			child.lock = lock;
 			child.process.send({ kind: "start", address, start: data, scripts, lock });
 			await awaitWithContext(child.started.promise, this.#closingContext);
 			return {
@@ -587,7 +578,6 @@ class WorkersComponent implements Workers<HostKind> {
 			reloaded: undefined,
 			ended: undefined,
 			grace: undefined,
-			lock: undefined,
 		};
 		// Nobody may wait for them.
 		child.started.promise.catch(() => {});
@@ -674,12 +664,6 @@ class WorkersComponent implements Workers<HostKind> {
 		child.started.reject(uncrossed(shown));
 		child.ready.reject(uncrossed(shown));
 		this.#ended(child);
-		const lock = child.lock;
-		// A child a signal ended (SIGKILL) ran no exit hooks: its socket file would stay until the address's next start.
-		// Cleared in the queue, like a start's clear; a failure here is the next start's to report (it clears again).
-		if (lock !== undefined && exit.signal !== null) {
-			void this.#enqueue(routed, () => clearStaleLock(lock, BACKGROUND_CONTEXT)).catch(() => {});
-		}
 		// `settled` never rejects.
 		void (this.#store?.settled() ?? Promise.resolve()).then(() => {
 			this.#left(routed, child, exit, failure);
