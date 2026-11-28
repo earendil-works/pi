@@ -7,7 +7,7 @@
  * - `pi.codemode.run`: the start (what the script can reach, written once before the VM starts) and the outcome,
  *   written once when the call decides it (with the store writes, in one transaction), so a rerun after that returns
  *   it without a VM.
- * - `pi.codemode.saved` (`call.ts`): the script's latest dump.
+ * - `pi.codemode.saved` (`call.ts`): the script's latest snapshot.
  */
 import type { Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
@@ -39,10 +39,10 @@ import {
 import { CATALOG_GLOBALS, CODEMODE_INTERNAL_PREFIX, createModelTools, MODEL_CALLS } from "./models.ts";
 
 /**
- * Version of what a stored call means: the start data, the saved dump, result mapping, globals. Bump it when that
+ * Version of what a stored call means: the start data, the saved snapshot, result mapping, globals. Bump it when that
  * changes; a call started under another version ends with an error result that asks for the script to be run again.
  */
-export const CODEMODE_MODULE_VERSION = 3;
+export const CODEMODE_MODULE_VERSION = 4;
 
 export const CODEMODE_TOOL_NAME = "codemode";
 

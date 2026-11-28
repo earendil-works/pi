@@ -9,7 +9,7 @@ describe("built-in document checkpoint policies", () => {
 		const info = { deltasSinceBase: 1000 };
 		expect(NestedCallDoc.definition.checkpointWhen({}, [], info)).toBe(false);
 		expect(CodemodeRunDoc.definition.checkpointWhen({}, [], info)).toBe(false);
-		// The saved dump is replaced whole on every save: its deltas are checkpointed early.
+		// The saved snapshot is replaced whole on every save: its deltas are checkpointed early.
 		expect(CodemodeSavedDoc.definition.checkpointWhen({}, [], { deltasSinceBase: 4 })).toBe(true);
 	});
 

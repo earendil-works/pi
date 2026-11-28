@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Saved runs are djs snapshots (`CodemodeSaved.snapshot`, base64) instead of dumps: the run's state as records, compiled again on load; djs refuses a snapshot whose waiting functions compile differently. Needs `@earendil-works/djs` 0.3 (ABI 11).
+
 ## [1.6.0] - 2026-11-20
 
 ## [1.5.2] - 2026-11-10

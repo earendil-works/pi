@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Code mode saves its scripts as djs snapshots (`pi.codemode.saved`); `CODEMODE_MODULE_VERSION` 4, so calls saved as dumps end with an error that asks to run the script again.
+
 ### Breaking Changes
 
 - Tool parks are tagged: `{ kind: "sleep", checkpoint?, until?, signals? }` and `{ kind: "wait", checkpoint?, on, policy }`, flat, in place of `{ sleep: { ... } }` and `{ wait: { ... } }`; a result has no `kind`. An object with another `kind` is an invalid park. Migration: return `{ kind: "sleep", ...sleep }` or `{ kind: "wait", ...wait }`, and tell a park from a result by `returned.kind`.

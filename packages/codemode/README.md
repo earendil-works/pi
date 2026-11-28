@@ -301,7 +301,7 @@ const scope: CodemodeScope = { tools: [{ name: "read", jsName: "read", descripti
 const run = await sandbox.begin(code, scope);
 await run.advance(signal);
 for (const call of run.calls) queue.add(call); // CodemodeHostCall: { id, identity, kind: "tool", name: "read", args }
-const saved = run.save(); // CodemodeSaved: { dump, output, writes, fuelUsed }
+const saved = run.save(); // CodemodeSaved: { snapshot, output, writes, fuelUsed }
 run.dispose();
 
 // Later, anywhere:
@@ -311,7 +311,7 @@ await resumed.advance(signal);
 if (resumed.result !== undefined) use(resumed.result);
 ```
 
-A call names what it reaches: `kind: "tool"` with the tool's `name` (from `tools`, or from what a script imports from `scope.modules`), or `kind: "global"`; `args` is the tool's argument, or a spread global's argument list. A run that ends lists the calls it made but no longer awaits in `dropped`; they never run. `save()` throws when the run holds a value a dump cannot write (a `WeakMap`, a `Proxy`); on a remote sandbox, which keeps nothing between steps, such a run ends with a sandbox error. The CPU budget counts across saves. `execute()` is built on the same runs.
+A call names what it reaches: `kind: "tool"` with the tool's `name` (from `tools`, or from what a script imports from `scope.modules`), or `kind: "global"`; `args` is the tool's argument, or a spread global's argument list. A run that ends lists the calls it made but no longer awaits in `dropped`; they never run. `save()` throws when the run holds a value a snapshot cannot write (a `WeakRef`); on a remote sandbox, which keeps nothing between steps, such a run ends with a sandbox error. The CPU budget counts across saves. `execute()` is built on the same runs.
 
 ## Results
 

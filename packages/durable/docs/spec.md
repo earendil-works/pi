@@ -5012,37 +5012,42 @@ Three documents, two of them scoped to the code mode call's task:
   version, `startedAt`, the deadline from `timeout_ms`, the tools, namespaces
   and globals the script sees, the store snapshot), and `result`, the outcome,
   written once.
-- `pi.codemode.saved`: `saved`, the script's latest dump (`CodemodeSaved`: the
-  djs dump with the script's body inlined, the output and the `store()` writes
-  so far), or `unsaved` once the script held a value a dump cannot write.
+- `pi.codemode.saved`: `saved`, the script's latest snapshot (`CodemodeSaved`:
+  the djs snapshot, base64, which carries the script's text, the output and the
+  `store()` writes so far), or `unsaved` once the script held a value a snapshot
+  cannot write.
 - `pi.codemode.store`: conversation-scoped, `history: "rewindable"`,
   `fork: "asOf"`; a successful script's `store()` writes are applied per key in
   the transaction that writes its `result`.
 
-No journal and no replay: the script's state is its latest dump. Before a call
-leaves the VM (a call the saved dump did not have yet launches) and before the
-script parks, the idle run is saved. A nested call therefore exists only if a
-saved dump made it, so a run resumed from the dump makes the same calls under
-the same keys and finds them again; a result lives in its nested call's task,
-and a resumed run takes it from there. Results applied after the last save are
-applied again; what the script did with them had no effect outside the VM yet.
-Globals are answered again when their call is open in the dump.
+No journal and no replay: the script's state is its latest snapshot. A djs
+snapshot holds the run's objects and suspended functions as records and never
+its compiled code: loading compiles the script again and refuses a snapshot
+whose waiting functions now compile to other bytecode (the call then ends with a
+sandbox error). Before a call leaves the VM (a call the saved snapshot did not
+have yet launches) and before the script parks, the idle run is saved. A nested
+call therefore exists only if a saved snapshot made it, so a run resumed from
+the snapshot makes the same calls under the same keys and finds them again; a
+result lives in its nested call's task, and a resumed run takes it from there.
+Results applied after the last save are applied again; what the script did with
+them had no effect outside the VM yet. Globals are answered again when their
+call is open in the snapshot.
 
 While the script waits on calls that are all nested calls for longer than
 `parkAfterMs` (default 1000), the tool parks (`wait` on their tasks, policy
 `any`) and its VM is gone; the wake runs `execute()` again, which resumes the
-dump. A script with a deadline does not park, since a park cannot watch it. A
-script whose state a dump cannot write (a `WeakMap`, a `Proxy`) runs on in
-memory only: it never parks, and a restart ends it as interrupted.
+snapshot. A script with a deadline does not park, since a park cannot watch it.
+A script whose state a snapshot cannot write (a `WeakRef`) runs on in memory
+only: it never parks, and a restart ends it as interrupted.
 
 A rerun (`execute()` after recovery or a wake) returns a stored `result`
 without a VM. Otherwise it ends the call with a stored error result, admitting
 no new nested call, when the module version differs (a call started under
 another code mode version asks to be run again),
 when the deadline passed, or when the script was unsaved; else it resumes the
-dump, or begins the script when none was saved. Closing the Harness while a
+snapshot, or begins the script when none was saved. Closing the Harness while a
 script runs decides nothing: the call stores no outcome, and the next process
-resumes the dump.
+resumes the snapshot.
 
 ## 8. Built-in tasks
 

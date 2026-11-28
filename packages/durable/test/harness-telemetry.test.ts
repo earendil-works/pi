@@ -977,7 +977,7 @@ describe("Durable telemetry", () => {
 			}),
 		);
 		setup.faux.setResponses([
-			// Both calls are open in the saved dump: the resumed script takes once's result from its nested call again.
+			// Both calls are open in the saved snapshot: the resumed script takes once's result from its nested call again.
 			toolReply("codemode", { code: "await Promise.all([tools.once({}), tools.hold({})]);" }),
 			fauxAssistantMessage("done"),
 		]);

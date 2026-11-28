@@ -1,6 +1,6 @@
 /**
  * One run of a script, driven by the host: a djs host-driven run, where everything the script can reach outside the
- * language is a host function named by a stable identity. No code of pi's runs in the VM, so none is in a dump.
+ * language is a host function named by a stable identity. No code of pi's runs in the VM, so none is in a snapshot.
  *
  * - Async host functions are the calls the host answers: `tools.<jsName>` for tools, a global's own name
  *   (`searchTools`, `models.classify`), and `<specifier>#<tool>` for what scripts import. The VM never calls them:
@@ -8,9 +8,10 @@
  * - Sync host functions are the output and the store: `text`, `image`, `exit`, `store`, `load`, `console.*`
  *   (`ScriptIo`): their checks and messages live on the host.
  *
- * `save()` writes an idle run as {@link CodemodeSaved}: the djs dump (a plain Script that names host functions only by
- * identity, with the script's body inlined) plus the output and store writes so far. `resumeRun()` continues it in a
- * new VM, any time later, given the same scope. Hosts that do not persist runs never call `save()`.
+ * `save()` writes an idle run as {@link CodemodeSaved}: a djs snapshot (the run's objects and suspended functions as
+ * records, host functions named by identity, the script's text; djs compiles it again on load and refuses a snapshot
+ * whose waiting functions now compile differently) plus the output and store writes so far. `resumeRun()` continues
+ * it in a new VM, any time later, given the same scope. Hosts that do not persist runs never call `save()`.
  */
 import { type OpenCall, type Run, RunExit, Sandbox, SandboxError, type SandboxOptions } from "@earendil-works/djs";
 import { ScriptIo } from "./host-io.ts";
@@ -59,15 +60,15 @@ export interface CodemodeHostCall {
 	args: unknown;
 }
 
-/** The persisted form of an idle run: JSON, self-contained (the script's text is in the dump). */
+/** The persisted form of an idle run: JSON, self-contained (the script's text is in the snapshot). */
 export type CodemodeSaved = {
-	/** The run as a djs dump, with the script's body inlined. */
-	dump: string;
+	/** The run as a djs snapshot, base64; it carries the script, the fuel used and the clock. */
+	snapshot: string;
 	/** Output so far. */
 	output: CodemodeOutputItem[];
 	/** `store()` writes so far. */
 	writes: CodemodeStoreWrites;
-	/** The fuel the run had used: a resumed run goes on counting from it (a dump does not carry it). */
+	/** The fuel the run had used (the snapshot carries it too): what a host capping each step needs before a load. */
 	fuelUsed: number;
 };
 
@@ -88,7 +89,7 @@ export interface CodemodeRun {
 	 * while it computes; `signal` aborts the step, and it rejects with the signal's reason.
 	 */
 	advance(signal?: AbortSignal): Promise<void>;
-	/** The idle run, persisted. Throws when it cannot be dumped (a WeakMap, a Proxy): then keep the previous one. */
+	/** The idle run, persisted. Throws when djs cannot snapshot it (a WeakRef, say): then keep the previous one. */
 	save(): CodemodeSaved;
 	dispose(): void;
 }
@@ -113,7 +114,7 @@ export function beginRun(
 	return new DjsRun(engine, scope, { kind: "begin", code }, observe);
 }
 
-/** Continues a saved run. The dump carries the script; `scope` must give every identity it refers to. */
+/** Continues a saved run. The snapshot carries the script; `scope` must give every identity it refers to. */
 export function resumeRun(engine: RunEngine, scope: CodemodeScope, saved: CodemodeSaved): CodemodeRun {
 	return new DjsRun(engine, scope, { kind: "resume", saved });
 }
@@ -166,7 +167,7 @@ class DjsRun implements CodemodeRun {
 				start.kind === "begin"
 					? // The first step runs in `advance()`, bounded like every other.
 						this.sandbox.begin(start.code, {}, { filename: FILENAME, start: false })
-					: this.sandbox.loadRun(start.saved.dump, { fuelUsed: start.saved.fuelUsed });
+					: this.sandbox.loadSnapshot(fromBase64(start.saved.snapshot));
 		} catch (error) {
 			this.state = { kind: "ended", result: this.failed(startError(error)), dropped: [] };
 			return;
@@ -212,7 +213,12 @@ class DjsRun implements CodemodeRun {
 	save(): CodemodeSaved {
 		if (this.state.kind !== "running") throw new Error("The script has ended");
 		const { run } = this.state;
-		return { dump: run.dump(), output: [...this.io.output], writes: this.io.storeWrites(), fuelUsed: run.fuelUsed };
+		return {
+			snapshot: toBase64(run.snapshot()),
+			output: [...this.io.output],
+			writes: this.io.storeWrites(),
+			fuelUsed: run.fuelUsed,
+		};
 	}
 
 	dispose(): void {
@@ -342,7 +348,7 @@ function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo):
 				namespace === "tools" ? (scope.missingToolHint ?? DEFAULT_MISSING_TOOL_HINT) : undefined,
 			);
 		},
-		// Host data: a dump names it, never writes it. Without tools, `tools` is an empty object: `"x" in tools` works.
+		// Host data: a snapshot names it, never writes it. Without tools, `tools` is an empty object: `"x" in tools` works.
 		values: scope.tools.length > 0 ? { ALL_TOOLS: listed } : { ALL_TOOLS: listed, tools: {} },
 		// `import { x } from "<specifier>"`: djs asks for a module once, and binds its exports by identity.
 		modules: (specifier) => {
@@ -354,15 +360,13 @@ function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo):
 				),
 			};
 		},
-		// Dumps carry the body: a resume needs no script.
-		inlineSources: true,
 		// Tools' arguments and the run's value cross as JSON; the output and store functions get plain values, so that
 		// `text(NaN)` prints NaN and `store()` reports what JSON cannot hold.
 		jsonBoundary: { except: ["text", "image", "store"] },
 	};
 }
 
-/** Why a run could not start: a compile error of the script (an unknown module too), or a dump that does not load. */
+/** Why a run could not start: a compile error of the script (an unknown module too), or a snapshot that does not load. */
 function startError(error: unknown): CodemodeError {
 	if (!(error instanceof SandboxError) || error.kind !== "syntax") {
 		return { kind: "sandbox", message: error instanceof Error ? error.message : String(error) };
@@ -404,4 +408,20 @@ function stepError(error: SandboxError, options: RunEngine): CodemodeError {
 		default:
 			return { kind: "sandbox", message: error.message };
 	}
+}
+
+/** Base64 without Buffer, so this also runs on Workers and in browsers. */
+function toBase64(bytes: Uint8Array): string {
+	let binary = "";
+	for (let at = 0; at < bytes.length; at += 0x8000) {
+		binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+	}
+	return btoa(binary);
+}
+
+function fromBase64(text: string): Uint8Array {
+	const binary = atob(text);
+	const bytes = new Uint8Array(binary.length);
+	for (let at = 0; at < binary.length; at++) bytes[at] = binary.charCodeAt(at);
+	return bytes;
 }

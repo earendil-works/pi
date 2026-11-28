@@ -110,7 +110,7 @@ async function sqlitePath(): Promise<string> {
 function codemodeChat(globals: CodemodeGlobal[] = [], parkAfterMs?: number, fuel?: number) {
 	const setup = chatSetup();
 	const sandbox = newSandbox({ memoryLimitBytes: 64 * 1024 * 1024, ...(fuel === undefined ? {} : { fuel }) });
-	// VMs started: a new run or a resumed dump.
+	// VMs started: a new run or a resumed snapshot.
 	const vm = { starts: 0 };
 	const begin = sandbox.begin.bind(sandbox);
 	const resume = sandbox.resume.bind(sandbox);
@@ -275,7 +275,7 @@ describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code 
 		);
 		expect(result).toEqual({ text: '["echo a","held 1","echo b",true]', isError: false });
 		expect(Object.fromEntries(chat.echo)).toEqual({ a: 1, b: 1 });
-		// The details list every call once, the one finished before the restart too (its row was saved with the dump).
+		// The details list every call once, the one finished before the restart too (its row was saved with the snapshot).
 		const entry = (await allEntries(await harness.root(context))).find((candidate) => ToolResultEntry.is(candidate))!;
 		const details = (entry.model![0] as { details?: CodemodeToolDetails }).details;
 		expect(details?.calls.map((call) => [call.id, call.name, call.status])).toEqual([
@@ -283,7 +283,7 @@ describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code 
 			[2, "hold", "ok"],
 			[3, "echo", "ok"],
 		]);
-		// The VM ran twice, the second time from its dump; hold, replay-safe, reran once after the restart.
+		// The VM ran twice, the second time from its snapshot; hold, replay-safe, reran once after the restart.
 		expect(chat.vm.starts).toBe(2);
 		expect(chat.holds.runs).toBe(2);
 		await harness.close(context);
@@ -514,7 +514,7 @@ describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code 
 		);
 		expect(result.isError).toBe(true);
 		expect(result.text).toContain("Script timed out: The script used its CPU budget (about 0.2 s of computation)");
-		// The VM ran twice: it resumed from its dump with the fuel it had used.
+		// The VM ran twice: it resumed from its snapshot with the fuel it had used.
 		expect(chat.vm.starts).toBe(2);
 		await harness.close(context);
 	});
@@ -875,7 +875,7 @@ describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code 
 		backend = name;
 	});
 
-	it("parks with its dump while a nested call is parked, and resumes it after a reopen", async () => {
+	it("parks with its snapshot while a nested call is parked, and resumes it after a reopen", async () => {
 		const path = await sqlitePath();
 		const echoes: string[] = [];
 		const code = `const a = await tools.echo({ text: "one" });
@@ -894,10 +894,14 @@ describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code 
 		).items.find((task) => (task.input as { kind: string }).kind === "model")!;
 		await waitFor(async () => (await opened.harness.getTask(script.id, context))?.state.status === "waiting");
 		await waitFor(() => !opened.harness.wake().active);
-		const saved = (await opened.harness.snapshot(CodemodeSavedDoc, script.id, context))?.saved as { dump: string };
-		// Calls are open in the dump by id and identity; the script's body is in the dump, not referred to by hash.
-		expect(saved.dump).toContain('$djs.resume(2, "tools.ask", [{}])');
-		expect(saved.dump).not.toContain("$djs.source");
+		const saved = (await opened.harness.snapshot(CodemodeSavedDoc, script.id, context))?.saved as {
+			snapshot: string;
+		};
+		// A djs snapshot, self-contained: the open call by its identity and the script's text are in it.
+		const bytes = Buffer.from(saved.snapshot, "base64").toString("latin1");
+		expect(bytes.startsWith("DJSNAP")).toBe(true);
+		expect(bytes).toContain("tools.ask");
+		expect(bytes).toContain("await tools.ask({})");
 		await opened.harness.close(context);
 
 		// Another process: a new sandbox, the same database.
@@ -948,10 +952,10 @@ describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code 
 		await harness.close(context);
 	});
 
-	it("runs a script that holds what a dump cannot write in memory only, and never parks it", async (test) => {
+	it("runs a script that holds what a snapshot cannot write in memory only, and never parks it", async (test) => {
 		if (backend === "remote") test.skip();
 		const setup = setupWith(newSandbox(), []);
-		const code = `const seen = new WeakMap(); seen.set({}, 1); await tools.echo({ text: "x" }); return "kept " + typeof seen;`;
+		const code = `const seen = new WeakRef({}); await tools.echo({ text: "x" }); return "kept " + typeof seen;`;
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),
@@ -963,10 +967,10 @@ describe.each(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[])("durable code 
 		await harness.close(context);
 	});
 
-	it("ends a script that holds what a dump cannot write on a remote, which keeps nothing between steps", async (test) => {
+	it("ends a script that holds what a snapshot cannot write on a remote, which keeps nothing between steps", async (test) => {
 		if (backend === "local") test.skip();
 		const setup = setupWith(newSandbox(), []);
-		const code = `const seen = new WeakMap(); seen.set({}, 1); await tools.echo({ text: "x" }); return "kept " + typeof seen;`;
+		const code = `const seen = new WeakRef({}); await tools.echo({ text: "x" }); return "kept " + typeof seen;`;
 		setup.faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("codemode", { code }, { id: "s1" })], { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),

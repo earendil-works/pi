@@ -5,6 +5,6 @@ export const CODEMODE_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 
 /**
  * The worker's code mode sandbox (host-internal): one per worker. Removing the plugin cancels the scripts running on it;
- * a reload or a worker stop leaves them to resume from their dumps.
+ * a reload or a worker stop leaves them to resume from their snapshots.
  */
 export const CodemodeRuntime = local("p2.codemode-runtime", { version: 2, params: {}, members: {} });

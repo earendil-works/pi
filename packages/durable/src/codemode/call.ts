@@ -1,6 +1,6 @@
 /**
  * One execution of the code mode tool on djs: a first run, or a resume after a restart or a wake. No journal and no
- * replay: the script's state is its latest dump.
+ * replay: the script's state is its latest snapshot.
  *
  * Problem: a script is in-memory VM state. A restart while
  *
@@ -9,14 +9,14 @@
  * waits for the last of 200 reads would lose the script and every read it made.
  *
  * Solution:
- * - Before a call leaves the VM (it launches) and before the script parks, the idle run is saved as a dump into
- *   `pi.codemode.saved`. A nested call exists only if a saved dump made it, so a restart from the dump makes the same
+ * - Before a call leaves the VM (it launches) and before the script parks, the idle run is saved as a snapshot into
+ *   `pi.codemode.saved`. A nested call exists only if a saved snapshot made it, so a restart from the snapshot makes the same
  *   calls under the same keys (`c<id>`) and finds them again.
- * - A result is not journaled: it lives in its nested call's task. A restart resumes the dump, finds each open call's
+ * - A result is not journaled: it lives in its nested call's task. A restart resumes the snapshot, finds each open call's
  *   task by key and takes its stored result. Results applied after the last save are applied again; what the script
  *   did with them had no effect outside the VM yet (new calls wait for the next save).
  * - While the script waits on its calls longer than `parkAfterMs`, the tool parks (`wait` on those calls' tasks,
- *   policy `any`) and its VM is gone. The wake runs `execute()` again, which resumes the dump.
+ *   policy `any`) and its VM is gone. The wake runs `execute()` again, which resumes the snapshot.
  *
  * A call started under another code mode version cannot resume: it ends with an error result that asks for the script
  * to be run again.
@@ -67,19 +67,19 @@ import { DEFAULT_MAX_OUTPUT_TOKENS, formatResult, type OutputFile } from "./outp
 type SavedState = {
 	/** The script at its latest idle point: a `CodemodeSaved`, as JSON (its store writes are JSON values). */
 	saved?: JsonObject;
-	/** The script held a value a dump cannot write: it ran in memory only, and cannot resume. */
+	/** The script held a value a snapshot cannot write: it ran in memory only, and cannot resume. */
 	unsaved?: true;
-	/** The `details` rows as of the dump, so a resumed script's result still lists the calls it finished before. */
+	/** The `details` rows as of the snapshot, so a resumed script's result still lists the calls it finished before. */
 	rows?: CodemodeNestedCall[];
 };
 
-/** The latest dump of a code mode call's script, scoped to its task and gone when it settles. */
+/** The latest snapshot of a code mode call's script, scoped to its task and gone when it settles. */
 export const CodemodeSavedDoc = defineDoc<SavedState>({
 	kind: "pi.codemode.saved",
 	version: 1,
 	scope: "task",
 	initial: () => ({}),
-	// Each save replaces the whole dump: keep few deltas.
+	// Each save replaces the whole snapshot: keep few deltas.
 	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 4,
 });
 
@@ -188,13 +188,13 @@ export class CodemodeCall {
 		const { saved } = found.saved;
 		for (const row of found.saved.rows ?? []) this.rows.set(row.id, row);
 		const { sandbox } = this.options;
-		// A dump that does not load ends the run at once, with a sandbox error.
+		// A snapshot that does not load ends the run at once, with a sandbox error.
 		const vm =
 			saved === undefined
 				? await sandbox.begin(code, this.scope())
 				: await sandbox.resume(this.scope(), saved as unknown as CodemodeSaved);
 		try {
-			// Every call open in the loaded dump may have its nested call already: they are found by key.
+			// Every call open in the loaded snapshot may have its nested call already: they are found by key.
 			return await this.drive(vm, saved === undefined, Math.max(0, ...vm.calls.map((call) => call.id)));
 		} finally {
 			this.ended = true;
@@ -219,7 +219,7 @@ export class CodemodeCall {
 
 	/**
 	 * Run the VM until the script ends or parks: answer its calls, apply their results, save before calls launch.
-	 * `launched`: the newest call id a saved dump made.
+	 * `launched`: the newest call id a saved snapshot made.
 	 */
 	private async drive(vm: CodemodeRun, fresh: boolean, launched: number): Promise<ToolExecutionResult | ToolPark> {
 		const { context } = this;
@@ -235,7 +235,7 @@ export class CodemodeCall {
 				: setTimeout(() => stop.abort(DEADLINE), Math.max(0, deadline - this.api.now()));
 		const onStop = () => this.poke();
 		stop.signal.addEventListener("abort", onStop);
-		// Whether the VM moved on since the stored dump. Saving is needed only before something leaves the VM (a call
+		// Whether the VM moved on since the stored snapshot. Saving is needed only before something leaves the VM (a call
 		// launches, the script parks): results applied since the last save come back from their nested calls.
 		let dirty = fresh;
 		try {
@@ -316,8 +316,8 @@ export class CodemodeCall {
 	}
 
 	/**
-	 * Store the idle run as its dump. When it cannot be dumped, the script goes on in memory only: it is marked unsaved,
-	 * never parks, and a restart ends it as interrupted instead of resuming an older dump.
+	 * Store the idle run as its snapshot. When it cannot be snapshotted, the script goes on in memory only: it is marked unsaved,
+	 * never parks, and a restart ends it as interrupted instead of resuming an older snapshot.
 	 */
 	private async save(vm: CodemodeRun): Promise<void> {
 		if (this.unsaved) return;

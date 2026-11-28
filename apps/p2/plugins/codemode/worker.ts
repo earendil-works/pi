@@ -1,6 +1,6 @@
 // Durable code mode: the `codemode` tool runs model-written JavaScript or TypeScript that calls the conversation's
 // other tools as nested durable calls (`await tools.read({ path })`), on this worker's thread, and survives worker
-// restarts by resuming the script's latest dump.
+// restarts by resuming the script's latest snapshot.
 
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";

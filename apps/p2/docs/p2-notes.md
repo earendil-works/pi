@@ -1772,7 +1772,7 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
 - **Code mode** (`plugins/codemode`): the worker facet registers Durable's `codemode` extension
   (`createCodemodeExtension`, tool `codemode`, callers `["model"]`, replay-safe) in `Extensions`. One
   `CodemodeSandbox` per worker (256 MiB VM heap: `CODEMODE_MEMORY_LIMIT_BYTES`) runs the scripts on the worker's
-  thread; a script saves its run (a djs dump) before its calls launch and when it parks, and resumes from it. A
+  thread; a script saves its run (a djs snapshot) before its calls launch and when it parks, and resumes from it. A
   reload leaves running scripts alone. Removing the plugin by a reload ends its running calls
   (`plugins/codemode/calls.ts`: each reports "Code mode was removed while this script ran." in its output, then is
   aborted through Durable's `abortTask`, which ends its script and nested calls and settles it with an error); the turn
