@@ -4,7 +4,10 @@ Pi supports the [llama.cpp](https://llama.app) router server. The router discove
 
 ## Install llama.cpp
 
-Install llama.cpp with the [official installer](https://llama.app/docs/installation):
+You can easily install llama.cpp on your machine:
+
+- **Mac and Windows**: install the [Llama app](https://llama.app), a minimalist desktop app that sits on your system tray
+- **Linux (or if you only want the command line)**: one-line install command:
 
 ```bash
 curl -LsSf https://llama.app/install.sh | sh
@@ -16,29 +19,34 @@ Verify the installation:
 llama --version
 ```
 
-See [llama.app](https://llama.app) for other installation methods, including package managers and building from source.
+See the [official install page](https://llama.app/docs/installation) for other installation methods, including package managers and building from source.
 
 ## Start the router
 
-Start `llama serve` without `--model`, `-m`, or `-hf`. Passing a model starts single-model mode instead of router mode. See the [llama.cpp server guide](https://llama.app/docs/serve#serving-multiple-models-router-mode) for router configuration.
+If you installed the desktop app, `llama serve` is already running. You can check by browsing the model list on [localhost:9931](http://localhost:9931/v1/models).
+
+If not, start `llama serve` without `--model`, `-m`, or `-hf`. Passing a model starts single-model mode instead of router mode. See the [llama.cpp server guide](https://llama.app/docs/serve#serving-multiple-models-router-mode) for router configuration.
+
+You have two options:
+- Automatic loading: by default, models load on demand.
+- Manual loading: add `--no-models-autoload`, then use `/llama` to load models before selecting them.
+
+For automatic loading, just launch:
 
 ```bash
-llama serve \
-  --no-models-autoload \
-  -ngl all \
-  -c 32768
+llama serve
 ```
 
-Important options:
+In most cases you do not need any extra flags as the defaults should be reasonable. For advanced usage, here are a sample of possible flags you might be interested in:
 
-- `--no-models-autoload` keeps loading explicit through `/llama`.
 - `-ngl all` offloads all layers to the GPU. Omit it to use automatic GPU offloading.
 - `-c 32768` sets the context size in tokens. Use `-c 0` for the model's full context window, which may require substantially more memory. Context is shared across parallel server slots.
+- `--models-dir ~/models` discovers local GGUF files from a custom local directory.
 
-A single-file model can sit directly in the model directory. Put multimodal and multi-shard models in separate subdirectories:
+By default, models will be stored in the standard huggingface local cache directory. Multimodal and multi-shard models are supported out of the box:
 
 ```text
-~/models/
+~/.cache/huggingface/hub/
 ├── llama-3.2-1b-Q4_K_M.gguf
 ├── gemma-3-4b-it-Q4_K_M/
 │   ├── gemma-3-4b-it-Q4_K_M.gguf
@@ -49,7 +57,9 @@ A single-file model can sit directly in the model directory. Put multimodal and 
     └── large-model-Q4_K_M-00003-of-00003.gguf
 ```
 
-Restart the router after manually adding files. The router also supports cached models and preset files via `--models-preset`, as described in the [server guide](https://llama.app/docs/serve#serving-multiple-models-router-mode).
+The router also supports cached models and preset files via `--models-preset`, as described in the [server guide](https://llama.app/docs/serve#serving-multiple-models-router-mode).
+
+If you prefer manual loading, add `--no-models-autoload` to the `llama serve` command and use Pi's `/llama` command to load or unload models.
 
 ## Configure Pi
 
@@ -61,7 +71,7 @@ Start Pi and configure the provider:
 
 Enter the router URL and optional API key. The default URL is `http://127.0.0.1:9931`.
 
-If you start the router with `--no-models-autoload`, `/login llama.cpp` only stores the connection. Run `/llama` to load a model, then `/model` to select the loaded model for the current session.
+Use `/model` to select a model for the current session. If you disabled automatic loading, load it with `/llama` first.
 
 Environment variables can configure the same values without `/login`:
 
@@ -90,7 +100,7 @@ Hugging Face search uses `HF_TOKEN` when set, then checks `$HF_TOKEN_PATH`, `$HF
 
 If other models are loaded, Pi asks whether to unload them first or keep them loaded. Pi does not silently unload models and never deletes model files. The router may be shared with other clients, so `/llama` always displays the router's current state.
 
-Loaded and sleeping models appear in `/model`. Sleeping models wake automatically when selected. With router autoload enabled, unloaded preset models also appear and load when selected. With `--no-models-autoload`, load a model through `/llama` before selecting it.
+Loaded and sleeping models appear in `/model`. Sleeping models wake automatically when selected. With router autoload enabled, unloaded preset models also appear and load on demand.
 
 If the router disconnects, `/llama` shows **Retry** and **Close**. Retry reconnects and refreshes model state without replaying the interrupted operation.
 
@@ -121,7 +131,7 @@ curl http://127.0.0.1:9931/health
 curl http://127.0.0.1:9931/models
 ```
 
-- **No models in `/llama`:** Check `--models-dir`, the directory layout, and restart the router.
+- **No models in `/llama`:** Check `--models-dir` or the local huggingface cache, the directory layout, and restart the router. Make sure your server URL (http://127.0.0.1:9931) and optional API Key, if you used one, are correct.
 - **Model missing from `/model` with `--no-models-autoload`:** Load it with `/llama` first.
 - **Load fails or uses too much memory:** Lower `-c` or unload another model.
 - **Server is not in router mode:** Start it without `--model`, `-m`, or `-hf`.
