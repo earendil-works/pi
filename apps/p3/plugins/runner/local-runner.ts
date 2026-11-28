@@ -7,14 +7,7 @@
 import { readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { type Address, type Context, invalid, type Link, reportError, Session } from "@earendil-works/p3/v1";
-import {
-	clearStaleLock,
-	type PluginScript,
-	type RolloutHost,
-	type ServerRuntime,
-	type WorkerRunner,
-	type WorkerState,
-} from "@earendil-works/p3/v1/server";
+import type { PluginScript, RolloutHost, ServerRuntime, WorkerRunner, WorkerState } from "@earendil-works/p3/v1/server";
 import { WorkerProcess } from "./worker-process.ts";
 
 /**
@@ -158,9 +151,6 @@ export class LocalRunner implements WorkerRunner {
 		const runtime = this.#runtime();
 		const dir = this.#dirOf(id);
 		const lock = `p3-session:${dir}`;
-		// Where the lock is a file (macOS, the BSDs), one a killed worker left fails closed: the runner, the one starter of
-		// a session's workers, one start at a time, clears it.
-		await clearStaleLock(lock, context);
 		const scripts = await runtime.workerScripts(context);
 		// After the last wait, in the step that forks: a close that started meanwhile found no worker to stop.
 		if (this.#closing) throw closed();

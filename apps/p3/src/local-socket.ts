@@ -10,7 +10,7 @@
 // holder's file cannot both win, and there is no moment without a socket at the path. A release removes the file only
 // while it is still its own (same inode). On Linux and Android the guard is an abstract socket, which any local user
 // can hold: the wait for it has a deadline and says so, never takes the socket (the file stays in the private
-// directory). Elsewhere it is a file in the temporary directory (ERNDL-1059). A taker killed between its listen and its
+// directory). Elsewhere it is a flock in a per-user directory (ERNDL-1059). A taker killed between its listen and its
 // rename leaves its temporary file (a dot-file with a random name) in the data directory: inert (nobody listens on
 // it, nobody takes it, it grants nothing) and left there, never swept by name: another starter's live temporary file
 // looks the same.

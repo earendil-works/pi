@@ -142,17 +142,16 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   child's own `hostPackages`), applies `reload` messages once the app's function returned (none while shutting down).
   `shutdown`, the parent's disconnect, `SIGTERM` and `SIGINT` abort its context and run the closers registered so far,
   also during startup. An uncaught error or a throwing function sends `fatal` with `redact(error)` and exits 1.
-- `processLock(name, ctx)`: the lock (an abstract socket on Linux, a named pipe on Windows, a socket file elsewhere).
-  A taker fails closed on a socket file nobody accepts on; the component clears one (a worker killed by a signal left
-  it) before each start and after a child's exit by a signal, in the address's queue (decision "Stale lock files are
-  cleared by the starter").
+- `processLock(name, ctx)`: the lock (an abstract socket on Linux, a named pipe on Windows, a flock on a directory on
+  macOS and the BSDs), freed by the kernel when its holder exits. `processLockState(name, ctx)` reads it without
+  taking it.
 
 ## Examples
 
 `test/examples/`: `41-workers` (a worker started on the first hold, stopped when idle), `42-worker-crash` (a crash
 stays failed, Retry brings it back), `43-rollout` (an edit rolled out to the server and its workers),
 `76-worker-reports` (a worker that reports and exits: the report never lands after the exit; what is kept across runs
-is tagged with the incarnation).
+is tagged with the incarnation), `80-process-locks` (a lock's state; a killed holder's lock free at once).
 
 ## Inside the directory
 

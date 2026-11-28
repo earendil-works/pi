@@ -31,8 +31,6 @@ export {
 	type SyncBody,
 } from "@earendil-works/chord/sync";
 export {
-	/** Removes a lock file a killed holder left (macOS, the BSDs); only the one starter of the lock's holders calls it. */
-	clearStaleLock,
 	/** Takes the lock of a name (a session's), owned by the kernel for the holder's life; waits while another holds it. */
 	processLock,
 } from "@earendil-works/chord/workers/child";

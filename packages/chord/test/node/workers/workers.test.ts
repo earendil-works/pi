@@ -2,17 +2,15 @@
 // `connect`, the start timer covering only the start), failures that stay (a crash, a `fatal`, a failed start: no fork
 // for a new hold, holders `failed { waiting }`) until `retry` or a rollout, a running worker's lost link recovered from
 // once a minute, idle stops and `busy`, `stop` and its suspension, the per-address queue, `close`, the rollout step,
-// stale lock files cleared, nothing kept of 1,000 addresses, and the worker base (an edit after its build runs in no
+// nothing kept of 1,000 addresses, and the worker base (an edit after its build runs in no
 // worker; forks without source maps; a start waits for the build; a broken entry fails every start; close keeps the
 // files until its workers exited), a worker's exit published only after its link's work ended, and its incarnation in
 // the state before its first call is handled.
 
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { withAbortSignal } from "../../../src/context/index.ts";
 import { arr, local, method, obj, str } from "../../../src/contracts/index.ts";
@@ -38,9 +36,6 @@ function listed(hosts: readonly RolloutHost[]) {
 				: (entry.error as Error).message,
 	]);
 }
-
-/** The process lock module, for a process that takes a lock and is killed holding it. */
-const LOCK_MODULE = fileURLToPath(new URL("../../../src/node/workers/lock.ts", import.meta.url));
 
 /** The state entry of `id`. */
 const stateOf = (state: unknown, id: string) =>
@@ -317,8 +312,8 @@ describe("failures stay until retry or a rollout (R2)", () => {
 		const control = await server.get(Control, { id: "S1" }, context);
 		await control.block(20_000, context);
 		await until(() => stateOf(workers.state.value, "S1")?.status === "stopping", 5_000);
-		// SIGKILL skipped the child's exit hooks: on macOS and the BSDs its lock's socket file was left, and the next start
-		// cleared it (else the new child would fail closed on it).
+		// SIGKILL skipped the child's exit hooks: on macOS and the BSDs its lock's socket file was left; the new child takes
+		// the lock past it (the kernel freed the flock with the killed one).
 		await until(() => starts.length === 2 && notes.state.value.kind === "live", 15_000);
 		await until(() => stateOf(workers.state.value, "S1")?.status === "running");
 		expect(errors).toMatchObject([
@@ -386,27 +381,6 @@ describe("failures stay until retry or a rollout (R2)", () => {
 		} finally {
 			vi.useRealTimers();
 		}
-	});
-});
-
-describe('stale lock files (macOS, the BSDs; decision "Stale lock files are cleared by the starter")', () => {
-	it("a start clears the lock file a killed worker of an earlier server left: the worker runs", async () => {
-		const { server, workers, root } = await fleet();
-		// What an earlier server's worker SIGKILLed while holding the lock leaves (nothing on Linux: an abstract socket).
-		const name = `chord-test:${root}:${Session({ id: "S1" }).key}`;
-		const script = `const { processLock } = await import(${JSON.stringify(LOCK_MODULE)}); await processLock(${JSON.stringify(name)}, {}); process.kill(process.pid, "SIGKILL");`;
-		const killed = spawnSync(process.execPath, [
-			"--experimental-strip-types",
-			"--no-warnings",
-			"--input-type=module",
-			"-e",
-			script,
-		]);
-		expect(killed.signal).toBe("SIGKILL");
-		const notes = server.hold(Notes, { id: "S1" }, context);
-		await until(() => notes.state.value.kind === "live");
-		expect(stateOf(workers.state.value, "S1")?.status).not.toBe("failed");
-		notes.release();
 	});
 });
 
