@@ -4,6 +4,7 @@
 
 ### Changed
 
+- A code mode call whose snapshot a newer djs refuses is begun again from its results instead of failing; `CODEMODE_MODULE_VERSION` 5.
 - Code mode saves its scripts as djs snapshots (`pi.codemode.saved`); `CODEMODE_MODULE_VERSION` 4, so calls saved as dumps end with an error that asks to run the script again.
 
 ### Breaking Changes

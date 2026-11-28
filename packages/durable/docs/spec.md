@@ -5014,17 +5014,24 @@ Three documents, two of them scoped to the code mode call's task:
   written once.
 - `pi.codemode.saved`: `saved`, the script's latest snapshot (`CodemodeSaved`:
   the djs snapshot, base64, which carries the script's text, the output and the
-  `store()` writes so far), or `unsaved` once the script held a value a snapshot
+  `store()` writes so far, and `rerun`, what begins the script again when the
+  snapshot no longer loads), or `unsaved` once the script held a value a snapshot
   cannot write.
 - `pi.codemode.store`: conversation-scoped, `history: "rewindable"`,
   `fork: "asOf"`; a successful script's `store()` writes are applied per key in
   the transaction that writes its `result`.
 
-No journal and no replay: the script's state is its latest snapshot. A djs
-snapshot holds the run's objects and suspended functions as records and never
-its compiled code: loading compiles the script again and refuses a snapshot
-whose waiting functions now compile to other bytecode (the call then ends with a
-sandbox error). Before a call leaves the VM (a call the saved snapshot did not
+The script's state is its latest snapshot. A djs snapshot holds the run's
+objects and suspended functions as records and never its compiled code: loading
+compiles the script again and refuses a snapshot whose waiting functions now
+compile to other bytecode. For that case every run is deterministic from its
+start (its clock moves only with results, `Math.random` is seeded) and the saved
+run keeps, next to the snapshot, the script, its start time and seed, and every
+result it applied with its clock (`rerun`). When the snapshot does not load, the
+script is begun again from those results: no call runs again, output and
+`store()` writes come out again inside the VM, and djs stops with an error that
+names the first difference if the script takes another path (the call then ends
+with a sandbox error). Before a call leaves the VM (a call the saved snapshot did not
 have yet launches) and before the script parks, the idle run is saved. A nested
 call therefore exists only if a saved snapshot made it, so a run resumed from
 the snapshot makes the same calls under the same keys and finds them again; a

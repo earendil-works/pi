@@ -13,7 +13,15 @@
  * whose waiting functions now compile differently) plus the output and store writes so far. `resumeRun()` continues
  * it in a new VM, any time later, given the same scope. Hosts that do not persist runs never call `save()`.
  */
-import { type OpenCall, type Run, RunExit, Sandbox, SandboxError, type SandboxOptions } from "@earendil-works/djs";
+import {
+	type Delivery,
+	type OpenCall,
+	type Run,
+	RunExit,
+	Sandbox,
+	SandboxError,
+	type SandboxOptions,
+} from "@earendil-works/djs";
 import { ScriptIo } from "./host-io.ts";
 import { FUEL_PER_SECOND } from "./limits.ts";
 import { missingMemberMessage, scriptError } from "./script-values.ts";
@@ -70,6 +78,12 @@ export type CodemodeSaved = {
 	writes: CodemodeStoreWrites;
 	/** The fuel the run had used (the snapshot carries it too): what a host capping each step needs before a load. */
 	fuelUsed: number;
+	/**
+	 * The fallback when a newer djs refuses `snapshot` (a waiting function compiles differently there): the script, the
+	 * run's deterministic inputs, and every result it applied, in order. The run is begun again from `code` with
+	 * `deliveries`; no call is made again, and djs stops with an error if the script takes another path.
+	 */
+	rerun: { code: string; startedAt: number; seed: number; deliveries: Delivery[] };
 };
 
 /** One run of a script, driven by the host: `CodemodeSandbox.begin()` and `resume()` make it. */
@@ -143,6 +157,9 @@ const STALL_MESSAGE =
 
 type Start = { kind: "begin"; code: string } | { kind: "resume"; saved: CodemodeSaved };
 
+/** What a deterministic run is begun from, kept with every save. */
+type Origin = { code: string; startedAt: number; seed: number };
+
 /** A run in progress, or its outcome and the calls it dropped. */
 type State =
 	| { kind: "running"; run: Run }
@@ -152,28 +169,69 @@ class DjsRun implements CodemodeRun {
 	private state: State;
 	private readonly options: RunEngine;
 	private readonly scope: CodemodeScope;
-	private readonly sandbox: Sandbox;
-	private readonly io: ScriptIo;
+	private sandbox: Sandbox;
+	private io: ScriptIo;
+	private readonly origin: Origin;
+	/** The results applied before this VM's `loadSnapshot` (the run's own `deliveries` start there). */
+	private readonly earlier: readonly Delivery[];
 
 	constructor(options: RunEngine, scope: CodemodeScope, start: Start, observe?: (item: CodemodeOutputItem) => void) {
 		this.options = options;
 		this.scope = scope;
 		const saved = start.kind === "resume" ? start.saved : undefined;
+		// Every run is deterministic from its start, so that it can be begun again from its results when its snapshot no
+		// longer loads.
+		this.origin =
+			saved?.rerun ??
+			({
+				code: (start as { code: string }).code,
+				startedAt: Date.now(),
+				seed: crypto.getRandomValues(new Uint32Array(1))[0]!,
+			} satisfies Origin);
 		this.io = new ScriptIo(scope.store, saved?.output ?? [], saved?.writes ?? { set: {}, delete: [] }, observe);
-		this.sandbox = new Sandbox(sandboxOptions(options, scope, this.io));
+		this.sandbox = new Sandbox(sandboxOptions(options, scope, this.io, this.origin));
 		let run: Run;
+		let earlier: readonly Delivery[] = [];
 		try {
-			run =
-				start.kind === "begin"
-					? // The first step runs in `advance()`, bounded like every other.
-						this.sandbox.begin(start.code, {}, { filename: FILENAME, start: false })
-					: this.sandbox.loadSnapshot(fromBase64(start.saved.snapshot));
+			if (start.kind === "begin") {
+				// The first step runs in `advance()`, bounded like every other.
+				run = this.sandbox.begin(start.code, {}, { filename: FILENAME, start: false });
+			} else {
+				try {
+					run = this.sandbox.loadSnapshot(fromBase64(start.saved.snapshot));
+					earlier = start.saved.rerun.deliveries;
+				} catch (refused) {
+					run = this.rerun(start.saved, refused);
+				}
+			}
 		} catch (error) {
+			this.earlier = [];
 			this.state = { kind: "ended", result: this.failed(startError(error)), dropped: [] };
 			return;
 		}
+		this.earlier = earlier;
 		this.state = { kind: "running", run };
 		this.check(run);
+	}
+
+	/**
+	 * The snapshot does not load in this djs: begin the script again with every result it applied. Output and store
+	 * writes come out again as the script makes them, so they start empty; nothing outside the VM runs.
+	 */
+	private rerun(saved: CodemodeSaved, refused: unknown): Run {
+		this.sandbox.dispose();
+		this.io = new ScriptIo(this.scope.store, [], { set: {}, delete: [] });
+		this.sandbox = new Sandbox(sandboxOptions(this.options, this.scope, this.io, this.origin));
+		try {
+			const deliveries = saved.rerun.deliveries.map(liveDelivery);
+			return this.sandbox.begin(this.origin.code, {}, { filename: FILENAME, deliveries });
+		} catch (error) {
+			const why = error instanceof SandboxError && error.kind === "diverged" ? error.message : String(error);
+			throw new SandboxError(
+				"misuse",
+				`The saved run does not load in this version (${refused instanceof Error ? refused.message : String(refused)}), and running the script again from its results failed: ${why}`,
+			);
+		}
 	}
 
 	get result(): CodemodeResult | undefined {
@@ -218,6 +276,8 @@ class DjsRun implements CodemodeRun {
 			output: [...this.io.output],
 			writes: this.io.storeWrites(),
 			fuelUsed: run.fuelUsed,
+			// JSON: a result that is `undefined` leaves its value out (a re-run reads it back as undefined).
+			rerun: { ...this.origin, deliveries: [...this.earlier, ...run.deliveries].map(jsonDelivery) },
 		};
 	}
 
@@ -288,7 +348,7 @@ function settlement(outcome: CodemodeOutcome): { ok: boolean; value: unknown } {
 }
 
 /** The djs sandbox of one run: pi's capabilities as host functions by identity, and the limits. */
-function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo): SandboxOptions {
+function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo, origin: Origin): SandboxOptions {
 	// The host settles every call itself: the functions are never called.
 	const host = () => {};
 	const asyncFunctions: Record<string, () => void> = {};
@@ -323,7 +383,9 @@ function sandboxOptions(options: RunEngine, scope: CodemodeScope, io: ScriptIo):
 		typescript: true,
 		console: { log, info: log, warn: log, error: log, debug: log },
 		// A rejection nobody handles is not the script's failure (its result is what counts): such reasons are dropped.
-		unhandledRejections: "collect",
+		unhandledRejections: "ignore",
+		// Deterministic from the start: the clock moves only with results, Math.random is seeded. What a re-run needs.
+		deterministic: { startedAt: origin.startedAt, seed: origin.seed },
 		// djs's default binding makes them globals: `text` and the other functions, `tools`, and each namespace.
 		functions: {
 			text: (value: unknown) => io.text(value),
@@ -408,6 +470,27 @@ function stepError(error: SandboxError, options: RunEngine): CodemodeError {
 		default:
 			return { kind: "sandbox", message: error.message };
 	}
+}
+
+/**
+ * A delivery as JSON, for the saved run: a rejection's Error becomes its message and own properties, and an
+ * `undefined` result leaves its value out. `liveDelivery` turns it back, so a re-run settles exactly what the run did.
+ */
+function jsonDelivery(delivery: Delivery): Delivery {
+	if (!delivery.ok && delivery.value instanceof Error) {
+		const properties: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(delivery.value)) properties[key] = value;
+		return { ...delivery, value: { error: { message: delivery.value.message, properties } } };
+	}
+	if (delivery.value !== undefined) return delivery;
+	const { value: _, ...rest } = delivery;
+	return rest as Delivery;
+}
+
+function liveDelivery(delivery: Delivery): Delivery {
+	const saved = delivery.value as { error?: { message: string; properties: Record<string, unknown> } } | undefined;
+	if (delivery.ok || saved?.error === undefined) return delivery;
+	return { ...delivery, value: Object.assign(new Error(saved.error.message), saved.error.properties) };
 }
 
 /** Base64 without Buffer, so this also runs on Workers and in browsers. */

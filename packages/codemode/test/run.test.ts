@@ -90,6 +90,53 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(resumed.result).toMatchObject({ ok: false, error: { kind: "timeout" } });
 			resumed.dispose();
 		});
+
+		it("begins the script again from its results when its snapshot does not load", async () => {
+			const sandbox = sandboxOf();
+			const code = `text("start " + Math.random().toFixed(6));
+				const a = await tools.ask({ n: 1 });
+				store("a", a);
+				const b = await tools.ask({ n: 2, a, at: Date.now() }).catch((e) => "failed " + e.message + " " + e.code);
+				text("got " + b);
+				return [a, b, await tools.ask({ n: 3 })];`;
+			const vm = await sandbox.begin(code, scope);
+			await vm.advance();
+			vm.settle(vm.calls[0]!.id, { ok: true, value: "A" });
+			await vm.advance();
+			// One save, a resume, a second save: the results applied before and after the load all count.
+			const first = vm.save();
+			vm.dispose();
+			const middle = await sandbox.resume(scope, first);
+			middle.settle(middle.calls[0]!.id, { ok: false, message: "B", properties: { code: 7 } });
+			await middle.advance();
+			const saved = middle.save();
+			const open = middle.calls;
+			middle.dispose();
+			expect(
+				JSON.parse(JSON.stringify(saved.rerun.deliveries)).map((delivery: { ok: boolean }) => delivery.ok),
+			).toEqual([true, false]);
+
+			// A newer djs refuses the snapshot: the script runs again from its results, to where it was.
+			const refused = { ...saved, snapshot: btoa("not a snapshot") };
+			const rerun = await sandbox.resume(scope, refused);
+			expect(rerun.calls).toEqual(open);
+			expect(rerun.output).toEqual(saved.output);
+			rerun.settle(rerun.calls[0]!.id, { ok: true, value: "C" });
+			await rerun.advance();
+			expect(rerun.result).toMatchObject({
+				ok: true,
+				value: ["A", "failed B 7", "C"],
+				storeWrites: { set: { a: "A" } },
+			});
+			rerun.dispose();
+
+			// A script that takes another path when run again ends with an error instead of making other calls.
+			const other = { ...refused, rerun: { ...refused.rerun, code: code.replace("n: 2", "n: 22") } };
+			const diverged = await sandbox.resume(scope, other);
+			expect(diverged.result).toMatchObject({ ok: false, error: { kind: "sandbox" } });
+			expect(JSON.stringify(diverged.result)).toContain("running the script again from its results failed");
+			diverged.dispose();
+		});
 	});
 
 	describe("imports from virtual modules", () => {

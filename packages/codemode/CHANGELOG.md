@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Every run is deterministic from its start, and a saved run keeps `rerun` (the script, its start time and seed, and every result with its clock): when a newer djs refuses the snapshot, `resume()` begins the script again from those results, and ends with an error only if the script takes another path. `unhandledRejections` is `ignore` (djs 0306). Needs djs ABI 13.
 - Saved runs are djs snapshots (`CodemodeSaved.snapshot`, base64) instead of dumps: the run's state as records, compiled again on load; djs refuses a snapshot whose waiting functions compile differently. Needs `@earendil-works/djs` 0.3 (ABI 11).
 
 ## [1.6.0] - 2026-11-20

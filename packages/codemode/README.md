@@ -301,7 +301,7 @@ const scope: CodemodeScope = { tools: [{ name: "read", jsName: "read", descripti
 const run = await sandbox.begin(code, scope);
 await run.advance(signal);
 for (const call of run.calls) queue.add(call); // CodemodeHostCall: { id, identity, kind: "tool", name: "read", args }
-const saved = run.save(); // CodemodeSaved: { snapshot, output, writes, fuelUsed }
+const saved = run.save(); // CodemodeSaved: { snapshot, output, writes, fuelUsed, rerun }
 run.dispose();
 
 // Later, anywhere:
