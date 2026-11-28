@@ -21,8 +21,9 @@ import {
 	type ResolvedAddress,
 	resolveAddress,
 } from "../documents.ts";
-import { ReadAfterWrite } from "../errors.ts";
+import { ConversationDeleting, ReadAfterWrite } from "../errors.ts";
 import type { SettledSubmissionRecord } from "../harness/types.ts";
+import { scanAll } from "../harness/util.ts";
 import { deliverSignal, isSettled, type SignalResult, type SignalToken, SubmissionSettled } from "../signals.ts";
 import type {
 	ConversationDocFamilyToken,
@@ -150,6 +151,11 @@ export interface TransactionHost {
 	install(document: LoadedDocument): void;
 	/** Remove a retired incarnation if it is still the cached occupant of its address. */
 	evict(addressId: string, recordId: DocumentId): void;
+	/**
+	 * Whether a conversation is being deleted and takes no new work; `undefined` when the Session deletes none. A plain
+	 * Session never does.
+	 */
+	closing(conversationId: ConversationId): Promise<boolean> | undefined;
 	/** Stage writes that belong to every newly created or forked conversation, in its creating transaction. */
 	conversationCreated(tx: Transaction, record: ConversationRecord): Promise<void>;
 	/** The newest entry ID visible from a conversation, known from the Session's commits. */
@@ -272,6 +278,8 @@ export class Transaction implements Tx {
 	readonly #submissions = new Map<SubmissionId, SubmissionRecord>();
 	/** Submission settlements and placements in staging order; resolved against the latest candidate record during assembly. */
 	readonly #submissionChanges: { readonly id: SubmissionId; readonly change: SubmissionChange }[] = [];
+	/** Conversations `deleteConversations()` staged, written after every other write of the batch. */
+	readonly #deletedConversationIds: ConversationId[] = [];
 
 	/** Write and publication plans of every staged incarnation, built during assembly. */
 	readonly #plans: DocumentPlan[] = [];
@@ -400,6 +408,8 @@ export class Transaction implements Tx {
 			...(parent === undefined ? {} : { parent }),
 			...(owner === undefined ? {} : { owner }),
 		};
+		if (parent !== undefined) await this.#requireOpenConversation(parent.conversationId);
+		this.#assertOpen();
 		const copies =
 			parent === undefined
 				? []
@@ -422,6 +432,52 @@ export class Transaction implements Tx {
 		await this.#host.conversationCreated(this, record);
 		this.#assertOpen();
 		return record;
+	}
+
+	/**
+	 * Internal: delete conversations whose tasks are all terminal (`conversation.delete`), after the commit's other
+	 * writes. Settles their queued and placed submissions `unanswered` (reason `deleted`) and retires their current
+	 * documents, so waiters, watches, and the cache follow. Reads tables, so before the first table write.
+	 */
+	deleteConversations(ids: readonly ConversationId[]): Promise<void> {
+		try {
+			this.#assertOpen();
+			if (this.#hasTableWrite) throw new ReadAfterWrite("Transaction.deleteConversations()");
+			this.#hasTableWrite = true;
+			return this.#track(this.#stageDeletion(ids));
+		} catch (error) {
+			return Promise.reject(error);
+		}
+	}
+
+	async #stageDeletion(ids: readonly ConversationId[]): Promise<void> {
+		const storage = this.#host.storage;
+		const context = this.#context;
+		for (const id of ids) {
+			for (const status of ["queued", "placed"] as const) {
+				const submissions = await scanAll((cursor) =>
+					storage.scanSubmissions({ conversationId: id, status }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
+				);
+				for (const { id: submissionId } of submissions) {
+					this.#submissionChanges.push({ id: submissionId, change: { status: "unanswered", reason: "deleted" } });
+				}
+			}
+			const scope = { kind: "conversation", conversationId: id } as const;
+			const documents = await scanAll((cursor) =>
+				storage.scanDocuments({ scope, at: "current" }, INTERNAL_SCAN_PAGE_SIZE, cursor, context),
+			);
+			for (const record of documents) {
+				const entry: DocumentEntry = {
+					addressId: addressId(record),
+					address: record,
+					target: { kind: "retire-only", record },
+					retireOnCommit: true,
+				};
+				this.#documents.push(entry);
+				this.#latestDocumentByAddress.set(entry.addressId, entry);
+			}
+			this.#deletedConversationIds.push(id);
+		}
 	}
 
 	appendEntry(conversationId: ConversationId, value: EntryDraft): Promise<EntryRecord>;
@@ -496,7 +552,7 @@ export class Transaction implements Tx {
 			}
 			const conversationId = owner?.conversationId ?? options.conversationId ?? this.#scope.conversationId;
 			if (conversationId === undefined) throw new TypeError("Tx.createTask() requires options.conversationId");
-			await this.#requireConversation(conversationId);
+			await this.#requireOpenConversation(conversationId);
 			this.#assertOpen();
 			const definition = task.definition;
 			const checkpoint = definition.initial(input);
@@ -530,7 +586,7 @@ export class Transaction implements Tx {
 	/** Create a raw submission record with a fresh ID; no admission rules apply. */
 	createSubmission(create: SubmissionCreate): Promise<SubmissionRecord> {
 		return this.#write(async () => {
-			await this.#requireConversation(create.conversationId);
+			await this.#requireOpenConversation(create.conversationId);
 			this.#assertOpen();
 			const id = await this.#host.storage.mintId<SubmissionId>();
 			this.#assertOpen();
@@ -1101,6 +1157,8 @@ export class Transaction implements Tx {
 			if (plan.content !== undefined) writes.push(plan.content);
 			if (plan.retire) writes.push({ type: "document.retire", id: plan.record.id });
 		}
+		// Last: what the batch settles or retires in a deleted conversation is published, then deleted with it.
+		for (const id of this.#deletedConversationIds) writes.push({ type: "conversation.delete", id });
 		return writes;
 	}
 
@@ -1212,6 +1270,14 @@ export class Transaction implements Tx {
 		if ((await this.#host.storage.conversation(id, this.#context)) === undefined) {
 			throw new Error(`Conversation ${id} does not exist`);
 		}
+	}
+
+	/** As `#requireConversation()`, and refuse one being deleted: new work, such as a task or a fork, needs an open one. */
+	async #requireOpenConversation(id: ConversationId): Promise<void> {
+		if (this.#createdConversationIds.has(id)) return;
+		await this.#requireConversation(id);
+		const gate = this.#host.closing(id);
+		if (gate !== undefined && (await gate)) throw new ConversationDeleting(id);
 	}
 
 	/**

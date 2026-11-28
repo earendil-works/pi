@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-telemetry";
 import { ResetEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
+import { DeletionRefused } from "../errors.ts";
 import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import type { SignalResult, SignalToken } from "../signals.ts";
@@ -46,7 +47,8 @@ import { ROOT_CONVERSATION_ID } from "../types.ts";
 import { AgentDoc, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts";
 import { createCompaction } from "./compaction.ts";
 import { readContext } from "./context.ts";
-import { InboxDoc, withdrawAbortedInputs } from "./inbox.ts";
+import { DELETIONS_KEY } from "./deletions.ts";
+import { InboxDoc, withdrawAbortedInputs, withdrawDeleted } from "./inbox.ts";
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts";
 import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
@@ -218,6 +220,8 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	readonly #tasks: TaskScheduler;
 	readonly #submissions: Submissions;
 	readonly #taskGraph: TaskGraphView;
+	/** Whether the Storage deletes conversations (`Storage.deletesConversations`). */
+	readonly #deletes: boolean;
 
 	constructor(rawStorage: Storage, options: HarnessOptions<Tool>, context: Context) {
 		const report = safeReport(options.onReport, options.telemetry ?? NOOP_TELEMETRY_CONTEXT);
@@ -234,6 +238,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		);
 		// Every component reads and writes through the Session's failure guard: `rawStorage` serves only `super()`.
 		const storage = this.storage;
+		this.#deletes = rawStorage.deletesConversations === true;
 		this.#options = options;
 		this.#report = report;
 		this.#hostSettings = hostSettings;
@@ -257,6 +262,8 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			gated: gatedCall,
 			settleOutcome: settleSchedulerOutcome,
 			withdrawInputs: withdrawAbortedInputs,
+			withdrawAll: withdrawDeleted,
+			deletes: rawStorage.deletesConversations === true,
 			conversation: async (id, binding, callContext) => {
 				const record = await this.readOnLine((line) => line.conversation(id, callContext));
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);
@@ -334,11 +341,11 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	inspect(context: Context): Promise<HarnessInspection> {
 		return this.readOnLine(async (storage) => {
-			const { scheduling, tasks } = await this.#tasks.inspect(this.#options.registry.snapshot());
+			const { scheduling, tasks, deleting } = await this.#tasks.inspect(this.#options.registry.snapshot());
 			const scan = (status: "queued" | "placed") =>
 				scanAll((cursor) => storage.scanSubmissions({ status }, SCAN_PAGE_SIZE, cursor, context));
 			const submissions = [...(await scan("queued")), ...(await scan("placed"))].sort((a, b) => a.id - b.id);
-			return { scheduling, tasks, submissions };
+			return { scheduling, tasks, submissions, deleting };
 		});
 	}
 
@@ -428,8 +435,23 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#create({ kind: "independent", ownership: options.ownership }, options, context);
 	}
 
+	async deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void> {
+		this.assertUsable();
+		if (ids.length === 0) return;
+		if (!this.#deletes) throw new DeletionRefused(ids[0]!, { kind: "unsupported" });
+		this.#tasks.resume();
+		return this.#tasks.deleteConversations(ids, context);
+	}
+
 	override report(error: unknown, info: ReportInfo = { kind: "listener_error" }, context?: Context): void {
 		this.#report(error, info, context);
+	}
+
+	/** Whether a deletion closed a conversation, once a closing commit that may be unpublished is (`pi.deletions`). */
+	protected override closingConversation(id: ConversationId): Promise<boolean> | undefined {
+		const gate = this.touch(DELETIONS_KEY);
+		if (gate !== undefined) return gate.then(() => this.#tasks.deleting(id));
+		return this.#tasks.deleting(id) ? Promise.resolve(true) : undefined;
 	}
 
 	/** The ownership memberships a commit's task changes write, from the scheduler's index. */

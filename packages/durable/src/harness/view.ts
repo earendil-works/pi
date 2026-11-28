@@ -7,6 +7,7 @@ import {
 	closeEndOf,
 	closeEnds,
 	contained,
+	ENDED,
 	guardObserver,
 	type ObservedCommit,
 	observation,
@@ -71,7 +72,7 @@ const DEFAULT_WINDOW_MIN = 50;
 /** Receives each next revision of one observer's window, and the Session's close. */
 export type ViewObserver = {
 	advance(call: WatchCall<ConversationView>, context: Context): void;
-	/** The Session closed (`ended`), or failed (`failed`). */
+	/** The Session closed or the conversation was deleted (`ended`), or the Session failed (`failed`). */
 	end(end: WatchEnd): void;
 };
 
@@ -148,6 +149,9 @@ export class ConversationViews {
 		session.followCommits((publication, context) => {
 			for (const [id, mount] of this.#mounts)
 				advance(id, mount, publication, context, (error) => this.report(error));
+			for (const change of publication.changes) {
+				if (change.type === "conversation.delete") this.#end(change.id);
+			}
 		});
 		session.subscribeClose(() => {
 			this.#closed = true;
@@ -161,6 +165,19 @@ export class ConversationViews {
 				}
 			this.#mounts.clear();
 		});
+	}
+
+	/** End the observers of a deleted conversation's view. */
+	#end(id: ConversationId): void {
+		const mount = this.#mounts.get(id);
+		if (mount === undefined) return;
+		this.#mounts.delete(id);
+		for (const windowed of [...mount.observers]) {
+			contained(
+				() => windowed.observer.end(ENDED),
+				(error) => this.report(error),
+			);
+		}
 	}
 
 	/** Report an observer's listener error through the Harness. */

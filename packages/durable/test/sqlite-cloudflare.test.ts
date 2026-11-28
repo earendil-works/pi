@@ -5,18 +5,24 @@ import { describe, expect, it } from "vitest";
 import { durableObjectStorage } from "../../chord/test/sqlite/helpers.ts";
 import { idFromNumber } from "../src/ids.ts";
 import { DurableObjectSqliteDatabase, openDurableObjectSqliteStorage } from "../src/storage/sqlite/cloudflare.ts";
+import { CURRENT_SQLITE_SCHEMA_VERSION } from "../src/storage/sqlite/migrations.ts";
 import { commitWrites } from "../src/testing/commit-writes.ts";
 import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
 
-registerStorageConformance({ describe, expect, it }, "SqliteStorage on a prefixed Durable Object", async (use) =>
-	use(await openDurableObjectSqliteStorage(durableObjectStorage(), { prefix: "pi_" })),
+registerStorageConformance(
+	{ describe, expect, it },
+	"SqliteStorage on a prefixed Durable Object",
+	async (use) => use(await openDurableObjectSqliteStorage(durableObjectStorage(), { prefix: "pi_" })),
+	{ deletesConversations: true },
 );
 
 describe("Durable Object SQLite adapter", () => {
 	it("keeps schema names unprefixed by default", async () => {
 		const sqlite = new DatabaseSync(":memory:");
 		await openDurableObjectSqliteStorage(durableObjectStorage(sqlite));
-		expect(sqlite.prepare("SELECT version FROM durable_schema").get()).toEqual({ version: 2 });
+		expect(sqlite.prepare("SELECT version FROM durable_schema").get()).toEqual({
+			version: CURRENT_SQLITE_SCHEMA_VERSION,
+		});
 		expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE name = 'pi_durable_schema'").get()).toBeUndefined();
 	});
 

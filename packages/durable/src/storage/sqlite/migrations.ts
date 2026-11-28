@@ -110,9 +110,16 @@ export function createSqliteMigrations(schema: SqliteSchema): readonly SqliteMig
 		`CREATE INDEX ${indexes.tasksByAbortRequested} ON ${tables.tasks} (abort_requested, id)`,
 		`CREATE INDEX ${indexes.tasksByBackground} ON ${tables.tasks} (background, id)`,
 	];
+	// Version 3 indexes forks by their parent, which a deletion looks up.
+	const forks: readonly string[] = [
+		`ALTER TABLE ${tables.conversations} ADD COLUMN parent_conversation_id INTEGER`,
+		`UPDATE ${tables.conversations} SET parent_conversation_id = json_extract(record, '$.parent.conversationId')`,
+		`CREATE INDEX ${indexes.conversationsByParent} ON ${tables.conversations} (parent_conversation_id, id)`,
+	];
 	return [
 		{ version: 1, statements: initialSchema },
 		{ version: 2, statements: sleepingStatus },
+		{ version: 3, statements: forks },
 	];
 }
 

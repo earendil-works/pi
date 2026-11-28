@@ -5,6 +5,7 @@
 
 import type { SqliteExecutor } from "@earendil-works/chord/sqlite";
 import type {
+	ConversationId,
 	DocumentContent,
 	DocumentCreate,
 	DocumentId,
@@ -53,6 +54,7 @@ export const claimOf = (write: StorageWrite): { readonly id: Id<string>; readonl
 			return { id: write.record.id, table: "document" };
 		case "document.change":
 		case "document.retire":
+		case "conversation.delete":
 			return undefined;
 	}
 };
@@ -358,9 +360,11 @@ export class PendingWrites {
 					write.value.id,
 					write.value.owner?.conversationId ?? null,
 					write.value.owner?.taskId ?? null,
+					write.value.parent?.conversationId ?? null,
 					encodeJson(write.value),
 				]);
 				break;
+
 			case "entry":
 				this.#entries.push([
 					write.value.id,
@@ -429,7 +433,7 @@ export class PendingWrites {
 		await insertRows(
 			executor,
 			tables.conversations,
-			["id", "owner_conversation_id", "owner_task_id", "record"],
+			["id", "owner_conversation_id", "owner_task_id", "parent_conversation_id", "record"],
 			this.#conversations,
 		);
 		await insertRows(
@@ -483,4 +487,21 @@ export class PendingWrites {
 		this.#cleared.clear();
 		this.#revisions.clear();
 	}
+}
+
+/** Removes conversations with everything scoped to them or their tasks; `record_ids` keeps their IDs claimed. */
+export async function deleteConversations(
+	executor: SqliteExecutor,
+	tables: Tables,
+	ids: readonly ConversationId[],
+): Promise<void> {
+	const json = JSON.stringify(ids);
+	const scoped = `SELECT id FROM ${tables.documents} WHERE scope_kind = 'conversation' AND owner_id IN (SELECT value FROM json_each(?))
+		OR scope_kind = 'task' AND owner_id IN (SELECT id FROM ${tables.tasks} WHERE conversation_id IN (SELECT value FROM json_each(?)))`;
+	await executor.run(`DELETE FROM ${tables.documentRevisions} WHERE document_id IN (${scoped})`, json, json);
+	await executor.run(`DELETE FROM ${tables.documents} WHERE id IN (${scoped})`, json, json);
+	for (const table of [tables.tasks, tables.entries, tables.submissions]) {
+		await executor.run(`DELETE FROM ${table} WHERE conversation_id IN (SELECT value FROM json_each(?))`, json);
+	}
+	await executor.run(`DELETE FROM ${tables.conversations} WHERE id IN (SELECT value FROM json_each(?))`, json);
 }

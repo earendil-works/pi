@@ -170,6 +170,8 @@ export type HostCallback = "now" | "settings" | "registry" | "env" | "models" | 
  *   or, outside a task, the conversation whose agent was resolved.
  * - `host_error`: a host callback threw; with the task that called it, if one did.
  * - `listener_error`: a commit, close, watch, view, or document listener threw.
+ * - `deletion_failed`: finishing `Harness.deleteConversations()` failed; its conversations stay closed until a later
+ *   call or open finishes it.
  */
 export type ReportInfo =
 	| { readonly kind: "storage_failed" }
@@ -201,6 +203,7 @@ export type ReportInfo =
 			readonly conversationId?: ConversationId;
 	  }
 	| { readonly kind: "host_error"; readonly callback: HostCallback; readonly task?: ReportTask }
+	| { readonly kind: "deletion_failed" }
 	| { readonly kind: "listener_error" };
 
 /** One report to `HarnessOptions.onReport`: what it is about (`ReportInfo`, by `kind`) and the `error` reported. */
@@ -321,7 +324,10 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	 * in conversations it owns are not included. Copies of the committed records.
 	 */
 	ownedTasks(context: Context): Promise<TaskRecord<JsonValue, JsonValue, JsonValue>[]>;
-	/** Outcomes of terminal tasks, in order; rejects when one is missing or not terminal. Used after a wait. */
+	/**
+	 * Outcomes of terminal tasks, in order; rejects when one is not terminal. Used after a wait. A missing task, which a
+	 * deletion removed (`Harness.deleteConversations()`), reads `{ status: "orphaned", reason: "deleted" }`.
+	 */
 	outcomes<T>(ids: readonly TaskId<T>[], context: Context): Promise<TaskOutcome<T>[]>;
 	/**
 	 * Invocation-bound handle of an existing conversation, for example one this task owns; `undefined` when absent. Its
@@ -862,6 +868,8 @@ export type ScanOrder = "ascending" | "descending";
 export type ConversationQuery = {
 	readonly ownerConversationId?: ConversationId;
 	readonly ownerTaskId?: TaskId;
+	/** The forks of a conversation; only for a Storage that sets `deletesConversations`, which indexes it. */
+	readonly parentConversationId?: ConversationId;
 	/** Default `ascending`; with a cursor, the cursor's order. */
 	readonly order?: ScanOrder;
 };
@@ -959,7 +967,8 @@ export type StorageWrite =
 			readonly id: DocumentId;
 			readonly content: DocumentContent;
 	  }
-	| { readonly type: "document.retire"; readonly id: DocumentId };
+	| { readonly type: "document.retire"; readonly id: DocumentId }
+	| { readonly type: "conversation.delete"; readonly id: ConversationId };
 
 /**
  * Committed change of one document incarnation: `type: "document"` with `kind: "change"` (a creation or an update) or
@@ -997,7 +1006,7 @@ export type DocumentCommitChange =
 /** Complete table record committed without another publication copy. */
 export type TableCommitChange = Extract<
 	StorageWrite,
-	{ readonly type: "conversation" | "entry" | "task" | "submission" }
+	{ readonly type: "conversation" | "entry" | "task" | "submission" | "conversation.delete" }
 >;
 
 export type CommitChange = TableCommitChange | DocumentCommitChange;
@@ -1398,6 +1407,12 @@ export interface Storage {
 	 * commit only once it ran. Without it, the Session publishes directly.
 	 */
 	publishing?(publish: () => void, context: Context): void;
+
+	/**
+	 * Set by a Storage that stores `conversation.delete` writes and indexes `ConversationQuery.parentConversationId`;
+	 * `Harness.deleteConversations()` refuses without it, and the Session sends neither to a Storage without it.
+	 */
+	readonly deletesConversations?: true;
 
 	/**
 	 * Return a fresh branded candidate from the Session-global numeric ID namespace, greater than every ID minted since

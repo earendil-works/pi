@@ -77,6 +77,7 @@ type State = {
 	conversationIds: ConversationId[];
 	conversationIdsByOwnerConversation: Map<ConversationId, ConversationId[]>;
 	conversationIdsByOwnerTask: Map<TaskId, ConversationId[]>;
+	conversationIdsByParent: Map<ConversationId, ConversationId[]>;
 	entries: Map<EntryId, EntryRecord>;
 	entryIds: Map<ConversationId, EntryId[]>;
 	headEntryIds: Map<ConversationId, EntryId[]>;
@@ -170,6 +171,13 @@ const insertMapId = <K, I extends Id<string>>(index: Map<K, I[]>, key: K, id: I)
 	insertSorted(ids, id);
 };
 
+const removeMapId = <K, I extends Id<string>>(index: Map<K, I[]>, key: K, id: I): void => {
+	const ids = index.get(key);
+	if (ids === undefined) return;
+	removeSorted(ids, id);
+	if (ids.length === 0) index.delete(key);
+};
+
 const scopeKey = (scope: DocumentRecord["scope"]): string => {
 	switch (scope.kind) {
 		case "session":
@@ -237,12 +245,14 @@ export interface PreparedMemoryCommit {
  * of serialization-backed stores. This is backend conformance, not validation.
  */
 export class MemoryStorage implements Storage {
+	readonly deletesConversations = true;
 	private readonly state: State = {
 		recordTypes: new Map(),
 		conversations: new Map(),
 		conversationIds: [],
 		conversationIdsByOwnerConversation: new Map(),
 		conversationIdsByOwnerTask: new Map(),
+		conversationIdsByParent: new Map(),
 		entries: new Map(),
 		entryIds: new Map(),
 		headEntryIds: new Map(),
@@ -374,9 +384,14 @@ export class MemoryStorage implements Storage {
 						insertMapId(this.state.conversationIdsByOwnerConversation, owner.conversationId, write.value.id);
 						insertMapId(this.state.conversationIdsByOwnerTask, owner.taskId, write.value.id);
 					}
+					const parent = write.value.parent;
+					if (parent !== undefined) {
+						insertMapId(this.state.conversationIdsByParent, parent.conversationId, write.value.id);
+					}
 					this.nextId = Math.max(this.nextId, write.value.id + 1);
 					break;
 				}
+
 				case "entry": {
 					this.state.recordTypes.set(write.value.id, "entry");
 					this.state.entries.set(write.value.id, write.value);
@@ -446,13 +461,71 @@ export class MemoryStorage implements Storage {
 				case "document.create":
 				case "document.change":
 				case "document.retire":
+				case "conversation.delete":
 					break;
 			}
 		}
 
 		this.applyDocumentActions(documentActions, seq);
+		// After every other write of the batch, which may settle or retire what the deletion removes.
+		for (const write of prepared) if (write.type === "conversation.delete") this.deleteConversation(write.id);
 		this.nextSeq = seq + 1;
 		return seq;
+	}
+
+	private deleteConversation(id: ConversationId): void {
+		const state = this.state;
+		const conversation = state.conversations.get(id);
+		if (conversation !== undefined) {
+			state.conversations.delete(id);
+			removeSorted(state.conversationIds, id);
+			const owner = conversation.owner;
+			if (owner !== undefined) {
+				removeMapId(state.conversationIdsByOwnerConversation, owner.conversationId, id);
+				removeMapId(state.conversationIdsByOwnerTask, owner.taskId, id);
+			}
+			if (conversation.parent !== undefined) {
+				removeMapId(state.conversationIdsByParent, conversation.parent.conversationId, id);
+			}
+		}
+		// Every record of the conversation goes, also without its record, as the other backends delete by its ID.
+		for (const entryId of state.entryIds.get(id) ?? []) {
+			state.entries.delete(entryId);
+			state.entryCommitSeqs.delete(entryId);
+		}
+		state.entryIds.delete(id);
+		state.headEntryIds.delete(id);
+		this.deleteDocuments({ kind: "conversation", conversationId: id });
+		for (const taskId of state.taskIds.filter((taskId) => state.tasks.get(taskId)!.conversationId === id)) {
+			const task = state.tasks.get(taskId)!;
+			state.tasks.delete(taskId);
+			removeSorted(state.taskIds, taskId);
+			removeSorted(state.taskIdsByStatus[task.state.status], taskId);
+			this.deleteDocuments({ kind: "task", taskId });
+		}
+		for (const submissionId of state.submissionIds) {
+			const submission = state.submissions.get(submissionId)!;
+			if (submission.conversationId !== id) continue;
+			state.submissions.delete(submissionId);
+			removeSorted(state.submissionIdsByStatus[submission.status], submissionId);
+		}
+		state.submissionIds = state.submissionIds.filter((submissionId) => state.submissions.has(submissionId));
+		state.submissionIdsByRequest.delete(id);
+	}
+
+	private deleteDocuments(scope: DocumentRecord["scope"]): void {
+		const state = this.state;
+		const key = scopeKey(scope);
+		for (const documentId of state.documentIdsByScope.get(key) ?? []) {
+			const record = state.documents.get(documentId)!.record;
+			state.documents.delete(documentId);
+			const addressKey = recordAddressKey(record);
+			const address = state.documentAddresses.get(addressKey)!;
+			removeSorted(address.ids, documentId);
+			if (address.currentId === documentId) delete address.currentId;
+			if (address.ids.length === 0) state.documentAddresses.delete(addressKey);
+		}
+		state.documentIdsByScope.delete(key);
 	}
 
 	async mintId<I extends Id<string>>(): Promise<I> {
@@ -474,18 +547,24 @@ export class MemoryStorage implements Storage {
 		_context: Context,
 	): Promise<Page<ConversationRecord, Cursor>> {
 		this.assertOpen();
+		const state = this.state;
 		const ids =
 			query.ownerTaskId !== undefined
-				? (this.state.conversationIdsByOwnerTask.get(query.ownerTaskId) ?? [])
+				? (state.conversationIdsByOwnerTask.get(query.ownerTaskId) ?? [])
 				: query.ownerConversationId !== undefined
-					? (this.state.conversationIdsByOwnerConversation.get(query.ownerConversationId) ?? [])
-					: this.state.conversationIds;
+					? (state.conversationIdsByOwnerConversation.get(query.ownerConversationId) ?? [])
+					: query.parentConversationId !== undefined
+						? (state.conversationIdsByParent.get(query.parentConversationId) ?? [])
+						: state.conversationIds;
 		const start = scanStart(query.order, cursor, "ascending");
 		const values: ConversationRecord[] = [];
 		for (const index of scanIndexes(ids, start)) {
 			if (values.length > limit) break;
-			const value = this.state.conversations.get(ids[index]!)!;
+			const value = state.conversations.get(ids[index]!)!;
 			if (query.ownerConversationId !== undefined && value.owner?.conversationId !== query.ownerConversationId) {
+				continue;
+			}
+			if (query.parentConversationId !== undefined && value.parent?.conversationId !== query.parentConversationId) {
 				continue;
 			}
 			values.push(value);
@@ -764,7 +843,12 @@ export class MemoryStorage implements Storage {
 	private checkGlobalIds(writes: readonly StorageWrite[]): void {
 		const claimed = new Map<Id<string>, TableName>();
 		for (const write of writes) {
-			if (write.type === "document.change" || write.type === "document.retire") continue;
+			if (
+				write.type === "document.change" ||
+				write.type === "document.retire" ||
+				write.type === "conversation.delete"
+			)
+				continue;
 			const document = write.type === "document.create" || write.type === "document.copy";
 			const table: TableName = document ? "document" : write.type;
 			const id = document ? write.record.id : write.value.id;

@@ -11,7 +11,10 @@ export {
 } from "./entries.ts";
 export {
 	ConversationBusy,
+	ConversationDeleting,
 	ConversationIdle,
+	type DeletionRefusal,
+	DeletionRefused,
 	ReadAfterWrite,
 	ReadOnlySession,
 	SessionFailed,

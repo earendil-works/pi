@@ -4,7 +4,11 @@ import { DurableObjectSqliteDatabase } from "@earendil-works/chord/sqlite/cloudf
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
 import { describe, expect, it } from "vitest";
 import { openDurableObjectSqliteStorage } from "../src/storage/sqlite/cloudflare.ts";
-import { applySqliteMigrationsForSchema, createSqliteMigrations } from "../src/storage/sqlite/migrations.ts";
+import {
+	applySqliteMigrationsForSchema,
+	CURRENT_SQLITE_SCHEMA_VERSION,
+	createSqliteMigrations,
+} from "../src/storage/sqlite/migrations.ts";
 import { createSqliteSchema } from "../src/storage/sqlite/schema.ts";
 
 const fresh = () => env.SESSIONS.get(env.SESSIONS.newUniqueId());
@@ -14,8 +18,7 @@ registerStorageConformance({ describe, expect, it }, "SqliteStorage on Durable O
 	runInDurableObject(fresh(), async (_instance, state) => {
 		// Tables of their own, next to the ones the object's Harness opened.
 		await use(await openDurableObjectSqliteStorage(state.storage, { prefix: `conformance${suite++}_` }));
-	}),
-);
+	}), { deletesConversations: true });
 
 describe("Durable Object SQLite schema", () => {
 	it("migrates a version 1 schema to admit sleeping tasks, keeping tasks and indexes", async () => {
@@ -35,7 +38,9 @@ describe("Durable Object SQLite schema", () => {
 			await expect(insert(6, "sleeping")).rejects.toThrow();
 
 			await openDurableObjectSqliteStorage(state.storage, { prefix: "legacy_" });
-			expect(await database.get(`SELECT version FROM ${schema.tables.durableSchema}`)).toEqual({ version: 2 });
+			expect(await database.get(`SELECT version FROM ${schema.tables.durableSchema}`)).toEqual({
+				version: CURRENT_SQLITE_SCHEMA_VERSION,
+			});
 			expect(await database.get(`SELECT status FROM ${tasks} WHERE id = 5`)).toEqual({ status: "waiting" });
 			await insert(6, "sleeping");
 			const indexes = await database.all<{ name: string }>(
@@ -49,6 +54,16 @@ describe("Durable Object SQLite schema", () => {
 				schema.indexes.tasksByKind,
 				schema.indexes.tasksByStatus,
 			]);
+		});
+	});
+});
+
+describe("Durable Object SQLite secure deletion", () => {
+	it("is refused when the storage opens, as Durable Objects refuse its pragma", async () => {
+		await runInDurableObject(fresh(), async (_instance, state) => {
+			await expect(
+				openDurableObjectSqliteStorage(state.storage, { prefix: "secure_", secureDelete: true }),
+			).rejects.toThrow("secureDelete: this database refuses PRAGMA secure_delete");
 		});
 	});
 });

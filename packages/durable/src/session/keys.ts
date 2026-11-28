@@ -121,6 +121,10 @@ export function tableKeys(writes: readonly StorageWrite[], keys: string[]): void
 					keys.push(requestKey(write.value.conversationId, write.value.requestId));
 				}
 				break;
+			// It removes records of every kind, which no key names on its own.
+			case "conversation.delete":
+				keys.push(ALL_KEYS);
+				break;
 		}
 	}
 }

@@ -31,6 +31,7 @@ const context = BACKGROUND_CONTEXT;
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
 class ReopeningStorage implements Storage {
+	readonly deletesConversations = true;
 	private current: IndexedDbStorage;
 	private readonly name: string;
 	private readonly indexedDB: IDBFactory;
@@ -110,20 +111,25 @@ async function withStorage(use: (storage: Storage) => Promise<void>): Promise<vo
 	}
 }
 
-registerStorageConformance({ describe, expect, it }, "IndexedDbStorage", withStorage);
+registerStorageConformance({ describe, expect, it }, "IndexedDbStorage", withStorage, { deletesConversations: true });
 
-registerStorageConformance({ describe, expect, it }, "IndexedDbStorage across reopen", async (use) => {
-	const indexedDB = new IDBFactory();
-	const name = "reopening-conformance";
-	const created = await IndexedDbStorage.open(name, { indexedDB });
-	await created.close(context);
-	const storage = new ReopeningStorage(await IndexedDbStorage.open(name, { indexedDB }), name, indexedDB);
-	try {
-		await use(storage);
-	} finally {
-		await storage.close(context);
-	}
-});
+registerStorageConformance(
+	{ describe, expect, it },
+	"IndexedDbStorage across reopen",
+	async (use) => {
+		const indexedDB = new IDBFactory();
+		const name = "reopening-conformance";
+		const created = await IndexedDbStorage.open(name, { indexedDB });
+		await created.close(context);
+		const storage = new ReopeningStorage(await IndexedDbStorage.open(name, { indexedDB }), name, indexedDB);
+		try {
+			await use(storage);
+		} finally {
+			await storage.close(context);
+		}
+	},
+	{ deletesConversations: true },
+);
 
 function pendingTask(id: TaskId<JsonValue>, conversationId = ROOT_CONVERSATION_ID): StoredTask {
 	return {
@@ -152,6 +158,34 @@ it("persists minted IDs across reopen", async () => {
 		expect(await reopened.mintId<EntryId>()).toBe(3);
 	} finally {
 		await reopened.close(context);
+	}
+});
+
+it("indexes the forks of a version 1 database from their records when it opens", async () => {
+	const indexedDB = new IDBFactory();
+	// The stores of version 1 this upgrade reads: the metadata and the conversations.
+	const legacy = indexedDB.open("fork-index", 1);
+	legacy.onupgradeneeded = () => {
+		legacy.result.createObjectStore("meta", { keyPath: "key" }).add({ key: "state", nextId: 4, nextSeq: 2 });
+		const conversations = legacy.result.createObjectStore("conversations", { keyPath: "id" });
+		conversations.add({ id: 1, record: { id: 1 } });
+		conversations.add({ id: 3, record: { id: 3, parent: { conversationId: 1, at: 2 } } });
+	};
+	await new Promise((resolve) => {
+		legacy.onsuccess = resolve;
+	});
+	legacy.result.close();
+	const storage = await IndexedDbStorage.open("fork-index", { indexedDB });
+	try {
+		const forks = await storage.scanConversations(
+			{ parentConversationId: ROOT_CONVERSATION_ID },
+			10,
+			undefined,
+			context,
+		);
+		expect(forks.items).toEqual([{ id: 3, parent: { conversationId: 1, at: 2 } }]);
+	} finally {
+		await storage.close(context);
 	}
 });
 

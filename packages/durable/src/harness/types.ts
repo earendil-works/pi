@@ -898,6 +898,8 @@ export type HarnessInspection = {
 	readonly tasks: readonly TaskInspection[];
 	/** Queued and placed submissions, in ID order. */
 	readonly submissions: readonly SubmissionRecord[];
+	/** Conversations a deletion closed and has not deleted yet, in ID order (`deleteConversations()`). */
+	readonly deleting: readonly ConversationId[];
 };
 
 /** Raw active transcript and derived model context. */
@@ -1011,6 +1013,7 @@ export interface Harness extends Session {
 	): Promise<Conversation>;
 	conversation(id: ConversationId, context: Context): Promise<Conversation | undefined>;
 	createConversation(options: ConversationCreateOptions, context: Context): Promise<Conversation>;
+	deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void>;
 
 	getTask<R>(id: TaskId<R>, context: Context): Promise<TaskRecord<JsonValue, JsonValue, R> | undefined>;
 	/** Live tasks and unsettled submissions. Writes nothing and runs no task code. */

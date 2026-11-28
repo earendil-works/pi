@@ -17,6 +17,7 @@ import {
 } from "@earendil-works/pi-telemetry";
 import type { ExecutionEnv } from "../env/index.ts";
 import { errorMessage, ReadOnlySession } from "../errors.ts";
+import { idFromNumber } from "../ids.ts";
 import { ALL_KEYS, conversationKey, INTENT_KEY, ownedKey, ROOTS_KEY, taskKey } from "../session/keys.ts";
 import type { ObservedCommit, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
@@ -48,6 +49,7 @@ import type {
 } from "../types.ts";
 import { agentHooks, DEFAULT_RESTART_LIMIT } from "./agent.ts";
 import { advanceRange, type ContextRange, rangeEntry, readContextFrom } from "./context.ts";
+import { DeletionsDoc, type DeletionsState, deletionSet } from "./deletions.ts";
 import { providerSessionsByRuntime } from "./provider.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import type {
@@ -261,6 +263,10 @@ export type TaskSchedulerOptions = {
 	readonly settleOutcome: (tx: Transaction, record: AnyTaskRecord, outcome: SchedulerOutcome) => Promise<void>;
 	/** Withdraw a conversation's queued inputs, for conversation abort and abort cascades. */
 	readonly withdrawInputs: (tx: Transaction, conversationId: ConversationId) => Promise<void>;
+	/** Settle and remove every queued item of a conversation being deleted, writes too. */
+	readonly withdrawAll: (tx: Transaction, conversationId: ConversationId) => Promise<void>;
+	/** Whether the Storage deletes conversations (`Storage.deletesConversations`). */
+	readonly deletes: boolean;
 	/** Invocation-bound handle of an existing conversation, for task runtimes and tools. */
 	readonly conversation: (
 		id: ConversationId,
@@ -338,6 +344,15 @@ export class TaskScheduler {
 	readonly #keepsAbandoned: TaskSchedulerOptions["keepsAbandoned"];
 	readonly #parkedAtGate: TaskSchedulerOptions["gated"];
 	readonly #withdrawInputs: TaskSchedulerOptions["withdrawInputs"];
+	readonly #withdrawAll: TaskSchedulerOptions["withdrawAll"];
+	/**
+	 * Conversations being deleted (`pi.deletions`), as committed: they take no new work, and no task elsewhere may start
+	 * waiting on theirs.
+	 */
+	#deleting: ReadonlySet<ConversationId> = new Set();
+	/** Set once the first `resume()` started finishing the deletions open found. */
+	#finishing = false;
+	readonly #deletes: boolean;
 	readonly #conversation: TaskSchedulerOptions["conversation"];
 	readonly #context: Context;
 	readonly #live = new Map<TaskId, AnyTaskRecord>();
@@ -470,6 +485,8 @@ export class TaskScheduler {
 		this.#keepsAbandoned = options.keepsAbandoned;
 		this.#parkedAtGate = options.gated;
 		this.#withdrawInputs = options.withdrawInputs;
+		this.#withdrawAll = options.withdrawAll;
+		this.#deletes = options.deletes;
 		this.#conversation = options.conversation;
 		this.#context = options.context;
 		this.#readOnly = options.readOnly === true;
@@ -490,6 +507,7 @@ export class TaskScheduler {
 			for (const id of this.#sleeping) this.#wakeGate(this.#live.get(id)!);
 			this.#kick();
 		});
+		this.#deleting = deletingOf(await this.#session.snapshot(DeletionsDoc, context));
 		await this.#session.commitWith(async (tx) => {
 			await this.#published();
 			// Every table read before the first write.
@@ -531,6 +549,11 @@ export class TaskScheduler {
 		this.#enabled = true;
 		this.#wakeDue();
 		this.#kick();
+		if (this.#finishing) return;
+		this.#finishing = true;
+		// The deletions a crash or close interrupted. A Storage that cannot delete, such as one a closed session was copied
+		// to, keeps them closed.
+		if (this.#deleting.size > 0 && this.#deletes) void this.#finishDeletion(this.#deleting);
 	}
 
 	/**
@@ -726,6 +749,66 @@ export class TaskScheduler {
 	}
 
 	/**
+	 * `Harness.deleteConversations()` (spec §2.2): one commit marks the conversations deleting, withdraws their queued
+	 * items, and abort-marks their live tasks, background ones included; once those ended, one commit deletes them, as
+	 * the scheduler's own work: cancelling the wait for it does not stop it.
+	 */
+	async deleteConversations(ids: readonly ConversationId[], context: Context): Promise<void> {
+		const set = await this.#session.commitWith(async (tx) => {
+			await this.#published();
+			const records = await deletionSet(tx, ids);
+			const set = new Set(records.map(({ id }) => id));
+			const deletions = (await tx.doc(DeletionsDoc)).conversations;
+			for (const id of set) if (!deletions.includes(id)) deletions.push(id);
+			for (const id of set) await this.#withdrawAll(tx, id);
+			for (const live of this.#live.values()) {
+				if (!set.has(live.conversationId)) continue;
+				if (!live.abortRequested || live.abortReason !== undefined) tx.setTask(withAbortMark(live));
+			}
+			return set;
+		}, context);
+		if (set.size === 0) return;
+		return awaitWithContext(this.#finishDeletion(set), context);
+	}
+
+	/**
+	 * Delete closed conversations once their tasks, abort-marked when they closed, ended. A failure other than the
+	 * Session's or its close is reported and leaves them closed, for the next call or open to finish: failing the
+	 * Session would fail every open after it too.
+	 */
+	#finishDeletion(set: ReadonlySet<ConversationId>): Promise<void> {
+		const finishing = this.#deleteClosed(set);
+		finishing.catch((error: unknown) => {
+			if (!this.#closing && this.#session.failure === undefined) this.#report(error, DELETION);
+		});
+		return finishing;
+	}
+
+	async #deleteClosed(set: ReadonlySet<ConversationId>): Promise<void> {
+		const context = this.#context;
+		for (;;) {
+			// A deleting conversation takes no new task, so this ends.
+			for (const live of [...this.#live.values()]) {
+				if (set.has(live.conversationId)) await this.waitForTask(live.id, context);
+			}
+			const deleted = await this.#session.commitWith(async (tx) => {
+				await this.#published();
+				for (const live of this.#live.values()) if (set.has(live.conversationId)) return false;
+				await tx.deleteConversations([...set]);
+				const deletions = await tx.doc(DeletionsDoc);
+				deletions.conversations = deletions.conversations.filter((id) => !set.has(idFromNumber(id)));
+				return true;
+			}, context);
+			if (deleted) return;
+		}
+	}
+
+	/** Whether a conversation is being deleted, as committed. */
+	deleting(id: ConversationId): boolean {
+		return this.#deleting.has(id);
+	}
+
+	/**
 	 * The ownership memberships a commit's task and conversation changes write (group commit §4.2), at its admission on
 	 * the line: for each task created or made terminal, every node from its parent up to and including the nearest live
 	 * task, or the root conversation, and then the roots too, conservatively, as a pending end may unlist the root a
@@ -828,6 +911,15 @@ export class TaskScheduler {
 			if (change.type === "conversation" && !this.#edges.has(change.value.id)) {
 				this.#setEdge(change.value.id, change.value.owner?.taskId ?? null);
 			}
+			if (
+				change.type === "document" &&
+				change.kind === "change" &&
+				change.record.kind === DeletionsDoc.definition.kind
+			) {
+				this.#deleting = deletingOf(change.value as DeletionsState);
+			}
+			// It has no live work; its kept context holds its entries.
+			if (change.type === "conversation.delete") this.#dropContext(change.id);
 		}
 		for (const change of publication.changes) {
 			if (change.type !== "task") continue;
@@ -2245,15 +2337,13 @@ export class TaskScheduler {
 	 * pending migration shows as `ready` with `migrates`, and only a migration the scheduler already tried, or one that
 	 * cannot exist, shows as failed.
 	 */
-	async inspect(
-		snapshot: RegistrySnapshot,
-	): Promise<{ scheduling: HarnessInspection["scheduling"]; tasks: TaskInspection[] }> {
+	async inspect(snapshot: RegistrySnapshot): Promise<Omit<HarnessInspection, "submissions">> {
 		await this.#published();
 		await this.#loadScopes(false);
 		const tasks: TaskInspection[] = [];
 		for (const record of this.#live.values()) tasks.push({ record, state: this.#inspectTask(record, snapshot) });
 		const scheduling = this.#closing ? "closing" : this.#enabled ? "running" : "paused";
-		return { scheduling, tasks };
+		return { scheduling, tasks, deleting: [...this.#deleting].sort((a, b) => a - b) };
 	}
 
 	#inspectTask(record: AnyTaskRecord, snapshot: RegistrySnapshot): TaskInspection["state"] {
@@ -2967,9 +3057,14 @@ export class TaskScheduler {
 					this.#session.readOnLine(async (storage) => {
 						const outcomes: TaskOutcome<JsonValue>[] = [];
 						for (const id of ids) {
-							const state = (await storage.task(id, context))?.state;
-							if (state?.status !== "terminal") throw new Error(`Task ${id} is not terminal`);
-							outcomes.push(state.outcome);
+							const record = await storage.task(id, context);
+							// Deleted with its conversation (`Harness.deleteConversations()`): IDs are never reused.
+							if (record === undefined) {
+								outcomes.push(DELETED_OUTCOME);
+								continue;
+							}
+							if (record.state.status !== "terminal") throw new Error(`Task ${id} is not terminal`);
+							outcomes.push(record.state.outcome);
 						}
 						return outcomes;
 					}),
@@ -3150,6 +3245,9 @@ export class TaskScheduler {
 	}
 }
 
+/** What `outcomes()` reads for a task whose record a deletion removed. */
+const DELETED_OUTCOME: TaskOutcome<JsonValue> = { status: "orphaned", reason: "deleted" };
+
 /** The signal of the Harness's close, by task runtime (`closeSignal()`). */
 const closeSignals = new WeakMap<object, AbortSignal>();
 
@@ -3165,6 +3263,7 @@ const REGISTRY: ReportInfo = { kind: "host_error", callback: "registry" };
 const SETTINGS: ReportInfo = { kind: "host_error", callback: "settings" };
 const ON_WAKE: ReportInfo = { kind: "host_error", callback: "onWake" };
 const TELEMETRY: ReportInfo = { kind: "host_error", callback: "telemetry" };
+const DELETION: ReportInfo = { kind: "deletion_failed" };
 
 /** The extension that installed `task` in `snapshot`, the last one that lists it; none for a built-in task. */
 function installerOf(snapshot: RegistrySnapshot, task: AnyTask | undefined): string | undefined {
@@ -3398,4 +3497,9 @@ function jsonEqual(left: JsonValue | undefined, right: JsonValue | undefined): b
 	const keys = Object.keys(left);
 	if (keys.length !== Object.keys(right).length) return false;
 	return keys.every((key) => Object.hasOwn(right, key) && jsonEqual(left[key], right[key]));
+}
+
+/** The conversations a `pi.deletions` value names. */
+function deletingOf(state: Readonly<DeletionsState> | undefined): ReadonlySet<ConversationId> {
+	return new Set(state?.conversations.map((id) => idFromNumber<ConversationId>(id)));
 }

@@ -183,6 +183,13 @@ export function withdrawQueuedInputs(tx: Tx, conversationId: ConversationId, rea
 	return withdrawInputs(tx, conversationId, reason, () => true);
 }
 
+/** Withdraw every queued item of a conversation being deleted, writes too: each settles `unanswered` with reason `deleted`. */
+export async function withdrawDeleted(tx: Tx, conversationId: ConversationId): Promise<void> {
+	const inbox = await tx.doc(InboxDoc, conversationId);
+	for (const item of inbox.items) tx.settleSubmission(item.id, { status: "unanswered", reason: "deleted" });
+	inbox.items = [];
+}
+
 /** Settle and remove the queued inputs `withdraws` selects, keeping the order of the items that stay. */
 async function withdrawInputs(
 	tx: Tx,

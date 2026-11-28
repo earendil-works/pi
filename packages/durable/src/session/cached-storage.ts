@@ -105,6 +105,9 @@ export class CachedStorage implements Storage {
 					this.#wrote(write.value.id);
 					this.#submissions.set(write.value.id, freeze(write.value));
 					break;
+				case "conversation.delete":
+					this.#forget(write.id);
+					break;
 			}
 		}
 	}
@@ -297,6 +300,18 @@ export class CachedStorage implements Storage {
 		}
 	}
 
+	/** Drop a deleted conversation and its records: a cached record would let a later commit write to it. */
+	#forget(id: ConversationId): void {
+		// Which records a read in flight is of is unknown: none of them may keep what it read.
+		for (const reads of this.#reads.values()) reads.version++;
+		this.#conversations.delete(id);
+		this.#tasks.deleteWhere((record) => record.conversationId === id);
+		for (const awaited of this.#awaited.values()) {
+			if (awaited.record?.conversationId === id) awaited.record = undefined;
+		}
+		this.#submissions.deleteWhere((record) => record.conversationId === id);
+	}
+
 	/** A published commit wrote record `id`: a read of it in flight may have missed that. */
 	#wrote(id: Id<string>): void {
 		const reads = this.#reads.get(id);
@@ -363,6 +378,10 @@ class Lru<K, V> {
 
 	delete(key: K): void {
 		this.#map.delete(key);
+	}
+
+	deleteWhere(matches: (value: V) => boolean): void {
+		for (const [key, value] of this.#map) if (matches(value)) this.#map.delete(key);
 	}
 
 	set(key: K, value: V): void {

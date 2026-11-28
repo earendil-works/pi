@@ -28,6 +28,7 @@ Built on [`@earendil-works/pi-ai`](../ai/README.md) for model access and `@earen
 - [Hooks](#hooks)
 - [More Conversations and Forks](#more-conversations-and-forks)
 - [Abort and Subagents](#abort-and-subagents)
+- [Deleting Conversations](#deleting-conversations)
 - [Child Tasks](#child-tasks)
 - [Task Graph](#task-graph)
 - [Your Own State](#your-own-state)
@@ -264,7 +265,7 @@ const result = await harness.signal(taskId, Answer, "answer", { text: "Yes" }, c
 
 **Crash loops.** Work that deterministically crashes its process, by exhausting memory or CPU before its next checkpoint, would otherwise be resumed and crash again forever. A model request the host died during is a failed attempt under `settings.retry`: its partial answer is kept as an aborted entry, the next attempt waits for the backoff (shown in `docs["pi.live"].generation.retry`), and with no retry left the run ends with `docs["pi.live"].runFailure` reason `interrupted`. A deferred response that was being fetched is polled again as the next attempt, not requested again, and cancelled when the run ends. A close is not a crash: a request it stopped is sent again. Other work is counted: open counts each task a crash, eviction, or reset cut off, and a new state the task commits starts the count over. Once the count reaches `settings.restartLimit` (default 5; `Infinity` never ends a task for it), the task ends instead of running again: a tool call with an error result (diagnostic code `restart_limit`), a compaction failed into `compactionFailure`, a run with `runFailure` reason `restart_limit` (also when charging an interrupted request keeps crashing), and a task of your own kinds `faulted`, reported as `task_faulted` with reason `restart_limit`. The built-in ones are reported as `task_interrupted`, as is a run that ends `interrupted`, so a crash loop always reaches `onReport`. Every task running when a process dies is counted, not only the one that killed it. An abort handler cut off that many times ends its task `faulted` too; a run someone aborted still ends `aborted`, with the cut-off in `detail`.
 
-**Reports.** `onReport(report)` gets one `Report`: the `error` and what happened in `report.kind`: `storage_failed` for the error that failed the Harness (a Storage error, often a platform reset); `task_faulted`, `task_interrupted` (crashes ended it, with `report.reason` and `report.restarts`), `migration_failed`, `task_outdated` (`reason` `missing_task`, `task_too_old`, or `migration_failed`, the words a blocked task shows), or `task_error` for a task, with `report.task` (its `id`, `kind`, and `conversationId`) and the extension that installed it in `report.extension`; `extension_error` for hooks, sections, wrappers, and tools, with the extension's name; `host_error` for a host callback, named in `report.callback`; and `listener_error`. A host can feed `task_faulted` reports of one kind to its own breaker.
+**Reports.** `onReport(report)` gets one `Report`: the `error` and what happened in `report.kind`: `storage_failed` for the error that failed the Harness (a Storage error, often a platform reset); `task_faulted`, `task_interrupted` (crashes ended it, with `report.reason` and `report.restarts`), `migration_failed`, `task_outdated` (`reason` `missing_task`, `task_too_old`, or `migration_failed`, the words a blocked task shows), or `task_error` for a task, with `report.task` (its `id`, `kind`, and `conversationId`) and the extension that installed it in `report.extension`; `extension_error` for hooks, sections, wrappers, and tools, with the extension's name; `host_error` for a host callback, named in `report.callback`; `listener_error`; and `deletion_failed` when finishing a deletion failed, which leaves its conversations closed. A host can feed `task_faulted` reports of one kind to its own breaker.
 
 **Queued inputs after a failed run.** A run that fails with a model error, a missing model, nothing to answer, its turn limit, or crashes (`interrupted`, `restart_limit`) leaves the inputs queued behind it waiting until the next input arrives. `settings.afterFailedRun` changes that: `continue` starts the next run with them, as after an answer, and `withdraw` settles them `unanswered` with reason `run_failed`.
 
@@ -693,7 +694,7 @@ It behaves like any other input: it starts a run, steers, follows up, or rejects
 
 ## Reset and Handoff
 
-`reset()` starts a new context. The model no longer sees older entries, but they stay in storage:
+`reset()` starts a new context. The model no longer sees older entries, but they stay in storage; to remove them, [delete the conversation](#deleting-conversations):
 
 ```typescript
 await root.reset(undefined, context);                                  // start from nothing
@@ -926,6 +927,34 @@ The examples show both patterns as product code:
 - [`21-subagent-foreground.ts`](test/examples/21-subagent-foreground.ts): the tool above, returning the child's answer. The UI finds the child through the call's `details` and prints the child's events indented under the call.
 - [`22-subagent-background.ts`](test/examples/22-subagent-background.ts): persistent subagents behind one `subagent` tool that spawns, messages (steer or follow-up), waits for, stops, and lists them. Each child is owned by a background anchor task, so the parent's Esc and idle waits never reach it. Each message is delivered by a background reporter task that posts the answer back to the parent as a follow-up input once it arrives; request IDs keep a restart from sending a message or a report twice.
 
+## Deleting Conversations
+
+```typescript
+await harness.deleteConversations([conversation.id], context);
+```
+
+Deletion is for good. It takes the conversations, their forks (whose history reads theirs), and the conversations their tasks own, such as subagents, and so on for those. One commit closes them: from then on they take no new submission, task, or fork (`ConversationDeleting`), their queued submissions settle `unanswered` with reason `deleted`, and their live tasks, background ones included, are aborted. Once that work has ended, a second commit removes their entries, tasks, submissions, and documents, and ends their views. The Harness finishes that second commit itself: cancelling the call stops only the wait for it. A crash or close in between leaves them closed; the reopened Harness finishes the deletion once it schedules. Unknown IDs are skipped, so a call repeated after restoring a backup is harmless; IDs are never reused. If finishing fails, the Harness reports `deletion_failed` and the conversations stay closed; `inspect().deleting` lists them, and a later call or the next open finishes them. A task elsewhere that waited on one of their tasks reads its outcome as `orphaned` with reason `deleted` once it is gone. Like `submit()`, the call enables scheduling, so that the aborted tasks' handlers run. `usage()` sums the conversations that remain, so its total drops.
+
+It refuses with `DeletionRefused` before it aborts anything; `error.refusal.kind` says why:
+
+| Refusal | When |
+|---|---|
+| `unsupported` | The storage cannot erase a conversation (JSONL) |
+| `root` | The root conversation |
+| `owner` | A live task of another conversation owns it; delete that conversation too, or end the task |
+
+What is erased depends on the backend:
+
+| Backend | Deletion |
+|---|---|
+| Memory, IndexedDB | The records are removed. |
+| SQLite | The rows are removed. SQLite keeps their bytes in free pages and the WAL until reused; open with `{ secureDelete: true }` to overwrite every freed page (`secure_delete` on the connection, which costs some writes on every commit) and truncate the WAL after each deletion. |
+| Cloudflare Durable Object | The rows are removed; Durable Objects manage their storage, and refuse the SQLite pragmas. |
+| Chord store (`StoreStorage`) | Not supported yet (`unsupported`). |
+| JSONL | Not supported (`unsupported`): `main.jsonl` is append-only. |
+
+Files and other effects of the conversation's tools stay, and so does what a provider retained.
+
 ## Child Tasks
 
 A task can own child tasks, created with `ownership: { kind: "task", taskId }`, and wait for them by committing a `waiting` state:
@@ -1059,7 +1088,7 @@ await database.transaction(async (transaction) => {
 });
 ```
 
-A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
+A custom backend's `commit(batches, receive, context)` stores `batches` in order, each as one atomic commit with its own seq, checked against the state the earlier ones left, in as few round trips as it can. It stops at the first batch its own checks refuse (global IDs, document actions, copy resolution): the batches before it stay stored, it and the later ones are not. Once they are durable it calls `receive(index, seq)` per stored batch, in order and synchronously, then resolves with `{ stored, refused? }`; it rejects for an unknown outcome (connection lost, a failed statement or `COMMIT`). `receive` is a durability receipt: the Session publishes each batch later, one at a time, so memory and every view never show a partial log. `receive` calls no Storage method and never throws. One that sets `deletesConversations` indexes the `parentConversationId` conversation filter and stores `conversation.delete`: after the other writes of its batch, it removes the conversation's record and everything of it or scoped to it, keeping its IDs claimed, and the later batches of the call are checked against what it left. Custom backends can run the shared conformance suite, which checks this too, with any Vitest- or Jest-compatible runner:
 
 ```typescript
 import { registerStorageConformance } from "@earendil-works/pi-durable/testing";
@@ -1072,7 +1101,7 @@ registerStorageConformance({ describe, expect, it }, "My Storage", async (use) =
 	} finally {
 		await closeMyStorage(storage);
 	}
-});
+}, { deletesConversations: true }); // omit for a backend that does not delete
 ```
 
 The package root loads pi-schema, because the tool task validates arguments with pi-ai's `validateToolArguments()`.

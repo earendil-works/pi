@@ -74,7 +74,9 @@ describe("durable SQLite migrations", () => {
 		await storage.close(BACKGROUND_CONTEXT);
 		const migrated = await openNodeSqliteDatabase(path);
 		try {
-			expect(await migrated.get("SELECT version FROM durable_schema WHERE singleton = 1")).toEqual({ version: 2 });
+			expect(await migrated.get("SELECT version FROM durable_schema WHERE singleton = 1")).toEqual({
+				version: CURRENT_SQLITE_SCHEMA_VERSION,
+			});
 			expect(await migrated.get("SELECT status, record FROM tasks WHERE id = 5")).toEqual({
 				status: "waiting",
 				record: JSON.stringify(waiting),
@@ -97,6 +99,30 @@ describe("durable SQLite migrations", () => {
 			});
 		} finally {
 			await migrated.close();
+		}
+	});
+
+	it("migrates a version 2 database to index forks by their parent, from their records", async () => {
+		const path = await databasePath();
+		const database = await openNodeSqliteDatabase(path);
+		await applySqliteMigrations(database, SQLITE_MIGRATIONS.slice(0, 2));
+		const insert = (id: number, record: object) =>
+			database.run("INSERT INTO conversations (id, record) VALUES (?, ?)", id, JSON.stringify(record));
+		await insert(1, { id: 1 });
+		await insert(3, { id: 3, parent: { conversationId: 1, at: 2 } });
+		await database.close();
+
+		const storage = await openNodeSqliteStorage(path);
+		try {
+			const forks = await storage.scanConversations(
+				{ parentConversationId: ROOT_CONVERSATION_ID },
+				10,
+				undefined,
+				BACKGROUND_CONTEXT,
+			);
+			expect(forks.items).toEqual([{ id: 3, parent: { conversationId: 1, at: 2 } }]);
+		} finally {
+			await storage.close(BACKGROUND_CONTEXT);
 		}
 	});
 

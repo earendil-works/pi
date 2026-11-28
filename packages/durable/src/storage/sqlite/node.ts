@@ -16,7 +16,7 @@ export async function openNodeSqliteStorage(
 	path: string,
 	options: NodeSqliteStorageOptions = {},
 ): Promise<SqliteStorage> {
-	const { prefix, ...databaseOptions } = options;
+	const { prefix, secureDelete, ...databaseOptions } = options;
 	if (prefix !== undefined) validateSqliteSchemaPrefix(prefix);
-	return SqliteStorage.open(await openNodeSqliteDatabase(path, databaseOptions), { prefix });
+	return SqliteStorage.open(await openNodeSqliteDatabase(path, databaseOptions), { prefix, secureDelete });
 }

@@ -100,7 +100,7 @@ const BUDGETS = {
 		// The fit-images extension hooks the Harness's tool task, so it reaches most of the root's graph (what a Harness
 		// user loads anyway); Photon stays behind `./images`.
 		"./images/fit": {
-			maxFiles: 100,
+			maxFiles: 101,
 			forbid: ["packages/durable/src/images/index.ts", "packages/durable/src/images/node.ts"],
 		},
 	},

@@ -77,6 +77,9 @@ export class ConversationTails {
 				if (entry.head !== undefined) {
 					put(this.#markers, entry.conversationId, freeze(entry as HeadMarker), MARKER_CAPACITY);
 				}
+			} else if (write.type === "conversation.delete") {
+				this.#latest.delete(write.id);
+				this.#markers.delete(write.id);
 			}
 		}
 	}

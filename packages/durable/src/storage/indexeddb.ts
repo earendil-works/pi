@@ -38,7 +38,7 @@ import type {
 } from "../types.ts";
 import { nextCursor, type ScanStart, scanStart } from "./scan.ts";
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const MAX_KEY = Number.MAX_SAFE_INTEGER;
 const META_KEY = "state";
 
@@ -58,6 +58,7 @@ const ALL_STORES = Object.values(STORES);
 const INDEXES = {
 	conversationsByOwnerConversation: "conversations_by_owner_conversation",
 	conversationsByOwnerTask: "conversations_by_owner_task",
+	conversationsByParent: "conversations_by_parent",
 	entriesByConversation: "entries_by_conversation",
 	entryHeadsByConversation: "entry_heads_by_conversation",
 	tasksByStatus: "tasks_by_status",
@@ -92,6 +93,7 @@ type ConversationRow = {
 	readonly id: ConversationId;
 	readonly ownerConversationId?: ConversationId;
 	readonly ownerTaskId?: TaskId;
+	readonly parentConversationId?: ConversationId;
 	readonly record: ConversationRecord;
 };
 type EntryRow = {
@@ -359,6 +361,7 @@ const writeId = (write: StorageWrite): Id<string> | undefined => {
 			return write.record.id;
 		case "document.change":
 		case "document.retire":
+		case "conversation.delete":
 			return undefined;
 	}
 };
@@ -405,8 +408,28 @@ function createSchema(database: IDBDatabase): void {
 	revisions.createIndex(INDEXES.documentRevisionsByKind, ["documentId", "kind", "seq"]);
 }
 
+/**
+ * Version 2: index forks by their parent. An existing database's conversations get their parent column from their
+ * record.
+ */
+function indexDeletion(transaction: IDBTransaction, created: boolean): void {
+	const conversations = transaction.objectStore(STORES.conversations);
+	conversations.createIndex(INDEXES.conversationsByParent, ["parentConversationId", "id"]);
+	if (created) return;
+	const request = conversations.openCursor();
+	request.addEventListener("success", () => {
+		const cursor = request.result;
+		if (cursor === null) return;
+		const row = cursor.value as ConversationRow;
+		const parent = row.record.parent;
+		if (parent !== undefined) cursor.update({ ...row, parentConversationId: parent.conversationId });
+		cursor.continue();
+	});
+}
+
 /** Browser IndexedDB implementation of the durable storage contract. One owner must serialize access to each database. */
 export class IndexedDbStorage implements Storage {
+	readonly deletesConversations = true;
 	private readonly database: IDBDatabase;
 	private closed = false;
 	private closing: Promise<void> | undefined;
@@ -423,7 +446,9 @@ export class IndexedDbStorage implements Storage {
 		if (factory === undefined) throw new Error("IndexedDB is not available");
 		const request = factory.open(name, DATABASE_VERSION);
 		request.addEventListener("upgradeneeded", (event) => {
-			if ((event as IDBVersionChangeEvent).oldVersion === 0) createSchema(request.result);
+			const { oldVersion } = event as IDBVersionChangeEvent;
+			if (oldVersion === 0) createSchema(request.result);
+			if (oldVersion < 2) indexDeletion(request.transaction!, oldVersion === 0);
 		});
 		const database = await requestResult(request);
 		try {
@@ -483,6 +508,10 @@ export class IndexedDbStorage implements Storage {
 				const seq = seqFromNumber(next++);
 				for (const write of writes) await this.applyTableWrite(transaction, write, seq);
 				await this.applyDocumentActions(transaction, documentActions, seq);
+				// After every other write of the batch, which may settle or retire what the deletion removes.
+				for (const write of writes) {
+					if (write.type === "conversation.delete") await this.deleteConversation(transaction, write.id);
+				}
 				for (const write of writes) {
 					const id = writeId(write);
 					if (id !== undefined) nextId = Math.max(nextId, id + 1);
@@ -535,7 +564,8 @@ export class IndexedDbStorage implements Storage {
 		return this.transaction(STORES.conversations, "readonly", async (transaction) => {
 			const store = transaction.objectStore(STORES.conversations);
 			const accept = (row: ConversationRow) =>
-				query.ownerConversationId === undefined || row.ownerConversationId === query.ownerConversationId;
+				(query.ownerConversationId === undefined || row.ownerConversationId === query.ownerConversationId) &&
+				(query.parentConversationId === undefined || row.parentConversationId === query.parentConversationId);
 			let rows: ConversationRow[];
 			if (query.ownerTaskId !== undefined) {
 				rows = await scanCompoundRows(
@@ -549,6 +579,14 @@ export class IndexedDbStorage implements Storage {
 				rows = await scanCompoundRows(
 					store.index(INDEXES.conversationsByOwnerConversation),
 					[query.ownerConversationId],
+					start,
+					limit + 1,
+					accept,
+				);
+			} else if (query.parentConversationId !== undefined) {
+				rows = await scanCompoundRows(
+					store.index(INDEXES.conversationsByParent),
+					[query.parentConversationId],
 					start,
 					limit + 1,
 					accept,
@@ -1002,7 +1040,12 @@ export class IndexedDbStorage implements Storage {
 		const store = transaction.objectStore(STORES.recordIds);
 		const claimed = new Map<Id<string>, TableName>();
 		for (const write of writes) {
-			if (write.type === "document.change" || write.type === "document.retire") continue;
+			if (
+				write.type === "document.change" ||
+				write.type === "document.retire" ||
+				write.type === "conversation.delete"
+			)
+				continue;
 			const document = write.type === "document.create" || write.type === "document.copy";
 			const table: TableName = document ? "document" : write.type;
 			const id = document ? write.record.id : write.value.id;
@@ -1132,6 +1175,9 @@ export class IndexedDbStorage implements Storage {
 									ownerConversationId: write.value.owner.conversationId,
 									ownerTaskId: write.value.owner.taskId,
 								}),
+						...(write.value.parent === undefined
+							? {}
+							: { parentConversationId: write.value.parent.conversationId }),
 						record: write.value,
 					} satisfies ConversationRow),
 				);
@@ -1178,7 +1224,41 @@ export class IndexedDbStorage implements Storage {
 			case "document.copy":
 			case "document.change":
 			case "document.retire":
+			case "conversation.delete":
 				break;
+		}
+	}
+
+	private async deleteConversation(transaction: IDBTransaction, id: ConversationId): Promise<void> {
+		const byConversation = compoundIdRange([id], 0, MAX_KEY);
+		const tasks = transaction.objectStore(STORES.tasks);
+		const taskIds = (await requestResult(
+			tasks.index(INDEXES.tasksByConversation).getAllKeys(byConversation),
+		)) as TaskId[];
+		await this.deleteDocuments(transaction, scopeColumns({ kind: "conversation", conversationId: id }));
+		for (const taskId of taskIds) {
+			await this.deleteDocuments(transaction, scopeColumns({ kind: "task", taskId }));
+			await requestResult(tasks.delete(taskId));
+		}
+		for (const [store, index] of [
+			[STORES.entries, INDEXES.entriesByConversation],
+			[STORES.submissions, INDEXES.submissionsByConversation],
+		] as const) {
+			const rows = transaction.objectStore(store);
+			for (const key of await requestResult(rows.index(index).getAllKeys(byConversation))) {
+				await requestResult(rows.delete(key));
+			}
+		}
+		await requestResult(transaction.objectStore(STORES.conversations).delete(id));
+	}
+
+	private async deleteDocuments(transaction: IDBTransaction, scope: ScopeColumns): Promise<void> {
+		const documents = transaction.objectStore(STORES.documents);
+		const revisions = transaction.objectStore(STORES.documentRevisions);
+		const range = compoundIdRange([scope.scopeKind, scope.ownerId], 0, MAX_KEY);
+		for (const key of await requestResult(documents.index(INDEXES.documentsByScope).getAllKeys(range))) {
+			await requestResult(revisions.delete(compoundIdRange([key as number], 0, MAX_KEY)));
+			await requestResult(documents.delete(key));
 		}
 	}
 

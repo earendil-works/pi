@@ -35,7 +35,14 @@ import type {
 	TaskRecord,
 } from "../../types.ts";
 import { nextCursor, type ScanStart, scanStart } from "../scan.ts";
-import { CommitState, claimOf, type DocumentAction, PendingWrites, prepareDocumentActions } from "./commit.ts";
+import {
+	CommitState,
+	claimOf,
+	type DocumentAction,
+	deleteConversations,
+	PendingWrites,
+	prepareDocumentActions,
+} from "./commit.ts";
 import { applySqliteMigrationsForSchema } from "./migrations.ts";
 import { addressParts, encodeIndexedString, isCurrentOnly, parseJson, scopeColumns } from "./rows.ts";
 import { createSqliteSchema, type SqliteSchema } from "./schema.ts";
@@ -57,6 +64,13 @@ export type SqliteStorageOptions = {
 	 * SQLite's reserved `sqlite_` prefix. Existing data is not migrated when this changes.
 	 */
 	readonly prefix?: string;
+	/**
+	 * Erase what a conversation deletion removes from the database files: the connection runs with `secure_delete`, so
+	 * every freed page is overwritten, and the WAL is truncated after each deletion, at open, and at close. Default
+	 * false: SQLite then keeps the bytes in free pages and the WAL until they are reused. Opening refuses it on a
+	 * database that refuses the pragma, such as a Durable Object's.
+	 */
+	readonly secureDelete?: boolean;
 };
 
 const cursorId = <I extends Id<string>>(cursor: Cursor | undefined): I | undefined => {
@@ -115,17 +129,20 @@ function watchCalls(executor: SqliteExecutor, calls: CheckCalls): SqliteExecutor
 
 /** Portable SQLite implementation of the Pico storage contract. */
 export class SqliteStorage implements Storage {
+	readonly deletesConversations = true;
 	private readonly db: SqliteDatabase;
 	private readonly schema: SqliteSchema;
+	private readonly secureDelete: boolean;
 	private nextId: number;
 	private closed = false;
 	private closing: Promise<void> | undefined;
 	private admittedReads = 0;
 	private readsDrained: (() => void) | undefined;
 
-	private constructor(db: SqliteDatabase, schema: SqliteSchema, nextId: number) {
+	private constructor(db: SqliteDatabase, schema: SqliteSchema, secureDelete: boolean, nextId: number) {
 		this.db = db;
 		this.schema = schema;
+		this.secureDelete = secureDelete;
 		this.nextId = nextId;
 	}
 
@@ -138,7 +155,18 @@ export class SqliteStorage implements Storage {
 				`SELECT next_id, next_seq FROM ${schema.tables.durableMetadata} WHERE singleton = 1`,
 			);
 			if (metadata === undefined) throw new Error("Durable SQLite metadata is missing");
-			return new SqliteStorage(db, schema, Number(metadata.next_id));
+			const secureDelete = options.secureDelete === true;
+			// For the whole connection: a deletion's batch also frees pages before its `DELETE`s, retiring documents and
+			// replacing rows, and so do the commits before it. Here, not at the first deletion, whose failure would fail its
+			// Session.
+			if (secureDelete) {
+				await db.exec("PRAGMA secure_delete = ON").catch((error: unknown) => {
+					throw new Error("secureDelete: this database refuses PRAGMA secure_delete", { cause: error });
+				});
+				// Frames a busy checkpoint after a deletion left, also before a crash.
+				await db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+			}
+			return new SqliteStorage(db, schema, secureDelete, Number(metadata.next_id));
 		} catch (error) {
 			try {
 				await db.close();
@@ -156,7 +184,7 @@ export class SqliteStorage implements Storage {
 	 * read the stored state of all batches up front and run in memory, and the accepted batches are written per table in
 	 * multi-row statements (`commit.ts`), so a call costs a few statements whatever its number of batches. A batch with a
 	 * copy reads the copy's source from the database: the batches before it are written first, so a call of many fork
-	 * batches costs a few statements per fork.
+	 * batches costs a few statements per fork. A batch that deletes conversations is written, then the deletion runs.
 	 */
 	async commit(
 		batches: readonly (readonly StorageWrite[])[],
@@ -167,13 +195,14 @@ export class SqliteStorage implements Storage {
 		const seqs: Seq[] = [];
 		let refused: { readonly error: unknown } | undefined;
 		let candidateNextId = this.nextId;
+		let deleted = false;
 		await this.db.transaction(async (transaction) => {
 			const metadata = await this.readMetadata(transaction);
 			let next = metadata.next_seq;
 			// A failure of the database rejects the call and rolls back the batches before it with the transaction.
-			const state = await CommitState.read(transaction, this.schema.tables, batches);
+			let state = await CommitState.read(transaction, this.schema.tables, batches);
 			const pending = new PendingWrites();
-			for (const writes of batches) {
+			for (const [index, writes] of batches.entries()) {
 				const checked = await this.checkBatch(transaction, state, pending, writes);
 				if (checked.kind === "refused") {
 					refused = { error: checked.refused };
@@ -182,6 +211,16 @@ export class SqliteStorage implements Storage {
 				const seq = seqFromNumber(next++);
 				state.apply(writes, checked.actions, seq);
 				pending.add(writes, checked.actions, seq, state);
+				const deletions: ConversationId[] = [];
+				for (const write of writes) if (write.type === "conversation.delete") deletions.push(write.id);
+				if (deletions.length > 0) {
+					// After every other write of the batch, which may settle or retire what the deletion removes.
+					await pending.flush(transaction, this.schema.tables);
+					await deleteConversations(transaction, this.schema.tables, deletions);
+					deleted = true;
+					// The state read up front still holds what the deletion removed: the later batches check against the database.
+					state = await CommitState.read(transaction, this.schema.tables, batches.slice(index + 1));
+				}
 				seqs.push(seq);
 				candidateNextId = Math.max(candidateNextId, this.candidateNextId(writes));
 			}
@@ -193,6 +232,9 @@ export class SqliteStorage implements Storage {
 		this.nextId = Math.max(this.nextId, candidateNextId);
 		// `COMMIT` returned: the stored batches are durable.
 		for (const [index, seq] of seqs.entries()) receive(index, seq);
+		// The deleted content left the database file; its WAL frames go too. A busy checkpoint leaves them to the next one;
+		// a failing one rejects the call after its receipts, as a storage error after `COMMIT` does.
+		if (deleted && this.secureDelete) await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 		return refused === undefined
 			? { kind: "stored", stored: seqs.length }
 			: { kind: "refused", stored: seqs.length, refused: refused.error };
@@ -277,6 +319,10 @@ export class SqliteStorage implements Storage {
 		if (query.ownerTaskId !== undefined) {
 			clauses.push("owner_task_id = ?");
 			params.push(query.ownerTaskId);
+		}
+		if (query.parentConversationId !== undefined) {
+			clauses.push("parent_conversation_id = ?");
+			params.push(query.parentConversationId);
 		}
 		params.push(limit + 1);
 		const rows = await this.db.all<JsonRow>(
@@ -635,7 +681,12 @@ export class SqliteStorage implements Storage {
 				this.readsDrained = resolve;
 			});
 		}
-		await this.db.close();
+		try {
+			// Frames a busy checkpoint after a deletion left.
+			if (this.secureDelete) await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		} finally {
+			await this.db.close();
+		}
 	}
 
 	/**
