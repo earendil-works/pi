@@ -28,6 +28,7 @@ export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-4-argon",
 	"google-vertex": "gemini-4-argon",
+	"google-ai-plan": "gemini-4-hydrogen",
 	"github-copilot": "gpt-6.1-sol",
 	openrouter: "moonshotai/kimi-k2.7-code",
 	"vercel-ai-gateway": "zai/glm-5.3",

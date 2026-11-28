@@ -1,4 +1,5 @@
 import type { OAuthAuth } from "../types.ts";
+import type { GoogleAiPlanClient } from "./google-ai-plan.ts";
 
 /**
  * Loads an OAuth flow module through a variable specifier so bundlers cannot
@@ -19,6 +20,7 @@ type OAuthFlowLoaders = {
 	openaiCodex: () => OAuthAuth | Promise<OAuthAuth>;
 	openaiChatGPT: () => OAuthAuth | Promise<OAuthAuth>;
 	githubCopilot: () => OAuthAuth | Promise<OAuthAuth>;
+	googleAiPlan: (client: GoogleAiPlanClient) => OAuthAuth | Promise<OAuthAuth>;
 	openrouter: () => OAuthAuth | Promise<OAuthAuth>;
 	kimiCoding: () => OAuthAuth | Promise<OAuthAuth>;
 	meta: () => OAuthAuth | Promise<OAuthAuth>;
@@ -51,6 +53,15 @@ export const loadOpenAIChatGPTOAuth = async (): Promise<OAuthAuth> => {
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.githubCopilot();
 	return ((await importOAuthModule("./github-copilot.ts")) as { githubCopilotOAuth: OAuthAuth }).githubCopilotOAuth;
+};
+
+export const loadGoogleAiPlanOAuth = async (client: GoogleAiPlanClient): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.googleAiPlan(client);
+	return (
+		(await importOAuthModule("./google-ai-plan.ts")) as {
+			createGoogleAiPlanOAuth: (client: GoogleAiPlanClient) => OAuthAuth;
+		}
+	).createGoogleAiPlanOAuth(client);
 };
 
 export const loadOpenRouterOAuth = async (): Promise<OAuthAuth> => {

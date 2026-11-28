@@ -13,6 +13,7 @@ import { DEEPSEEK_CLASSIFIER_MODELS, DEEPSEEK_IMAGE_MODELS, DEEPSEEK_MODELS } fr
 import { FIREWORKS_CLASSIFIER_MODELS, FIREWORKS_IMAGE_MODELS, FIREWORKS_MODELS } from "./providers/fireworks.models.ts";
 import { GITHUB_COPILOT_CLASSIFIER_MODELS, GITHUB_COPILOT_IMAGE_MODELS, GITHUB_COPILOT_MODELS } from "./providers/github-copilot.models.ts";
 import { GOOGLE_CLASSIFIER_MODELS, GOOGLE_IMAGE_MODELS, GOOGLE_MODELS } from "./providers/google.models.ts";
+import { GOOGLE_AI_PLAN_CLASSIFIER_MODELS, GOOGLE_AI_PLAN_IMAGE_MODELS, GOOGLE_AI_PLAN_MODELS } from "./providers/google-ai-plan.models.ts";
 import { GOOGLE_VERTEX_CLASSIFIER_MODELS, GOOGLE_VERTEX_IMAGE_MODELS, GOOGLE_VERTEX_MODELS } from "./providers/google-vertex.models.ts";
 import { GROQ_CLASSIFIER_MODELS, GROQ_IMAGE_MODELS, GROQ_MODELS } from "./providers/groq.models.ts";
 import { HUGGINGFACE_CLASSIFIER_MODELS, HUGGINGFACE_IMAGE_MODELS, HUGGINGFACE_MODELS } from "./providers/huggingface.models.ts";
@@ -58,6 +59,7 @@ export const MODELS: {
 	readonly "fireworks": typeof FIREWORKS_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_MODELS;
 	readonly "google": typeof GOOGLE_MODELS;
+	readonly "google-ai-plan": typeof GOOGLE_AI_PLAN_MODELS;
 	readonly "google-vertex": typeof GOOGLE_VERTEX_MODELS;
 	readonly "groq": typeof GROQ_MODELS;
 	readonly "huggingface": typeof HUGGINGFACE_MODELS;
@@ -102,6 +104,7 @@ export const MODELS: {
 	"fireworks": FIREWORKS_MODELS,
 	"github-copilot": GITHUB_COPILOT_MODELS,
 	"google": GOOGLE_MODELS,
+	"google-ai-plan": GOOGLE_AI_PLAN_MODELS,
 	"google-vertex": GOOGLE_VERTEX_MODELS,
 	"groq": GROQ_MODELS,
 	"huggingface": HUGGINGFACE_MODELS,
@@ -148,6 +151,7 @@ export const IMAGE_MODELS: {
 	readonly "fireworks": typeof FIREWORKS_IMAGE_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_IMAGE_MODELS;
 	readonly "google": typeof GOOGLE_IMAGE_MODELS;
+	readonly "google-ai-plan": typeof GOOGLE_AI_PLAN_IMAGE_MODELS;
 	readonly "google-vertex": typeof GOOGLE_VERTEX_IMAGE_MODELS;
 	readonly "groq": typeof GROQ_IMAGE_MODELS;
 	readonly "huggingface": typeof HUGGINGFACE_IMAGE_MODELS;
@@ -192,6 +196,7 @@ export const IMAGE_MODELS: {
 	"fireworks": FIREWORKS_IMAGE_MODELS,
 	"github-copilot": GITHUB_COPILOT_IMAGE_MODELS,
 	"google": GOOGLE_IMAGE_MODELS,
+	"google-ai-plan": GOOGLE_AI_PLAN_IMAGE_MODELS,
 	"google-vertex": GOOGLE_VERTEX_IMAGE_MODELS,
 	"groq": GROQ_IMAGE_MODELS,
 	"huggingface": HUGGINGFACE_IMAGE_MODELS,
@@ -238,6 +243,7 @@ export const CLASSIFIER_MODELS: {
 	readonly "fireworks": typeof FIREWORKS_CLASSIFIER_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_CLASSIFIER_MODELS;
 	readonly "google": typeof GOOGLE_CLASSIFIER_MODELS;
+	readonly "google-ai-plan": typeof GOOGLE_AI_PLAN_CLASSIFIER_MODELS;
 	readonly "google-vertex": typeof GOOGLE_VERTEX_CLASSIFIER_MODELS;
 	readonly "groq": typeof GROQ_CLASSIFIER_MODELS;
 	readonly "huggingface": typeof HUGGINGFACE_CLASSIFIER_MODELS;
@@ -282,6 +288,7 @@ export const CLASSIFIER_MODELS: {
 	"fireworks": FIREWORKS_CLASSIFIER_MODELS,
 	"github-copilot": GITHUB_COPILOT_CLASSIFIER_MODELS,
 	"google": GOOGLE_CLASSIFIER_MODELS,
+	"google-ai-plan": GOOGLE_AI_PLAN_CLASSIFIER_MODELS,
 	"google-vertex": GOOGLE_VERTEX_CLASSIFIER_MODELS,
 	"groq": GROQ_CLASSIFIER_MODELS,
 	"huggingface": HUGGINGFACE_CLASSIFIER_MODELS,

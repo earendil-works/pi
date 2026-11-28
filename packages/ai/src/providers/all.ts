@@ -14,6 +14,7 @@ import { deepseekProvider } from "./deepseek.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
 import { googleProvider } from "./google.ts";
+import { googleAiPlanProvider } from "./google-ai-plan.ts";
 import { googleVertexProvider } from "./google-vertex.ts";
 import { groqProvider } from "./groq.ts";
 import { huggingfaceProvider } from "./huggingface.ts";
@@ -46,7 +47,7 @@ import { xiaomiTokenPlanSgpProvider } from "./xiaomi-token-plan-sgp.ts";
 import { zaiProvider } from "./zai.ts";
 import { zaiCodingCnProvider } from "./zai-coding-cn.ts";
 
-export { radiusProvider };
+export { googleAiPlanProvider, radiusProvider };
 
 /** Providers present in the generated catalog. `KnownProvider` additionally
  * includes purely dynamic providers (e.g. "radius") that have no static
@@ -133,7 +134,10 @@ export function getAllBuiltinModels<TProvider extends BuiltinProvider>(provider:
 	return [...getBuiltinModels(provider), ...getBuiltinImageModels(provider), ...getBuiltinClassifierModels(provider)];
 }
 
-/** All built-in providers, freshly constructed. */
+/**
+ * All built-in providers, freshly constructed, except `google-ai-plan`, which needs the app's own Google client
+ * (see `googleAiPlanProvider`).
+ */
 export function builtinProviders(): Provider[] {
 	return [
 		amazonBedrockProvider(),

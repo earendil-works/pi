@@ -14,6 +14,7 @@ export function registerLazyOAuthFlows(): void {
 		openaiCodex: async () => (await import("./auth/oauth/openai-codex.ts")).openaiCodexOAuth,
 		openaiChatGPT: async () => (await import("./auth/oauth/openai-chatgpt.ts")).openaiChatGPTOAuth,
 		githubCopilot: async () => (await import("./auth/oauth/github-copilot.ts")).githubCopilotOAuth,
+		googleAiPlan: async (client) => (await import("./auth/oauth/google-ai-plan.ts")).createGoogleAiPlanOAuth(client),
 		openrouter: async () => (await import("./auth/oauth/openrouter.ts")).openRouterOAuth,
 		kimiCoding: async () => (await import("./auth/oauth/kimi-coding.ts")).kimiCodingOAuth,
 		meta: async () => (await import("./auth/oauth/meta.ts")).metaOAuth,

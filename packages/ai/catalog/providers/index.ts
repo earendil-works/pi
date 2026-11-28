@@ -13,6 +13,7 @@ import deepseek from "./deepseek.ts";
 import fireworks from "./fireworks.ts";
 import githubCopilot from "./github-copilot.ts";
 import google from "./google.ts";
+import googleAiPlan from "./google-ai-plan.ts";
 import googleVertex from "./google-vertex.ts";
 import groq from "./groq.ts";
 import huggingface from "./huggingface.ts";
@@ -59,6 +60,7 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	githubCopilot,
 	googleVertex,
 	google,
+	googleAiPlan,
 	groq,
 	huggingface,
 	kimiCoding,
