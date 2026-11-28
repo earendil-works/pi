@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added MCP `2026-07-28`, the stateless protocol revision. `McpClient` still sends `initialize` first, so servers of earlier revisions see no change. It switches to `server/discover` and the stateless revision only for servers that reject `initialize`. `protocol: "2026-07-28"` speaks only that revision. Supports multi round-trip requests (answered with the client's request handlers, such as `roots/list`), the `Mcp-Method`, `Mcp-Name`, and `Mcp-Param-*` HTTP headers, and `logLevel` for servers' log messages. Based on [#12479](https://github.com/earendil-works/pi/pull/12479) by [@dmmulroy](https://github.com/dmmulroy) ([#10416](https://github.com/earendil-works/pi/issues/10416))
+- Added `isStatelessRevisionError(error)`, which tells errors only servers of `2026-07-28` send
+- Added `protocol` to the shared `mcpServers` config fields (`"auto"` or `"2026-07-28"`)
+
 ## [1.7.0] - 2026-11-27
 
 ## [1.6.1] - 2026-11-25

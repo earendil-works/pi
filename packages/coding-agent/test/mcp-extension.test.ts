@@ -585,6 +585,105 @@ for await (const line of createInterface({ input: process.stdin })) {
 		await connection.close();
 	});
 
+	/**
+	 * In-memory server that only speaks MCP 2026-07-28 and records requests: it rejects `initialize`.
+	 * `exit`: it is gone after that, as rmcp servers are.
+	 */
+	function createStatelessTransport(requests: { method: string; params: unknown }[], kind: "stay" | "exit" = "stay") {
+		const pair = createInMemoryTransportPair();
+		servers.push(pair.server);
+		let rejected = false;
+		pair.server.onMessage((message) => {
+			if (!("id" in message) || !("method" in message)) return;
+			requests.push({ method: message.method, params: message.params });
+			const reply = (payload: Record<string, unknown>) =>
+				queueMicrotask(
+					() => void pair.server.send({ jsonrpc: "2.0", id: message.id, ...payload } as JsonRpcMessage),
+				);
+			if (rejected && kind === "exit") {
+				void pair.server.close();
+			} else if (message.method === "initialize") {
+				reply({
+					error: { code: -32022, message: "Unsupported protocol version", data: { supported: ["2026-07-28"] } },
+				});
+				rejected = true;
+			} else if (message.method === "server/discover") {
+				reply({ result: { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } } });
+			} else if (message.method === "tools/list") {
+				reply({ result: { tools: [{ name: "echo", inputSchema: { type: "object" } }] } });
+			} else {
+				reply({ result: { resultType: "complete", content: [{ type: "text", text: "ok" }] } });
+			}
+		});
+		void pair.server.start();
+		return pair.client;
+	}
+
+	it("connects to servers that only speak MCP 2026-07-28, asking for log messages", async () => {
+		const requests: { method: string; params: unknown }[] = [];
+		const log = new McpServerLog(join(tmpdir(), "unused-mcp.log"));
+		const { connection } = connect(
+			{ name: "fake", config: { command: "unused" }, source: "test" },
+			[() => createStatelessTransport(requests)],
+			log,
+		);
+		expect((await connection.getClient()).protocolVersion).toBe("2026-07-28");
+		expect(connection.tools.map((tool) => tool.name)).toEqual(["echo"]);
+		expect(await connection.callTool("echo", {}, {})).toEqual({
+			resultType: "complete",
+			content: [{ type: "text", text: "ok" }],
+		});
+		expect(requests.map((request) => request.method)).toEqual([
+			"initialize",
+			"server/discover",
+			"tools/list",
+			"tools/call",
+		]);
+		expect(requests[1]?.params).toMatchObject({
+			_meta: {
+				"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+				"io.modelcontextprotocol/clientInfo": { name: "pi" },
+				"io.modelcontextprotocol/clientCapabilities": { roots: {} },
+				"io.modelcontextprotocol/logLevel": "info",
+			},
+		});
+		await connection.close();
+
+		// Pinned, the server is not asked to initialize.
+		requests.length = 0;
+		const pinned = connect({ name: "fake", config: { command: "unused", protocol: "2026-07-28" }, source: "test" }, [
+			() => createStatelessTransport(requests),
+		]);
+		await pinned.connection.getClient();
+		expect(requests.map((request) => request.method)).toEqual(["server/discover", "tools/list"]);
+		await pinned.connection.close();
+	});
+
+	it("starts a stdio server again with MCP 2026-07-28 when it is gone after rejecting initialize", async () => {
+		const requests: { method: string; params: unknown }[] = [];
+		const { connection, opened } = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
+			() => createStatelessTransport(requests, "exit"),
+			() => createStatelessTransport(requests, "exit"),
+		]);
+		expect((await connection.getClient()).protocolVersion).toBe("2026-07-28");
+		expect(opened()).toBe(2);
+		expect(requests.map((request) => request.method)).toEqual([
+			"initialize",
+			"server/discover",
+			"server/discover",
+			"tools/list",
+		]);
+		await connection.close();
+
+		// Only once, and not for servers that answer `initialize`.
+		const legacy = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
+			() => createTransport(),
+		]);
+		await legacy.connection.getClient();
+		expect(legacy.opened()).toBe(1);
+		await legacy.connection.close();
+	});
+
 	it("marks a dropped connection and reconnects on the next call", async () => {
 		const { connection, opened } = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
 			() => createTransport(),

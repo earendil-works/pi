@@ -10,7 +10,7 @@ CI runs it in the `mcp-conformance` job of `.github/workflows/ci.yml`. Requires 
 
 ## How it works
 
-For every protocol version pi negotiates (`2025-03-26`, `2025-06-18`, `2025-11-25`), `run.ts` lists the suite's client scenarios and runs them one at a time. The suite starts a scenario server and runs `client.ts` against it.
+For every protocol version pi speaks (`2025-03-26`, `2025-06-18`, `2025-11-25` through `initialize`, and the stateless `2026-07-28`), `run.ts` lists the suite's client scenarios and runs them one at a time. The suite starts a scenario server and runs `client.ts` against it.
 
 `client.ts` uses the code pi runs for an HTTP server in `mcp.json`: `McpServerConnection` connects and calls tools, and `signInMcpServer` runs the OAuth sign-in that `/mcp` starts. A simulated browser fetches the authorization URL and delivers the redirect to pi's loopback callback server. When the server asks for sign-in again (for example for more scope), the simulated user signs in again, up to three times.
 
@@ -41,5 +41,7 @@ node packages/coding-agent/test/mcp-conformance/run.ts --update-baseline
 - `elicitation-sep1034-client-defaults`: pi does not support elicitation.
 - `auth/basic-cimd`: pi uses its Client ID Metadata Document on pi.dev, not the suite's `https://conformance-test.local/client-metadata.json`.
 - `auth/scope-retry-limit`: `pi-client` fails by design; the server never accepts the granted scope.
-
-2026-07-28 is not covered: it is a stateless protocol pi does not implement.
+- `request-metadata` and `http-standard-headers` (2026-07-28): pi sends `initialize` first and stays on the earlier revision with servers that answer it, so these servers, which speak both, get no stateless requests (`request-metadata`), and the `initialize` request has no `Mcp-Method` header (`http-standard-headers`).
+- `sep-2322-client-request-state` (2026-07-28): the scenario asks for input with `elicitation/create`, which pi does not support, so the checks of retried requests fail. pi-mcp's tests cover the retries with `roots/list`.
+- `auth/resource-mismatch`, `auth/iss-supported-missing`, `auth/iss-wrong-issuer`, `auth/iss-unexpected`, `auth/iss-normalized`, `auth/metadata-issuer-mismatch` (2026-07-28): `pi-client` fails by design; pi refuses the sign-in, which these scenarios check.
+- `auth/authorization-server-migration` (2026-07-28): pi does not register again when the protected resource names a new authorization server (SEP-2352).

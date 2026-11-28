@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added MCP `2026-07-28`, the stateless revision. Pi still starts every connection with `initialize`, so existing servers work as before. Servers that reject `initialize` are spoken to with `2026-07-28`; a stdio server that exits after rejecting it is started once more. `"protocol": "2026-07-28"` in `mcp.json` uses it with servers that speak both revisions. See [Protocol versions](docs/mcp.md#protocol-versions). Based on [#12479](https://github.com/earendil-works/pi/pull/12479) by [@dmmulroy](https://github.com/dmmulroy) ([#10416](https://github.com/earendil-works/pi/issues/10416))
+
 ### Fixed
 
 - Fixed WSL detection in terminals that start the shell without the WSL environment variables (for example from a systemd user service): the Windows keybinding defaults (`alt+v` image paste, `ctrl+q` follow-up) and the footer's branch polling for repos under `/mnt/<drive>` now apply there too, because all WSL checks share one detection that falls back to `/proc/version`.

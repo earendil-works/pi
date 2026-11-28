@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 import {
 	type AuthProvider,
 	type CallToolResult,
+	isStatelessRevisionError,
 	JSON_RPC_ERROR_CODES,
 	type ListResourcesResult,
 	type ListResourceTemplatesResult,
@@ -18,6 +19,7 @@ import {
 	McpClient,
 	McpError,
 	McpHttpError,
+	type McpProtocolMode,
 	type McpRequestOptions,
 	McpSessionExpiredError,
 	type Tool as McpTool,
@@ -25,6 +27,7 @@ import {
 	type ReadResourceResult,
 	type Resource,
 	type ResourceTemplate,
+	STATELESS_PROTOCOL_VERSION,
 	StdioTransport,
 	StreamableHttpTransport,
 } from "@earendil-works/pi-mcp";
@@ -343,12 +346,27 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		this.state = "connecting";
 		this.changed();
 		const retries = "url" in this.entry.config ? CONNECT_RETRY_DELAYS_MS : [];
-		for (let attempt = 0; ; attempt++) {
+		const configured = this.entry.config.protocol;
+		let protocol: McpProtocolMode = configured ?? "auto";
+		let restarted = false;
+		for (let attempt = 0; ; ) {
 			this.stderrTail = undefined;
 			try {
-				return await this.connectOnce();
+				return await this.connectOnce(protocol);
 			} catch (error) {
-				const delay = retries[attempt];
+				// A stdio server that only speaks the stateless revision may exit after rejecting
+				// `initialize` (rmcp servers do); start it once more with that revision.
+				const restart =
+					configured === undefined &&
+					!restarted &&
+					!("url" in this.entry.config) &&
+					isStatelessRevisionError(error);
+				if (restart && !this.closed) {
+					restarted = true;
+					protocol = STATELESS_PROTOCOL_VERSION;
+					continue;
+				}
+				const delay = retries[attempt++];
 				if (this.closed || delay === undefined || !isTransientError(error)) {
 					throw this.connectFailed(error);
 				}
@@ -358,14 +376,17 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 		}
 	}
 
-	private async connectOnce(): Promise<McpClient> {
+	private async connectOnce(protocol: McpProtocolMode): Promise<McpClient> {
+		const log = this.log;
 		const client = new McpClient({
 			name: "pi",
 			version: VERSION,
+			protocol,
 			requestTimeoutMs: this.timeoutMs,
 			roots: [{ uri: pathToFileURL(this.cwd).href, name: basename(this.cwd) }],
+			// Servers on the stateless revision send log messages only for requests that ask for them.
+			...(log ? { logLevel: "info" as const } : {}),
 		});
-		const log = this.log;
 		if (log) client.onNotification("notifications/message", (params) => log.write(this.entry.name, params));
 		// Closing the client fails its pending initialize or discovery requests and closes the transport.
 		// Memoized: a second `client.close()` returns before the first finished closing the transport.

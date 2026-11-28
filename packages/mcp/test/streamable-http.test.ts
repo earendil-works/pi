@@ -683,3 +683,191 @@ describe("StreamableHttpTransport", () => {
 		await client.close();
 	});
 });
+
+/**
+ * A server that only speaks MCP 2026-07-28, answering like SDK servers without legacy support:
+ * `initialize` gets a 400 with an `UnsupportedProtocolVersionError`.
+ */
+async function statelessHandler(
+	request: IncomingMessage,
+	response: ServerResponse,
+	requests: RecordedRequest[],
+	body?: Record<string, unknown>,
+): Promise<void> {
+	if (request.method !== "POST") {
+		requests.push({ method: request.method ?? "", headers: request.headers });
+		response.statusCode = 405;
+		response.end();
+		return;
+	}
+	const message = body ?? (JSON.parse(await readBody(request)) as Record<string, unknown>);
+	requests.push({ method: "POST", headers: request.headers, message });
+	const reply = (status: number, payload: Record<string, unknown>) => {
+		// A session header the client must not send back.
+		response.writeHead(status, { "content-type": "application/json", "mcp-session-id": "ignored" });
+		response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id ?? null, ...payload }));
+	};
+	switch (message.method) {
+		case "initialize":
+			reply(400, {
+				error: { code: -32022, message: "Unsupported protocol version", data: { supported: ["2026-07-28"] } },
+			});
+			return;
+		case "server/discover":
+			reply(200, { result: { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } } });
+			return;
+		case "tools/list":
+			reply(200, {
+				result: {
+					tools: [
+						{
+							name: "deploy",
+							inputSchema: {
+								type: "object",
+								properties: { region: { type: "string", "x-mcp-header": "Region" } },
+							},
+						},
+					],
+				},
+			});
+			return;
+		case "resources/read":
+			reply(404, { error: { code: -32602, message: "Unknown resource" } });
+			return;
+		default:
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			response.end(
+				`id: 1\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "done" }] } })}\n\n`,
+			);
+	}
+}
+
+describe("StreamableHttpTransport on the stateless revision (2026-07-28)", () => {
+	it("falls back from a rejected initialize and sends requests without a session", async () => {
+		const { url, requests } = await startServer(statelessHandler);
+		const transport = new StreamableHttpTransport({ url });
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		await client.connect(transport);
+		expect(client.protocolVersion).toBe("2026-07-28");
+		await client.listTools();
+		expect(await client.callTool("deploy", { region: "Zürich" })).toEqual({
+			content: [{ type: "text", text: "done" }],
+		});
+		await expect(client.readResource("file:///missing")).rejects.toMatchObject({
+			name: "McpError",
+			code: -32602,
+			message: "Unknown resource",
+		});
+		await client.close();
+		expect(transport.sessionId).toBeUndefined();
+
+		// No GET stream, no session to delete, no handshake notification.
+		expect(requests.map((entry) => entry.message?.method ?? entry.method)).toEqual([
+			"initialize",
+			"server/discover",
+			"tools/list",
+			"tools/call",
+			"resources/read",
+		]);
+		const [initialize, ...stateless] = requests;
+		expect(initialize?.headers["mcp-method"]).toBeUndefined();
+		for (const entry of stateless) {
+			expect(entry.headers["mcp-protocol-version"]).toBe("2026-07-28");
+			expect(entry.headers["mcp-method"]).toBe(entry.message?.method);
+			expect(entry.headers["mcp-session-id"]).toBeUndefined();
+		}
+		const call = requests.find((entry) => entry.message?.method === "tools/call");
+		expect(call?.headers["mcp-name"]).toBe("deploy");
+		expect(call?.headers["mcp-param-region"]).toBe("=?base64?WsO8cmljaA==?=");
+		expect(requests.find((entry) => entry.message?.method === "resources/read")?.headers["mcp-name"]).toBe(
+			"file:///missing",
+		);
+	});
+
+	it("drops the session of an initialize answered with the stateless revision", async () => {
+		const { url, requests } = await startServer(async (request, response, requests) => {
+			if (request.method !== "POST") return statelessHandler(request, response, requests);
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			if (message.method !== "initialize") return statelessHandler(request, response, requests, message);
+			requests.push({ method: "POST", headers: request.headers, message });
+			response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "session-1" });
+			response.end(
+				JSON.stringify({
+					jsonrpc: "2.0",
+					id: message.id,
+					result: { protocolVersion: "2026-07-28", capabilities: {}, serverInfo: { name: "s", version: "1" } },
+				}),
+			);
+		});
+		const transport = new StreamableHttpTransport({ url });
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		await client.connect(transport);
+		await client.listTools();
+		await client.close();
+		expect(requests.map((entry) => entry.message?.method ?? entry.method)).toEqual([
+			"initialize",
+			"server/discover",
+			"tools/list",
+		]);
+		expect(requests.slice(1).every((entry) => entry.headers["mcp-session-id"] === undefined)).toBe(true);
+	});
+
+	it("reports a sign-in a stateless server requires after rejecting initialize", async () => {
+		const { url } = await startServer(async (request, response) => {
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			if (message.method === "initialize") {
+				response.writeHead(400, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({
+						jsonrpc: "2.0",
+						id: message.id,
+						error: { code: -32020, message: "Missing MCP-Protocol-Version header" },
+					}),
+				);
+				return;
+			}
+			response.writeHead(401, { "www-authenticate": 'Bearer resource_metadata="https://example.com/meta"' });
+			response.end();
+		});
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		await expect(client.connect(new StreamableHttpTransport({ url }))).rejects.toMatchObject({
+			name: "McpAuthRequiredError",
+			status: 401,
+		});
+	});
+
+	it("cancels a request by closing its response stream, and does not resume streams", async () => {
+		const closed: string[] = [];
+		const { url, requests } = await startServer(async (request, response, requests) => {
+			if (request.method !== "POST") return statelessHandler(request, response, requests);
+			const message = JSON.parse(await readBody(request)) as Record<string, unknown>;
+			const name = (message.params as { name?: string } | undefined)?.name;
+			if (message.method !== "tools/call") return statelessHandler(request, response, requests, message);
+			requests.push({ method: "POST", headers: request.headers, message });
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			if (name === "dropped") {
+				// An event id would let a legacy client resume; this stream ends without an answer.
+				response.end("id: 1\nretry: 5\ndata:\n\n");
+				return;
+			}
+			response.write(": waiting\n\n");
+			response.on("close", () => closed.push(String(name)));
+		});
+		const client = new McpClient({ name: "http-test", version: "1.0.0" });
+		await client.connect(new StreamableHttpTransport({ url }));
+
+		const controller = new AbortController();
+		const waiting = client.callTool("wait", {}, { signal: controller.signal });
+		await vi.waitFor(() => expect(requests.some((entry) => entry.message?.method === "tools/call")).toBe(true));
+		controller.abort("stop");
+		await expect(waiting).rejects.toThrow("MCP request aborted");
+		await vi.waitFor(() => expect(closed).toEqual(["wait"]));
+
+		await expect(client.callTool("dropped")).rejects.toThrow(
+			"MCP response stream failed: stream ended without a response",
+		);
+		await client.close();
+		expect(requests.some((entry) => entry.method === "GET")).toBe(false);
+		expect(requests.some((entry) => entry.message?.method === "notifications/cancelled")).toBe(false);
+	});
+});

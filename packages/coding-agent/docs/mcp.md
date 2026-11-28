@@ -66,6 +66,7 @@ HTTP servers use `url`, `headers`, and `oauth` (see [Authenticate with OAuth](#a
 Both server types support:
 
 - `timeout`: per-request timeout in seconds (default 60). Progress notifications reset it.
+- `protocol`: `"2026-07-28"` to speak only the stateless MCP revision (see [Protocol versions](#protocol-versions)). Default: `"auto"`.
 - `enabled: false`: keep the entry without connecting to it.
 - `exposure` and `toolExposure`: control how tools reach the model (see [Control tool exposure](#control-tool-exposure)).
 - `description`: what the server offers, in a sentence. It lists the server in the system prompt (see [Control tool exposure](#control-tool-exposure)), tool search ranks the server's tools by it, and codemode's `describeNamespace()` returns it. Without it, the first line of the server instructions is used once the server connects.
@@ -100,6 +101,16 @@ Pi reports configuration errors, failed connections, and required sign-ins once 
 Pi connects every enabled server in the background when a session starts. A server's tools appear once it connects; the `codemode` description does not list them, so it does not change when servers connect. The first prompt waits up to 10 seconds only for servers with `direct` tools, which must be declared in its request. Other servers are waited for when they are needed: a codemode script waits for the servers it names (`mcp__<server>`) and, when it calls `searchTools()` or reads `ALL_TOOLS`, for all of them; `tool_search` and the resource tools also wait for all of them. HTTP network errors and transient statuses (408, 429, and 5xx) are retried twice. A dropped connection is shown as disconnected and reconnects on the next call. When a server announces a changed tool list, new tools are added and withdrawn tools become unreachable.
 
 Stopping a stdio server closes its stdin, sends SIGTERM, then sends SIGKILL to its process group. This also stops servers launched through wrappers such as `npx` or `uvx`.
+
+### Protocol versions
+
+MCP `2026-07-28` is a stateless revision without the `initialize` handshake of earlier revisions. Pi starts every connection with `initialize`, as servers of earlier revisions expect, so they work as before. Servers that speak both revisions answer it and use the earlier one: older servers break on any request they do not know (Python servers before mcp 1.9.4 stop answering), so pi does not ask them whether they speak `2026-07-28` too.
+
+A server that rejects `initialize` is asked with `server/discover` and spoken to with `2026-07-28`. A stdio server that exits after rejecting `initialize` is started once more with `2026-07-28`.
+
+Set `"protocol": "2026-07-28"` to use the stateless revision with a server that speaks both.
+
+With `2026-07-28` servers, pi answers their requests for the workspace roots, and fails tool calls that ask for other input (elicitation or sampling), which pi does not support. Their tool list changes are not followed: reconnect the server to pick up new tools.
 
 ## Migrate configuration from another client
 

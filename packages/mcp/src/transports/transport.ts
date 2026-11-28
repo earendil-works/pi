@@ -13,6 +13,8 @@ export interface McpTransportSendOptions {
 	 * retrying it after an authorization refresh. It does not undo a message already dispatched.
 	 */
 	signal?: AbortSignal;
+	/** HTTP headers for this message (`Mcp-Param-*` of MCP 2026-07-28). Transports without headers ignore them. */
+	headers?: Record<string, string>;
 }
 
 export interface McpTransport {
@@ -22,6 +24,11 @@ export interface McpTransport {
 	onMessage(listener: McpTransportMessageListener): () => void;
 	onError(listener: McpTransportErrorListener): () => void;
 	onClose(listener: McpTransportCloseListener): () => void;
+	/**
+	 * The negotiated protocol version, for transports that send it with every message. Also called with
+	 * `2026-07-28` before the first request of the stateless revision, which some transports carry
+	 * differently (no session over HTTP).
+	 */
 	setProtocolVersion?(version: string): void;
 }
 

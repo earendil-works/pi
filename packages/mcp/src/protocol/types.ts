@@ -9,6 +9,21 @@ export const LATEST_PROTOCOL_VERSION = "2025-11-25";
 export const SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 export type SupportedProtocolVersion = (typeof SUPPORTED_PROTOCOL_VERSIONS)[number];
 
+/**
+ * The stateless protocol revision: no `initialize` handshake and no session; every request carries the
+ * protocol version and the client's info and capabilities in `_meta`.
+ */
+export const STATELESS_PROTOCOL_VERSION = "2026-07-28";
+
+/**
+ * How a client picks the protocol. `auto`: `initialize` first, as servers of every earlier revision
+ * expect; only when the server rejects it, `server/discover` for the stateless revision. A version
+ * (`2026-07-28`) speaks only that revision.
+ */
+export type McpProtocolMode = "auto" | typeof STATELESS_PROTOCOL_VERSION;
+
+export type LoggingLevel = "debug" | "info" | "notice" | "warning" | "error" | "critical" | "alert" | "emergency";
+
 export interface Implementation {
 	name: string;
 	version: string;
@@ -47,6 +62,20 @@ export interface InitializeResult {
 	capabilities: ServerCapabilities;
 	serverInfo: Implementation;
 	instructions?: string;
+}
+
+/** The answer to `server/discover` (MCP 2026-07-28). */
+export interface DiscoverResult {
+	supportedVersions: string[];
+	capabilities: ServerCapabilities;
+	instructions?: string;
+	_meta?: Record<string, unknown>;
+}
+
+/** A request the server needs answered before it can complete a request (MCP 2026-07-28). */
+export interface InputRequest {
+	method: string;
+	params?: Record<string, unknown>;
 }
 
 export interface ProgressNotification {

@@ -23,8 +23,8 @@ import { parseArgs } from "node:util";
 
 /** The pinned upstream suite. Bumping it requires reviewing and regenerating the baseline. */
 const CONFORMANCE_PACKAGE = "@modelcontextprotocol/conformance@0.2.0-alpha.11";
-/** Protocol versions pi negotiates. 2026-07-28 is a different (stateless) protocol pi does not speak. */
-const MODES = ["2025-03-26", "2025-06-18", "2025-11-25"] as const;
+/** Protocol versions pi speaks: the ones `initialize` negotiates, and the stateless 2026-07-28. */
+const MODES = ["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"] as const;
 const SCENARIO_TIMEOUT_MS = 30_000;
 /** Checks that are part of the suite's HTTP trace, not assertions. */
 const IGNORED_STATUSES = new Set(["INFO", "SKIPPED"]);

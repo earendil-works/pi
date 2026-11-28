@@ -36,12 +36,31 @@ interface ToolCall {
 	arguments: Record<string, unknown>;
 }
 
-/** Tool calls of a scenario after connecting. `undefined` for scenarios this client does not know. */
-function toolCalls(scenario: string, connection: McpServerConnection): ToolCall[] | undefined {
+/**
+ * Tool calls of a scenario after connecting. `undefined` for scenarios this client does not know. A
+ * scenario's context may list its calls itself.
+ */
+function toolCalls(
+	scenario: string,
+	connection: McpServerConnection,
+	context: Record<string, unknown>,
+): ToolCall[] | undefined {
+	if (Array.isArray(context.toolCalls)) return context.toolCalls as ToolCall[];
 	if (scenario.startsWith("auth/")) return [{ name: "test-tool", arguments: {} }];
 	switch (scenario) {
 		case "initialize":
+		case "request-metadata":
+		case "json-schema-ref-no-deref":
 			return [];
+		// pi must have left out the tools with invalid `x-mcp-header` annotations.
+		case "http-invalid-tool-headers":
+		case "http-standard-headers":
+			return connection.tools.map((tool) => ({ name: tool.name, arguments: {} }));
+		// Calls that need no input first: the others ask for elicitation, which pi does not provide.
+		case "sep-2322-client-request-state":
+			return ["test_mrtr_unrelated", "test_mrtr_no_result_type", "test_mrtr_no_state", "test_mrtr_echo_state"].map(
+				(name) => ({ name, arguments: {} }),
+			);
 		case "tools_call":
 			return [{ name: "add_numbers", arguments: { a: 2, b: 3 } }];
 		case "sse-retry":
@@ -162,15 +181,28 @@ async function run(serverUrl: string, scenario: string): Promise<void> {
 	};
 
 	try {
-		await withSignIn(() => connection.getClient());
-		log(`connected, tools: ${connection.tools.map((tool) => tool.name).join(", ") || "(none)"}`);
-		const calls = toolCalls(scenario, connection);
+		const client = await withSignIn(() => connection.getClient());
+		log(
+			`connected (${client.protocolVersion}), tools: ${connection.tools.map((tool) => tool.name).join(", ") || "(none)"}`,
+		);
+		const calls = toolCalls(scenario, connection, context);
 		if (!calls) throw new Error(`Unknown scenario ${scenario}`);
+		const failures: string[] = [];
 		for (const call of calls) {
-			const result = await withSignIn(() => connection.callTool(call.name, call.arguments, {}));
-			log(`${call.name}: ${JSON.stringify(result.content)}`);
-			if (result.isError) throw new Error(`Tool ${call.name} failed: ${JSON.stringify(result.content)}`);
+			try {
+				const result = await withSignIn(() => connection.callTool(call.name, call.arguments, {}));
+				log(`${call.name}: ${JSON.stringify(result.content)}`);
+				if (result.isError) failures.push(`Tool ${call.name} failed: ${JSON.stringify(result.content)}`);
+			} catch (error) {
+				// Later calls may exercise other checks.
+				failures.push(`Tool ${call.name} failed: ${errorMessage(error)}`);
+			}
 		}
+		if (scenario === "http-standard-headers" && connection.hasResources) {
+			const [resource] = await connection.allResources({});
+			if (resource) await connection.readResource(resource.uri, {});
+		}
+		if (failures.length > 0) throw new Error(failures.join("; "));
 	} finally {
 		await connection.close();
 	}

@@ -52,6 +52,7 @@ export {
 	McpTimeoutError,
 	parseJsonRpcMessage,
 } from "./protocol/jsonrpc.ts";
+export { isStatelessRevisionError } from "./protocol/stateless.ts";
 export {
 	type CancelledNotification,
 	type ClientCapabilities,
@@ -62,12 +63,15 @@ export {
 	type ListResourcesResult,
 	type ListResourceTemplatesResult,
 	type ListToolsResult,
+	type LoggingLevel,
+	type McpProtocolMode,
 	type ProgressNotification,
 	type ReadResourceResult,
 	type Resource,
 	type ResourceTemplate,
 	type Root,
 	type ServerCapabilities,
+	STATELESS_PROTOCOL_VERSION,
 	SUPPORTED_PROTOCOL_VERSIONS,
 	type SupportedProtocolVersion,
 	type Tool,

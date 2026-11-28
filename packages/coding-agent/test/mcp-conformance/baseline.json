@@ -407,6 +407,522 @@
 				],
 				"failing": []
 			}
+		},
+		"2026-07-28": {
+			"tools_call": {
+				"passing": [
+					"pi-client",
+					"tool-add-numbers",
+					"wire-schema-valid"
+				],
+				"failing": []
+			},
+			"request-metadata": {
+				"passing": [
+					"pi-client",
+					"sep-2575-client-declares-roots-capability",
+					"sep-2575-client-retry-supported-version",
+					"sep-2575-http-version-header-matches-meta"
+				],
+				"failing": [
+					"sep-2575-client-populates-meta",
+					"sep-2575-client-sends-client-info",
+					"sep-2575-http-client-sends-version-header"
+				]
+			},
+			"auth/metadata-default": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/metadata-var1": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/metadata-var2": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/metadata-var3": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/basic-cimd": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": [
+					"cimd-client-id-used"
+				]
+			},
+			"auth/scope-from-www-authenticate": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"scope-from-www-authenticate",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/scope-from-scopes-supported": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"scope-from-scopes-supported",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/scope-omitted-when-undefined": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"scope-omitted-when-undefined",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/scope-step-up": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"scope-step-up-escalation",
+					"scope-step-up-initial",
+					"sep-2350-scope-union-on-reauth",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/scope-retry-limit": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"scope-retry-limit",
+					"sep-837-application-type-present",
+					"token-request"
+				],
+				"failing": [
+					"pi-client"
+				]
+			},
+			"auth/token-endpoint-auth-basic": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"resource-parameter-consistency",
+					"resource-parameter-in-authorization",
+					"resource-parameter-in-token",
+					"resource-parameter-valid-uri",
+					"sep-837-application-type-present",
+					"token-endpoint-auth-method",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/token-endpoint-auth-post": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"resource-parameter-consistency",
+					"resource-parameter-in-authorization",
+					"resource-parameter-in-token",
+					"resource-parameter-valid-uri",
+					"sep-837-application-type-present",
+					"token-endpoint-auth-method",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/token-endpoint-auth-none": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"resource-parameter-consistency",
+					"resource-parameter-in-authorization",
+					"resource-parameter-in-token",
+					"resource-parameter-valid-uri",
+					"sep-837-application-type-present",
+					"token-endpoint-auth-method",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/pre-registration": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"pre-registration-auth",
+					"prm-pathbased-requested",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/resource-mismatch": {
+				"passing": [
+					"authorization-server-metadata",
+					"prm-pathbased-requested",
+					"resource-mismatch-rejected"
+				],
+				"failing": [
+					"pi-client"
+				]
+			},
+			"auth/offline-access-scope": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/offline-access-not-supported": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"sep-2207-offline-access-not-requested",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/authorization-server-migration": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"sep-2352-no-cross-as-credential-reuse",
+					"sep-2352-no-reuse-on-as-change",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": [
+					"pi-client",
+					"sep-2352-reregister-on-as-change"
+				]
+			},
+			"auth/iss-supported": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"sep-2468-client-compare-iss-supported",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/iss-not-advertised": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pi-client",
+					"pkce-code-challenge-sent",
+					"pkce-code-verifier-sent",
+					"pkce-s256-method-used",
+					"pkce-verifier-matches-challenge",
+					"prm-pathbased-requested",
+					"sep-2468-client-proceed-no-iss",
+					"sep-837-application-type-present",
+					"token-request",
+					"valid-bearer-token"
+				],
+				"failing": []
+			},
+			"auth/iss-supported-missing": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pkce-code-challenge-sent",
+					"pkce-s256-method-used",
+					"prm-pathbased-requested",
+					"sep-2468-client-reject-missing-iss",
+					"sep-837-application-type-present"
+				],
+				"failing": [
+					"pi-client"
+				]
+			},
+			"auth/iss-wrong-issuer": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pkce-code-challenge-sent",
+					"pkce-s256-method-used",
+					"prm-pathbased-requested",
+					"sep-2468-client-compare-iss-supported",
+					"sep-837-application-type-present"
+				],
+				"failing": [
+					"pi-client"
+				]
+			},
+			"auth/iss-unexpected": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pkce-code-challenge-sent",
+					"pkce-s256-method-used",
+					"prm-pathbased-requested",
+					"sep-2468-client-compare-iss-unadvertised",
+					"sep-837-application-type-present"
+				],
+				"failing": [
+					"pi-client"
+				]
+			},
+			"auth/iss-normalized": {
+				"passing": [
+					"authorization-request",
+					"authorization-server-metadata",
+					"client-registration",
+					"pkce-code-challenge-sent",
+					"pkce-s256-method-used",
+					"prm-pathbased-requested",
+					"sep-2468-client-no-normalization",
+					"sep-837-application-type-present"
+				],
+				"failing": [
+					"pi-client"
+				]
+			},
+			"auth/metadata-issuer-mismatch": {
+				"passing": [
+					"authorization-server-metadata",
+					"prm-pathbased-requested",
+					"sep-2468-client-validate-metadata-issuer"
+				],
+				"failing": [
+					"pi-client"
+				]
+			},
+			"sep-2322-client-request-state": {
+				"passing": [
+					"sep-2322-client-parallel-isolation",
+					"sep-2322-default-result-type-complete"
+				],
+				"failing": [
+					"pi-client",
+					"sep-2322-client-jsonrpc-id-different",
+					"sep-2322-client-no-state-omitted",
+					"sep-2322-client-request-state-echoed"
+				]
+			},
+			"http-standard-headers": {
+				"passing": [
+					"pi-client"
+				],
+				"failing": [
+					"sep-2243-client-includes-standard-headers"
+				]
+			},
+			"http-custom-headers": {
+				"passing": [
+					"pi-client",
+					"sep-2243-client-base64-unsafe",
+					"sep-2243-client-encode-values",
+					"sep-2243-client-mirrors-designated-params",
+					"sep-2243-client-omit-null",
+					"sep-2243-client-supports-custom-headers"
+				],
+				"failing": []
+			},
+			"http-invalid-tool-headers": {
+				"passing": [
+					"pi-client",
+					"sep-2243-client-reject-invalid-tool",
+					"sep-2243-x-mcp-header-charset",
+					"sep-2243-x-mcp-header-not-empty",
+					"sep-2243-x-mcp-header-primitive-only",
+					"sep-2243-x-mcp-header-unique"
+				],
+				"failing": []
+			},
+			"json-schema-ref-no-deref": {
+				"passing": [
+					"pi-client",
+					"sep-2106-no-network-ref-deref"
+				],
+				"failing": []
+			},
+			"json-schema-2020-12-preservation": {
+				"passing": [
+					"json-schema-2020-12-client-$defs-preserved",
+					"json-schema-2020-12-client-$schema-preserved",
+					"json-schema-2020-12-client-additionalProperties-preserved",
+					"json-schema-2020-12-client-echo-completed",
+					"json-schema-2020-12-client-tool-found",
+					"pi-client",
+					"sep-2106-client-anchor-keyword-preserved",
+					"sep-2106-client-composition-keywords-preserved",
+					"sep-2106-client-conditional-keywords-preserved",
+					"wire-schema-valid"
+				],
+				"failing": []
+			}
 		}
 	}
 }

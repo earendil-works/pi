@@ -7,6 +7,7 @@ import {
 	McpClient,
 	McpError,
 	McpTimeoutError,
+	type McpTransport,
 } from "../src/index.ts";
 import { createInMemoryTransportPair, type InMemoryTransport } from "../src/testing/index.ts";
 
@@ -334,6 +335,267 @@ describe("McpClient", () => {
 			result: { roots: [{ uri: "file:///workspace", name: "workspace" }] },
 		});
 		expect(changed).toHaveBeenCalledWith(undefined);
+		await client.close();
+	});
+});
+
+const STATELESS_META = {
+	"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+	"io.modelcontextprotocol/clientInfo": { name: "test-client", version: "1.0.0" },
+	"io.modelcontextprotocol/clientCapabilities": { roots: {} },
+};
+
+/** A server that only speaks MCP 2026-07-28: it rejects `initialize` as SDK servers without legacy support do. */
+async function createStatelessServer(): Promise<{ clientTransport: InMemoryTransport; server: TestServer }> {
+	const created = await createServer();
+	created.server.setHandler("initialize", () => {
+		throw new McpError(-32022, "Unsupported protocol version: 2025-11-25", {
+			supported: ["2026-07-28"],
+			requested: "2025-11-25",
+		});
+	});
+	created.server.setHandler("server/discover", () => ({
+		supportedVersions: ["2026-07-28"],
+		capabilities: { tools: {} },
+		instructions: "Stateless tools.",
+		resultType: "complete",
+		_meta: { "io.modelcontextprotocol/serverInfo": { name: "stateless-server", version: "3.0.0" } },
+	}));
+	return created;
+}
+
+function requestsOf(server: TestServer): JsonRpcRequest[] {
+	return server.messages.filter((message): message is JsonRpcRequest => "method" in message && "id" in message);
+}
+
+async function connectStateless(options: { protocol?: "2026-07-28"; logLevel?: "info" } = {}) {
+	const { clientTransport, server } = await createStatelessServer();
+	const sent: { method: string; headers: Record<string, string> | undefined }[] = [];
+	const send = clientTransport.send.bind(clientTransport);
+	// The in-memory transport carries no headers; record what the client asks for.
+	const transport: McpTransport = clientTransport;
+	transport.send = (message, sendOptions) => {
+		if ("method" in message) sent.push({ method: message.method, headers: sendOptions?.headers });
+		return send(message);
+	};
+	const client = new McpClient({
+		name: "test-client",
+		version: "1.0.0",
+		roots: [{ uri: "file:///workspace", name: "workspace" }],
+		...options,
+	});
+	await client.connect(clientTransport);
+	return { client, server, sent };
+}
+
+describe("McpClient on the stateless revision (2026-07-28)", () => {
+	it("asks with server/discover only when the server rejects initialize", async () => {
+		const { client, server } = await connectStateless({ logLevel: "info" });
+		expect(client.protocolVersion).toBe("2026-07-28");
+		expect(client.serverInfo).toEqual({ name: "stateless-server", version: "3.0.0" });
+		expect(client.serverCapabilities).toEqual({ tools: {} });
+		expect(client.instructions).toBe("Stateless tools.");
+		server.setHandler("tools/list", () => ({ tools: [] }));
+		await client.listTools();
+		const requests = requestsOf(server);
+		expect(requests.map((request) => request.method)).toEqual(["initialize", "server/discover", "tools/list"]);
+		// No handshake notification; every request names the version, the client, and the log level.
+		expect(server.messages).toHaveLength(requests.length);
+		const meta = { ...STATELESS_META, "io.modelcontextprotocol/logLevel": "info" };
+		expect(requests[1]?.params).toEqual({ _meta: meta });
+		expect(requests[2]?.params).toEqual({ _meta: meta });
+		await client.close();
+	});
+
+	it("speaks only the stateless revision when pinned", async () => {
+		const { client, server } = await connectStateless({ protocol: "2026-07-28" });
+		expect(client.protocolVersion).toBe("2026-07-28");
+		expect(requestsOf(server).map((request) => request.method)).toEqual(["server/discover"]);
+		await client.close();
+
+		const legacy = await createServer();
+		const pinned = new McpClient({ name: "test-client", version: "1.0.0", protocol: "2026-07-28" });
+		await expect(pinned.connect(legacy.clientTransport)).rejects.toThrow("Method not found: server/discover");
+		expect(requestsOf(legacy.server).map((request) => request.method)).toEqual(["server/discover"]);
+	});
+
+	it("reports the initialize error when server/discover fails too", async () => {
+		const { clientTransport, server } = await createServer();
+		server.setHandler("initialize", () => {
+			throw new McpError(-32600, "bad initialize");
+		});
+		const client = new McpClient({ name: "test-client", version: "1.0.0" });
+		await expect(client.connect(clientTransport)).rejects.toThrow("bad initialize");
+		expect(requestsOf(server).map((request) => request.method)).toEqual(["initialize", "server/discover"]);
+
+		// A server that ignores the request does not hold up the error for longer than the request timeout.
+		const silent = await createServer();
+		silent.server.setHandler("initialize", () => {
+			throw new McpError(-32600, "bad initialize");
+		});
+		silent.server.setHandler("server/discover", () => new Promise(() => {}));
+		const waiting = new McpClient({ name: "test-client", version: "1.0.0", requestTimeoutMs: 20 });
+		await expect(waiting.connect(silent.clientTransport)).rejects.toThrow("bad initialize");
+	});
+
+	it("asks with server/discover when initialize is answered with the stateless revision", async () => {
+		const { clientTransport, server } = await createStatelessServer();
+		server.setHandler("initialize", () => ({
+			protocolVersion: "2026-07-28",
+			capabilities: {},
+			serverInfo: { name: "stateless-server", version: "3.0.0" },
+		}));
+		const client = new McpClient({ name: "test-client", version: "1.0.0" });
+		await client.connect(clientTransport);
+		expect(client.protocolVersion).toBe("2026-07-28");
+		expect(server.messages.map((message) => ("method" in message ? message.method : ""))).toEqual([
+			"initialize",
+			"server/discover",
+		]);
+		await client.close();
+	});
+
+	it("reports the server/discover error when the rejection proved a stateless server", async () => {
+		const { clientTransport, server } = await createStatelessServer();
+		server.setHandler("server/discover", () => {
+			throw new McpError(-32021, "Missing required client capability: elicitation");
+		});
+		const client = new McpClient({ name: "test-client", version: "1.0.0" });
+		await expect(client.connect(clientTransport)).rejects.toThrow("Missing required client capability: elicitation");
+	});
+
+	it("reports the initialize rejection when the server is gone after it", async () => {
+		const { clientTransport, server } = await createStatelessServer();
+		server.setHandler("server/discover", async () => {
+			await server.transport.close();
+			return new Promise(() => {});
+		});
+		const client = new McpClient({ name: "test-client", version: "1.0.0" });
+		await expect(client.connect(clientTransport)).rejects.toMatchObject({ code: -32022 });
+	});
+
+	it("does not ask with server/discover when initialize fails without an answer", async () => {
+		const { clientTransport, server } = await createServer();
+		server.setHandler("initialize", () => new Promise(() => {}));
+		const client = new McpClient({ name: "test-client", version: "1.0.0", requestTimeoutMs: 5 });
+		await expect(client.connect(clientTransport)).rejects.toBeInstanceOf(McpTimeoutError);
+		expect(requestsOf(server).map((request) => request.method)).toEqual(["initialize"]);
+	});
+
+	it("rejects a discover result without this client's version", async () => {
+		const { clientTransport, server } = await createStatelessServer();
+		server.setHandler("server/discover", () => ({ supportedVersions: ["2027-01-01"], capabilities: {} }));
+		const client = new McpClient({ name: "test-client", version: "1.0.0", protocol: "2026-07-28" });
+		await expect(client.connect(clientTransport)).rejects.toThrow(
+			"MCP server supports none of this client's protocol versions: 2027-01-01",
+		);
+	});
+
+	it("answers input requests and sends the request again until it completes", async () => {
+		const { client, server } = await connectStateless();
+		server.setHandler("tools/call", (request) => {
+			const params = request.params as Record<string, unknown>;
+			if (params.requestState === undefined) {
+				return {
+					resultType: "input_required",
+					inputRequests: { roots: { method: "roots/list" } },
+					requestState: "state-1",
+				};
+			}
+			return { resultType: "complete", content: [{ type: "text", text: JSON.stringify(params.inputResponses) }] };
+		});
+		const result = await client.callTool("needs-roots", { a: 1 });
+		expect(result.content).toEqual([
+			{
+				type: "text",
+				text: JSON.stringify({ roots: { roots: [{ uri: "file:///workspace", name: "workspace" }] } }),
+			},
+		]);
+		const calls = requestsOf(server).filter((request) => request.method === "tools/call");
+		expect(calls.map((request) => request.params)).toEqual([
+			{ name: "needs-roots", arguments: { a: 1 }, _meta: STATELESS_META },
+			{
+				name: "needs-roots",
+				arguments: { a: 1 },
+				inputResponses: { roots: { roots: [{ uri: "file:///workspace", name: "workspace" }] } },
+				requestState: "state-1",
+				_meta: STATELESS_META,
+			},
+		]);
+		// Every attempt is a new request.
+		expect(new Set(calls.map((request) => request.id)).size).toBe(2);
+		await client.close();
+	});
+
+	it("fails requests that ask for input the client does not provide, or that never complete", async () => {
+		const { client, server } = await connectStateless();
+		server.setHandler("tools/call", (request) =>
+			(request.params as { name: string }).name === "form"
+				? { resultType: "input_required", inputRequests: { form: { method: "elicitation/create", params: {} } } }
+				: { resultType: "input_required", requestState: "again" },
+		);
+		await expect(client.callTool("form")).rejects.toThrow(
+			"MCP server asked for input this client does not provide: elicitation/create",
+		);
+		await expect(client.callTool("loop")).rejects.toThrow("MCP tools/call still asks for input after 16 rounds");
+		server.setHandler("tools/list", () => ({ resultType: "input_required", requestState: "x" }));
+		await expect(client.listTools()).rejects.toThrow("MCP tools/list result asks for input, which it may not");
+		server.setHandler("tools/list", () => ({ resultType: "task", tools: [] }));
+		await expect(client.listTools()).rejects.toThrow("Unsupported MCP tools/list result type: task");
+		await client.close();
+	});
+
+	it("mirrors x-mcp-header arguments into headers and leaves out tools with invalid annotations", async () => {
+		const { client, server, sent } = await connectStateless();
+		const errors: string[] = [];
+		client.onError((error) => errors.push(error.message));
+		const regionTool = {
+			name: "deploy",
+			inputSchema: { type: "object", properties: { region: { type: "string", "x-mcp-header": "Region" } } },
+		};
+		const invalidTool = {
+			name: "broken",
+			inputSchema: { type: "object", properties: { data: { type: "object", "x-mcp-header": "Data" } } },
+		};
+		server.setHandler("tools/list", () => ({ tools: [regionTool, invalidTool] }));
+		expect((await client.listTools()).map((tool) => tool.name)).toEqual(["deploy"]);
+		expect(errors).toEqual([
+			'Excluded MCP tool "broken": x-mcp-header "Data" must be on a string, integer, or boolean property',
+		]);
+
+		server.setHandler("tools/call", () => ({ content: [] }));
+		await client.callTool("deploy", { region: "us-west1" });
+		expect(sent.at(-1)).toEqual({ method: "tools/call", headers: { "Mcp-Param-Region": "us-west1" } });
+		await client.close();
+	});
+
+	it("lists the tools again and retries once when the server reports mismatching headers", async () => {
+		const { client, server, sent } = await connectStateless();
+		server.setHandler("tools/list", () => ({
+			tools: [
+				{
+					name: "deploy",
+					inputSchema: { type: "object", properties: { region: { type: "string", "x-mcp-header": "Region" } } },
+				},
+			],
+		}));
+		let calls = 0;
+		server.setHandler("tools/call", () => {
+			if (++calls === 1) throw new McpError(-32020, "Header mismatch: Mcp-Param-Region");
+			return { content: [{ type: "text", text: "ok" }] };
+		});
+		// Called before the tools were listed: no bindings yet.
+		expect(await client.callTool("deploy", { region: "eu" })).toEqual({ content: [{ type: "text", text: "ok" }] });
+		expect(sent.slice(-3)).toEqual([
+			{ method: "tools/call", headers: undefined },
+			{ method: "tools/list", headers: undefined },
+			{ method: "tools/call", headers: { "Mcp-Param-Region": "eu" } },
+		]);
+
+		server.setHandler("tools/call", () => {
+			throw new McpError(-32020, "Header mismatch");
+		});
+		await expect(client.callTool("deploy", { region: "eu" })).rejects.toThrow("Header mismatch");
 		await client.close();
 	});
 });

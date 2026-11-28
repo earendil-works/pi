@@ -1,8 +1,12 @@
 import type { AuthProvider, McpFetch } from "../auth-provider.ts";
+import { standardRequestHeaders } from "../protocol/http-headers.ts";
 import {
+	isJsonRpcNotification,
 	isJsonRpcRequest,
 	isJsonRpcResponse,
+	isObject,
 	JSON_RPC_ERROR_CODES,
+	type JsonRpcErrorObject,
 	type JsonRpcId,
 	type JsonRpcMessage,
 	McpAbortError,
@@ -11,6 +15,7 @@ import {
 	parseJsonRpcMessage,
 	toError,
 } from "../protocol/jsonrpc.ts";
+import { STATELESS_PROTOCOL_VERSION } from "../protocol/types.ts";
 import {
 	DEFAULT_MAX_MESSAGE_BYTES,
 	type McpTransport,
@@ -243,6 +248,20 @@ function describeHttpFailure(status: number, body: string): string {
 	return `MCP HTTP request failed with status ${status}${snippet ? `: ${snippet}` : ""}`;
 }
 
+/** The JSON-RPC error in an HTTP error body, which servers on the stateless revision send with 4xx statuses. */
+export function jsonRpcErrorIn(body: string): JsonRpcErrorObject | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(body);
+	} catch {
+		return undefined;
+	}
+	if (!isObject(parsed) || parsed.jsonrpc !== "2.0" || !isObject(parsed.error)) return undefined;
+	const { code, message, data } = parsed.error;
+	if (typeof code !== "number" || typeof message !== "string") return undefined;
+	return { code, message, ...(data === undefined ? {} : { data }) };
+}
+
 interface StreamCursor {
 	lastEventId: string | undefined;
 	retryMs: number | undefined;
@@ -259,6 +278,11 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	private closed = false;
 	private sessionIdValue: string | undefined;
 	private protocolVersion: string | undefined;
+	/**
+	 * MCP 2026-07-28: no session, `Mcp-Method` and `Mcp-Name` headers, response streams that cannot be
+	 * resumed, and closing a request's response stream cancels it.
+	 */
+	private stateless = false;
 	private getStreamStarted = false;
 	/** Access token of the latest request, which `close()` reuses instead of asking the auth provider. */
 	private lastToken: string | undefined;
@@ -285,18 +309,37 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 
 	setProtocolVersion(version: string): void {
 		this.protocolVersion = version;
+		this.stateless = version === STATELESS_PROTOCOL_VERSION;
+		// A server that answered `initialize` with the stateless revision may have started a session.
+		if (this.stateless) this.sessionIdValue = undefined;
 	}
 
-	async send(message: JsonRpcMessage, { signal }: McpTransportSendOptions = {}): Promise<void> {
+	async send(message: JsonRpcMessage, { signal, headers }: McpTransportSendOptions = {}): Promise<void> {
 		if (!this.started || this.closed) throw new McpConnectionClosedError();
+		const statelessRequest = this.stateless && isJsonRpcRequest(message);
+		// Aborting the request's response stream already cancelled it.
+		if (this.stateless && isJsonRpcNotification(message) && message.method === "notifications/cancelled") return;
 		const response = await this.authorizedFetch(
 			"POST",
 			{
-				headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+				headers: {
+					accept: "application/json, text/event-stream",
+					"content-type": "application/json",
+					...(statelessRequest ? { ...headers, ...standardRequestHeaders(message.method, message.params) } : {}),
+				},
 				body: JSON.stringify(message),
+				// Closing the connection cancels a stateless request, also before its response arrives.
+				...(statelessRequest && signal ? { signal } : {}),
 			},
 			signal,
 		);
+		if (statelessRequest && response.status >= 400 && response.status < 500 && response.status !== 401) {
+			const body = (await readBodyText(response, MAX_ERROR_BODY_BYTES).catch(() => ({ text: "" }))).text;
+			const error = jsonRpcErrorIn(body);
+			if (!error) throw new McpHttpError(response.status, describeHttpFailure(response.status, body), body);
+			this.emitMessage({ jsonrpc: "2.0", id: message.id, error });
+			return;
+		}
 		await this.checkResponse(response);
 		this.captureSession(response);
 
@@ -320,7 +363,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 			return;
 		}
 		if (type === "text/event-stream" && response.body) {
-			void this.consumeResponseStream(response.body, message.id);
+			void this.consumeResponseStream(response.body, message.id, signal);
 			return;
 		}
 		await discard(response);
@@ -348,7 +391,8 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 
 	/**
 	 * Fetch with auth headers. A 401 (or a 403 asking for more scope) is handed to the auth provider
-	 * once, and the request is retried with whatever credentials it left behind.
+	 * once, and the request is retried with whatever credentials it left behind. `init.signal` aborts
+	 * the fetch itself.
 	 *
 	 * `signal` only stops dispatch: getting a token or the authorization recovery can take a while, and a
 	 * request its sender gave up on in the meantime must not reach the server. It does not abort the shared
@@ -356,10 +400,11 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	 */
 	private async authorizedFetch(
 		method: "GET" | "POST",
-		init: { headers: Record<string, string>; body?: string },
+		init: { headers: Record<string, string>; body?: string; signal?: AbortSignal },
 		signal?: AbortSignal,
 	): Promise<Response> {
 		const onUnauthorized = this.options.authProvider?.onUnauthorized?.bind(this.options.authProvider);
+		const fetchSignal = init.signal ? AbortSignal.any([this.controller.signal, init.signal]) : this.controller.signal;
 		for (let attempt = 0; ; attempt++) {
 			const { headers, token } = await this.headers(init.headers);
 			if (signal?.aborted) throw new McpAbortError();
@@ -367,7 +412,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 				method,
 				headers,
 				body: init.body,
-				signal: this.controller.signal,
+				signal: fetchSignal,
 			});
 			if (attempt > 0 || !onUnauthorized || !needsAuthorization(response)) return response;
 			try {
@@ -395,7 +440,7 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 
 	private captureSession(response: Response): void {
 		const sessionId = response.headers.get("mcp-session-id");
-		if (sessionId) this.sessionIdValue = sessionId;
+		if (sessionId && !this.stateless) this.sessionIdValue = sessionId;
 	}
 
 	private async checkResponse(response: Response): Promise<void> {
@@ -440,9 +485,14 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 	/**
 	 * Read the SSE stream answering one request. When the stream ends or breaks before the response
 	 * arrives and the server assigned event IDs, resume it with GET and `Last-Event-ID`, as the
-	 * server may close response streams at will. Otherwise only this request fails.
+	 * server may close response streams at will. Otherwise, and always on the stateless revision,
+	 * only this request fails.
 	 */
-	private async consumeResponseStream(body: ReadableStream<Uint8Array>, requestId: JsonRpcId): Promise<void> {
+	private async consumeResponseStream(
+		body: ReadableStream<Uint8Array>,
+		requestId: JsonRpcId,
+		signal: AbortSignal | undefined,
+	): Promise<void> {
 		const cursor: StreamCursor = { lastEventId: undefined, retryMs: undefined, received: false };
 		let answered = false;
 		const onMessage = (message: JsonRpcMessage) => {
@@ -459,9 +509,10 @@ export class StreamableHttpTransport extends TransportEvents implements McpTrans
 					failure = error;
 				}
 			}
-			if (answered || this.closed) return;
+			// An aborted `signal`: the request settled without this stream (timed out, cancelled).
+			if (answered || this.closed || signal?.aborted) return;
 			if (failure !== undefined && !this.isRetryable(failure)) break;
-			if (cursor.lastEventId === undefined || attempt >= this.maxRetries()) break;
+			if (this.stateless || cursor.lastEventId === undefined || attempt >= this.maxRetries()) break;
 			if (cursor.received) attempt = 0;
 			cursor.received = false;
 			if (!(await this.sleep(this.reconnectDelay(attempt++, cursor.retryMs)))) return;

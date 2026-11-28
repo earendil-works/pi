@@ -29,6 +29,20 @@ For a remote server, use `new StreamableHttpTransport({ url, headers })`. Fetch 
 
 An MCP transport owns framing and I/O. It delivers individual JSON-RPC messages to `McpClient`; the client owns request correlation, initialization, timeouts, cancellation, server requests, and protocol-level helpers.
 
+### Protocol versions
+
+MCP `2026-07-28` is a stateless revision: there is no `initialize` handshake and no session, and every request carries the protocol version and the client's info and capabilities in `_meta`. Earlier revisions start with `initialize`.
+
+`McpClient` sends `initialize` first, so servers of every earlier revision see what they always saw. `isStatelessRevisionError(error)` tells errors only servers of that revision send, for applications that start a stdio server again with `protocol: "2026-07-28"` after it exited on rejecting `initialize`. Servers that speak both revisions answer it and stay on the earlier one. Only when a server rejects `initialize` (with a JSON-RPC error, or over HTTP with status 400) does the client send `server/discover` and, when the server lists `2026-07-28`, speak that. When `server/discover` fails as well, `connect()` fails with the server's answer to `initialize`. `protocol: "2026-07-28"` skips `initialize` and speaks only the stateless revision, also to servers that speak both.
+
+On the stateless revision, the client:
+
+- answers results that ask for input (`resultType: "input_required"`) with the handler of the input request's method (`roots/list` from `roots`, or one registered with `setRequestHandler`), and sends the request again with the answers. Input it has no handler for fails the request.
+- sends `Mcp-Method`, `Mcp-Name`, and the `Mcp-Param-*` headers that tools' `x-mcp-header` annotations ask for over HTTP, leaves out tools whose annotations are invalid (reported through `onError`), and lists the tools again once when the server reports mismatching headers.
+- asks for log messages at `logLevel` with every request, when that option is set.
+
+It does not open `subscriptions/listen` streams, so tool list changes of such servers are not delivered.
+
 ### Stdio servers started elsewhere
 
 `PipeTransport` speaks MCP's stdio framing over a program that something else starts, for example on another machine. `open` starts the program, connects its stdout and stderr to the given handlers, and returns an `McpPipe` (`write`, `closeStdin`, `close` to kill, and an `exited` promise). `@earendil-works/pi-env`'s `openProcess()` returns one, without an adapter:
@@ -151,7 +165,7 @@ The OAuth implementation is adapted from the MIT-licensed Model Context Protocol
 
 ### Configuration
 
-`validateMcpServerConfig(name, entry, options)` validates one entry of the `mcpServers` shape that MCP clients share: stdio servers (`command`, `args`, `env`, `cwd`), Streamable HTTP servers (`url`, `headers`, `oauth`), and `enabled`, `description`, and `timeout`. It returns `{ kind: "stdio" | "http", config }` or `{ kind: "invalid", error }`. Fields it does not know stay in `config`, typed `unknown`, for the application to check afterwards, depending on `kind` where it matters. Resolving `${VAR}` references and relative paths is left to the application. `oauth.clientRegistration: "cimd"` is accepted only with `options.checkMetadataDocumentCallback`, which checks that the application's Client ID Metadata Documents list the callback.
+`validateMcpServerConfig(name, entry, options)` validates one entry of the `mcpServers` shape that MCP clients share: stdio servers (`command`, `args`, `env`, `cwd`), Streamable HTTP servers (`url`, `headers`, `oauth`), and `enabled`, `description`, `timeout`, and `protocol`. It returns `{ kind: "stdio" | "http", config }` or `{ kind: "invalid", error }`. Fields it does not know stay in `config`, typed `unknown`, for the application to check afterwards, depending on `kind` where it matters. Resolving `${VAR}` references and relative paths is left to the application. `oauth.clientRegistration: "cimd"` is accepted only with `options.checkMetadataDocumentCallback`, which checks that the application's Client ID Metadata Documents list the callback.
 
 ```typescript
 import { validateMcpServerConfig } from "@earendil-works/pi-mcp";
@@ -170,6 +184,7 @@ for (const [name, entry] of Object.entries(file.mcpServers)) {
 ## Supported protocol surface
 
 - MCP protocol version `2025-11-25`, accepting servers that negotiate `2025-06-18`, `2025-03-26`, or `2024-11-05`
+- the stateless revision `2026-07-28` for servers that reject `initialize` (see [Protocol versions](#protocol-versions)), with `server/discover`, multi round-trip requests, and the `Mcp-*` HTTP headers
 - initialization and `notifications/initialized`
 - ping
 - paginated `tools/list`

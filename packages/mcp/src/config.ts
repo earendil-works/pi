@@ -1,7 +1,7 @@
 /**
  * The `mcpServers` configuration shape that MCP clients share, so configurations can be copied between
  * them: stdio servers (`command`, `args`, `env`, `cwd`), Streamable HTTP servers (`url`, `headers`,
- * `oauth`), and `enabled`, `description` and `timeout` for both.
+ * `oauth`), and `enabled`, `description`, `timeout` and `protocol` for both.
  *
  * ```json
  * {
@@ -16,6 +16,8 @@
  * for the caller to check afterwards.
  */
 
+import { type McpProtocolMode, STATELESS_PROTOCOL_VERSION } from "./protocol/types.ts";
+
 /** Fields every server entry may have. */
 interface McpServerConfigBase {
 	/** What the server offers, in a sentence. */
@@ -24,6 +26,11 @@ interface McpServerConfigBase {
 	enabled?: boolean;
 	/** Per-request timeout in seconds. */
 	timeout?: number;
+	/**
+	 * `auto` (default): `initialize`, and the stateless revision only for servers that reject it.
+	 * `2026-07-28`: only the stateless revision, also for servers that speak both.
+	 */
+	protocol?: McpProtocolMode;
 }
 
 /** A server started as a local program that speaks MCP over stdin and stdout. */
@@ -143,8 +150,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function validateBaseFields(entry: Record<string, unknown>): string | undefined {
-	const { enabled, timeout, description } = entry;
+	const { enabled, timeout, description, protocol } = entry;
 	if (enabled !== undefined && typeof enabled !== "boolean") return "enabled must be a boolean";
+	if (protocol !== undefined && protocol !== "auto" && protocol !== STATELESS_PROTOCOL_VERSION) {
+		return `protocol must be "auto" or "${STATELESS_PROTOCOL_VERSION}"`;
+	}
 	if (description !== undefined && typeof description !== "string") return "description must be a string";
 	if (timeout !== undefined && (typeof timeout !== "number" || !(timeout > 0))) {
 		return "timeout must be a positive number of seconds";

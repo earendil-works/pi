@@ -1,4 +1,5 @@
 import type { CallToolResult } from "./protocol/content.ts";
+import { type ToolHeaderBinding, toolHeaderBindings, toolParamHeaders } from "./protocol/http-headers.ts";
 import {
 	isJsonRpcId,
 	isJsonRpcNotification,
@@ -18,26 +19,51 @@ import {
 	toError,
 } from "./protocol/jsonrpc.ts";
 import {
+	HEADER_MISMATCH_ERROR_CODE,
+	readStatelessResult,
+	STATELESS_ERROR_CODES,
+	type StatelessRequestMeta,
+	validateDiscoverResult,
+	withStatelessMeta,
+} from "./protocol/stateless.ts";
+import {
 	type ClientCapabilities,
 	type Implementation,
 	type InitializeResult,
+	type InputRequest,
 	LATEST_PROTOCOL_VERSION,
 	type ListResourcesResult,
 	type ListResourceTemplatesResult,
+	type LoggingLevel,
+	type McpProtocolMode,
 	type ProgressNotification,
 	type ReadResourceResult,
 	type Resource,
 	type ResourceTemplate,
 	type Root,
 	type ServerCapabilities,
+	STATELESS_PROTOCOL_VERSION,
 	SUPPORTED_PROTOCOL_VERSIONS,
 	type SupportedProtocolVersion,
 	type Tool,
 } from "./protocol/types.ts";
+import { jsonRpcErrorIn, McpHttpError } from "./transports/streamable-http.ts";
 import type { McpTransport } from "./transports/transport.ts";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_LIST_PAGES = 1_000;
+/**
+ * Bounds `server/discover` after a rejected `initialize`. The server already answered once, so a
+ * stateless server answers quickly; a legacy server that ignores the request must not hold up the error.
+ */
+const DISCOVER_AFTER_INITIALIZE_TIMEOUT_MS = 10_000;
+/**
+ * Rounds of input a server may ask for before one request completes. Servers may ask again until they
+ * have what they need; this bounds a server that never does.
+ */
+const MAX_INPUT_ROUNDS = 16;
+/** Methods whose results may ask for input in MCP 2026-07-28 (multi round-trip requests). */
+const INPUT_METHODS = new Set(["tools/call", "resources/read", "prompts/get"]);
 
 type ClientState = "idle" | "connecting" | "connected" | "closed";
 type NotificationListener = (params: unknown) => void;
@@ -47,7 +73,15 @@ type RequestHandler = (params: unknown, context: { signal: AbortSignal }) => unk
 
 export interface McpClientOptions extends Implementation {
 	capabilities?: ClientCapabilities;
+	/** Version the `initialize` handshake asks for. Default: {@link LATEST_PROTOCOL_VERSION}. */
 	protocolVersion?: SupportedProtocolVersion;
+	/** How the protocol is picked (see {@link McpProtocolMode}). Default: `auto`. */
+	protocol?: McpProtocolMode;
+	/**
+	 * Servers on the stateless revision send log messages (`notifications/message`) only for requests
+	 * that name a level, so every such request names this one. Without it, they send none.
+	 */
+	logLevel?: LoggingLevel;
 	requestTimeoutMs?: number;
 	roots?: readonly Root[] | (() => readonly Root[] | Promise<readonly Root[]>);
 }
@@ -153,6 +187,34 @@ function validateCallToolResult(value: unknown): CallToolResult {
 	return (value.content === undefined ? { ...value, content: [] } : value) as unknown as CallToolResult;
 }
 
+/**
+ * What a failed `initialize` tells about the server. Servers that only speak the stateless revision
+ * reject it with a JSON-RPC error, over HTTP with a 400: `stateless` when the error has a code only that
+ * revision uses, `unknown` for other such rejections, and undefined for failures that are no answer
+ * (timeouts, closed connections, authorization).
+ */
+function initializeRejection(error: unknown): "stateless" | "unknown" | undefined {
+	const code =
+		error instanceof McpError
+			? error.code
+			: error instanceof McpHttpError && error.status === 400
+				? jsonRpcErrorIn(error.body)?.code
+				: null;
+	if (code === null) return undefined;
+	return code !== undefined && STATELESS_ERROR_CODES.includes(code) ? "stateless" : "unknown";
+}
+
+/** The connection closed under a request: the transport closed, or the stdio server was gone when written to. */
+function isConnectionLost(error: unknown): boolean {
+	// Node's write errors are the trust boundary here: `code` is all they carry.
+	return (
+		error instanceof McpConnectionClosedError || (error instanceof Error && "code" in error && error.code === "EPIPE")
+	);
+}
+
+/** Thrown for an `initialize` answered with the stateless revision, which has no handshake. */
+class StatelessInitializeError extends Error {}
+
 export class McpClient {
 	readonly options: Readonly<McpClientOptions>;
 	private state: ClientState = "idle";
@@ -162,6 +224,11 @@ export class McpClient {
 	private serverCapabilitiesValue: ServerCapabilities | undefined;
 	private instructionsValue: string | undefined;
 	private protocolVersionValue: string | undefined;
+	/** Whether the connection speaks the stateless revision: every request carries {@link meta}. */
+	private stateless = false;
+	private readonly meta: StatelessRequestMeta;
+	/** `Mcp-Param-*` bindings of the tools last listed, for servers on the stateless revision. */
+	private toolHeaders = new Map<string, ToolHeaderBinding[]>();
 	private pending = new Map<JsonRpcId, PendingRequest>();
 	private progressRequests = new Map<JsonRpcId, JsonRpcId>();
 	private incoming = new Map<JsonRpcId, AbortController>();
@@ -173,6 +240,18 @@ export class McpClient {
 
 	constructor(options: McpClientOptions) {
 		this.options = Object.freeze({ ...options });
+		const capabilities: ClientCapabilities = { ...options.capabilities };
+		if (options.roots && capabilities.roots === undefined) capabilities.roots = {};
+		this.meta = {
+			protocolVersion: STATELESS_PROTOCOL_VERSION,
+			clientInfo: {
+				name: options.name,
+				version: options.version,
+				...(options.title === undefined ? {} : { title: options.title }),
+			},
+			clientCapabilities: capabilities,
+			logLevel: options.logLevel,
+		};
 		this.requestHandlers.set("ping", () => ({}));
 		const roots = options.roots;
 		if (roots) {
@@ -202,6 +281,10 @@ export class McpClient {
 		return this.protocolVersionValue;
 	}
 
+	/**
+	 * Connect over `transport`. Resolves to what the server reported about itself; for servers on the
+	 * stateless revision, a result in the shape of `initialize` built from `server/discover`.
+	 */
 	async connect(transport: McpTransport): Promise<InitializeResult> {
 		if (this.state !== "idle") throw new Error(`Cannot connect MCP client in ${this.state} state`);
 		this.state = "connecting";
@@ -215,33 +298,10 @@ export class McpClient {
 
 		try {
 			await transport.start();
-			const capabilities: ClientCapabilities = { ...this.options.capabilities };
-			if (this.options.roots && capabilities.roots === undefined) capabilities.roots = {};
-			const result = validateInitializeResult(
-				await this.requestInternal(
-					"initialize",
-					{
-						protocolVersion: this.options.protocolVersion ?? LATEST_PROTOCOL_VERSION,
-						capabilities,
-						clientInfo: {
-							name: this.options.name,
-							version: this.options.version,
-							...(this.options.title === undefined ? {} : { title: this.options.title }),
-						},
-					},
-					{},
-					true,
-				),
-			);
-			if (!(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(result.protocolVersion)) {
-				throw new Error(`MCP server selected unsupported protocol version ${result.protocolVersion}`);
-			}
-			this.protocolVersionValue = result.protocolVersion;
-			this.serverInfoValue = result.serverInfo;
-			this.serverCapabilitiesValue = result.capabilities;
-			this.instructionsValue = result.instructions;
-			transport.setProtocolVersion?.(result.protocolVersion);
-			await this.notifyInternal("notifications/initialized", undefined, true);
+			const result =
+				this.options.protocol === STATELESS_PROTOCOL_VERSION
+					? await this.discover(transport, this.requestTimeoutMs())
+					: await this.initializeOrDiscover(transport);
 			this.state = "connected";
 			return result;
 		} catch (error) {
@@ -250,18 +310,97 @@ export class McpClient {
 		}
 	}
 
+	/**
+	 * `initialize` first, so servers of every earlier revision see what they always saw. Only a server
+	 * that rejects it is asked with `server/discover`. When that fails too, the error is the rejection,
+	 * unless the rejection proved a stateless server and the connection is still open: then
+	 * `server/discover` failed for its own reason (sign-in required, say). Some stdio servers exit
+	 * after rejecting `initialize`; they need a new connection with `protocol: "2026-07-28"`.
+	 */
+	private async initializeOrDiscover(transport: McpTransport): Promise<InitializeResult> {
+		try {
+			return await this.initialize(transport);
+		} catch (error) {
+			const rejection = error instanceof StatelessInitializeError ? "stateless" : initializeRejection(error);
+			if (rejection === undefined) throw error;
+			if (rejection === "stateless") {
+				return await this.discover(transport, this.requestTimeoutMs()).catch((discoverError: unknown) => {
+					throw isConnectionLost(discoverError) ? error : discoverError;
+				});
+			}
+			const timeoutMs = Math.min(this.requestTimeoutMs(), DISCOVER_AFTER_INITIALIZE_TIMEOUT_MS);
+			return await this.discover(transport, timeoutMs).catch(() => {
+				throw error;
+			});
+		}
+	}
+
+	private async initialize(transport: McpTransport): Promise<InitializeResult> {
+		const result = validateInitializeResult(
+			await this.requestInternal(
+				"initialize",
+				{
+					protocolVersion: this.options.protocolVersion ?? LATEST_PROTOCOL_VERSION,
+					capabilities: this.meta.clientCapabilities,
+					clientInfo: this.meta.clientInfo,
+				},
+				{},
+				true,
+			),
+		);
+		if (result.protocolVersion === STATELESS_PROTOCOL_VERSION) {
+			throw new StatelessInitializeError("MCP server answered initialize with the stateless protocol revision");
+		}
+		if (!(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(result.protocolVersion)) {
+			throw new Error(`MCP server selected unsupported protocol version ${result.protocolVersion}`);
+		}
+		this.protocolVersionValue = result.protocolVersion;
+		this.serverInfoValue = result.serverInfo;
+		this.serverCapabilitiesValue = result.capabilities;
+		this.instructionsValue = result.instructions;
+		transport.setProtocolVersion?.(result.protocolVersion);
+		await this.notifyInternal("notifications/initialized", undefined, true);
+		return result;
+	}
+
+	/** Speak the stateless revision: no handshake, `server/discover` tells what the server offers. */
+	private async discover(transport: McpTransport, timeoutMs: number): Promise<InitializeResult> {
+		this.stateless = true;
+		transport.setProtocolVersion?.(STATELESS_PROTOCOL_VERSION);
+		const { result, serverInfo } = validateDiscoverResult(
+			await this.requestInternal("server/discover", undefined, { timeoutMs }, true),
+		);
+		if (!result.supportedVersions.includes(STATELESS_PROTOCOL_VERSION)) {
+			throw new Error(`MCP server supports none of this client's protocol versions: ${result.supportedVersions}`);
+		}
+		this.protocolVersionValue = STATELESS_PROTOCOL_VERSION;
+		this.serverInfoValue = serverInfo;
+		this.serverCapabilitiesValue = result.capabilities;
+		this.instructionsValue = result.instructions;
+		return {
+			protocolVersion: STATELESS_PROTOCOL_VERSION,
+			capabilities: result.capabilities,
+			serverInfo: serverInfo ?? { name: "", version: "" },
+			...(result.instructions === undefined ? {} : { instructions: result.instructions }),
+		};
+	}
+
 	request<Result = unknown>(
 		method: string,
 		params?: Record<string, unknown>,
 		options: McpRequestOptions = {},
 	): Promise<Result> {
-		return this.requestInternal(method, params, options, false) as Promise<Result>;
+		return this.requestConnected(method, params, options) as Promise<Result>;
 	}
 
 	notify(method: string, params?: Record<string, unknown>): Promise<void> {
 		return this.notifyInternal(method, params, false);
 	}
 
+	/**
+	 * Answer requests of `method` from the server: requests a legacy server sends, and the input requests
+	 * of the same method that results of the stateless revision ask for (`roots/list`, say).
+	 */
 	setRequestHandler(method: string, handler: RequestHandler): () => void {
 		this.requestHandlers.set(method, handler);
 		return () => {
@@ -294,8 +433,26 @@ export class McpClient {
 		await this.request("ping", undefined, options);
 	}
 
+	/**
+	 * Every tool, following `nextCursor` through all pages. On the stateless revision, tools whose
+	 * `x-mcp-header` annotations are invalid are left out and reported through `onError`.
+	 */
 	async listTools(options: McpRequestOptions = {}): Promise<Tool[]> {
-		return (await this.listAll("tools/list", "tools", isTool, options)) as unknown as Tool[];
+		const tools = (await this.listAll("tools/list", "tools", isTool, options)) as unknown as Tool[];
+		if (!this.stateless) return tools;
+		const kept: Tool[] = [];
+		const headers = new Map<string, ToolHeaderBinding[]>();
+		for (const tool of tools) {
+			const bindings = toolHeaderBindings(tool.inputSchema);
+			if (bindings.kind === "invalid") {
+				this.emitError(new Error(`Excluded MCP tool "${tool.name}": ${bindings.reason}`));
+				continue;
+			}
+			if (bindings.bindings.length > 0) headers.set(tool.name, bindings.bindings);
+			kept.push(tool);
+		}
+		this.toolHeaders = headers;
+		return kept;
 	}
 
 	/** Every resource, following `nextCursor` through all pages. */
@@ -376,14 +533,29 @@ export class McpClient {
 		throw new Error(`MCP ${method} exceeded ${MAX_LIST_PAGES} pages`);
 	}
 
+	/**
+	 * Call a tool. On the stateless revision, arguments the tool marks with `x-mcp-header` go into
+	 * `Mcp-Param-*` headers too; when the server reports that they do not match, the tools are listed
+	 * again for their current annotations and the call is sent once more.
+	 */
 	async callTool(
 		name: string,
 		args?: Record<string, unknown>,
 		options: McpRequestOptions = {},
 	): Promise<CallToolResult> {
-		return validateCallToolResult(
-			await this.request("tools/call", { name, ...(args === undefined ? {} : { arguments: args }) }, options),
-		);
+		const params = { name, ...(args === undefined ? {} : { arguments: args }) };
+		const call = async () => {
+			const bindings = this.toolHeaders.get(name);
+			const headers = bindings ? toolParamHeaders(bindings, args) : undefined;
+			return validateCallToolResult(await this.requestConnected("tools/call", params, options, headers));
+		};
+		try {
+			return await call();
+		} catch (error) {
+			if (!(this.stateless && error instanceof McpError && error.code === HEADER_MISMATCH_ERROR_CODE)) throw error;
+			await this.listTools(options.signal ? { signal: options.signal } : {});
+			return await call();
+		}
 	}
 
 	async close(): Promise<void> {
@@ -394,20 +566,69 @@ export class McpClient {
 		await transport?.close();
 	}
 
+	/**
+	 * A request on the connection. On the stateless revision, a result that asks for input is answered
+	 * with the handlers of the input requests' methods, and the request is sent again with the answers
+	 * until it completes. Every attempt is a new JSON-RPC request.
+	 */
+	private async requestConnected(
+		method: string,
+		params: Record<string, unknown> | undefined,
+		options: McpRequestOptions,
+		headers?: Record<string, string>,
+	): Promise<unknown> {
+		if (!this.stateless) return this.requestInternal(method, params, options, false, headers);
+		let input: Record<string, unknown> = {};
+		for (let round = 0; ; round++) {
+			const result = readStatelessResult(
+				method,
+				await this.requestInternal(method, { ...params, ...input }, options, false, headers),
+			);
+			if (result.kind === "complete") return result.result;
+			if (!INPUT_METHODS.has(method)) throw new Error(`MCP ${method} result asks for input, which it may not`);
+			if (round + 1 >= MAX_INPUT_ROUNDS) {
+				throw new Error(`MCP ${method} still asks for input after ${MAX_INPUT_ROUNDS} rounds`);
+			}
+			input = {
+				inputResponses: await this.answerInputRequests(result.inputRequests, options.signal),
+				...(result.requestState === undefined ? {} : { requestState: result.requestState }),
+			};
+		}
+	}
+
+	private async answerInputRequests(
+		requests: Record<string, InputRequest>,
+		signal: AbortSignal | undefined,
+	): Promise<Record<string, unknown>> {
+		const responses: Record<string, unknown> = {};
+		for (const [key, request] of Object.entries(requests)) {
+			const handler = this.requestHandlers.get(request.method);
+			if (!handler) throw new Error(`MCP server asked for input this client does not provide: ${request.method}`);
+			responses[key] = (await handler(request.params, { signal: signal ?? new AbortController().signal })) ?? {};
+		}
+		return responses;
+	}
+
+	private requestTimeoutMs(): number {
+		return this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+	}
+
 	private async requestInternal(
 		method: string,
 		params: Record<string, unknown> | undefined,
 		options: McpRequestOptions,
 		allowConnecting: boolean,
+		headers?: Record<string, string>,
 	): Promise<unknown> {
 		const transport = this.requireTransport(allowConnecting);
 		if (options.signal?.aborted) throw new McpAbortError();
 		const id = this.nextRequestId++;
 		const progressToken = options.onProgress ? id : undefined;
+		const metaParams = this.stateless ? withStatelessMeta(params, this.meta) : params;
 		const requestParams =
 			progressToken === undefined
-				? params
-				: { ...params, _meta: { ...(isObject(params?._meta) ? params._meta : {}), progressToken } };
+				? metaParams
+				: { ...metaParams, _meta: { ...(isObject(metaParams?._meta) ? metaParams._meta : {}), progressToken } };
 		const message: JsonRpcRequest = {
 			jsonrpc: "2.0",
 			id,
@@ -418,7 +639,7 @@ export class McpClient {
 			const entry: PendingRequest = {
 				resolve,
 				reject,
-				timeoutMs: options.timeoutMs ?? this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+				timeoutMs: options.timeoutMs ?? this.requestTimeoutMs(),
 				timer: undefined,
 				signal: options.signal,
 				// The spec forbids cancelling `initialize`.
@@ -439,7 +660,7 @@ export class McpClient {
 			options.signal?.addEventListener("abort", entry.onAbort, { once: true });
 			this.armTimeout(id, entry);
 			transport
-				.send(message, { signal: entry.sendController.signal })
+				.send(message, { signal: entry.sendController.signal, ...(headers === undefined ? {} : { headers }) })
 				.catch((error) => this.cancelPending(id, error, false));
 		});
 	}
